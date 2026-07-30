@@ -348,6 +348,10 @@ const RANK_SENTENCE_RE =
 // 「Kindle◯円 / 定価 / 価格 / ◯円で読める・購入 / 0円」だけを対象にする。
 const PRICE_SENTENCE_RE =
   /[^。！!\n]*(?:Kindle(?:版)?\s*(?:で)?\s*[¥￥]?\s*\d[\d,]*\s*円|定価\s*[¥￥]?\s*\d|価格\s*(?:は)?\s*[¥￥]?\s*\d|[¥￥]?\s*\d[\d,]*\s*円\s*で(?:読|購入|お求め|手に入|楽しめ)|[¥￥]?\s*0\s*円)[^。！!\n]*[。！!\n]?/g;
+// KU 無料訴求(文単位)。canonical な KU_FREE_NOTE を priceFactLine が 1 回だけ注入するため、
+// LLM が本文に書いた「Kindle Unlimited会員は無料/読み放題」等は除去して二重表現を防ぐ。
+const KU_SENTENCE_RE =
+  /[^。！!\n]*(?:Kindle\s*Unlimited|KindleUnlimited|ＫＵ|KU\s*会員|読み放題|無料で(?:お)?読み|無料でお読み|会員(?:の方)?は\s*(?:無料|0\s*円))[^。！!\n]*[。！!\n]?/gi;
 
 /**
  * 販促本文から「捏造されがちな事実」を除去する (決定的・純関数)。
@@ -364,6 +368,7 @@ export function sanitizePromoBody(body: string): string {
   s = s.replace(SALE_SENTENCE_RE, '');
   s = s.replace(RANK_SENTENCE_RE, '');
   s = s.replace(PRICE_SENTENCE_RE, '');
+  s = s.replace(KU_SENTENCE_RE, '');
   // 購入導線/リンクのプレースホルダ行を除去する。購入リンクはコード側が正規URLで付与するため、
   // LLM が書いた「(リンク)」「▼Amazon商品ページ」「購入はこちら」等の空導線は不要 (URLを剥がすと
   // 見出しだけ残って不格好になる)。行単位で判定して落とす。
@@ -398,6 +403,10 @@ function isCtaPlaceholderLine(line: string): boolean {
   ) {
     return true;
   }
+  // 「プロフィール(プロフ/bio)のリンクから〜」— IG/TikTok 用の bio 導線は finalizePromoBody が
+  // canonical に 1 回注入する (PURCHASE_LABEL_IG_LINK / IG_NO_LINK)。LLM が本文に書いた同種の
+  // 導線行は重複するため除去する ("プロフィールのリンクからどうぞ/見に来てください" 等)。
+  if (/(?:プロフィール|プロフ|bio|Bio)[^。\n]{0,8}(?:リンク|link)/i.test(t)) return true;
   return false;
 }
 

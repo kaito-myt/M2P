@@ -306,6 +306,28 @@ describe('finalizePromoBody — 事実サニタイズ + 検証済み事実注入
     expect(out).toMatch(/#(読書|自己啓発)/); // ハッシュタグ必須
     expect(weightedTweetLengthWithUrls(out)).toBeLessThanOrEqual(X_MAX_WEIGHT);
   });
+  it('IG: LLM本文のKU無料訴求とプロフィールリンク導線の二重化を除去し canonical を1回だけにする', () => {
+    const body = [
+      'そんな問いから書いた一冊です📚',
+      '『あなたが不幸なのは、いい人すぎるからだ』',
+      '',
+      'KindleUnlimited会員の方は無料でお読みいただけます。',
+      'プロフィールのリンクからどうぞ。',
+      '',
+      '📘 Kindle 599円（Kindle Unlimited会員は0円）',
+      '',
+      'プロフィールのリンクから見に来てください。',
+    ].join('\n');
+    const out = finalizePromoBody({ channel: 'instagram', body, asin: null, priceJpy: 599, hashtags: ['#本紹介'] });
+    // KU 無料訴求は canonical priceFactLine の 1 回だけ
+    expect(out.match(/Unlimited/gi)?.length ?? 0).toBe(1);
+    expect(out).not.toContain('無料でお読みいただけ');
+    // プロフィールのリンク導線は canonical(IG_NO_LINK)の 1 回だけ
+    expect(out.match(/プロフィール[^。\n]{0,8}リンク/g)?.length ?? 0).toBe(1);
+    expect(out).not.toContain('リンクからどうぞ');
+    expect(out).toContain('📘 Kindle 599円');
+    expect(out).toContain('#本紹介');
+  });
   it('X: 実ASINが無ければ偽URLを一切出さない', () => {
     const out = finalizePromoBody({
       channel: 'x',
