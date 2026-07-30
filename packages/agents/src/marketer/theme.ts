@@ -44,9 +44,12 @@ import type {
 import type { LoadModelAssignmentDeps } from '../lib/load-model-assignment.js';
 
 /** Marketer LLM 呼出の既定 max tokens。10 件分の構造化 JSON を返す余裕。 */
-// opus-4-8 は Web 検索付きで長い分析文＋(拡張思考)を出力し 8192 では JSON candidates が
-// 末尾で truncation して extractJson が失敗する(themes not created)。十分な余裕を持たせる。
-const DEFAULT_MAX_OUTPUT_TOKENS = 32768;
+// opus-4-8 は Web 検索付きで長い分析文を出力し 8192 では JSON candidates が末尾で
+// truncation して extractJson が失敗するため余裕を持たせる。ただし 32768 まで上げると
+// Anthropic SDK が「非ストリーミングでは 10 分を超えうる」と判断し messages.create を
+// 即エラーにする (ProviderError: Streaming is required)。16384 はこの閾値未満かつ
+// 実測 (3.5k tokens 程度で完結) に対し十分な余裕があるため 16384 を上限とする。
+const DEFAULT_MAX_OUTPUT_TOKENS = 16384;
 
 /**
  * LLM 出力の JSON 解析/スキーマ検証は非決定的に失敗しうる (モデルが稀に候補ラッパーを
