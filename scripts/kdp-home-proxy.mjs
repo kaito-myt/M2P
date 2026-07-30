@@ -25,7 +25,7 @@
 import http from 'node:http';
 import net from 'node:net';
 import { spawn } from 'node:child_process';
-import { readFileSync, existsSync } from 'node:fs';
+import { readFileSync, existsSync, readdirSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { timingSafeEqual } from 'node:crypto';
 import path from 'node:path';
@@ -83,6 +83,20 @@ function loadPg() {
     } catch {
       /* try next */
     }
+  }
+  // pnpm の厳格 node_modules だと pg は直接解決できないことがある。
+  // node_modules/.pnpm/pg@x.y.z/node_modules/pg を走査してフォールバック。
+  try {
+    const pnpmDir = path.join(repoRoot, 'node_modules', '.pnpm');
+    const hit = existsSync(pnpmDir)
+      ? readdirSync(pnpmDir).find((d) => /^pg@\d/.test(d))
+      : null;
+    if (hit) {
+      const pgDir = path.join(pnpmDir, hit, 'node_modules', 'pg', 'package.json');
+      return createRequire(pgDir)('pg');
+    }
+  } catch {
+    /* fall through */
   }
   throw new Error('pg モジュールが見つかりません (pnpm install 済みか確認してください)');
 }

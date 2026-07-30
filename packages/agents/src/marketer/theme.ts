@@ -46,7 +46,16 @@ import type { LoadModelAssignmentDeps } from '../lib/load-model-assignment.js';
 /** Marketer LLM 呼出の既定 max tokens。10 件分の構造化 JSON を返す余裕。 */
 // opus-4-8 は Web 検索付きで長い分析文＋(拡張思考)を出力し 8192 では JSON candidates が
 // 末尾で truncation して extractJson が失敗する(themes not created)。十分な余裕を持たせる。
-const DEFAULT_MAX_OUTPUT_TOKENS = 16384;
+const DEFAULT_MAX_OUTPUT_TOKENS = 32768;
+
+/**
+ * LLM 出力の JSON 解析/スキーマ検証は非決定的に失敗しうる (モデルが稀に候補ラッパーを
+ * 崩す / 制御文字を混ぜる)。theme.auto は日次 cron で 1 回しか回らないため、1 度の
+ * パース失敗が「その日テーマ 0 件 → パイプライン全停止」に直結する (実障害: 2026-07-28/29)。
+ * そこで invalid_output 系失敗のみ LLM 呼出ごと最大 3 回まで再試行する。
+ * ProviderError (API 障害/クォータ) は透過して上位 worker のリトライに委ねる。
+ */
+const MAX_PARSE_RETRIES = 3;
 
 export interface GenerateThemesDeps {
   loadActivePrompt?: typeof defaultLoadActivePrompt;
@@ -114,45 +123,57 @@ export async function generateMarketerThemes(
     factoryDeps,
   );
 
-  // 4. LLM 呼出 — system に差込済プロンプト、user に簡易指示 (テンプレ依存しすぎを避ける)
-  const completion = await client.complete({
-    role: 'marketer',
-    genre: parsedInput.genre,
-    messages: [
-      { role: 'system', content: systemPrompt },
-      {
-        role: 'user',
-        content: buildUserMessage(parsedInput),
-      },
-    ],
-    maxOutputTokens: DEFAULT_MAX_OUTPUT_TOKENS,
-  });
-
-  const rawText = completion.text;
-  if (typeof rawText !== 'string' || rawText.trim().length === 0) {
-    throw new AgentError('marketer.theme.invalid_output: empty response', {
-      details: { rawText: String(rawText) },
+  // 4-5. LLM 呼出 + JSON 抽出 + zod 検証 を invalid_output 失敗時に最大 MAX_PARSE_RETRIES 回まで再試行。
+  //      モデルは非決定的なので、1 度崩れた出力でも再呼出でほぼ通る。ProviderError は透過。
+  const userMessage = buildUserMessage(parsedInput);
+  let validated: ReturnType<typeof MarketerThemeOutputSchema.safeParse> | undefined;
+  let lastError: AgentError | undefined;
+  for (let attempt = 1; attempt <= MAX_PARSE_RETRIES; attempt++) {
+    const completion = await client.complete({
+      role: 'marketer',
+      genre: parsedInput.genre,
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: userMessage },
+      ],
+      maxOutputTokens: DEFAULT_MAX_OUTPUT_TOKENS,
     });
+
+    const rawText = completion.text;
+    if (typeof rawText !== 'string' || rawText.trim().length === 0) {
+      lastError = new AgentError('marketer.theme.invalid_output: empty response', {
+        details: { rawText: String(rawText), attempt },
+      });
+      continue;
+    }
+
+    // schema-aware predicate で `candidates` 配列を持つブロックを優先選択し、
+    // competitor 単体 JSON 等の混在ブロックの誤採用を防ぐ。
+    const parsedJson = extractJson(rawText, hasCandidatesArray);
+    if (parsedJson === undefined) {
+      lastError = new AgentError('marketer.theme.invalid_output: failed to parse JSON', {
+        details: { rawText, attempt, rawTextLength: rawText.length },
+      });
+      continue;
+    }
+
+    const candidate = MarketerThemeOutputSchema.safeParse(parsedJson);
+    if (!candidate.success) {
+      lastError = new AgentError('marketer.theme.invalid_output: schema validation failed', {
+        details: { rawText, attempt, issues: candidate.error.issues },
+        cause: candidate.error,
+      });
+      continue;
+    }
+    validated = candidate;
+    break;
   }
 
-  // 5. JSON 抽出 + zod 検証
-  //    schema-aware predicate を渡し、`candidates` キーを持つブロックを優先選択。
-  //    これにより LLM が candidates ラッパーの前後に別の {...} ブロック (例:
-  //    competitor の単体 JSON、example object) を混ぜても誤採用されず、決定論的
-  //    失敗 (前 iteration で起きた `candidates: undefined` schema 違反) を回避する。
-  const parsedJson = extractJson(rawText, hasCandidatesArray);
-  if (parsedJson === undefined) {
-    throw new AgentError('marketer.theme.invalid_output: failed to parse JSON', {
-      details: { rawText },
-    });
-  }
-
-  const validated = MarketerThemeOutputSchema.safeParse(parsedJson);
-  if (!validated.success) {
-    throw new AgentError('marketer.theme.invalid_output: schema validation failed', {
-      details: { rawText, issues: validated.error.issues },
-      cause: validated.error,
-    });
+  if (!validated || !validated.success) {
+    throw (
+      lastError ??
+      new AgentError('marketer.theme.invalid_output: failed to parse JSON', { details: {} })
+    );
   }
 
   // 6. 重複除外: candidates 内同一 title + excludeTitlesRecent と一致
