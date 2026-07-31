@@ -10,6 +10,7 @@ import { SALES_FETCH_DISPATCHER_TASK_NAME } from './tasks/sales-fetch-dispatcher
 import { BOOK_CULL_DETECT_TASK_NAME } from './tasks/book-cull-detect.js';
 import { KDP_PUBLISH_STATUS_SYNC_TASK_NAME } from './tasks/kdp-publish-status-sync.js';
 import { PIPELINE_THEME_AUTO_TASK_NAME } from './tasks/pipeline-theme-auto.js';
+import { KDP_SUBMIT_DISPATCHER_TASK_NAME } from './tasks/kdp-submit-dispatcher.js';
 import { PROMOTION_DISPATCH_TASK_NAME } from './tasks/promotion-dispatch.js';
 import { PROMOTION_REVIEW_DAILY_TASK_NAME } from './tasks/promotion-review-daily.js';
 import { COST_OPTIMIZE_WEEKLY_TASK_NAME } from './tasks/cost-optimize-weekly.js';
@@ -143,6 +144,20 @@ export const PIPELINE_THEME_AUTO_CRON_ITEM: CronItem = {
   task: PIPELINE_THEME_AUTO_TASK_NAME,
   match: PIPELINE_THEME_AUTO_CRON_DEFAULT,
   identifier: 'pipeline-theme-auto-daily',
+};
+
+/**
+ * F-041 Phase3: サーバー側自動入稿ディスパッチャの既定 cron (30分毎)。
+ * AppSettings.kdp_auto_submit_enabled=true のときだけ条件付き追加する（既定OFF）。
+ * 同時 1 冊出版のため間隔は出版 1 冊(~10分)より十分長くする。
+ */
+export const KDP_SUBMIT_DISPATCHER_CRON_DEFAULT = '*/30 * * * *';
+
+/** `kdp.submit.dispatch` の CronItem 定義。 */
+export const KDP_SUBMIT_DISPATCHER_CRON_ITEM: CronItem = {
+  task: KDP_SUBMIT_DISPATCHER_TASK_NAME,
+  match: KDP_SUBMIT_DISPATCHER_CRON_DEFAULT,
+  identifier: 'kdp-submit-dispatch',
 };
 
 /**
@@ -299,6 +314,10 @@ export interface CronRuntimeSettings {
   autopass_theme_enabled?: boolean;
   /** パイプライン設定: pipeline.theme.auto cron (省略時は既定 07:00 JST)。 */
   pipeline_theme_cron?: string | null;
+  /** F-041 Phase3: サーバー側自動入稿ディスパッチャ (kdp.submit.dispatch) を cron 有効化するか（既定OFF）。 */
+  kdp_auto_submit_enabled?: boolean;
+  /** F-041 Phase3: kdp.submit.dispatch cron (省略時は既定 30分毎)。 */
+  kdp_auto_submit_cron?: string | null;
 }
 
 /** 後方互換エイリアス (旧名)。 */
@@ -402,6 +421,14 @@ export function buildCronItemsWithSettings(settings: CronRuntimeSettings): CronI
         ? settings.pipeline_theme_cron.trim()
         : PIPELINE_THEME_AUTO_CRON_DEFAULT;
     items.push({ ...PIPELINE_THEME_AUTO_CRON_ITEM, match: cronMatch });
+  }
+
+  if (settings.kdp_auto_submit_enabled) {
+    const cronMatch =
+      typeof settings.kdp_auto_submit_cron === 'string' && settings.kdp_auto_submit_cron.trim().length > 0
+        ? settings.kdp_auto_submit_cron.trim()
+        : KDP_SUBMIT_DISPATCHER_CRON_DEFAULT;
+    items.push({ ...KDP_SUBMIT_DISPATCHER_CRON_ITEM, match: cronMatch });
   }
 
   return items;

@@ -1033,6 +1033,12 @@ model AppSettings {
   book_cull_max_royalty_jpy       Int      @default(100) // 累計ロイヤリティがこれ以下 → 低迷=候補
   kdp_submit_timeout_minutes      Int      @default(10)
   kdp_submit_retry_count          Int      @default(2)
+  // F-041 Phase3: サーバー側自動入稿(kdp.submit)の自動運用。true で dispatcher が
+  // kdp_publish_queued=true の本を1冊ずつ kdp.submit へ enqueue する。既定OFF(誤出版防止)。
+  kdp_auto_submit_enabled         Boolean  @default(false)
+  kdp_auto_submit_cron            String   @default("*/30 * * * *") // 30分毎に入稿キューを1冊処理
+  // F-041 Phase3: 完全無人時に「出版」ボタンを押さず直前で止めるドライラン(検証用)。
+  kdp_submit_dry_run              Boolean  @default(false)
   job_log_retention_days          Int      @default(90)
   r2_archive_threshold_days       Int      @default(365) // T-07-09: R2 アーカイブログ保持日数
   ai_disclosure_text              String   @db.Text // F-005 巻末挿入文

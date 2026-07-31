@@ -38,6 +38,7 @@ import {
   kdpPublishStatusSyncTask,
 } from './tasks/kdp-publish-status-sync.js';
 import { KDP_SUBMIT_TASK_NAME, kdpSubmitTask } from './tasks/kdp-submit.js';
+import { KDP_SUBMIT_DISPATCHER_TASK_NAME, kdpSubmitDispatcherTask } from './tasks/kdp-submit-dispatcher.js';
 import { LOCKS_SWEEP_TASK_NAME, locksSweepTask } from './tasks/locks-sweep.js';
 import {
   OPTIMIZER_PROMPT_GENERATE_TASK_NAME,
@@ -242,6 +243,7 @@ export function buildTaskList(): TaskList {
     [PROMOTION_DISPATCH_TASK_NAME]: promotionDispatchTask,
     [BAKEOFF_RUN_TASK_NAME]: bakeoffRunTask,
     [KDP_SUBMIT_TASK_NAME]: kdpSubmitTask,
+    [KDP_SUBMIT_DISPATCHER_TASK_NAME]: kdpSubmitDispatcherTask,
     [KDP_ASIN_FETCH_TASK_NAME]: kdpAsinFetchTask,
     [KDP_PUBLISH_STATUS_SYNC_TASK_NAME]: kdpPublishStatusSyncTask,
     [ALERT_COST_CHECK_TASK_NAME]: alertCostCheckTask,
@@ -356,6 +358,8 @@ async function fetchAppSettingsForCron(log: Logger): Promise<CronRuntimeSettings
     org_kdp_screen_cron: null,
     autopass_theme_enabled: false,
     pipeline_theme_cron: null,
+    kdp_auto_submit_enabled: false,
+    kdp_auto_submit_cron: null,
   };
   try {
     const row = await prisma.appSettings.findUnique({
@@ -383,6 +387,8 @@ async function fetchAppSettingsForCron(log: Logger): Promise<CronRuntimeSettings
         org_kdp_screen_cron: true,
         autopass_theme_enabled: true,
         pipeline_theme_cron: true,
+        kdp_auto_submit_enabled: true,
+        kdp_auto_submit_cron: true,
       },
     });
     if (!row) {
@@ -415,6 +421,8 @@ async function fetchAppSettingsForCron(log: Logger): Promise<CronRuntimeSettings
       org_kdp_screen_cron: row.org_kdp_screen_cron,
       autopass_theme_enabled: row.autopass_theme_enabled,
       pipeline_theme_cron: row.pipeline_theme_cron,
+      kdp_auto_submit_enabled: row.kdp_auto_submit_enabled,
+      kdp_auto_submit_cron: row.kdp_auto_submit_cron,
     };
   } catch (err) {
     log.warn({ err }, 'failed to read AppSettings; auto-dispatch crons disabled (safe default)');

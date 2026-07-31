@@ -1799,24 +1799,34 @@ export const SalesFetchPayload = z.object({ account_id: z.string(), year_month: 
 >   - データセンター IP からのログインは CAPTCHA が提示されることがあり、`looksLikeCaptcha` で検知した場合は `reason='captcha'` を返してヘッドレス突破を諦め、従来通り手動でのセッション再キャプチャにフォールバックする (F-038 の既知の限界)。
 >   - `AMAZON_EMAIL`/`AMAZON_PASSWORD` 未設定、または LINE 中継未設定の場合は本追加ロジックを一切実行せず、従来通り `session_expired` で failed のまま (後方互換)。
 
-#### 5.3.15 `kdp.submit` [F-041] (Phase 3・不採用 — 4.3.16 参照)
+#### 5.3.15 `kdp.submit` [F-041] (Phase 3・**採用/実装 2026-08-01**)
 
-> **実装メモ**: Amazon KDP の入稿都度 2FA 再認証要求により、この Playwright 無人ジョブ設計は
-> 実現不能と判断し不採用とした。実際には `actions/kdp-submit.ts` の `submitToKdp` が
-> `Book.kdp_publish_queued` を立てるだけで、入稿自体はローカルのアシスト出版ツール
-> (`scripts/kdp-publish.mjs`) が担当する。以下は当初案として記録のみ残す。
+> **設計転換 (2026-08-01)**: 「入稿都度 2FA でサーバー無人化不能」という旧判断は **F-038 の実証で覆った**
+> （Railway データセンター IP から `max_auth_age=0` 再認証を正パスワード＋2FA で通過できる）。よって
+> サーバー側 `kdp.submit` を実装する。旧 `Kdp2FaCode`＋メール承認方式は使わず、**2 段階認証は
+> TOTP 自動生成（`AMAZON_TOTP_SECRET`）→ 無ければ LINE 双方向認証リレー（`kdp_auth_requests`）** に統一。
 
 ```typescript
-export const KdpSubmitPayload = z.object({ book_id: z.string(), job_id: z.string() })
+export const KdpSubmitPayload = z.object({
+  book_id: z.string(),
+  dry_run: z.boolean().optional(),        // 「出版」ボタンを押さず直前で停止
+  account_id: z.string().optional(),
+})
 ```
+
+**構成（playwright import 隔離ルール順守）**:
+- `apps/worker/src/tasks/kdp-submit.ts` — オーケストレーション（DI 境界 `KdpPublishPort`）。book+`kdp_metadata`+docx/cover(R2) 取得 → セッション再利用(`accounts.kdp_session_state_enc`) → ポート呼出 → `publish_status` 更新 → 監査。
+- `apps/worker/src/tasks/kdp-submit/playwright-publish-port.ts` — playwright 実装（`scripts/kdp-publish.mjs` の実証済ウィザードを移植）。`resolveKdpProxy`（任意）/`refreshKdpSession`/TOTP/LINE リレーを利用。
 
 | 項目 | 値 |
 |---|---|
-| 想定時間 | 10 分 |
+| 想定時間 | 8〜10 分/冊（KDP ファイル変換待ち含む） |
 | timeout | 30 分 |
-| max_attempts | `AppSettings.kdp_submit_retry_count` (既定 2) |
+| max_attempts | 1（多重出版防止。失敗は保留し再 enqueue） |
 | priority | 50 |
-| 実行内容 | `BookLock` 取得 → Playwright + stealth で KDP ログイン → メタデータ入力 → docx/png アップロード → 価格設定 → 「公開待ち」で停止。2FA 要求時は `Kdp2FaCode` INSERT + メール送信 → `RH POST /api/kdp/2fa/:jobId` 受信を最大 10 分ポーリング待機 → 失敗時はスクショ R2 保存 + `KdpSubmissionProgress.last_error`。 |
+| 実行内容 | ①セッション復号→ヘッドレス Chromium 起動（既定データセンター IP、proxy 有効時のみ住宅IP）。②`ensureLoggedIn`（アカウント選択タイル→パスワード実タイプ→2FA: TOTP 自動 or LINE）。③**既存下書き resume**（作成上限を消費しない）→ STEP1 メタデータ（ローマ字は `kanaToRomaji`、カテゴリ階層、非公有・非成人）→ STEP2 原稿/表紙アップロード（`data-assets-interior-file-upload` / `data-assets-cover-jp-file-upload`、変換完了待ち→DRM/アクセシビリティ/AI「いいえ」/確認チェック `role=checkbox` 実クリック）→ STEP3（ロイヤリティ70%先選択→JP価格実タイプ+Tab→`dry_run` でなければ「出版」）。④出版確認は本棚照合（`verifyPublished`）。⑤`publish_status='submitted'` にし `kdp_publish_queued=false`。⑥`blocked: creation_limit` 検知時は保留し翌日再試行。各段スクショを R2 に保存。 |
+
+**自動運用**: `AppSettings.kdp_auto_submit_enabled=true`＋dispatcher（`kdp.submit.dispatch`, 例 30 分毎）が `kdp_publish_queued=true AND publish_status<>'published'` の本を 1 冊ずつ `kdp.submit` へ enqueue（同時 1 冊。`org.kdp.screen` 合格→queue と連携）。`AMAZON_EMAIL`/`AMAZON_PASSWORD` 未設定時は起動しない。
 
 #### 5.3.16 `kdp.asin.fetch` [F-042] (Phase 3)
 
