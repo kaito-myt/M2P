@@ -49,6 +49,12 @@ export const authConfig: NextAuthConfig = {
         return true;
       }
 
+      // ルート (/) は公開可 — page.tsx が「未認証→公開サイト(/shop) / 認証済→/dashboard」に振り分ける。
+      // ドメイン直打ち (外部審査のレビュアー等) がログイン画面に落ちないようにするため。
+      if (pathname === '/') {
+        return true;
+      }
+
       const isLoginPage = pathname === '/login';
       if (isLoginPage) {
         // 既にログイン済みでログイン画面に来たらダッシュボードへ
