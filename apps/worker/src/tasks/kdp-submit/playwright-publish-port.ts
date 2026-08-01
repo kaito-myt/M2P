@@ -23,6 +23,8 @@ const log = createLogger('worker.kdp-submit.playwright');
 const BOOKSHELF = 'https://kdp.amazon.co.jp/ja_JP/bookshelf';
 const EDIT_BASE =
   'https://kdp.amazon.co.jp/action/dualbookshelf.editkindledetails/ja_JP/title-setup/kindle/';
+const CREATE_URL =
+  'https://kdp.amazon.co.jp/action/mangaactions.createkindle/ja_JP/title-setup/kindle/new/details';
 const OTP_SEL = '#auth-mfa-otpcode, input[name="otpCode"], #cvf-input-code, input[name="code"]';
 
 // ---------------------------------------------------------------------------
@@ -188,24 +190,18 @@ async function publishOne(args: KdpPublishArgs): Promise<KdpPublishResult> {
       return { ok: false, reason: 'reauth_failed', message: 'login/reauth failed' };
     }
 
-    // 2. 既存下書きを collect (作成上限を消費しない)。対象書籍に割り当てる。
+    // 2. 既存下書きがあれば resume(作成上限を消費しない)、無ければ新規作成(上限を1消費)。
     const draftIds = await collectDraftIds(page);
-    log.info({ drafts: draftIds.length }, 'collected draft slots');
-    if (draftIds.length === 0) {
-      return {
-        ok: false,
-        reason: 'no_draft',
-        message: '空き下書きスロットがありません(新規作成は作成上限を消費するため回避)。運営者が下書きを1件用意してください。',
-      };
-    }
-    const draftId = draftIds[0]!;
+    const detailsUrl = draftIds.length > 0 ? EDIT_BASE + draftIds[0] + '/details' : CREATE_URL;
+    const mode = draftIds.length > 0 ? 'resume' : 'create';
+    log.info({ drafts: draftIds.length, mode }, 'collected draft slots');
 
-    // 3. STEP1 詳細
-    await page.goto(EDIT_BASE + draftId + '/details', { waitUntil: 'domcontentloaded' }).catch(() => {});
+    // 3. STEP1 詳細ページを開く
+    await page.goto(detailsUrl, { waitUntil: 'domcontentloaded' }).catch(() => {});
     await page.waitForTimeout(6000);
-    await passReauth(page, args); // 編集ページで再度ウォールが出ることがある
+    await passReauth(page, args); // 編集/作成ページで再度ウォールが出ることがある
     if (!/\/details/.test(page.url()) || !(await page.$('#data-title').catch(() => null))) {
-      await page.goto(EDIT_BASE + draftId + '/details', { waitUntil: 'domcontentloaded' }).catch(() => {});
+      await page.goto(detailsUrl, { waitUntil: 'domcontentloaded' }).catch(() => {});
       await page.waitForTimeout(6000);
       await passReauth(page, args);
     }
