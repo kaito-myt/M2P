@@ -143,6 +143,39 @@ describe('runKdpPublishStatusSync', () => {
     expect(auditWrites[0]!.data.target_id).toBe('book-1');
   });
 
+  it('(a-2) asin未記録の本を title 検索で live 検知 → asin も backfill する', async () => {
+    const { prisma, bookUpdates, auditWrites } = makeMockPrisma({
+      books: [{ id: 'book-1b', asin: null, title: 'ASIN未記録の本' }],
+    });
+    const { port, calls } = makePort({
+      'ASIN未記録の本': { ok: true, status: 'live', asin: 'B0BACKFIL1' },
+    });
+
+    const res = await runKdpPublishStatusSync({ bookshelfPort: port, prisma, logger: silent });
+
+    expect(res).toEqual({ checked: 1, promoted: 1 });
+    expect(calls).toEqual(['ASIN未記録の本']); // asin 無いので title 検索
+    expect(bookUpdates).toHaveLength(1);
+    expect(bookUpdates[0]!.data.publish_status).toBe('published');
+    expect(bookUpdates[0]!.data.asin).toBe('B0BACKFIL1');
+    expect(auditWrites[0]!.data.after_json).toMatchObject({ asin: 'B0BACKFIL1' });
+  });
+
+  it('(a-3) 既に asin がある本は backfill で上書きしない', async () => {
+    const { prisma, bookUpdates } = makeMockPrisma({
+      books: [{ id: 'book-1c', asin: 'B0EXISTING1', title: '既存ASINの本' }],
+    });
+    const { port } = makePort({
+      B0EXISTING1: { ok: true, status: 'live', asin: 'B0DIFFERENT' },
+    });
+
+    await runKdpPublishStatusSync({ bookshelfPort: port, prisma, logger: silent });
+
+    expect(bookUpdates).toHaveLength(1);
+    expect(bookUpdates[0]!.data.publish_status).toBe('published');
+    expect(bookUpdates[0]!.data.asin).toBeUndefined(); // 既存 asin は保持
+  });
+
   it('(b) submitted + draft 検知 → 更新しない', async () => {
     const { prisma, bookUpdates, auditWrites } = makeMockPrisma({
       books: [{ id: 'book-2', asin: 'B0DRAFT002', title: '審査待ちの本' }],

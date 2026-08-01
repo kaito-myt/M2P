@@ -219,7 +219,9 @@ async function readBookStatus(args: ReadBookStatusArgs): Promise<ReadBookStatusR
     if (dots.length === 0) return { ok: true, status: 'not_found' };
     // ASIN 完全一致検索なら通常 1 件。複数ヒットしても最初の 1 件を対象にする(READ-ONLY のため誤爆リスクなし)。
     const rowText = await extractRowText(page, dots[0]!);
-    return { ok: true, status: mapStatusLabel(rowText) };
+    // 行テキストから ASIN を拾って backfill 用に返す(タイトル検索で LIVE 化した本の ASIN 未記録を自己修復する)。
+    const asin = (rowText.match(/ASIN:\s*(B0[A-Z0-9]{8})/) ?? [])[1] ?? args.asin ?? null;
+    return { ok: true, status: mapStatusLabel(rowText), asin };
   } catch (err) {
     const msg = errMsg(err);
     log.warn({ err: msg, query }, 'readBookStatus failed');

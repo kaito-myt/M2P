@@ -1890,6 +1890,10 @@ export const ArchiveJobsPayload = z.object({})
 
 `readBookStatus` の状態ラベル→5値マッピングは `apps/worker/src/tasks/book-cull/playwright-bookshelf-port.ts` の純関数 `mapStatusLabel` (単体テスト対象) が担う: 販売中/Live→`live`、下書き/Draft→`draft`、レビュー中/In Review→`in_review`、ブロック/Blocked→`blocked`、該当行なし/未知の文言→`not_found`。
 
+**ASIN 自己修復 backfill (2026-08-02 追加)**: `readBookStatus` は本棚行テキストから `ASIN:\s*(B0[A-Z0-9]{8})` を抽出し `ReadBookStatusResult.asin` として返す。`kdp.publish.status.sync` は `live` 昇格時、`Book.asin` が未記録 (null) で読み取り ASIN が正規なら **同時に `Book.asin` を backfill** する (既存 asin は上書きしない)。これは実運用で判明したドリフト — `scripts/kdp-publish.mjs` や `kdp.submit` は入稿成功時に `asin` を記録しないため、`submitted` の本が LIVE 化しても ASIN が空のままで公開一覧 (`/shop`) に載らない — を自動解消するための措置。公開一覧 (`apps/web/app/shop/page.tsx`) は `publish_status='published' AND asin IS NOT NULL` を条件とするため、ASIN 記録は公開の必須条件。
+
+**新発覚のドリフト実態と是正 (2026-08-02)**: 上記 backfill が無かった期間に DB が KDP 本棚から乖離していた。運営者依頼で **本棚を READ-ONLY 全件スキャンして突合** した結果: (1) `submitted` の 9 冊は実際には既に販売中だが ASIN 未記録で `/shop` 未掲載、(2) `published` の 14 冊は実際には本棚でアーカイブ (下書き) 済み = 販売停止なのに `published` のまま `/shop` 掲載、という二重のずれを確認。**KDP 本棚を真実として** DB を是正 (販売中 19 冊に ASIN backfill + `published` 化、非販売 15 冊を `retracted` 化)。以後は本 backfill と `kdp.publish.status.sync` で自動追従する。是正手順は本棚を検索ボックス空・`50 冊/ページ` で全件走査し、行の `ASIN:`・ステータスラベル・`アーカイブ済みの本` ビューを突合するスクリプト方式 (playwright + セッション再利用)。
+
 ### 5.4 crontab 定義
 
 `apps/worker/src/crontab.ts`：

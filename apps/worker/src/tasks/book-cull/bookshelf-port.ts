@@ -47,7 +47,7 @@ export interface ReadBookStatusArgs {
 export type KdpBookStatus = 'live' | 'draft' | 'in_review' | 'blocked' | 'not_found';
 
 export type ReadBookStatusResult =
-  | { ok: true; status: KdpBookStatus }
+  | { ok: true; status: KdpBookStatus; /** 本棚行から読み取った ASIN(取得できた場合のみ)。DB backfill に使う。 */ asin?: string | null }
   | { ok: false; reason: 'session_expired' | 'no_session' | 'action_failed' | 'unknown'; message: string };
 
 export type BookshelfPort = {
@@ -65,7 +65,7 @@ export function createFixtureBookshelfPort(finalState = 'archived'): BookshelfPo
       return { ok: true, steps, finalState };
     },
     async readBookStatus() {
-      return { ok: true, status: 'live' };
+      return { ok: true, status: 'live', asin: null };
     },
   };
 }

@@ -40,7 +40,7 @@ export interface KdpPublishStatusSyncPrisma {
     }): Promise<Array<{ id: string; asin: string | null; title: string }>>;
     update(args: {
       where: { id: string };
-      data: { publish_status: string; updated_at: Date };
+      data: { publish_status: string; updated_at: Date; asin?: string };
     }): Promise<unknown>;
   };
   auditLog: {
@@ -151,10 +151,21 @@ export async function runKdpPublishStatusSync(
 
     if (res.status !== 'live') continue;
 
+    // 本棚行から読み取った ASIN を backfill(未記録なら)。ASIN が無いと /shop 等の公開一覧に
+    // 載らないため、LIVE 昇格と同時に確実に記録して DB↔本棚のドリフトを自己修復する。
+    const backfillAsin =
+      !book.asin && typeof res.asin === 'string' && /^B0[A-Z0-9]{8}$/.test(res.asin)
+        ? res.asin
+        : undefined;
+
     try {
       await db.book.update({
         where: { id: book.id },
-        data: { publish_status: 'published', updated_at: now() },
+        data: {
+          publish_status: 'published',
+          updated_at: now(),
+          ...(backfillAsin ? { asin: backfillAsin } : {}),
+        },
       });
       await db.auditLog.create({
         data: {
@@ -162,8 +173,12 @@ export async function runKdpPublishStatusSync(
           action: 'kdp.publish.published',
           target_kind: 'book',
           target_id: book.id,
-          before_json: { publish_status: 'submitted' },
-          after_json: { publish_status: 'published', detected_status: res.status },
+          before_json: { publish_status: 'submitted', asin: book.asin },
+          after_json: {
+            publish_status: 'published',
+            detected_status: res.status,
+            ...(backfillAsin ? { asin: backfillAsin } : {}),
+          },
         },
       });
       promoted++;
