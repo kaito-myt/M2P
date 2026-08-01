@@ -123,10 +123,14 @@ export default async function BlogIndexPage() {
     <div className="flex min-h-screen flex-col bg-[#F7F1E3] text-[#1B1714] antialiased">
       {/* ── ヘッダ ── */}
       <header className="sticky top-0 z-20 border-b border-[#E6DECB] bg-[#F7F1E3]/90 backdrop-blur">
-        <div className="mx-auto flex max-w-6xl items-center justify-between px-5 py-4">
-          <Link href="/blog" className="flex items-baseline gap-2 no-underline">
-            <span className="font-serif text-2xl font-bold tracking-tight text-[#1B1714]">栞</span>
-            <span className="text-[11px] font-semibold uppercase tracking-[0.4em] text-[#C6572E]">SHIORI</span>
+        <div className="mx-auto flex max-w-6xl items-center justify-between px-5 py-3.5">
+          <Link href="/blog" className="flex items-center gap-2.5 no-underline">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src="/blog-mark.png" alt="栞 -SHIORI-" className="h-8 w-8 rounded-md object-cover" />
+            <span className="flex items-baseline gap-1.5">
+              <span className="font-serif text-xl font-bold tracking-tight text-[#1B1714]">栞</span>
+              <span className="text-[10px] font-semibold uppercase tracking-[0.4em] text-[#C6572E]">SHIORI</span>
+            </span>
           </Link>
           <nav className="hidden items-center gap-6 text-sm text-[#5C554A] md:flex">
             {CATEGORY_GENRES.slice(0, 5).map((g) => (
@@ -144,65 +148,59 @@ export default async function BlogIndexPage() {
         </div>
       </header>
 
-      {/* ── ヒーロー (インパクト重視・ダーク) ── */}
+      {/* ── ヒーロー (ブログのコンセプト = 良い本を読む習慣) ── */}
       <section className="w-full bg-[#141210] text-[#F3ECDC]">
-        <div className="mx-auto max-w-6xl px-5 py-14 md:py-20">
-          {featured ? (
-            <div className="grid grid-cols-1 items-center gap-10 md:grid-cols-[1.4fr_1fr]">
-              <div>
-                <div className="mb-5 flex items-center gap-3">
-                  <span className="inline-block h-px w-8 bg-[#C6572E]" />
-                  <span className="text-[11px] font-semibold uppercase tracking-[0.35em] text-[#C6572E]">
-                    Featured — 今日の一冊
-                  </span>
-                </div>
-                <Link href={`/blog/${featured.slug}`} className="no-underline">
-                  <h1 className="font-serif text-4xl font-bold leading-[1.15] tracking-tight text-[#F3ECDC] transition-colors hover:text-[#E6B98A] md:text-6xl">
-                    {featured.title}
-                  </h1>
-                </Link>
-                <p className="mt-5 max-w-xl text-base leading-relaxed text-[#B9B2A4]">
-                  {excerpt(featured.body_md, 150)}
-                </p>
-                <div className="mt-6 flex items-center gap-4 text-sm text-[#8B8577]">
-                  {featured.genre && (
-                    <span className="rounded-full border border-[#3A342C] px-3 py-1 text-[#C9C1B1]">{featured.genre}</span>
-                  )}
-                  <span>{fmtDate(featured.published_at)}</span>
-                </div>
+        <div className="mx-auto grid max-w-6xl grid-cols-1 items-center gap-12 px-5 py-16 md:grid-cols-[1.35fr_1fr] md:py-24">
+          <div>
+            <div className="mb-6 flex items-center gap-3">
+              <span className="inline-block h-px w-8 bg-[#C6572E]" />
+              <span className="text-[11px] font-semibold uppercase tracking-[0.35em] text-[#C6572E]">
+                A Reading Habit — 良い本を読む習慣
+              </span>
+            </div>
+            <h1 className="font-serif text-4xl font-bold leading-[1.2] tracking-tight text-[#F3ECDC] md:text-[3.4rem]">
+              良い本を読む習慣は、
+              <br className="hidden sm:block" />
+              <span className="text-[#E6B98A]">「要点」</span>から始まる。
+            </h1>
+            <p className="mt-6 max-w-xl text-base leading-[1.9] text-[#C9C1B1]">
+              積ん読が増える毎日でも、良書との出会いはあきらめたくない。
+              <strong className="font-semibold text-[#F3ECDC]">栞 -SHIORI-</strong> は、
+              名作・話題のビジネス書や実用書・自己啓発を、忙しいあなたのために
+              <strong className="font-semibold text-[#F3ECDC]">要点だけ</strong>に絞ってお届けするブックジャーナルです。
+            </p>
+            <p className="mt-4 max-w-xl text-base leading-[1.9] text-[#B9B2A4]">
+              1記事5分。「読んだ気」で終わらせず、明日から使える学びを一つ持ち帰る——
+              そんな読書習慣を、栞のように毎日そっと差し込んでいきます。
+            </p>
+            <div className="mt-8 flex flex-wrap items-center gap-4">
+              {featured && (
                 <Link
                   href={`/blog/${featured.slug}`}
-                  className="mt-8 inline-flex items-center gap-2 border-b-2 border-[#C6572E] pb-1 text-sm font-semibold text-[#F3ECDC] no-underline transition-colors hover:text-[#E6B98A]"
+                  className="inline-flex items-center gap-2 rounded-full bg-[#C6572E] px-6 py-2.5 text-sm font-semibold text-[#F3ECDC] no-underline transition-colors hover:bg-[#a8461f]"
                 >
-                  この本の要点を読む
-                  <span aria-hidden>→</span>
+                  最新のレビューを読む <span aria-hidden>→</span>
                 </Link>
-              </div>
-              {/* カバー(縦) or 大きな見出し */}
-              <div className="flex justify-center md:justify-end">
-                <Link href={`/blog/${featured.slug}`} className="no-underline">
-                  {featured.coverUrl ? (
-                    // eslint-disable-next-line @next/next/no-img-element
-                    <img
-                      src={featured.coverUrl}
-                      alt={featured.title}
-                      className="aspect-[10/16] w-52 rotate-[2deg] rounded-sm object-cover shadow-[0_30px_60px_-15px_rgba(0,0,0,0.6)] ring-1 ring-white/10 transition-transform duration-300 hover:rotate-0 md:w-60"
-                    />
-                  ) : (
-                    <div className="flex aspect-[10/16] w-52 rotate-[2deg] flex-col items-center justify-center gap-3 rounded-sm bg-gradient-to-br from-[#1E5B49] to-[#0F332A] px-6 text-center shadow-2xl md:w-60">
-                      <span className="font-serif text-5xl text-[#F3ECDC]">栞</span>
-                      <span className="text-[11px] uppercase tracking-[0.3em] text-[#9FD3C2]">Book Review</span>
-                    </div>
-                  )}
-                </Link>
-              </div>
+              )}
+              <Link
+                href="/shop"
+                className="inline-flex items-center gap-2 border-b-2 border-[#3A342C] pb-1 text-sm font-medium text-[#C9C1B1] no-underline transition-colors hover:border-[#C6572E] hover:text-[#F3ECDC]"
+              >
+                出版書籍を見る
+              </Link>
             </div>
-          ) : (
-            <div className="py-8 text-center">
-              <h1 className="font-serif text-5xl font-bold text-[#F3ECDC]">栞 -SHIORI-</h1>
-              <p className="mt-4 text-[#B9B2A4]">良書の、要点だけ。まもなくレビューを公開します。</p>
+          </div>
+          {/* 栞イラスト (gpt-image 生成) を額装 */}
+          <div className="flex justify-center md:justify-end">
+            <div className="overflow-hidden rounded-2xl bg-[#F3ECDC] p-2 shadow-[0_30px_70px_-20px_rgba(0,0,0,0.7)] ring-1 ring-white/10">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src="/blog-mark-source.png"
+                alt="栞 -SHIORI- のシンボル"
+                className="h-56 w-56 rounded-xl object-cover md:h-72 md:w-72"
+              />
             </div>
-          )}
+          </div>
         </div>
       </section>
 
@@ -231,6 +229,42 @@ export default async function BlogIndexPage() {
           <p className="py-16 text-center text-[#8B8577]">まもなく記事を公開します。</p>
         ) : (
           <>
+            {/* 最新の一冊 (横長ハイライト) */}
+            {featured && (
+              <Link
+                href={`/blog/${featured.slug}`}
+                className="group mb-14 grid grid-cols-1 overflow-hidden rounded-lg border border-[#E6DECB] bg-[#FCF8EE] no-underline shadow-[0_14px_40px_-22px_rgba(0,0,0,0.4)] transition-shadow hover:shadow-[0_22px_50px_-22px_rgba(0,0,0,0.5)] md:grid-cols-[1.1fr_1fr]">
+                <div className="overflow-hidden">
+                  {featured.coverUrl ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img
+                      src={featured.coverUrl}
+                      alt={featured.title}
+                      className="h-56 w-full object-cover transition-transform duration-500 group-hover:scale-[1.03] md:h-full"
+                    />
+                  ) : (
+                    <Placeholder genre={featured.genre} tall />
+                  )}
+                </div>
+                <div className="flex flex-col justify-center p-7 md:p-9">
+                  <div className="mb-3 flex items-center gap-3 text-[11px] uppercase tracking-[0.18em] text-[#8A6A45]">
+                    <span className="rounded-full bg-[#C6572E] px-2.5 py-0.5 font-semibold text-[#F3ECDC]">最新</span>
+                    {featured.genre && <span className="font-semibold text-[#1E5B49]">{featured.genre}</span>}
+                    <span>{fmtDate(featured.published_at)}</span>
+                  </div>
+                  <h3 className="font-serif text-2xl font-bold leading-snug text-[#1B1714] transition-colors group-hover:text-[#1E5B49] md:text-3xl">
+                    {featured.title}
+                  </h3>
+                  <p className="mt-3 line-clamp-3 text-[15px] leading-relaxed text-[#5C554A]">
+                    {excerpt(featured.body_md, 130)}
+                  </p>
+                  <span className="mt-5 inline-flex items-center gap-1.5 text-sm font-semibold text-[#C6572E]">
+                    この本の要点を読む <span aria-hidden>→</span>
+                  </span>
+                </div>
+              </Link>
+            )}
+
             <div className="mb-8 flex items-end justify-between">
               <h2 className="font-serif text-2xl font-bold text-[#1B1714]">最新のレビュー</h2>
               <span className="text-[11px] uppercase tracking-[0.2em] text-[#8A6A45]">Latest</span>
@@ -275,7 +309,8 @@ export default async function BlogIndexPage() {
       {/* ── 書籍導線バンド ── */}
       <section className="w-full border-t border-[#E6DECB] bg-[#EFE7D4]">
         <div className="mx-auto flex max-w-6xl flex-col items-center gap-4 px-5 py-12 text-center">
-          <span className="font-serif text-3xl text-[#1E5B49]">栞</span>
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src="/blog-mark.png" alt="栞" className="h-12 w-12 rounded-lg object-cover shadow-sm" />
           <h2 className="font-serif text-2xl font-bold text-[#1B1714]">読んだあとは、次の一冊へ。</h2>
           <p className="max-w-lg text-sm leading-relaxed text-[#5C554A]">
             レビューで紹介する名作に加え、要点をぎゅっとまとめた電子書籍もお届けしています。Kindle Unlimited 対象も。
