@@ -1824,7 +1824,7 @@ export const KdpSubmitPayload = z.object({
 | timeout | 30 分 |
 | max_attempts | 1（多重出版防止。失敗は保留し再 enqueue） |
 | priority | 50 |
-| 実行内容 | ①セッション復号→ヘッドレス Chromium 起動（既定データセンター IP、proxy 有効時のみ住宅IP）。②`ensureLoggedIn`（アカウント選択タイル→パスワード実タイプ→2FA: TOTP 自動 or LINE）。③**既存下書き resume**（作成上限を消費しない）→ STEP1 メタデータ（ローマ字は `kanaToRomaji`、カテゴリ階層、非公有・非成人）→ STEP2 原稿/表紙アップロード（`data-assets-interior-file-upload` / `data-assets-cover-jp-file-upload`、変換完了待ち→DRM/アクセシビリティ/AI「いいえ」/確認チェック `role=checkbox` 実クリック）→ STEP3（ロイヤリティ70%先選択→JP価格実タイプ+Tab→`dry_run` でなければ「出版」）。④出版確認は本棚照合（`verifyPublished`）。⑤`publish_status='submitted'` にし `kdp_publish_queued=false`。⑥`blocked: creation_limit` 検知時は保留し翌日再試行。各段スクショを R2 に保存。 |
+| 実行内容 | ①セッション復号→ヘッドレス Chromium 起動（既定データセンター IP、proxy 有効時のみ住宅IP）。②`ensureLoggedIn`（アカウント選択タイル→パスワード実タイプ→2FA: TOTP 自動 or LINE）。③**既存下書き resume**（作成上限を消費しない）→ STEP1 メタデータ（ローマ字は `kanaToRomaji`、カテゴリ階層、非公有・非成人）→ STEP2 原稿/表紙アップロード（`data-assets-interior-file-upload` / `data-assets-cover-jp-file-upload`、変換完了待ち→DRM/アクセシビリティ/AI「いいえ」/確認チェック `role=checkbox` 実クリック）→ STEP3（**KDP セレクトに登録**を先に ON=KU/読み放題対象化 `enrollKdpSelect` role=checkbox 実クリック→ロイヤリティ70%先選択→JP価格実タイプ+Tab→`dry_run` でなければ「出版」）。④出版確認は本棚照合（`verifyPublished`）。⑤`publish_status='submitted'` にし `kdp_publish_queued=false`。⑥`blocked: creation_limit` 検知時は保留し翌日再試行。各段スクショを R2 に保存。 |
 
 **自動運用**: `AppSettings.kdp_auto_submit_enabled=true`＋dispatcher（`kdp.submit.dispatch`, 例 30 分毎）が `kdp_publish_queued=true AND publish_status<>'published'` の本を 1 冊ずつ `kdp.submit` へ enqueue（同時 1 冊。`org.kdp.screen` 合格→queue と連携）。`AMAZON_EMAIL`/`AMAZON_PASSWORD` 未設定時は起動しない。
 

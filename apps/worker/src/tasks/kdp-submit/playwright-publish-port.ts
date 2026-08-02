@@ -740,12 +740,62 @@ async function waitCoverDone(page: Page, stage: string, timeoutMs = 180000): Pro
   throw new Error('cover upload timeout');
 }
 
+/**
+ * STEP3(価格)ページ冒頭の「KDP セレクトに登録する」チェックボックスを ON にする。
+ * KDP セレクト登録で Kindle Unlimited/読み放題 対象になり、JP以外でも70%ロイヤリティ枠が開く。
+ * react-aui の role=checkbox は JS dispatch では入らないため Playwright 実クリック。
+ * 新規タイトルは既定 OFF なので未チェック時のみクリックする(resume で既に ON の場合は触らない)。
+ */
+async function enrollKdpSelect(page: Page, stage: string): Promise<boolean> {
+  const handles = await page.$$('[role="checkbox"], input[type="checkbox"]').catch(() => []);
+  for (const h of handles) {
+    const isSelect = await h
+      .evaluate((el: HTMLElement) => {
+        let n: HTMLElement | null = el;
+        for (let i = 0; i < 8 && n; i++) {
+          const t = n.textContent || '';
+          if (/KDP\s*セレクト/.test(t) && /登録|Kindle Unlimited|読み放題|KDP Select/i.test(t)) return true;
+          n = n.parentElement;
+        }
+        return false;
+      })
+      .catch(() => false);
+    if (!isSelect) continue;
+    const isInput = (await h.evaluate((el: HTMLElement) => el.tagName).catch(() => '')) === 'INPUT';
+    const readChecked = async () =>
+      isInput
+        ? await h.evaluate((el: HTMLInputElement) => el.checked).catch(() => false)
+        : (await h.getAttribute('aria-checked').catch(() => null)) === 'true';
+    let checked = await readChecked();
+    if (!checked) {
+      await h.click().catch(() => {});
+      await page.waitForTimeout(1500);
+      checked = await readChecked();
+      if (!checked) {
+        await h.focus().catch(() => {});
+        await page.keyboard.press('Space').catch(() => {});
+        await page.waitForTimeout(800);
+        checked = await readChecked();
+      }
+    }
+    await screenshot(page, stage, 'kdp-select-' + (checked ? 'enrolled' : 'failed'));
+    return checked;
+  }
+  await screenshot(page, stage, 'kdp-select-notfound');
+  return false;
+}
+
 async function fillStep3(
   page: Page,
   b: KdpBookInput,
   stage: string,
   dryRun?: boolean,
 ): Promise<{ ok?: boolean; blocked?: string; dryRun?: boolean }> {
+  // KDP セレクト登録(KU/読み放題)を先に有効化してから ロイヤリティ/価格 を設定する。
+  const enrolled = await enrollKdpSelect(page, stage);
+  log.info({ enrolled }, 'KDP Select enrollment');
+  await page.waitForTimeout(1500);
+
   await page.evaluate(() => {
     const lbl = (e: HTMLInputElement) => {
       const l = e.closest('label') || (e.id && document.querySelector('label[for="' + e.id + '"]'));
