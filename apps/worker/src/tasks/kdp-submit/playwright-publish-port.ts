@@ -872,7 +872,24 @@ async function verifyPublished(page: Page, title: string): Promise<{ published: 
 }
 
 async function screenshot(page: Page, stage: string, name: string): Promise<void> {
-  await page.screenshot({ path: path.join(stage, name + '.png'), fullPage: true }).catch(() => {});
+  let buf: Buffer | null = null;
+  try {
+    buf = await page.screenshot({ fullPage: true });
+    await import('node:fs').then((fs) => fs.writeFileSync(path.join(stage, name + '.png'), buf!)).catch(() => {});
+  } catch {
+    /* best-effort local */
+  }
+  // R2 にも保存して失敗時に証跡を確認できるようにする(local tmp はジョブ終了で消えるため)。
+  if (buf) {
+    try {
+      const mod = await import('@a2p/storage');
+      const key = `debug/kdp-submit/${name}-${Date.now()}.png`;
+      await mod.uploadBuffer(key, buf, 'image/png');
+      log.info({ key }, 'saved kdp-submit debug shot');
+    } catch {
+      /* best-effort R2 */
+    }
+  }
 }
 
 function errMsg(err: unknown): string {
