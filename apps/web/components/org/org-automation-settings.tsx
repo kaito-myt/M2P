@@ -12,9 +12,10 @@ import { useCallback, useState } from 'react';
 import { CheckCircle, Info, XCircle } from 'lucide-react';
 
 import { updateOrgAutomation } from '@/app/actions/org-automation';
-import { isValidCronExpression, nextCronRunJst } from '@/lib/cron-utils';
+import { isValidCronExpression } from '@/lib/cron-utils';
 import { messages } from '@/lib/messages';
 import type { OrgAutomationView } from '@/lib/org-automation-core';
+import { ScheduleField } from './schedule-field';
 
 const m = messages.orgAutomation;
 
@@ -56,7 +57,6 @@ function AutomationRow({
   onToggle,
   cron,
   onCronChange,
-  onCronBlur,
   cronError,
   label,
   help,
@@ -66,13 +66,11 @@ function AutomationRow({
   onToggle: (v: boolean) => void;
   cron: string;
   onCronChange: (v: string) => void;
-  onCronBlur: () => void;
   cronError: string | null;
   label: string;
   help: string;
   testId: string;
 }) {
-  const nextRun = enabled && !cronError && isValidCronExpression(cron.trim()) ? nextCronRunJst(cron.trim()) : null;
   return (
     <div className="flex flex-col gap-2 rounded-button border border-border-warm bg-white px-4 py-3">
       <div className="flex items-start justify-between gap-space-loose">
@@ -82,30 +80,12 @@ function AutomationRow({
         </div>
         <Toggle checked={enabled} onChange={onToggle} label={label} testId={`${testId}-toggle`} />
       </div>
-      <div className={`flex flex-col gap-1 ${enabled ? '' : 'opacity-60'}`}>
-        <label htmlFor={`${testId}-cron`} className="text-button-sm font-medium text-charcoal">
-          {m.cronLabel}
-        </label>
-        <input
-          id={`${testId}-cron`}
-          type="text"
-          value={cron}
-          disabled={!enabled}
-          onChange={(e) => onCronChange(e.target.value)}
-          onBlur={onCronBlur}
-          data-testid={`${testId}-cron-input`}
-          className={`w-56 rounded-button border px-3 py-1.5 text-button-sm text-charcoal focus:outline-none focus-visible:ring-2 focus-visible:ring-foreground disabled:cursor-not-allowed disabled:bg-gray-100 disabled:opacity-60 ${
-            cronError ? 'border-destructive bg-white' : 'border-border-warm bg-cream-light'
-          }`}
-        />
+      <div className="flex flex-col gap-1">
+        <span className="text-button-sm font-medium text-charcoal">{m.cronLabel}</span>
+        <ScheduleField cron={cron} disabled={!enabled} onChange={onCronChange} testId={testId} />
         {cronError && (
           <p role="alert" className="text-button-sm text-destructive" data-testid={`${testId}-cron-error`}>
             {cronError}
-          </p>
-        )}
-        {nextRun && (
-          <p className="text-button-sm text-muted" data-testid={`${testId}-next-run`}>
-            {m.nextRunLabel}: {nextRun}
           </p>
         )}
       </div>
@@ -212,7 +192,6 @@ export function OrgAutomationSettings({ initial }: { initial: OrgAutomationView 
           onToggle={setPlanEnabled}
           cron={planCron}
           onCronChange={setPlanCron}
-          onCronBlur={() => setPlanCronError(planEnabled ? validateCron(planCron) : null)}
           cronError={planCronError}
           label={m.rows.plan.label}
           help={m.rows.plan.help}
@@ -223,7 +202,6 @@ export function OrgAutomationSettings({ initial }: { initial: OrgAutomationView 
           onToggle={setExecuteEnabled}
           cron={executeCron}
           onCronChange={setExecuteCron}
-          onCronBlur={() => setExecuteCronError(executeEnabled ? validateCron(executeCron) : null)}
           cronError={executeCronError}
           label={m.rows.execute.label}
           help={m.rows.execute.help}
@@ -234,7 +212,6 @@ export function OrgAutomationSettings({ initial }: { initial: OrgAutomationView 
           onToggle={setOpsWatchEnabled}
           cron={opsWatchCron}
           onCronChange={setOpsWatchCron}
-          onCronBlur={() => setOpsWatchCronError(opsWatchEnabled ? validateCron(opsWatchCron) : null)}
           cronError={opsWatchCronError}
           label={m.rows.opsWatch.label}
           help={m.rows.opsWatch.help}
@@ -245,7 +222,6 @@ export function OrgAutomationSettings({ initial }: { initial: OrgAutomationView 
           onToggle={setFinanceTickEnabled}
           cron={financeTickCron}
           onCronChange={setFinanceTickCron}
-          onCronBlur={() => setFinanceTickCronError(financeTickEnabled ? validateCron(financeTickCron) : null)}
           cronError={financeTickCronError}
           label={m.rows.financeTick.label}
           help={m.rows.financeTick.help}
@@ -256,7 +232,6 @@ export function OrgAutomationSettings({ initial }: { initial: OrgAutomationView 
           onToggle={setKdpScreenEnabled}
           cron={kdpScreenCron}
           onCronChange={setKdpScreenCron}
-          onCronBlur={() => setKdpScreenCronError(kdpScreenEnabled ? validateCron(kdpScreenCron) : null)}
           cronError={kdpScreenCronError}
           label={m.rows.kdpScreen.label}
           help={m.rows.kdpScreen.help}

@@ -2365,8 +2365,8 @@ export const messages = {
     saveButton: '保存',
     saving: '保存中...',
     saved: '保存しました',
-    cronLabel: '実行スケジュール (cron, UTC)',
-    cronErrorInvalid: '5 フィールドの cron 式を入力してください（例: 0 20 * * *）',
+    cronLabel: '実行スケジュール（時刻はJST）',
+    cronErrorInvalid: 'スケジュールが不正です。カスタムの場合は 5 フィールドの cron 式（UTC・例: 0 20 * * *）を入力してください',
     nextRunLabel: '次回実行 (推定)',
     workerRestartNote:
       'cron の変更は worker 再起動後に反映されます。ON/OFF の切替も worker 起動時に読み込まれるため、次回 worker 再起動（次回デプロイ）後から有効になります。',
