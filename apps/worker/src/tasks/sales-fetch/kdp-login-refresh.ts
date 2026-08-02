@@ -42,6 +42,13 @@ export interface KdpLoginRefreshDeps {
   oldStorageState?: string;
   /** 自宅回線経由の HTTP プロキシ(住宅IP)。未指定なら直結。データセンターIPだと anti-bot に当たるため通常は指定する。 */
   proxy?: KdpProxyConfig;
+  /**
+   * ログイン開始時に開く URL (既定: 本棚)。売上レポート DL が失敗した場合は
+   * `https://kdpreports.amazon.co.jp/` を渡すことで、本棚は browse セッションで
+   * 通ってしまい再認証が起きない問題を回避し、reports ホストの OpenID サインイン
+   * (→ email/password/OTP) を確実に発火させて reports 側セッションを確立する。
+   */
+  landingUrl?: string;
 }
 
 export type KdpLoginRefreshResult =
@@ -72,9 +79,15 @@ export function looksLikeCaptcha(html: string): boolean {
   );
 }
 
-/** URL とログイン系フォームの有無からログイン完了を判定する (純関数・テスト容易)。 */
+/**
+ * URL とログイン系フォームの有無からログイン完了を判定する (純関数・テスト容易)。
+ * 本棚 (kdp.amazon.co.jp/bookshelf) だけでなく、レポートホスト (kdpreports.amazon.co.jp) の
+ * ダッシュボード着地も「ログイン完了」とみなす。売上レポート DL は kdpreports 側の
+ * OpenID セッションを要求するため、再ログインの着地先を reports ホストにするケースがある。
+ */
 export function isLoggedIn(url: string, hasAuthField: boolean): boolean {
-  return url.includes('/bookshelf') && !/signin/i.test(url) && !hasAuthField;
+  const onLoggedInLanding = url.includes('/bookshelf') || /kdpreports\.amazon\.co\.jp/i.test(url);
+  return onLoggedInLanding && !/signin|\/ap\b/i.test(url) && !hasAuthField;
 }
 
 /** `handleOtpRetryLoop` が要求する最小限のページ操作 I/F (実体は Playwright `Page`)。 */
@@ -172,7 +185,7 @@ export async function refreshKdpSession(deps: KdpLoginRefreshDeps): Promise<KdpL
       acceptDownloads: false,
     });
     const page = await context.newPage();
-    await page.goto(BOOKSHELF_URL, { waitUntil: 'domcontentloaded' }).catch(() => {});
+    await page.goto(deps.landingUrl ?? BOOKSHELF_URL, { waitUntil: 'domcontentloaded' }).catch(() => {});
     await page.waitForTimeout(3000);
 
     for (let iter = 0; iter < MAX_ITERS; iter++) {

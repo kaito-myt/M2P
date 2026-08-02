@@ -170,7 +170,15 @@ export async function runSalesFetch(deps: SalesFetchDeps): Promise<SalesFetchRes
       isLineRelayConfigured() && Boolean(process.env.AMAZON_EMAIL) && Boolean(process.env.AMAZON_PASSWORD);
     if (canAutoRelogin) {
       await pushLine('KDP売上取得: セッション切れを検知。自動再ログインを試みます。').catch(() => {});
-      const ref = await refreshKdpSession({ prisma: db, oldStorageState: sessionState, proxy: deps.proxy });
+      // 本棚 (kdp.amazon.co.jp) は browse セッションで通ってしまい再認証が起きないため、
+      // レポートホスト (kdpreports.amazon.co.jp) を着地先にして OpenID サインイン
+      // (→ email/password/OTP) を確実に発火させ、reports 側セッションを確立する。
+      const ref = await refreshKdpSession({
+        prisma: db,
+        oldStorageState: sessionState,
+        proxy: deps.proxy,
+        landingUrl: 'https://kdpreports.amazon.co.jp/',
+      });
       if (ref.ok) {
         try {
           await db.account.update({

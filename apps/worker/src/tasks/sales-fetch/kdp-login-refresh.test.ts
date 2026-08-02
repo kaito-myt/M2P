@@ -58,6 +58,16 @@ describe('isLoggedIn', () => {
   it('bookshelf を含まない URL は false', () => {
     expect(isLoggedIn('https://kdp.amazon.co.jp/ja_JP/title-setup', false)).toBe(false);
   });
+
+  it('レポートホスト着地 (kdpreports) かつ認証フィールド無しは true', () => {
+    expect(isLoggedIn('https://kdpreports.amazon.co.jp/', false)).toBe(true);
+  });
+
+  it('レポートホストの signin リダイレクトは false', () => {
+    expect(
+      isLoggedIn('https://www.amazon.co.jp/ap/signin?openid.return_to=https%3A%2F%2Fkdpreports.amazon.co.jp%2F', false),
+    ).toBe(false);
+  });
 });
 
 // ---------------------------------------------------------------------------
