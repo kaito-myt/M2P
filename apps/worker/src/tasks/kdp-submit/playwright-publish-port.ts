@@ -178,6 +178,13 @@ async function publishOne(args: KdpPublishArgs): Promise<KdpPublishResult> {
       viewport: { width: 1500, height: 1200 },
       acceptDownloads: false,
     });
+    // tsx/esbuild(keepNames) は evaluate コールバック内のネスト関数を __name(...) でラップする。
+    // その __name はブラウザ側に存在せず page.evaluate が "ReferenceError: __name is not defined"
+    // で落ちるため、全ナビゲーションの主コンテキストに no-op シムを注入して補う (文字列で渡し
+    // esbuild 変換を回避)。
+    await context.addInitScript({
+      content: 'globalThis.__name = globalThis.__name || function (f) { return f; };',
+    });
     const page: Page = await context.newPage();
     page.setDefaultTimeout(60000);
 

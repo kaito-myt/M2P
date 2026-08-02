@@ -68,6 +68,7 @@ async function takedownBook(args: TakedownBookArgs): Promise<TakedownBookResult>
       userAgent: UA,
       viewport: { width: 1500, height: 1000 },
     });
+    await context.addInitScript({ content: 'globalThis.__name = globalThis.__name || function (f) { return f; };' });
     const page = await context.newPage();
     page.setDefaultTimeout(timeoutMs);
 
@@ -197,6 +198,7 @@ async function readBookStatus(args: ReadBookStatusArgs): Promise<ReadBookStatusR
       userAgent: UA,
       viewport: { width: 1500, height: 1000 },
     });
+    await context.addInitScript({ content: 'globalThis.__name = globalThis.__name || function (f) { return f; };' });
     const page = await context.newPage();
     page.setDefaultTimeout(timeoutMs);
 
