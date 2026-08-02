@@ -63,8 +63,9 @@ function sp(params: Record<string, string | string[] | undefined>, key: string):
 export default async function SalesKpiPage({ searchParams }: PageProps) {
   const params = await searchParams;
 
-  // Parse filter params
-  const periodRaw = sp(params, 'period') ?? '1';
+  // Parse filter params。既定は直近6ヶ月 (period=1 だと当月のみ=売上未計上でグラフが空に
+  // なりがちなため。当月KENPは翌月確定なので当月単独表示は実質いつも空になる)。
+  const periodRaw = sp(params, 'period') ?? '6';
   const accountId = sp(params, 'accountId');
   const genre = sp(params, 'genre');
 
