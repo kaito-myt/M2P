@@ -229,7 +229,7 @@ async function publishOne(args: KdpPublishArgs): Promise<KdpPublishResult> {
     log.info('step1 OK -> content');
 
     // 4. STEP2 原稿/表紙アップロード
-    const s2 = await fillStep2(page, b.coverPath, b.docxPath, stage);
+    const s2 = await fillStep2(page, b.coverPath, b.docxPath, stage, args);
     if (s2.blocked) {
       await screenshot(page, stage, b.id + '-blocked2');
       return { ok: false, reason: 'blocked', message: `step2 blocked: ${s2.blocked}`, blockedAt: 'step2' };
@@ -239,7 +239,7 @@ async function publishOne(args: KdpPublishArgs): Promise<KdpPublishResult> {
     // 5. STEP3 価格/出版
     let s3: { ok?: boolean; blocked?: string; dryRun?: boolean; verify?: boolean };
     try {
-      s3 = await fillStep3(page, b, stage, dryRun);
+      s3 = await fillStep3(page, b, stage, dryRun, args);
     } catch (e) {
       log.warn({ err: errMsg(e) }, 'step3 threw (nav on publish?) — verifying via bookshelf');
       s3 = { verify: true };
@@ -641,6 +641,7 @@ async function fillStep2(
   coverPath: string,
   docxPath: string,
   stage: string,
+  args: KdpPublishArgs,
 ): Promise<{ ok?: boolean; blocked?: string }> {
   await page
     .setInputFiles('#data-assets-interior-file-upload-AjaxInput', docxPath)
@@ -684,12 +685,25 @@ async function fillStep2(
   await screenshot(page, stage, 'step2-ready');
   const saveDeadline = Date.now() + 8 * 60 * 1000;
   while (Date.now() < saveDeadline) {
+    if (/\/(pricing)/.test(page.url())) return { ok: true };
+    // STEP2→STEP3 の「続行」で max_auth_age による再認証ウォールに飛ぶことがある。
+    // signin/ap ページを検知したら passReauth(password/OTP) で通してから再試行する。
+    if (isReauthWall(page.url())) {
+      log.info('step2: reauth wall detected on advance — re-authenticating');
+      await passReauth(page, args);
+      await page.waitForTimeout(3000);
+      continue;
+    }
     await page.click('#save-and-continue-announce').catch(() => {});
     await page.waitForTimeout(6000);
-    if (/\/(pricing)/.test(page.url())) return { ok: true };
   }
   await screenshot(page, stage, 'step2-blocked');
   return { blocked: 'content_not_advanced' };
+}
+
+/** signin/ap/mfa/cvf のいずれかを URL に含めば再認証ウォールとみなす。 */
+function isReauthWall(url: string): boolean {
+  return /signin|\/ap\/|\/mfa|\/cvf/i.test(url);
 }
 
 async function waitUploadDone(page: Page, tag: string, minCount: number, stage: string, timeoutMs = 180000): Promise<void> {
@@ -789,8 +803,14 @@ async function fillStep3(
   page: Page,
   b: KdpBookInput,
   stage: string,
-  dryRun?: boolean,
+  dryRun: boolean | undefined,
+  args: KdpPublishArgs,
 ): Promise<{ ok?: boolean; blocked?: string; dryRun?: boolean }> {
+  // STEP2→STEP3 遷移で再認証に飛んでいたら通す。
+  if (isReauthWall(page.url())) {
+    await passReauth(page, args);
+    await page.waitForTimeout(3000);
+  }
   // KDP セレクト登録(KU/読み放題)を先に有効化してから ロイヤリティ/価格 を設定する。
   const enrolled = await enrollKdpSelect(page, stage);
   log.info({ enrolled }, 'KDP Select enrollment');
@@ -837,6 +857,14 @@ async function fillStep3(
   }
   await page.click('#save-and-publish-announce').catch(() => {});
   await page.waitForTimeout(5000);
+  // 出版クリックで max_auth_age 再認証に飛ぶことがある → 通してから再度出版を押す。
+  if (isReauthWall(page.url())) {
+    log.info('step3: reauth wall on publish — re-authenticating');
+    await passReauth(page, args);
+    await page.waitForTimeout(3000);
+    await page.click('#save-and-publish-announce').catch(() => {});
+    await page.waitForTimeout(5000);
+  }
   if (await bannerErr()) {
     await screenshot(page, stage, 'step3-publish-reverted');
     return { blocked: 'price_reverted_on_publish' };
