@@ -27,8 +27,12 @@ const GENRES = [
 
 type GenreKey = 'practical' | 'business' | 'self_help';
 
-const CHART_HEIGHT = 200;
-const BAR_GAP = 4;
+// viewBox 基準の座標系。svg は width=100% + preserveAspectRatio=meet で描画するため、
+// レンダリング高さは「コンテナ幅 × VB_H/VB_W」に一定化される (巨大な空白ボックスを防ぐ)。
+const VB_W = 1000;
+const PLOT_H = 230;
+const AXIS_H = 46;
+const VB_H = PLOT_H + AXIS_H;
 
 function formatYen(v: number): string {
   if (v >= 100_000) return `¥${Math.round(v / 10_000)}万`;
@@ -67,111 +71,76 @@ export function SalesTrendChart({ data }: SalesTrendChartProps) {
       </div>
 
       {isEmpty ? (
-        <div className="flex h-40 items-center justify-center rounded-card border border-border-warm bg-cream-light">
+        <div className="flex h-64 items-center justify-center rounded-card border border-border-warm bg-cream-light">
           <p className="text-body text-muted">{m.empty}</p>
         </div>
       ) : (
-        <div className="overflow-x-auto rounded-card border border-border-warm bg-cream-light p-space-snug">
+        <div className="rounded-card border border-border-warm bg-cream-light p-space-snug">
           {/* Screen-reader summary */}
           <p className="sr-only">
             {m.ariaDescription(data.length, formatYen(maxValue))}
           </p>
           <svg
             width="100%"
-            viewBox={`0 0 ${Math.max(data.length * 40, 320)} ${CHART_HEIGHT + 30}`}
-            preserveAspectRatio="xMinYMin meet"
+            viewBox={`0 0 ${VB_W} ${VB_H}`}
+            preserveAspectRatio="xMidYMid meet"
             role="img"
             aria-labelledby="trend-chart-heading"
+            className="block h-auto w-full"
+            style={{ maxHeight: 320 }}
           >
             <defs>
-              {/* Diagonal line pattern for practical */}
-              <pattern id="diag-practical" patternUnits="userSpaceOnUse" width="4" height="4" patternTransform="rotate(45)">
-                <line x1="0" y1="0" x2="0" y2="4" stroke="#fff" strokeWidth="1.5" />
+              <pattern id="diag-practical" patternUnits="userSpaceOnUse" width="8" height="8" patternTransform="rotate(45)">
+                <line x1="0" y1="0" x2="0" y2="8" stroke="#fff" strokeWidth="2.5" />
               </pattern>
-              {/* Crosshatch for business */}
-              <pattern id="diag-business" patternUnits="userSpaceOnUse" width="4" height="4">
-                <line x1="0" y1="2" x2="4" y2="2" stroke="#fff" strokeWidth="1" />
-                <line x1="2" y1="0" x2="2" y2="4" stroke="#fff" strokeWidth="1" />
+              <pattern id="diag-business" patternUnits="userSpaceOnUse" width="8" height="8">
+                <line x1="0" y1="4" x2="8" y2="4" stroke="#fff" strokeWidth="1.5" />
+                <line x1="4" y1="0" x2="4" y2="8" stroke="#fff" strokeWidth="1.5" />
               </pattern>
-              {/* Horizontal lines for self_help */}
-              <pattern id="diag-selfhelp" patternUnits="userSpaceOnUse" width="4" height="4">
-                <line x1="0" y1="2" x2="4" y2="2" stroke="#fff" strokeWidth="1" />
+              <pattern id="diag-selfhelp" patternUnits="userSpaceOnUse" width="8" height="8">
+                <line x1="0" y1="4" x2="8" y2="4" stroke="#fff" strokeWidth="1.5" />
               </pattern>
             </defs>
 
+            {/* baseline + max gridline */}
+            <line x1={0} y1={PLOT_H} x2={VB_W} y2={PLOT_H} stroke="#D8D2C4" strokeWidth="1" />
+            <line x1={0} y1={PLOT_H * 0.15 + 6} x2={VB_W} y2={PLOT_H * 0.15 + 6} stroke="#ECE7DA" strokeWidth="1" strokeDasharray="4 4" />
+            <text x={4} y={PLOT_H * 0.15} fontSize="16" fill="#9CA3AF">
+              {formatYen(maxValue)}
+            </text>
+
             {data.map((month, i) => {
-              const barWidth = Math.max(20, (320 / data.length) - BAR_GAP);
-              const x = i * (barWidth + BAR_GAP) + BAR_GAP;
-              let yOffset = CHART_HEIGHT;
+              const slotW = VB_W / data.length;
+              const barWidth = Math.min(slotW * 0.5, 110);
+              const x = i * slotW + (slotW - barWidth) / 2;
+              let yOffset = PLOT_H;
               const bars: ReactElement[] = [];
 
               for (const genre of [...GENRES].reverse()) {
                 const val = month[genre.key as GenreKey];
                 if (val <= 0) continue;
-                const barH = (val / maxValue) * (CHART_HEIGHT - 20);
+                const barH = (val / maxValue) * (PLOT_H - 24);
                 yOffset -= barH;
                 const label = `${month.ym} ${m.genreLabels[genre.key as keyof typeof m.genreLabels]}: ${formatYen(val)}`;
                 bars.push(
                   <g key={genre.key}>
-                    <rect
-                      x={x}
-                      y={yOffset}
-                      width={barWidth}
-                      height={barH}
-                      fill={genre.color}
-                      stroke="white"
-                      strokeWidth="0.5"
-                    >
+                    <rect x={x} y={yOffset} width={barWidth} height={barH} fill={genre.color} stroke="white" strokeWidth="1" rx="2">
                       <title>{label}</title>
                     </rect>
-                    <rect
-                      x={x}
-                      y={yOffset}
-                      width={barWidth}
-                      height={barH}
-                      fill={genre.pattern}
-                      stroke="none"
-                      aria-label={label}
-                    />
+                    <rect x={x} y={yOffset} width={barWidth} height={barH} fill={genre.pattern} stroke="none" rx="2" aria-label={label} />
                   </g>,
                 );
               }
 
-              const ymShort = month.ym.slice(5); // "MM"
-
               return (
                 <g key={month.ym}>
                   {bars}
-                  <text
-                    x={x + barWidth / 2}
-                    y={CHART_HEIGHT + 14}
-                    textAnchor="middle"
-                    fontSize="9"
-                    fill="#6B7280"
-                  >
-                    {ymShort}
+                  <text x={i * slotW + slotW / 2} y={PLOT_H + 30} textAnchor="middle" fontSize="18" fill="#6B7280">
+                    {month.ym.slice(5)}
                   </text>
                 </g>
               );
             })}
-
-            {/* Y-axis label */}
-            <text
-              x={2}
-              y={8}
-              fontSize="8"
-              fill="#9CA3AF"
-            >
-              {formatYen(maxValue)}
-            </text>
-            <line
-              x1={0}
-              y1={CHART_HEIGHT}
-              x2={Math.max(data.length * 44, 320)}
-              y2={CHART_HEIGHT}
-              stroke="#E5E7EB"
-              strokeWidth="1"
-            />
           </svg>
         </div>
       )}

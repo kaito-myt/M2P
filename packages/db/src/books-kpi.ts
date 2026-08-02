@@ -327,14 +327,14 @@ export async function getMonthlyGenreSales(
   // ただし genre フィルタ指定時は tc.genre = $ 条件が NULL 行を自然に除外する (意図通り)。
   const sql = `
     SELECT
-      COALESCE(tc.genre, 'practical') AS genre,
+      COALESCE(tc.genre, 'other') AS genre,
       sr.year_month           AS ym,
       SUM(sr.royalty_jpy)::bigint AS royalty_jpy
     FROM sales_records sr
     JOIN books b           ON b.id = sr.book_id
     LEFT JOIN theme_candidates tc ON tc.id = b.theme_id
     ${whereClause}
-    GROUP BY COALESCE(tc.genre, 'practical'), sr.year_month
+    GROUP BY COALESCE(tc.genre, 'other'), sr.year_month
     ORDER BY sr.year_month, 1
   `;
 

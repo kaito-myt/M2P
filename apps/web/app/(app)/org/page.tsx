@@ -6,6 +6,7 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
 
+import { genreLabel } from '@a2p/contracts';
 import { prisma } from '@a2p/db';
 import {
   DIVISIONS,
@@ -147,7 +148,7 @@ export default async function OrgDashboardPage() {
             <div className="flex flex-wrap gap-2">
               {patterns.top_genres.slice(0, 6).map((g) => (
                 <span key={g.genre} className="rounded-full bg-charcoal px-2 py-0.5 text-caption text-cream-light">
-                  {g.genre} {yen(g.royalty_jpy)}（{g.book_count}冊）
+                  {genreLabel(g.genre) ?? g.genre} {yen(g.royalty_jpy)}（{g.book_count}冊）
                 </span>
               ))}
             </div>

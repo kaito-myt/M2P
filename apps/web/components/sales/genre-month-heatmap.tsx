@@ -12,7 +12,7 @@
 
 import { Fragment } from 'react';
 import { messages } from '@/lib/messages';
-import { formatJpy, type HeatmapMatrix } from '@/lib/sales-kpi-view';
+import { formatJpy, salesGenreLabel, type HeatmapMatrix } from '@/lib/sales-kpi-view';
 
 interface GenreMonthHeatmapProps {
   matrix: HeatmapMatrix;
@@ -38,7 +38,6 @@ function cellFg(intensity: number): string {
 
 export function GenreMonthHeatmap({ matrix }: GenreMonthHeatmapProps) {
   const isEmpty = matrix.maxValue === 0;
-  const genreLabels = m.genreLabels;
 
   return (
     <section
@@ -72,7 +71,7 @@ export function GenreMonthHeatmap({ matrix }: GenreMonthHeatmapProps) {
             <tbody>
               {matrix.genres.map((genre) => (
                 <tr key={genre}>
-                  <th scope="row">{genreLabels[genre as keyof typeof genreLabels] ?? genre}</th>
+                  <th scope="row">{salesGenreLabel(genre)}</th>
                   {matrix.months.map((ym) => {
                     const cell = getCell(matrix.cells, genre, ym);
                     return (
@@ -111,13 +110,13 @@ export function GenreMonthHeatmap({ matrix }: GenreMonthHeatmapProps) {
                   className="flex items-center pr-1 text-button-sm text-muted"
                   style={{ fontSize: '10px', whiteSpace: 'nowrap' }}
                 >
-                  {genreLabels[genre as keyof typeof genreLabels] ?? genre}
+                  {salesGenreLabel(genre)}
                 </div>
                 {matrix.months.map((ym) => {
                   const cell = getCell(matrix.cells, genre, ym);
                   const intensity = cell?.intensity ?? 0;
                   const value = cell?.value ?? 0;
-                  const label = `${genreLabels[genre as keyof typeof genreLabels] ?? genre} ${ym}: ${formatJpy(value)}`;
+                  const label = `${salesGenreLabel(genre)} ${ym}: ${formatJpy(value)}`;
 
                   return (
                     <div

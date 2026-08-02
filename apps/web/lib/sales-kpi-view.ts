@@ -10,6 +10,8 @@
  *  - SP-08 T-08-07
  */
 
+import { genreLabel } from '@a2p/contracts';
+
 import type { BooksKpiRow, SalesKpiSummary } from '@a2p/db/books-kpi';
 
 // ---------------------------------------------------------------------------
@@ -186,24 +188,44 @@ export function buildTrendChartFromAggregates(
 // ---------------------------------------------------------------------------
 
 /**
- * Builds heatmap from pre-aggregated genre×month data
- * (output of getMonthlyGenreSales).
+ * ジャンル slug → 日本語表示名。全ジャンル分類 (packages/contracts genres.ts) を単一の真実源として使う。
+ * theme 未設定売上の内部バケット 'other' のみ「その他」に特別対応する。
+ */
+export function salesGenreLabel(genre: string | null | undefined): string {
+  if (!genre || genre === 'other') return 'その他';
+  return genreLabel(genre) ?? genre;
+}
+
+/**
+ * Builds heatmap from pre-aggregated genre×month data (output of getMonthlyGenreSales)。
+ *
+ * ジャンル行はハードコードせず、集計に実際に現れたジャンルを **売上合計の多い順** に動的表示する
+ * (実用書/ビジネス/自己啓発 の 3 種固定だった不具合を解消。趣味/ギャンブル/小説等も売上があれば出る)。
+ * `genres` を明示指定した場合はその順序で固定する (テスト用)。
  */
 export function buildHeatmapFromAggregates(
   aggregates: Array<{ ym: string; genre: string; royalty_jpy: number }>,
   months: string[],
-  genres: string[] = ['practical', 'business', 'self_help'],
+  genres?: string[],
 ): HeatmapMatrix {
   const lookup = new Map<string, number>();
+  const genreTotals = new Map<string, number>();
   for (const agg of aggregates) {
-    const key = `${normalizeGenre(agg.genre)}:${agg.ym}`;
-    lookup.set(key, (lookup.get(key) ?? 0) + agg.royalty_jpy);
+    const g = agg.genre || 'other';
+    lookup.set(`${g}:${agg.ym}`, (lookup.get(`${g}:${agg.ym}`) ?? 0) + agg.royalty_jpy);
+    genreTotals.set(g, (genreTotals.get(g) ?? 0) + agg.royalty_jpy);
   }
+
+  const genreList =
+    genres ??
+    [...genreTotals.entries()]
+      .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+      .map(([g]) => g);
 
   const cells: HeatmapCell[] = [];
   let maxValue = 0;
 
-  for (const genre of genres) {
+  for (const genre of genreList) {
     for (const ym of months) {
       const value = Math.round(lookup.get(`${genre}:${ym}`) ?? 0);
       if (value > maxValue) maxValue = value;
@@ -215,7 +237,7 @@ export function buildHeatmapFromAggregates(
     cell.intensity = maxValue > 0 ? cell.value / maxValue : 0;
   }
 
-  return { genres, months, cells, maxValue };
+  return { genres: genreList, months, cells, maxValue };
 }
 
 // ---------------------------------------------------------------------------
