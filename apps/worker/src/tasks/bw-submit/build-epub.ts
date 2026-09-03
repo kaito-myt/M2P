@@ -41,10 +41,15 @@ const esc = (s: unknown): string =>
 // 特に markdown のタスクリスト `- [ ]` が生成する <input> が主因(2026-09-04 実害)。
 const VOID_ELEMENTS = 'area|base|br|col|embed|hr|img|input|link|meta|param|source|track|wbr';
 const VOID_RE = new RegExp(`<(${VOID_ELEMENTS})\\b([^>]*)>`, 'gi');
+// epubcheck(XHTML5)が拒否する非推奨プレゼンテーション属性。LLM 生成本文が
+// <p align="center"> 等の生 HTML を含むと RSC-005 で 400 になる(2026-09-04 実害)。
+const DEPRECATED_ATTR_RE =
+  /\s(align|valign|bgcolor|hspace|vspace|nowrap|clear|compact|char|charoff|frame|rules)\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)/gi;
 
-/** Markdown → XHTML 本文 (marked の HTML 出力を XHTML 化: 全 void 要素を自己終了)。 */
+/** Markdown → XHTML 本文 (marked の HTML 出力を XHTML 化: 全 void 要素を自己終了 + 非推奨属性除去)。 */
 function mdToXhtml(md: string): string {
-  const html = marked.parse(md, { async: false }) as string;
+  let html = marked.parse(md, { async: false }) as string;
+  html = html.replace(DEPRECATED_ATTR_RE, '');
   return html.replace(VOID_RE, (_m, tag: string, attrs: string) => `<${tag}${attrs.replace(/\/\s*$/, '')}/>`);
 }
 

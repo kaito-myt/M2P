@@ -29,8 +29,11 @@ const esc = (s) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').
 // Markdown → XHTML本文: 全void要素を自己終了(epubcheck FATAL回避)。
 // markdownのタスクリスト`- [ ]`が生成する<input>未終了でBW検証400になる(2026-09-04実害)。
 const VOID_RE = /<(area|base|br|col|embed|hr|img|input|link|meta|param|source|track|wbr)\b([^>]*)>/gi;
+// epubcheck(XHTML5)が拒否する非推奨属性(align等)。LLM本文の生HTMLで混入しBW検証400になる。
+const DEPRECATED_ATTR_RE = /\s(align|valign|bgcolor|hspace|vspace|nowrap|clear|compact|char|charoff|frame|rules)\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)/gi;
 function mdToXhtml(md) {
-  const html = marked.parse(md, { async: false });
+  let html = marked.parse(md, { async: false });
+  html = html.replace(DEPRECATED_ATTR_RE, '');
   return html.replace(VOID_RE, (_m, tag, attrs) => `<${tag}${attrs.replace(/\/\s*$/, '')}/>`);
 }
 
