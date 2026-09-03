@@ -36,14 +36,16 @@ const esc = (s: unknown): string =>
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;');
 
-/** Markdown → XHTML 本文 (marked の HTML 出力を XHTML 化: 自己終了タグ調整)。 */
+// HTML void 要素(終了タグを持たない)。EPUB3=XHTML なので全て自己終了しないと
+// epubcheck が FATAL(RSC-016) で落ち、BW の /api/files/epub/check が 400 を返す。
+// 特に markdown のタスクリスト `- [ ]` が生成する <input> が主因(2026-09-04 実害)。
+const VOID_ELEMENTS = 'area|base|br|col|embed|hr|img|input|link|meta|param|source|track|wbr';
+const VOID_RE = new RegExp(`<(${VOID_ELEMENTS})\\b([^>]*)>`, 'gi');
+
+/** Markdown → XHTML 本文 (marked の HTML 出力を XHTML 化: 全 void 要素を自己終了)。 */
 function mdToXhtml(md: string): string {
-  let html = marked.parse(md, { async: false }) as string;
-  html = html
-    .replace(/<br>/g, '<br/>')
-    .replace(/<hr>/g, '<hr/>')
-    .replace(/<img([^>]*?)(?<!\/)>/g, '<img$1/>');
-  return html;
+  const html = marked.parse(md, { async: false }) as string;
+  return html.replace(VOID_RE, (_m, tag: string, attrs: string) => `<${tag}${attrs.replace(/\/\s*$/, '')}/>`);
 }
 
 const xhtmlDoc = (t: string, body: string): string => `<?xml version="1.0" encoding="UTF-8"?>

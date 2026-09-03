@@ -24,7 +24,7 @@ while read -r bid asin; do
   total=$((total+1))
   echo "=== [$total] $bid $asin $(date '+%m/%d %H:%M') ==="
   cleanup_chrome
-  timeout 900 node scripts/paperback/pb-pilot.mjs "$bid" "$asin" > "scripts/paperback/out/$bid-pilot.log" 2>&1
+  timeout 1500 node scripts/paperback/pb-pilot.mjs "$bid" "$asin" > "scripts/paperback/out/$bid-pilot.log" 2>&1
   rc=$?
   if [ $rc -eq 4 ]; then echo "!!! CREATION_LIMIT — 本日はここまで ($(date '+%H:%M'))"; break; fi
   tid=$(grep -o 'print-setup/paperback/[A-Z0-9]*' "scripts/paperback/out/$bid-pilot.log" | head -1 | sed 's#.*/##')
@@ -33,7 +33,7 @@ while read -r bid asin; do
     fail=$((fail+1)); consec=$((consec+1))
   else
     cleanup_chrome; sleep 10
-    timeout 1200 node scripts/paperback/pb-complete.mjs "$bid" "$tid" --go > "scripts/paperback/out/$bid-complete.log" 2>&1
+    timeout 1500 node scripts/paperback/pb-complete.mjs "$bid" "$tid" --go > "scripts/paperback/out/$bid-complete.log" 2>&1
     rc2=$?
     if grep -q 'PB SUBMITTED' "scripts/paperback/out/$bid-complete.log"; then
       echo "✅ 出版 $bid ($tid)"
