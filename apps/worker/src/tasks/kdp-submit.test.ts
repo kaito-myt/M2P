@@ -39,7 +39,7 @@ function makePrisma(row: Record<string, unknown> | null) {
     $queryRawUnsafe: vi.fn().mockResolvedValue(row ? [row] : []),
     book: { update: bookUpdate },
     account: { update: accountUpdate },
-    appSettings: { findUnique: vi.fn().mockResolvedValue(null) },
+    appSettings: { findUnique: vi.fn().mockResolvedValue(null), update: vi.fn().mockResolvedValue({}) },
   } as unknown as KdpSubmitDeps['prisma'];
   return { prisma, bookUpdate, accountUpdate };
 }
@@ -120,7 +120,7 @@ describe('runKdpSubmit', () => {
     expect(bookUpdate).not.toHaveBeenCalled();
   });
 
-  it('creation_limit 失敗時は books 更新せず reason を返す', async () => {
+  it('creation_limit 失敗時は cooldown を設定し reason を返す', async () => {
     const { prisma, bookUpdate } = makePrisma(baseRow());
     const r = await runKdpSubmit({
       payload: { book_id: 'book1' },
@@ -131,6 +131,8 @@ describe('runKdpSubmit', () => {
     });
     expect(r.ok).toBe(false);
     expect(r.reason).toBe('creation_limit');
-    expect(bookUpdate).not.toHaveBeenCalled();
+    // 実装は ~20h の再試行クールダウンを設定する(枠浪費・永久ループ防止 2026-08)。
+    expect(bookUpdate).toHaveBeenCalledTimes(1);
+    expect(bookUpdate.mock.calls[0]![0].data).toHaveProperty("kdp_submit_cooldown_until");
   });
 });

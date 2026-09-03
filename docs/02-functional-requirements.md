@@ -138,7 +138,35 @@
 | F-061前提 | 投稿失敗の人間可読化（`explainPromotionError` が生エラーを日本語見出し＋対処手順に翻訳、生ログは details 保持） | N/A (UI) | P1 | Phase 2 |
 | F-062 | 週次コスト分析＋承認実行（`cost_optimizer` が直近30日を役割×モデルで集計し改善案＋推定削減額、安全・可逆な施策のみ承認実行、`cost.optimize.weekly` cron） | cost_optimizer | P1 | Phase 2 |
 | F-063 | TikTok 投稿（Content Posting API 直叩き、多エージェント台本＋動画レンダ、アプリ内 OAuth 接続、下書き投稿） | tiktok_scenario/creator/editor/proofreader/marketer | P1 | Phase 2 |
+| F-058拡張 | IG/TikTok 公開投稿を **Zernio(getlate) 中継**へ移行（`ZERNIO_API_KEY` があれば `defaultResolvePort` が IG/TikTok を Zernio 最優先。TikTok 自前APIは「個人/社内利用不可」で恒久却下されたため審査済みパートナー経由で公開。**IG・TikTok とも本番公開検証済み 2026-08-06**、TikTok は 9:16 mp4 を PUBLIC で公開。受入: `zernio post published` ログ＋`promotion_posts.status='posted'`） | N/A (Publish) | P1 | Phase 2 |
+| F-060改善 | TikTok 動画のシーン数上限 `MAX_SCENES=6`（シーン数=gpt-image 生成回数。無制限だと 11シーン→約12分・高コスト。scenario/editor プロンプト指示＋コードでハード間引き、末尾CTA温存） | tiktok_scenario/editor | P1 | Phase 2 |
+| F-064拡張 | SNS投稿を市場リサーチベースに（`promo_strategist`(web検索)の販促プレイブックを**生成器 promoter/content_creator の入力に接続**＝生成段階で反映。従来は後段optimizerのみ参照。`promotion.playbook.refresh` を週次cron化＝これまで未定期実行だった研究を鮮度維持） | promo_strategist/promoter/content_creator | P1 | Phase 2 |
 | F-052/F-058 | 接続フォームの自動補完ガード（資格情報欄 read-only-until-focus）＋接続テストを手段別（x / tiktok / instagram / webhook）に整理（`probeChannelAuth`） | N/A (UI) | P1 | Phase 2 |
+| F-072 | **販促「実績」トラッキング（2026-08-10）** — 投稿済みSNSの実エンゲージメント（impression/like/repost/reply）を取得し `promotion_posts` に保存。まず X（`GET /2/tweets?tweet.fields=public_metrics`, 保存済み tweet ID + OAuth1 で取得）。worker `promotion.metrics.fetch`（日次cron・常時ON）。**背景**: 従来は実測をどこにも保存しておらず、戦略(promo_analyst)は「投稿件数」しか見ておらず反応を最適化できなかった（＝実績なしで戦略盲目）。IG/TikTokは投稿ID未保存＋公式インサイト要のため後続。受入: X投稿の public_metrics が DB に反映される（APIプランが読み取り不可なら skip_reason 記録）。 | N/A (metrics) | P1 | Phase 2 |
+| F-052改善 | **投稿量の抑制（質重視, 2026-08-10）** — 1書籍あたり SNS 投稿を先頭 `MAX_SNS_POSTS_PER_BOOK`(=3) に制限＋間隔を `SNS_INTERVAL_DAYS`(=2) に拡大。新規アカウントへの無闇な大量投稿(実測で各1日約16件・反応ゼロ)を是正。 | N/A (policy) | P1 | Phase 2 |
+| F-073 | **SNSグロース（フォロワー育成）計測＋組織アラートループ（2026-08-12）** — 販促本部の自己監視。(1) `promotion.metrics.fetch` を拡張し **X `GET /2/users/me?user.fields=public_metrics`** でフォロワー数を日次スナップショット→ `promotion_growth_snapshots` に蓄積。(2) worker `org.promo.tick`（日次cron・常時ON、`0 16 * * *`＝JST 01:00, metrics.fetch の1h後）が実エンゲージメント要約(直近14日・平均インプレッション/いいね)＋フォロワー推移を **決定的に**評価し、`reach_critical`（サンプル≥10かつ平均インプレッション<50）/`growth_stalled`（スパン≥5日でフォロワー増減≤0）/`cold_start`（フォロワー<100）のいずれかで **promotion本部に `growth_alert`(needs_human) を1件起票＋LINEで運営者へプッシュ**。財務の `enforce_limit` と同型。**背景**: 反応ゼロを組織自身が検知して運営者にエスカレーションする神経系が販促に欠けていた（毎回運営者が指摘していた）。**実測(2026-08-12)**: X 直近100投稿の平均インプレッション=1・最大9・総いいね1＝到達ほぼゼロ（＝投稿の質でなく**到達/フォロワー不足**が根本）。ユーザー方針=「投稿だけでなく様々な方法でフォロワーを長期的に伸ばす」。**重複防止**: 開いている growth_alert があれば再起票しない。受入: 実測が危機水準のとき growth_alert が起票され LINE 通知が飛ぶ。 | S-018/019 | P1 | Phase 2 |
+| F-079 | **本文品質: ページターナー執筆＋読者なりきりレビュー（2026-08-17, CONTENT-1）** — 運営者指摘「本文が読者を惹きつける内容になっていない／レビュアーが読者になり切ってレビューしていない」。実態: Writer は"明快・正確・構成"重視で"読み進めたくなる"指示が無く、Judge は6軸ルーブリック採点のみで読者体験を評価していなかった。**修正(DBプロンプトのみ・即時反映)**: (a) `writer` に「読み進めたくなる文章」節を追加（各節冒頭1〜2文で掴む/好奇心ギャップ/絵が浮かぶ具体/リズム/次への引き）。(b) `judge` に「あなたは"想定読者そのもの"として冒頭から読み、続きを読みたくなるか・退屈しないか・冒頭で掴まれるかを最優先で問う。退屈/説明的すぎ/フック弱は benefit_clarity・genre_fit を大きく減点し、overall に"どこで読む手が止まるか"を必ず書く」を追加。→ 退屈な原稿は低スコア化し既存のリビジョンループが改稿を促す。次回以降の生成に反映。 | N/A (prompt) | P2 | Phase 2 |
+| F-078 | **戦略準拠の強化: 話題一致ハッシュタグ＋グロース使命（2026-08-17）** — 運営者指摘「戦略通りに投稿していない／これではフォロワーが増えない」。実態調査で、投稿は柱・トーンには沿うが**ハッシュタグが core 2個（#読書記録等）に固定**され、戦略の `rotating` 層（#貯金/#競馬/#話し方…）を全く使っていなかった＝競馬投稿が競馬層に一切リーチせず発見されない。**修正(a)**: `pickTopicHashtags(body, core, rotating)`（contracts）で **core常時＋本文の話題に合致する rotating タグ**を選び付与（キーワード辞書＋部分一致、X は重み内で採用）。`promotion.content.generate` に組込み。**修正(b) 使命の明示**: content_creator/content_optimizer/promoter の DBプロンプト冒頭に「唯一の使命＝フォロワーを増やす（伸びなければ失敗）／戦略厳密準拠／フォローしたくなる価値／想定読者に一点集中／冒頭フック」の mandate を注入。テスト付。 | S-018/019 | P2 | Phase 2 |
+| F-089 | **CEO によるエージェントプロンプト改訂（会話起点）＋M2Pポータル刷新（2026-08-22）** — (a) 運営者要望「A2Pで入力した指示がしっかり通るようにしてほしい／CEOエージェントに他エージェントのプロンプト書き換え権限を持たせ、CEOとの会話だけで完結したい」。調査で判明した根因: 従来「追加指示」は戦略生成時に一度だけLLMへ渡り**永続保存されず**、日次生成・継続ループは凍結された `strategy_json` を読むのみで運営者方針が再反映されない（＝指示が効き続けない）。**対策=CEOチャット(`ceo_chat`)にプロンプト改訂能力を付与**: CEO出力に `prompt_edits[{role,instruction}]`(最大5) を追加 → worker `org.ceo.chat` が対象 role の現行 active プロンプトを取得し、新設 **`prompt_editor`** エージェントが**プレースホルダを厳守したまま最小改訂** → 旧版 archived＋新版 active＋`prompt_proposals`(auto_approved,decided_by=ceo,7日ロールバック)＋`AuditLog` を1トランザクションで適用 → CEOが「✅ content_creator を v5 に更新」と返信。**受入基準**: 運営者がCEOチャットで方針を伝える→対象roleのactiveプロンプトが新版に置換→以後の生成に反映→旧版保持でロールバック可→`{placeholder}` は全保持(欠落時は中止)→`ceo`/`ceo_chat`/`prompt_editor` 自身は改訂対象外(保護)→全変更が監査記録。(b) **M2PポータルUI全面刷新**: 淡色フラット→ダーク"管制室"ルック(オーロラ背景/ガラスパネル/ツールカードのホバーグロー)。公式ロゴ・ファビコン適用。**常設メニューバー新設**(ツール/経営ダッシュボード[全ツール横断P&Lの雛形]/設定)。ヒーロー文言を「"稼ぐ"をAIで自動化する」に刷新。ツールは別タブ表示。詳細は docs/10。 | S-org/S-002 | P1 | Phase 2 |
+| F-088 | **M2Pポータル導線＋ホーム画面の実データ再実装（2026-08-20）** — (a) 運営者指摘「A2Pからツール選択ポータルへ戻る導線がない」。A2Pヘッダー右に **「M2Pポータル」リンク**（`LayoutGrid`アイコン、`NEXT_PUBLIC_PORTAL_URL`／未設定時 localhost:3002）を追加。プラットフォーム上位（apps/portal）へ戻れるように。(b) 運営指摘「ホーム画面が全然機能してない／必要な項目が揃っているか疑問」。従来 S-002 は Quality 以外プレースホルダだった → **運営者目線（儲かっているか/AI会社は動いているか/自分がやることは何か）で全面再実装**。当月純利益ヒーロー（黒字/赤字色分け）＋売上MoM＋コスト/予算＋出版累計＋品質、自律運用6トグルの現在ON/OFF＋現在の方針、進行中ジョブのライブ表示、要対応カード（実カウント＋実リンク、0件ミュート）、最近の本/パイプライン内訳/未読アラート、SNSフォロワー成長を実データ接続。詳細は docs/04 §S-002。(c) ヘッダー小修正3点: ①ヘッダー右の無反応「設定」プレースホルダを**実ユーザーメニュー**(username＋設定リンク＋**ログアウト**。従来アプリにログアウト導線が皆無だった)に置換(`components/layout/user-menu.tsx`＋`app/actions/auth.ts` logout server action)。②メニューの死にタブ「KDP自動入稿」(`enabled:false`・実ページ無し・認証ウォールで完全自動不可)を撤去。③サイドバー下部「実行中ジョブ」の常時"—"プレースホルダを実接続(`/api/jobs/running`を10秒ポーリングしrunning件数表示)。(d) 書籍ライブラリ小修正: ①ジャンルが全件「実用書」問題—表示バグではなく、テーマ生成が**アカウント既定ジャンル(practical)を全テーマに刻印**していたのが原因(内容と乖離: 競馬/小説/NISA等も practical化)。**全書籍の実タイトルをLLM分類し `theme_candidates.genre` を内容準拠へ振り直し**(106テーマ中100更新: gambling26/side_business13/lifestyle12/light_novel9/money8/self_help7/ai_tech6…)。表示は `genreLabel`(36ジャンル)フォールバックで対応済。②ライブラリ表の改行崩れ(アカウント/ジャンル/日時/コスト列)を `whitespace-nowrap`＋見出し折返し禁止＋`tabular-nums`で是正。③サムネ承認に1冊滞留=`status='thumbnail'`固着。真因は **export の public.jobs 行が `graphile_job_id=null`(worker未投入)** で判定停止していたため。exportをgraphileへ手動投入→done化→タブ空に。 | S-002/S-009 | P1 | Phase 2 |
+| F-087 | **書籍パイプライン停止の復旧＋動画BGM/テロップ位置＋UI崩れ是正（2026-08-20）** — (a) **書籍が editor で停止**: 運営者指摘「進行が止まってる書籍がある」。調査で5冊が `pipeline.book.editor` で8日間停止。根因2つ: ①`model_assignments` の **editor/marketer が廃止済み `google/gemini-2.5-flash` を参照**(Google「新規ユーザー提供終了」)＝以前のGemini枠枯渇と同種のサイレント停止 → `anthropic/claude-sonnet-4-6` へ再割当。②editor出力の**JSONパース破綻**: モデルが本文引用に未エスケープの `"` を使い(例 `なぜ"かわいそう"という`)文字列が途中終端 → `packages/agents/src/editor` の JSON サニタイザに「文字列値内の未エスケープ`"`を復旧」(次の非空白が構造文字/終端の時だけ閉じ引用と判定)を追加。実際の失敗rawText3件で実証。→ 停止5冊を editor 再投入し復旧。※worker再起動時に app `jobs` が `running` のまま残り book_locks が孤児化して停止し続ける潜在課題あり(locks-sweep は graphile 側のみ)。(b) **TikTok/IGリール動画**: テロップが `placement:'bottom'`(Veoは y=h*0.66)で **TikTok/IGが投稿説明文・UIを重ねる下部と衝突** → スライド/Veoとも**上部セーフゾーンへ移動**。**BGM追加**: `video-render` に BGM ミックス(ffmpeg amix・音量0.12・ループ・fade)を実装。既定は権利クリーンな合成アンビエント(Cメジャードローン)、`PROMO_BGM_URL` で運営者提供のロイヤリティフリー曲に差し替え可、`PROMO_BGM_ENABLED='0'` で無効化。(c) **UI崩れ是正**: 全50画面・38テーブル監査。ヒートマップ桁溢れ(`formatJpyCompact`)、多列表の日時折れ(`whitespace-nowrap`)、`truncate`のtd直付け不具合(内側span化)、長文セルの`line-clamp`/`break-words`、数値列`tabular-nums`等を一括是正。 | S-017/018/019 | P2 | Phase 2 |
+| F-086 | **KDPセッション切れ通知の連投防止＋通知の根本解決＋SNSコンテンツを一流マーケター多様化（2026-08-20）** — (a) 運営者指摘「『KDP売上取得: セッション切れを検知…』が頻繁に届く」。**調査結果**: 実データ上 `sales.fetch` は**既に完全に自己回復している**（session_expired→`refreshKdpSession` 自動再ログイン成功→DL成功→done。直近3週間 OTP 要求ゼロ＝デバイス信頼cookieで email/password のみ通過。sales_fetch_runs は全て done）。真のスパム源は `kdp.publish.status.sync`(6h) で、これは READ-ONLY 設計ゆえ**セッション切れを検知しても再ログインせず通知して諦めるだけ**だった（＋submitted→published 昇格が黙って停止）。**根本修正**: (1) `kdp.publish.status.sync` に **自己回復(自動再ログイン)を注入**(`refreshSession` DI: セッション切れ検知時に1度だけ `refreshKdpSession`(本棚着地・住宅proxyあれば経由)→新セッションでDBへ書き戻し＆同じ本を再読込して走査継続)。sales.fetch と同型に自己回復するため6h毎の切れ通知が消え、本棚同期も安定。(2) `sales.fetch` は自己回復が常態のため「検知/試みます」の**予告通知を廃止**し、**自己回復に失敗した時だけ**通知(＝人手が必要なときのみシステムが喋る)。(3) 予防線として `kdpSessionAlertGate()`(`app_settings.kdp_session_alert_at`基準・**24hに1回だけ通知**・判定不能時は安全側で通知)を残置し失敗通知に適用。→ 結論: セッションは自動再ログインで自己維持され**手動再取得は原則不要**(住宅IPプロキシは Amazon が CAPTCHA へエスカレートした場合の予備)。(b) 運営者指摘「投稿が本の宣伝ばかりでアカウント育成が見られない/一流マーケターが稼働してるか」。原因はF-080の是正が振れ過ぎ、content_creator v3で**全投稿が良書紹介=宣伝的な単調botに**なっていたこと。**修正**: content_creator **v4「一流SNSマーケター」** に刷新—共感/実用/エンゲージ誘発/人格/良書推薦の**多様な型を必ず散らし、本は3〜4投稿に1回(最大1/4)だけ・宣伝ではなく信頼できる推薦として**。few-shot例(x/ig/tiktok)も"本なし育成中心＋1つ良書推薦"に多様化。実測: 再生成でXは育成型中心＋読書ライフの人格が出る形に転換(前=全投稿本紹介)。Veo `durationSeconds` は数値必須(APIは文字列を400拒否)に修正。 | S-018/019 | P2 | Phase 2 |
+| F-085 | **固定/従量原価の計上＋自動最新化（2026-08-20）** — 運営者指摘「計上コストにX API利用料が入っていない」。実態: `token_usage` は**AI従量のみ**で、X API・Zernio・Railway・LINE 等のサブスク/インフラ原価が未計上→黒字化判定が甘い。**修正**: `recurring_costs` テーブル(label/category/monthly_jpy/currency/amount_usd/auto_source/active)を追加し実費を計上。調査で判明した2026料金でseed: X API=従量($0.015/write,$0.005/read, Basic$200/月は6月廃止), Railway=Pro$20+従量($30見積), Zernio=最初の2アカウント無料(IG+TikTokで$0), LINE=¥0(200通/月無料)。**販促強化ループ(F-081)の損益計算を「売上 −(AI従量原価 + 固定費)」に修正**し /org・LINE に黒字/赤字を明示。**自動最新化** `recurring.cost.refresh`(月次 `0 20 1 * *`): `auto_source='fx'`=USD建てを最新FX(app_settings.latest_fx_rate)で再換算, `='x_usage'`=X API実使用量(当月のX投稿+フォロー/いいね数+検索回数)から月額推定, `=null`=手動固定。合計が10%以上動けばLINE通知。決定的な `estimateXMonthlyUsd` 等テスト付。 | S-org | P2 | Phase 2 |
+| F-084 | **TikTok/IGリール動画: Veo 3.1ハイブリッド＋IGリール流用（2026-08-20）** — (a) **IGリール流用**: `promotion.video.generate` が生成したTikTok動画(mp4)を、同一 `media_key` で instagram の予約投稿(Reel)にも複製(2hずらし)。Zernio(getlate)ポートは動画メディア(.mp4)なら IG も `type:'video'`(Reel)で投稿。→ 1本の動画がTikTok＋IG両方に。(b) **Veo 3.1ハイブリッド(コスト最適)**: マスタスイッチ `video_use_veo_enabled`(既定OFF)ON時、動画の**冒頭フック(scene0)のみ Veo 3.1(fast既定)で実写級クリップ生成**、残りは従来の画像スライド(gpt-image+Ken Burns+テロップ+TTS)。運営者選択=ハイブリッド(1本≈$1-2)。Veoは Gemini API `predictLongRunning`(veo-3.1-fast/lite/standard, 9:16, 8秒)を非同期ポーリングで生成→R2。冒頭クリップは9:16クロップ＋ffmpeg drawtext(Noto Bold)テロップ＋TTS合成。Veo生成失敗時は画像スライドへ自動フォールバック。コストは token_usage(role='veo_video')に記録。`generateVeoClip`/`buildVeoHookPrompt`/`wrapCaption` はテスト付。 | S-018/019 | P2 | Phase 2 |
+| F-083 | **手動グロースToDoのワンタップUI＋TikTok自動化の断念（2026-08-20）** — TikTok自動フォローを実地検証した結果、**TikTokはbot検知が極めて厳格**(ログインはCDP経由=実Chromeで解決できたが、headless Playwrightでの閲覧は中身空ページを返す/ステルス対策後も連続アクセスでブロック率が上昇、データセンターIPでは即ブロック＋アカウント凍結リスク)で、**信頼できる自動化は不可**と判断。方針: **IG/Xは自動、TikTok(＋note/IGの一部)は手動ToDoで確実に**。手動の作業コストを最小化するため、`growth_manual` ToDoを**ワンタップUI**に刷新: `result_json.actions` を「[✓済] ハンドル＋理由 [開く→]」の行で表示、「開く」がアプリで対象プロフィール/投稿を直接表示→フォロー/いいね→チェックで進捗保存(`result_json.completed` に永続、`toggleGrowthTarget` SA)。「残りをまとめて開く」も可。`resolveGrowthUrl`/`extractGrowthTargets` はテスト付。TikTok自動化のコード資産(CDP取り込み`scripts/sns-capture-cdp.mjs`＋channel対応port)は将来の住宅IPプロキシ運用に備え残置(既定では未使用=セッションをDB保存しないため bot は TikTok をスキップ)。 | S-org | P2 | Phase 2 |
+| F-082 | **全社ToDo自動承認モード（滞留承認スイープ）（2026-08-19）** — `org_auto_approve_tasks`(既定ON)は従来「タスク起票時」だけ非人手kindを approved にしていたため、何らかの事情で `proposed` のまま残った ToDo が滞留し得た。本追加で **org.plan の各ティック冒頭に継続スイープ**を入れ、自動承認モードON時は滞留中の `proposed`（`create_account`/`growth_manual` 等の needs_human kind は除外）を一括 `approved` へ前進させる。これにより「提案中で止まる」ToDoが無くなり、AI組織が真に自走し続ける。UIトグル「ToDo 自動承認」（/org）で ON/OFF。決定的・best-effort（失敗しても計画本体は継続）。 | S-org | P2 | Phase 2 |
+| F-081 | **販促強化の継続AIループ（2026-08-19）** — 運営者方針「必ず黒字化」。`org.promo.tick`(受動アラート)に対し、本ループは**能動的に販促を強化し続ける**。worker `promotion.growth.loop`（毎日 `0 21 * * *`=JST 06:00, マスタスイッチ `promo_growth_loop_enabled` 既定OFF）が実測を決定的に評価し、安全・可逆な強化アクションを **AIサブタスクの再起動**として自動実行: 予約価値投稿が薄い/到達が弱いチャンネル → `promotion.content.generate`（content_creator=AIで良書紹介を再生成）、プレイブックが陳腐化/到達が弱い → `promotion.playbook.refresh`（web_searchリサーチ更新）。エンゲージ engine がOFFなら**推奨のみ**（自動ONはせずキルスイッチ尊重）。実行内容＋「フォロワー/当月ロイヤリティ」の黒字化フレーミングを org_task(kind=`growth_loop`, approved) と LINE に記録。暴走防止: 1回上限（再生成5/リサーチ3）。決定的な `decideGrowthActions` はテスト付。 | S-018/019 | P2 | Phase 2 |
+| F-080 | **良書紹介アカウントへのコンテンツ転換（2026-08-18）** — 運営者指摘「良本紹介アカウントとして育てる指示に反し、投稿が本に触れない一般論のまま」。原因は content_creator プロンプトの絶対ルール「本の売り込み・URLを入れない」が**本の紹介自体まで禁止**していたこと＋戦略 `strategy_json` の各柱 `example_post`（few-shot）が全て「本に触れないtips」で、few-shotがシステムプロンプトを上書きしていたこと。**修正**: (a) content_creator を **v3「読書案内人／目利きの書店員」** に刷新（毎投稿でフック→『書名』著者→刺さる中身→誰に効くか、実在の定番・名著のみ、ハルシネーション厳禁、他社の良書も歓迎、宣伝臭NG）。(b) X/IG/TikTok/note 全チャンネルの各柱 example_post を**実在の良書紹介の見本に全書換**（few-shotを意図に一致させた）。実測: 再生成でXの6/6投稿が実在良書（『反応しない練習』『GIVE&TAKE』『お金の大学』『優駿』等）を著者名付き・正しい帰属で紹介する形に転換したことを確認。プロンプトはDBのため即時反映（デプロイ不要）。 | S-018/019 | P2 | Phase 2 |
+| F-094 | **BOOK☆WALKER サーバー自動入稿（2026-09-04）** — 出版パイプラインに「BOOK☆WALKER入稿」タブ (`/bookwalker`) を追加し、KDP入稿と同型のキュー運用で Railway ワーカーが自動申請する。章Markdown→EPUB3(販売用+試し読み)をその場生成、採用表紙→1600px JPG、著者センター /books/new を headless Playwright で申請（信頼済みクリック2段/キーワード100字制限/EPUB検証40秒待ち）。ログインは reCAPTCHA のためサーバー不可 — ローカル手動ログイン後 `bw-session-push.sh` で storageState を暗号化保存し再利用、失効時は自動入稿を停止して LINE 通知。受入基準: キュー登録→30分cron(bw.submit.dispatch)が1冊ずつ bw.submit 実行→成功で bw_publish_status=submitted+LINE通知、二重申請なし（申請済み/販売中は dispatcher と task の両方で除外）。 | S-015 系 | P2 | Phase 4 |
+| F-095 | **楽天Kobo入稿タブ（2026-09-04 UI先行）** — `/kobo`。キュー登録/取消のみ先行実装（books.kobo_* 列）。入稿エンジンは KWL (rakutenkwl.kobo.com, Kobo OAuth・未ログイン403) の初回手動ログイン→セッション保存後に F-094 パターンで worker タスク化する。EPUB3 素材は F-094 と共用。 | S-015 系 | P3 | Phase 4 |
+| F-096 | **Booth入稿タブ（2026-09-04 UI先行）** — `/booth`。キュー登録/取消のみ先行実装（books.booth_* 列）。入稿エンジンは pixiv ログイン→セッション保存後に worker タスク化（BOOTH はダウンロード販売=PDF/EPUB を商品登録する形。詳細偵察は後続）。 | S-015 系 | P3 | Phase 4 |
+| F-093 | **栞ストアフロントの独自ブランド化（favicon分離＋専用サブドメイン, 2026-08-27）** — 運営者指摘「①『栞の本棚』検索の着地が A2P ツールになる ②アイコンが出ない ③ツールのfaviconまで栞になった」。1ドメイン `a2p.m2p.tools` に公開ストアフロント(栞)と管理ツール(A2P)が同居する構成に起因。**修正**: (a) **favicon分離** — ルート/既定 `app/icon.png`=A2Pロゴ(ツール継承)、`/blog`・`/shop` セグメントのみ `app/{blog,shop}/icon.png`=栞。※罠: `public/icon.png`(静的)が `app/icon.png`(メタデータ規約)を同一 `/icon.png` で上書きするため public 側を削除。route group `(app)/icon.png` は URL 透過で `/icon.png` に化け衝突するため使わない。(b) **検索の着地を修正** — `/blog`・`/shop`・`/blog/[slug]` に self-canonical、sitemap からリダイレクトするルート `/` を除外し `/shop`・`/blog` を最上位に。(c) **専用サブドメイン `shiori.m2p.tools`** — `app/page.tsx` が host∈`STOREFRONT_HOSTS`(既定 shiori.m2p.tools)ならルート`/`→`/blog`(認証問わず)。`lib/site.ts` の `STOREFRONT_URL`(=`NEXT_PUBLIC_STOREFRONT_URL`||`NEXT_PUBLIC_SITE_URL`)を canonical/sitemap/robots に使用。運営者作業=Railwayに `shiori.m2p.tools` カスタムドメイン追加＋Cloudflareに CNAME(a2pと同 target `fejfqglp.up.railway.app`)＋解決確認後に env `NEXT_PUBLIC_STOREFRONT_URL` 設定(順番厳守: DNS解決前に設定するとcanonicalが死URL化)。Google のfavicon/URL反映は数日〜数週(Search Console再インデックスで短縮)。 | S-052b | P2 | Phase 2 |
+| F-092 | **栞ブログの良書紹介に実在書籍の表紙画像を自動挿入（2026-08-27）** — 運営者指摘「ブログの『Book Review』プレースホルダに本の表紙画像をはめ込みたい」。従来は書影が無く装丁風の擬似カバー(PseudoCover)のみだった。**実装**: 新エージェント `book_cover`(`packages/agents/src/book-cover`)が記事の紹介対象書籍を同定し実表紙 URL を解決、`blog_posts.cover_image_url` に保存、一覧(`/blog`)・詳細(`/blog/[slug]`)で書影表示（自社本=R2書影優先、無ければ cover_image_url、それも無ければ PseudoCover）。**解決フロー(誤書影を絶対に出さない設計)**: ① LLM(sonnet-5)で書名/著者を同定 → ② 書名の中核(`coreTitle`=副題を落とした先頭塊。副題込みだと Amazon 商品名と字句が食い違い照合が外れる)で「中核 著者」を **Amazon 書籍検索**(`/s?k=&i=stripbooks`, `data-asin`抽出) → ③ **NDL(国会図書館)OpenSearch** の書名一致書誌の ISBN も**常に**候補に足す(Amazon が関連書しか返さない長い和書名の保険) → ④ 各 ASIN の **`/dp/<ASIN>` 実商品名を取得し、中核書名を包含するときだけ採用**(=Amazon 自身の商品名で本人確認。短い書名『優駿』等は著者名の裏取りも必須) → ⑤ その書影を byte サイズで実在検証(欠品~43byte除外)。**是正の経緯**: 初版は「LLM が推測した ISBN を openBD の負の検証だけで採用」したため、**openBD 未収録書で幻覚 ISBN が別の本(平家物語→「ヒーロー!」等)の書影を6/12件掴む事故**が発生（運営者「全然違う本になってる」）。ISBN 当てずっぽうを廃し「Amazon 検索で実在 ASIN → その商品名で本人確認」を核に全面刷新して解消（12/12 実書影を確認）。すべて**非致命**（特定不能は null → PseudoCover）。公開時に自動解決＋既存記事は一回性スクリプト `apps/worker/src/scripts/backfill-blog-covers.ts` でバックフィル。token_usage は `role='book_cover'` で記録。 | S-052b | P2 | Phase 2 |
+| F-091 | **note ブラウザ自動フォロー & スキ（2026-08-27）** — note もフォロー/スキ(いいね)の公式APIが無いため、IG/TikTok の F-077 を忠実に踏襲した Playwright ブラウザ自動化を実装。worker `note.engage`（1日2回 `0 4,10 * * *`=JST 13/19時）が、`note_engage_enabled`(既定**ON**=キルスイッチ, note は IG/TikTok より制限が緩く凍結リスクが低いため既定ON) が有効かつ `NoteAccount.status='active'` かつ `session_state_enc` 有りの各アカウントで、`growth_scout`(channel=note) が web_search で特定した note 上の実在アカウント/記事を、復号セッション(＋住宅プロキシがあれば経由)で自動フォロー＆スキする。**動線**: follow=プロフィール(`https://note.com/<urlname>`)を開き「フォロー」ボタン押下（既済みは「フォロー中」判定→already）／like=記事URLを開き aria-label「スキ」ボタン押下（既済みは aria-pressed/「取り消す」判定→already）。見つからなければ failed=skip（落とさない）。**ガード**: マスタスイッチ＋**保守的ランプアップ**（follow `followDailyCap`: 初日3→5→8→巡航10, like `likeDailyCap`: 初日5→8→12→巡航15, note チャンネル全体の24h合算キャップ）＋1回上限(follow6/like10)＋ジッター(人間的な間6〜16秒)＋既存 `promotion_sns_engagements`(channel='note', action_type='follow'\|'like', target_handle 一意)で二重防止＋**セッション切れ/アクションブロック検知で即停止＆LINE通知**（検知したら他アカウントもその回は停止）。決定的な `followDailyCap`/`likeDailyCap`/`pickNoteTargets`＋オーケストレーションは純ロジックとして分離しテスト可能。記録テーブルは新設せず F-077 の `promotion_sns_engagements` を流用。 | S-018/019 | P2 | Phase 2 |
+| F-077 | **IG/TikTok ブラウザ自動フォロー（2026-08-18）** — IG/TikTok はフォロー/いいねの公式APIが無い（F-075で手動ToDo化していた）。運営者が承認（凍結リスク受容）したため**Playwrightによるブラウザ自動フォロー**を実装。運営者がローカル(住宅IP)で一度ログインしたセッション(storageState)を **`scripts/sns-capture-session.mjs`** で取り込み→worker鍵で暗号化して `promotion_channel_settings.browser_session_enc` に保存。worker `promotion.sns.engage`（1日2回 `0 3,9 * * *`）が、`sns_engage_enabled`(既定OFF) ON かつセッション有りのチャンネルで、`growth_scout` が特定した実在アカウントを復号セッション＋(住宅プロキシがあれば経由し)フォローする。**ガード**: マスタスイッチ＋**保守的ランプアップ**（`dailyCap`: 初日5→8→12→巡航15, IG/TikTokはXより低い）＋1回最大4件＋ジッター＋`promotion_sns_engagements`(channel,action,handle 一意)で二重防止＋**アクションブロック/ログイン誘導検知で即停止＆LINE通知**（検知したら他チャンネルもその回は停止）。セレクタ `getByRole('button',{name:/フォロー|Follow/})` は実IGセッションで検証済み。決定的な `dailyCap`/`pickFollowTargets`＋オーケストレーションはテスト付。TikTokはセッション取り込み待ち（試行制限のためGoogleログイン推奨）。 | S-018/019 | P2 | Phase 2 |
+| F-076 | **X 能動エンゲージメント自動化（2026-08-17）** — 「投稿だけ」ではフォロワーが増えないため、X公式API(OAuth1)で**ニッチ検索→いいね＋著者フォロー**を能動実行。`promotion.x.engage`（worker, 1日3回 `0 1,7,13 * * *`）が `GET /2/tweets/search/recent` で読書ニッチの投稿を発見→`POST /2/users/:id/likes`＋`POST /2/users/:id/following`。**ガード**: マスタスイッチ `x_engage_enabled`(既定OFF)＋**ランプアップ**（`dailyCap`: 初日8→数日で15→22→巡航30, 運営者選択「積極」）＋1回最大6件＋ジッター＋大手(>3万フォロワー)除外＋`promotion_x_engagements`(action_type,target_id 一意)で二重防止＋**429/403検知で即停止＆LINE通知**。実測: X APIは現行(有料)ティアで search/follow/like いずれも200で叩けることを確認済み。決定的な `dailyCap`/`pickCandidates` はテスト付。IG/TikTokは公式APIに該当機能が無く別途Playwright(F-077予定)。 | S-018/019 | P2 | Phase 2 |
+| F-075 | **手動グロースToDo生成（2026-08-15）** — IG/TikTok/note は**フォロー/いいねの公式APIが無く自動化不可**。新エージェント `growth_scout`（web_search, anthropic/opus）が、チャンネルごとに**実在の・フォロー/いいね/コメントすべき具体ターゲット**（@ハンドル・投稿URL・理由・優先度）を特定し、worker `promotion.growth.todo`（週次 `0 22 * * 1`・常時ON）が **needs_human の org_task（kind=`growth_manual`、チャンネル別に1件を upsert=重複防止）** として起票＋**LINE要約通知**。`/org` タスクボードは指示を開いて全文チェックリスト表示（`<details>` 展開）。運営者は「誰をフォロー・どの投稿にいいね」を見て手で実行。決定的な整形（`formatGrowthTodo`）＋テスト付。`GrowthScoutOutput` 契約は `@a2p/contracts/agents/growth-scout`。 | S-018/019 | P2 | Phase 2 |
+| F-074 | **（後続）フォロワー育成の実施施策** — GROW-2 コンテンツ・ミックス是正（宣伝ブラスト→価値投稿主役化・総量実効削減）／GROW-3 安全なエンゲージメント施策（自アカのエンゲージャーへのお礼リプ・メンション対応, ToS順守レート制限）／GROW-4 ターゲット・フォロー/価値リプ（ニッチ層へ少量・人間的レート, **バンリスク高につき運営者quota明示制**）。GROW-1(F-073)の計測を前提に効果測定しながら段階実行。 | S-018/019 | P2 | Phase 2 |
 
 合計機能数: **52**（F-001〜F-050, F-051, F-052）＋販促付録 F-052〜F-063（docs/05 採番）。
 
@@ -191,11 +219,11 @@
 ### F-003 ライター: アウトライン（章立て）生成
 
 - **目的**: §4.1 工程 2、§5.2 W→C2。
-- **入力**: 採用されたテーマ ID、想定文字数（既定 45,000–55,000 字）、ジャンル
+- **入力**: 採用されたテーマ ID、想定文字数（**既定 120,000 字 ≒ 200〜300 ページ相当**、2026-08-25 引き上げ。旧既定 50,000 字）、ジャンル
 - **処理**:
   1. `prompts` テーブルから「Writer × ジャンル」テンプレ最新版を取得（F-027）
-  2. 章数（既定 7–10、章あたり 5,000–7,500 字程度）と各章の見出し・要旨・想定文字数を生成
-  3. 「はじめに / おわりに」を必ず含める
+  2. 章数（**既定 14、7〜18 章の範囲**、章あたり 8,000〜9,000 字程度。2026-08-25 引き上げ。旧既定 7–10章）と各章の見出し・要旨・想定文字数を生成
+  3. **実用書系（非小説）**は「はじめに / おわりに」を必ず含める。**小説（genre=novel）は前付けを付けず**プロローグ/第1話など本文（物語）から始める（実際の Kindle 慣習に合わせる）
 - **出力**: アウトライン JSON（章×小見出しの階層）、UI で承認/編集可能
 - **受け入れ基準**:
   - 章合計の想定文字数が指示の ±15% に収まる
@@ -217,9 +245,12 @@
 - **受け入れ基準**:
   - 章ごとの実文字数が想定の ±20% に収まる（5,000 字想定なら 4,000–6,000 字）
   - 書籍全体の実文字数が 45,000–55,000 字レンジに収まる（許容 ±15%）
-  - 同一書籍内で「ですます調/だである調」が混在しない（自動チェック合格）
+  - **文体はジャンル種別で分岐する**（下記）。同一書籍内で文体が混在しない
   - 章執筆 1 件あたりの token_usage が記録され、書籍 ID と紐づく
-- **関連エージェント**: Writer
+- **ジャンル種別による書き分け（2026-08-23 追加）**: ジャンルは「実用書系」と「小説・フィクション系」に分かれ、書き方を分岐する（判定 = `packages/contracts/src/genres.ts` の `FICTION_GENRES`/`isFiction`。対象 = novel / light_novel / mystery / sf_fantasy / romance_fiction / historical_novel / horror）。
+  - **実用書系**: 従来どおり「ですます」調で統一。`##` 小見出し・箇条書き・章冒頭導入/章末まとめ等の実用書フォーマットで書く。
+  - **小説・フィクション系**: **「だ・である」調**（会話文は自然な口語）で統一する。`##` 小見出し・箇条書き・「ポイント/まとめ」等の実用書フォーマットは使わない。アウトラインの subheadings は「場面(シーン)の流れ」の内部メモとして扱い、本文には見出しとして出さず地の文・描写・会話で一続きに繋ぐ。「はじめに/おわりに」は付けず物語本文から始める。説明・要約に逃げず、情景・心情・五感・比喩・省略・余韻で「見せる」、文学的で詩的な文章にする。文体・表現指針は `FICTION_STYLE_DIRECTIVE` が `{genre_guidance}` 経由で Writer/Editor/Judge の全プロンプトに注入される。Editor は小説の「だ・である」調をですます調へ書き換えず、実用書フォーマットへ変換しない。
+- **関連エージェント**: Writer, Editor（文体の維持）, Judge（ジャンル文脈での評価）
 
 ---
 
@@ -310,6 +341,7 @@
 - **受け入れ基準**:
   - 1 リクエストで N 冊同時にキックでき、N 冊分の `books` が生成される
   - 各書籍ジョブはステータス（queued/running/done/failed）を持つ
+  - **重複制作ガード（2026-08-10, block-on-any）**: 同一 `theme_id` に既に `Book` が1冊でも存在する場合（取り下げ済 `retracted` を含む）は新規作成せず skip する（batch/自律運用org/手動の全経路で「1テーマ=1書籍」を保証）。取り下げ済テーマの作り直しは人間の明示操作に限る（自律運用が勝手に再制作しない）。背景・詳細は docs/05 §5.3.1 / docs/06。
 - **関連エージェント**: N/A（オーケストレーション）
 
 ---
@@ -334,9 +366,10 @@
 - **入力**: 校閲後 Markdown、書籍メタ（タイトル/著者）
 - **処理**: `docx` パッケージで章見出し・本文を構造化変換し、KDP 推奨スタイルを適用
 - **出力**: `.docx` ファイル → R2 保存（F-015）
+- **構成（ジャンル分岐, 2026-08-04）**: 実際の Kindle 慣習に合わせ、**実用書系は「はじめに → 目次 → 本文」**（はじめに章の後に目次を配置）、**小説（genre=novel）は目次を付けず本文から開始**。`buildDocx(book, chapters, { isNovel })`／`buildPdf(..., { isNovel })` に export タスクが `theme.genre==='novel'` を渡す。
 - **受け入れ基準**:
   - 章見出しが Word の Heading1 スタイルで出力される
-  - ページ番号・目次が自動生成される
+  - 実用書はページ番号・目次が生成される（目次は「はじめに」の後）／小説は目次を付けない
 - **関連エージェント**: N/A
 
 ---
@@ -704,7 +737,12 @@
 - **入力**: `sales_records`、`eval_results`、`token_usage`
 - **処理**: 書籍ごとに「累計売上 / 累計コスト / Quality スコア / 平均星」を一覧表示。フィルタ（アカウント別/ジャンル別/期間別）
 - **出力**: ダッシュボード UI
-- **受け入れ基準**: 100 冊規模でも 2 秒以内に一覧表示
+- **可視化 (2026-08-04 改修)**:
+  - **売上推移チャート**: 月次積み上げ棒を **全ジャンル動的**（売上合計の多い順・ジャンル別色）に。旧実装は practical/business/self_help の 3 種固定で、競馬(gambling)/小説(novel)/money 等を全て practical に潰していた不具合を解消（`buildTrendChartFromAggregates` は segments=全ジャンル内訳を返す。トレンドとヒートマップは同じジャンル順・色 `genreColorMap`）。
+  - **分析サマリ (SalesInsights)**: 既存 KPI に加え **直近月売上・前月比(MoM)・黒字(ROI>0)冊数・売上ゼロ冊数・売れ筋Top5・ジャンル別売上構成(%)** を表示（`buildSalesInsights`）。
+  - **レイアウト**: 売上推移チャートとジャンル×月ヒートマップは、横並び 2 カラムをやめ **各横幅いっぱいで縦積み**（データ量が増えると横並びだと双方が窮屈になるため）。
+  - **書籍別サムネ実画像表示**: KPI テーブルのサムネ列はプレースホルダ文字ではなく **採用カバーの実画像**を表示する。book_id しか手元に無いため配信ルート `GET /api/books/[id]/thumbnail`（採用カバー `covers.status='adopted'` の最新 r2_key を解決 → 15 分署名付き URL へ 302、認証必須・Cookie 前提の素の `<img>` で参照）を新設。
+- **受け入れ基準**: 100 冊規模でも 2 秒以内に一覧表示。売上のある全ジャンルがチャート/ヒートマップ/構成比に表示される。採用カバーのある書籍はサムネ列に実画像が出る。
 - **関連エージェント**: N/A
 
 ---
@@ -754,6 +792,24 @@
   - **ファイル**: 原稿 docx（`artifacts.kind='docx'`）・表紙（`covers` adopted）を R2 から取得してアップロード。
   - **自動運用**: `AppSettings.kdp_auto_submit_enabled=true` のとき dispatcher が `kdp_publish_queued=true`
     の本を `kdp.submit` へ enqueue（`org.kdp.screen` 合格→queue と連携）。監査用スクショは R2 に保存。
+  - **【重要バグ修正 2026-08-12】screen→queue 連携の欠落**: 上記「合格→queue 連携」は仕様上あるべきだったが
+    **実装が欠落**しており、`org.kdp.screen` は publish_kdp タスクを `approved` にするだけで
+    `books.kdp_publish_queued` を一度も立てていなかった。結果、`kdp_auto_submit_enabled`/`org_kdp_auto_publish_enabled`
+    が両方 ON でも dispatcher は対象ゼロ→**自動入稿が14日以上完全停止**（＝出版完了通知も来ない共通原因）。
+    修正: `org.kdp.screen` が **eligible かつ `publish_status='unlisted'` かつ未キューの本に `kdp_publish_queued=true` を
+    立てる**（published/submitted は二重出版防止で除外、冪等）。`OrgKdpScreenResult.queued` で件数を観測。回帰テスト付。
+    **実機検証(2026-08-12)**: 修正後、screen が2冊をキュー→dispatcher→`kdp.submit` が **TOTP で完全無人**にウィザード
+    (step1メタ→step2アップロード→KDP Select登録→step3価格→公開)を完走し `submitted` へ。14日ぶりに自動出版が復活。
+  - **【PUB-2 出版完了通知 2026-08-12】**: 従来 `notification_kinds_json` に「出版完了」種別が無く、出版完了が運営者に
+    一切通知されていなかった。`kdp.publish.status.sync`(6h毎)が submitted→published(LIVE)へ昇格させた本があれば、
+    その書名一覧を **LINE で運営者へプッシュ**する（`isLineRelayConfigured()` 時のみ・ベストエフォート）。回帰テスト維持。
+  - **【PUB-3 出版デイリーレポート 2026-08-14】**: 運営者から「出版の通知が来ない／失敗時は原因も報告して」と要望。
+    従来 (a) 完了通知は LIVE 検知時のみ、(b) `creation_limit` 失敗は連投防止で**意図的に無通知**だったため、
+    出版が進んでいるのか止まっているのか分からなかった。新タスク `kdp.publish.digest`(worker, 日次 `30 22 * * *`
+    ＝JST 07:30, 常時ON)が **公開(LIVE)/審査待ち(submitted)/入稿キュー/作成上限で待機(creation_limit)** を
+    1通にまとめて毎朝 **LINE 通知**する（完了ゼロの日でも状況が届く）。`summarizePublishDigest`/`formatDigestMessage`
+    は決定的・テスト付。**KDP作成上限(1日5冊)** が主なボトルネックで、CREATE方式が枠を消費し翌日クールダウン明けに
+    自動再試行するため、大量キュー時は数日かけて消化される（digestで日々可視化）。
 - **入力**: `books.id`、`kdp_metadata`、成果物（docx/cover、R2）
 - **処理**: Playwright で KDP にログイン → メタデータ入力 → 本文/カバーアップロード → 価格設定 → 「公開」（`dry_run` 時は保留）。2FA は TOTP 自動生成または LINE リレー。
 - **出力**: 入稿ジョブ結果（`publish_status='submitted'`）、ASIN（F-042 が翌日取得）
@@ -1184,8 +1240,8 @@ CLAUDE.md Hard Rule および §4.2 スコープ外を機能要件としても�
 
 > 後段（tech-selection / ui-design / program-design）で覆る可能性がある仮置き値。確定時は本文を更新する。
 
-1. **1 冊あたり想定文字数**: 45,000–55,000 字（KDP の実用書/ビジネス書/自己啓発で読み応えを担保するボリューム帯）。F-003/F-004 の章設計はこれを既定とする。
-2. **章数の既定**: 7–10 章（章あたり 5,000–7,500 字）。F-003 のアウトライン生成既定。
+1. **1 冊あたり想定文字数**: **既定 120,000 字（約 200〜300 ページ相当。2026-08-25 引き上げ、旧 45,000–55,000 字）**。KDP の実用書/ビジネス書/自己啓発で十分な読み応え・情報量を担保するため。F-003/F-004 の章設計はこれを既定とする。上限 160,000 字。
+2. **章数の既定**: **既定 14 章（7〜18 章の範囲、章あたり 8,000〜9,000 字程度。2026-08-25 引き上げ、旧 7–10 章）**。F-003 のアウトライン生成既定。章単位 max output tokens は 24,000、outline は 16,384。
 3. **画像生成回数**: カバー 1 冊あたり既定 3 候補。多色展開や帯バリエーションは Phase 2 以降の選択肢。
 4. **並列度の既定**: 書籍並列 5、章並列 4。Phase 1 で実コストとリードタイムを計測してチューニング。
 5. **コスト計算の通貨換算**: USD → JPY は `model_catalog` 取得時の為替レート（外部 API）でスナップショット保存。為替変動の遡及調整はしない。

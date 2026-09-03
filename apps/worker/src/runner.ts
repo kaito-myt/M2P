@@ -31,7 +31,9 @@ import {
   batchPlanDispatcherTask,
 } from './tasks/batch-plan-dispatcher.js';
 import { CATALOG_FETCH_TASK_NAME, catalogFetchTask } from './tasks/catalog-fetch.js';
+import { MODEL_HEALTH_PROBE_TASK_NAME, modelHealthProbeTask } from './tasks/model-health-probe.js';
 import { FX_FETCH_TASK_NAME, fxFetchTask } from './tasks/fx-fetch.js';
+import { ADS_SPEND_FETCH_TASK_NAME, adsSpendFetchTask } from './tasks/ads-spend-fetch.js';
 import { KDP_ASIN_FETCH_TASK_NAME, kdpAsinFetchTask } from './tasks/kdp-asin-fetch.js';
 import {
   KDP_PUBLISH_STATUS_SYNC_TASK_NAME,
@@ -39,6 +41,8 @@ import {
 } from './tasks/kdp-publish-status-sync.js';
 import { KDP_SUBMIT_TASK_NAME, kdpSubmitTask } from './tasks/kdp-submit.js';
 import { KDP_SUBMIT_DISPATCHER_TASK_NAME, kdpSubmitDispatcherTask } from './tasks/kdp-submit-dispatcher.js';
+import { BW_SUBMIT_TASK_NAME, bwSubmitTask } from './tasks/bw-submit.js';
+import { BW_SUBMIT_DISPATCHER_TASK_NAME, bwSubmitDispatcherTask } from './tasks/bw-submit-dispatcher.js';
 import { LOCKS_SWEEP_TASK_NAME, locksSweepTask } from './tasks/locks-sweep.js';
 import {
   OPTIMIZER_PROMPT_GENERATE_TASK_NAME,
@@ -56,6 +60,10 @@ import {
   PIPELINE_BOOK_JUDGE_TASK_NAME,
   pipelineBookJudgeTask,
 } from './tasks/pipeline-book-judge.js';
+import {
+  PIPELINE_BOOK_SEO_TASK_NAME,
+  pipelineBookSeoTask,
+} from './tasks/pipeline-book-seo.js';
 import {
   PIPELINE_BOOK_KICKOFF_TASK_NAME,
   pipelineBookKickoffTask,
@@ -155,11 +163,24 @@ import {
   PROMOTION_DISPATCH_TASK_NAME,
   promotionDispatchTask,
 } from './tasks/promotion-dispatch.js';
+import {
+  PROMOTION_METRICS_FETCH_TASK_NAME,
+  promotionMetricsFetchTask,
+} from './tasks/promotion-metrics-fetch.js';
 import { BAKEOFF_RUN_TASK_NAME, bakeoffRunTask } from './tasks/bakeoff-run.js';
 import { ORG_PLAN_TASK_NAME, orgPlanTask } from './tasks/org-plan.js';
 import { ORG_EXECUTE_DISPATCH_TASK_NAME, orgExecuteDispatchTask } from './tasks/org-execute.js';
+import { ORG_CEO_CHAT_TASK_NAME, orgCeoChatTask } from './tasks/org-ceo-chat.js';
 import { ORG_OPS_WATCH_TASK_NAME, orgOpsWatchTask } from './tasks/org-ops-watch.js';
 import { ORG_FINANCE_TICK_TASK_NAME, orgFinanceTickTask } from './tasks/org-finance-tick.js';
+import { ORG_PROMO_TICK_TASK_NAME, orgPromoTickTask } from './tasks/org-promo-tick.js';
+import { KDP_PUBLISH_DIGEST_TASK_NAME, kdpPublishDigestTask } from './tasks/kdp-publish-digest.js';
+import { PROMOTION_GROWTH_TODO_TASK_NAME, promotionGrowthTodoTask } from './tasks/promotion-growth-todo.js';
+import { PROMOTION_X_ENGAGE_TASK_NAME, promotionXEngageTask } from './tasks/promotion-x-engage.js';
+import { PROMOTION_SNS_ENGAGE_TASK_NAME, promotionSnsEngageTask } from './tasks/promotion-sns-engage.js';
+import { NOTE_ENGAGE_TASK_NAME, noteEngageTask } from './tasks/note-engage.js';
+import { PROMOTION_GROWTH_LOOP_TASK_NAME, promotionGrowthLoopTask } from './tasks/promotion-growth-loop.js';
+import { RECURRING_COST_REFRESH_TASK_NAME, recurringCostRefreshTask } from './tasks/recurring-cost-refresh.js';
 import { ORG_KDP_SCREEN_TASK_NAME, orgKdpScreenTask } from './tasks/org-kdp-screen.js';
 import { ORG_BAKEOFF_RECOMMEND_TASK_NAME, orgBakeoffRecommendTask } from './tasks/org-bakeoff-recommend.js';
 
@@ -223,11 +244,14 @@ export function buildTaskList(): TaskList {
     [PIPELINE_BOOK_READINGS_GENERATE_TASK_NAME]: pipelineBookReadingsGenerateTask,
     [PIPELINE_BOOK_PROMOTION_GENERATE_TASK_NAME]: pipelineBookPromotionGenerateTask,
     [PIPELINE_BOOK_JUDGE_TASK_NAME]: pipelineBookJudgeTask,
+    [PIPELINE_BOOK_SEO_TASK_NAME]: pipelineBookSeoTask,
     [PIPELINE_BOOK_EXPORT_TASK_NAME]: pipelineBookExportTask,
     [REVISION_BOOK_APPLY_TASK_NAME]: revisionBookApplyTask,
     [OPTIMIZER_PROMPT_GENERATE_TASK_NAME]: optimizerPromptGenerateTask,
     [CATALOG_FETCH_TASK_NAME]: catalogFetchTask,
+    [MODEL_HEALTH_PROBE_TASK_NAME]: modelHealthProbeTask,
     [FX_FETCH_TASK_NAME]: fxFetchTask,
+    [ADS_SPEND_FETCH_TASK_NAME]: adsSpendFetchTask,
     [SALES_FETCH_TASK_NAME]: salesFetchTask,
     [SALES_FETCH_DISPATCHER_TASK_NAME]: salesFetchDispatcherTask,
     [BOOK_CULL_DETECT_TASK_NAME]: bookCullDetectTask,
@@ -241,9 +265,12 @@ export function buildTaskList(): TaskList {
     [PROMOTION_VIDEO_GENERATE_TASK_NAME]: promotionVideoGenerateTask,
     [PROMOTION_POST_PUBLISH_TASK_NAME]: promotionPostPublishTask,
     [PROMOTION_DISPATCH_TASK_NAME]: promotionDispatchTask,
+    [PROMOTION_METRICS_FETCH_TASK_NAME]: promotionMetricsFetchTask,
     [BAKEOFF_RUN_TASK_NAME]: bakeoffRunTask,
     [KDP_SUBMIT_TASK_NAME]: kdpSubmitTask,
     [KDP_SUBMIT_DISPATCHER_TASK_NAME]: kdpSubmitDispatcherTask,
+    [BW_SUBMIT_TASK_NAME]: bwSubmitTask,
+    [BW_SUBMIT_DISPATCHER_TASK_NAME]: bwSubmitDispatcherTask,
     [KDP_ASIN_FETCH_TASK_NAME]: kdpAsinFetchTask,
     [KDP_PUBLISH_STATUS_SYNC_TASK_NAME]: kdpPublishStatusSyncTask,
     [ALERT_COST_CHECK_TASK_NAME]: alertCostCheckTask,
@@ -253,8 +280,17 @@ export function buildTaskList(): TaskList {
     [BATCH_PLAN_DISPATCHER_TASK_NAME]: batchPlanDispatcherTask,
     [ORG_PLAN_TASK_NAME]: orgPlanTask,
     [ORG_EXECUTE_DISPATCH_TASK_NAME]: orgExecuteDispatchTask,
+    [ORG_CEO_CHAT_TASK_NAME]: orgCeoChatTask,
     [ORG_OPS_WATCH_TASK_NAME]: orgOpsWatchTask,
     [ORG_FINANCE_TICK_TASK_NAME]: orgFinanceTickTask,
+    [ORG_PROMO_TICK_TASK_NAME]: orgPromoTickTask,
+    [KDP_PUBLISH_DIGEST_TASK_NAME]: kdpPublishDigestTask,
+    [PROMOTION_GROWTH_TODO_TASK_NAME]: promotionGrowthTodoTask,
+    [PROMOTION_X_ENGAGE_TASK_NAME]: promotionXEngageTask,
+    [PROMOTION_SNS_ENGAGE_TASK_NAME]: promotionSnsEngageTask,
+    [NOTE_ENGAGE_TASK_NAME]: noteEngageTask,
+    [PROMOTION_GROWTH_LOOP_TASK_NAME]: promotionGrowthLoopTask,
+    [RECURRING_COST_REFRESH_TASK_NAME]: recurringCostRefreshTask,
     [ORG_KDP_SCREEN_TASK_NAME]: orgKdpScreenTask,
     [ORG_BAKEOFF_RECOMMEND_TASK_NAME]: orgBakeoffRecommendTask,
   };
@@ -360,6 +396,8 @@ async function fetchAppSettingsForCron(log: Logger): Promise<CronRuntimeSettings
     pipeline_theme_cron: null,
     kdp_auto_submit_enabled: false,
     kdp_auto_submit_cron: null,
+    bw_auto_submit_enabled: false,
+    bw_auto_submit_cron: null,
   };
   try {
     const row = await prisma.appSettings.findUnique({
@@ -389,6 +427,8 @@ async function fetchAppSettingsForCron(log: Logger): Promise<CronRuntimeSettings
         pipeline_theme_cron: true,
         kdp_auto_submit_enabled: true,
         kdp_auto_submit_cron: true,
+        bw_auto_submit_enabled: true,
+        bw_auto_submit_cron: true,
       },
     });
     if (!row) {
@@ -423,6 +463,8 @@ async function fetchAppSettingsForCron(log: Logger): Promise<CronRuntimeSettings
       pipeline_theme_cron: row.pipeline_theme_cron,
       kdp_auto_submit_enabled: row.kdp_auto_submit_enabled,
       kdp_auto_submit_cron: row.kdp_auto_submit_cron,
+      bw_auto_submit_enabled: row.bw_auto_submit_enabled,
+      bw_auto_submit_cron: row.bw_auto_submit_cron,
     };
   } catch (err) {
     log.warn({ err }, 'failed to read AppSettings; auto-dispatch crons disabled (safe default)');

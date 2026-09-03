@@ -48,3 +48,16 @@ scripts/.kdp-userdata/
 
 # KDP home proxy secrets
 scripts/.kdp-proxy.env
+
+# SNS(IG/TikTok) セッション取り込み — 秘密情報
+scripts/.sns-session-*.json
+scripts/.sns-*-userdata/
+
+scripts/.cdp-chrome/
+
+# paperback generated artifacts (railway up のアップロード肥大防止)
+scripts/paperback/out/
+scripts/.stage/
+scripts/.bw-userdata*/
+scripts/.kobo-userdata/
+scripts/.booth-userdata/

@@ -21,9 +21,16 @@
 >   - `org.execute.dispatch` の連鎖起票（改善ToDo follow-up）を、`isHumanKind` が false の kind は `proposed` ではなく `approved` で起票するよう変更（`apps/worker/src/tasks/org-execute.ts`）。人手前提 kind は従来通り `needs_human`。これにより次サイクルの dispatcher が自動着手し、CEO立案を待たずに自己改善が回る。
 >   - 全社ToDoボード（`/org/tasks`）に、`blocked`→`approved`（「再実行」、error クリア）／`needs_human`→`approved`（「承認」）の前進操作を追加（`retryOrgTask` SA、`lib/org-view.ts` の `canRetryOrgTask`）。従来は `blocked`/`needs_human` を前進させる手段がボードになかった。
 >
+> F-089（CEO起点のプロンプト改訂, 2026-08-22）:
+>   - **目的**: 運営者が CEO チャット(`/org`, `org.ceo.chat`)で「あるエージェントの発信内容/書き方/方針を変えたい」と伝えると、対象 runtime エージェントの system プロンプト(`prompts`)を CEO 権限で恒久改訂し、以後の全生成に反映させる（＝入力した指示が効き続ける）。
+>   - **CEO出力拡張**: `CeoChatOutputSchema` に `prompt_edits: [{role, instruction}]`(最大5, 任意) を追加（`packages/contracts/src/org/index.ts`）。`ceo_chat` プロンプトを v2 化し本能力を告知（`packages/db/apply-ceo-chat-v2.ts`）。
+>   - **新エージェント `prompt_editor`**（`packages/agents/src/org/prompt-editor.ts`, role 追加 `llm-client.ts`, I/O は `PromptEditorInput/Output` in `org/index.ts`, seed `apply-prompt-editor.ts` = anthropic/claude-opus-4-8）: 対象の現行本文＋改訂指示＋保持必須プレースホルダを受け、**最小改訂**した新本文を返す。プレースホルダ(`{…}`)は全保持が絶対条件。
+>   - **適用フロー**（`apps/worker/src/tasks/org-ceo-chat.ts` `applyCeoPromptEdit`）: ①対象 role の現行 active プロンプト取得(genre=null優先) ②`prompt_editor` で改訂 ③検証（新本文が空/無変更/プレースホルダ欠落なら中止） ④`$transaction`: `prompt_proposals`(status=auto_approved, decided_by='ceo', rollback_until=+7d) 作成＋旧 active を archived＋新版 active(created_by=`ceo:<message_id>`, placeholders 継承)＋`AuditLog`(action='prompt.approve', trigger=ceo)。1件失敗しても対話は壊さない(try/catch)。CEO返信に「✅/⚠️ role を vN に更新…」を追記。
+>   - **ガード**: `ceo`/`ceo_chat`/`prompt_editor` 自身は改訂対象外（`PROMPT_EDIT_EXCLUDED_ROLES`）。`prompts` の active 一意制約を守るため archive→insert を同一tx。旧版保持でロールバック可。
+>
 > P1（起票）＋P2（制作/出版/分析の実行）＋P3（販促/運用/経営の統合）追加物（本ドキュメントの各レジストリへの反映）:
 > - **DB**: `org_objectives` / `org_tasks`（+`token_usage.org_task_id`、`org_tasks.theme_id/account_id`、`app_settings.org_auto_plan_enabled/org_plan_cron/org_auto_execute_enabled/org_execute_cron/org_ops_watch_enabled/org_ops_watch_cron/org_finance_tick_enabled/org_finance_tick_cron`）
-> - **worker タスク**: `org.plan`（CEOティック。日次cron 既定05:00 JST）／`org.execute.dispatch`（承認済タスクの実行。15分毎cron）／`org.ops.watch`（運用の自己復旧監視。10分毎cron）／`org.finance.tick`（経営の予算ガード。毎時cron）。いずれも AppSettings フラグで条件付き有効化。フラグ/cron は `/org` の「自律運用設定」カードから編集可能（P4増分6）
+> - **worker タスク**: `org.plan`（CEOティック。日次cron 既定05:00 JST）／`org.execute.dispatch`（承認済タスクの実行。15分毎cron）／`org.ops.watch`（運用の自己復旧監視。10分毎cron。モデル障害の割当自動切替 `healModelOutages` に加え、2026-09-02 から**デプロイ残骸の自己修復** `defaultRepairOrphan` を実装 — デプロイ/強制終了で worker ごと殺され `public.jobs` が running のまま graphile ジョブを失った行を queued に戻し保存 payload で再投入。タスクの CAS が stale running に弾かれて再試行が空振り消滅し本が無言凍結する実障害への恒久対策）／`org.finance.tick`（経営の予算ガード。毎時cron）。いずれも AppSettings フラグで条件付き有効化。フラグ/cron は `/org` の「自律運用設定」カードから編集可能（P4増分6）
 > - **dispatch 対象 kind**: 制作 `plan_book`/`write`、出版 `prepare_metadata`/`set_price`、分析 `analyze_sales`/`research_market`/`report`、販促 `create_content`/`publish_post`/`analyze_promo`、運用 `recover_job`、経営 `cost_report`/`budget_review`。`enforce_limit`/`triage_error`/`publish_kdp`/`create_account`/`connect_account` は `needs_human`
 > - **エージェント役割**: `ceo` ＋ 6本部長 ＋ 担当者 `sales_analyst`/`market_analyst`/`metadata_worker`（P2）・`promo_analyst`/`cost_accountant`（P3）
 > - **画面**: `/org`（経営ダッシュボード＋自律運用設定カード）・`/org/tasks`（全社ToDoカンバン＋「承認済タスクを実行」「運用監視を実行」「予算ガードを実行」＋成果/コスト表示＋`blocked`/`needs_human`の前進操作）
@@ -956,6 +963,9 @@ model AppSettings {
   prompt_auto_approval_rollback_h   Int      @default(24)
   sales_auto_fetch_enabled          Boolean  @default(false)
   sales_auto_fetch_cron             String   @default("0 17 * * *") // 02:00 JST
+  // docs/06 増分7: ToDo 自動承認。true=起票を(人手前提kind除き)即approved自動実行/false=proposedで人手承認待ち。
+  org_auto_approve_tasks            Boolean  @default(true)
+  // ※ org_* の自律運用フラグ(auto_plan/execute/ops_watch/finance_tick/kdp_auto_publish + 各cron)も存在。詳細は docs/06。
   // KDP アクセスを自宅回線(住宅IP)経由にするトンネルプロキシ設定 (docs/09 §9.6)。
   // 自宅の scripts/kdp-home-proxy.mjs が ngrok アドレスを heartbeat 公開し、worker が
   // Playwright の HTTP プロキシとして使う。認証情報は env(KDP_PROXY_USER/PASS)、DBには置かない。
@@ -1570,6 +1580,14 @@ export const PipelineBookKickoffPayload = z.object({
 | priority | 10 (通常) |
 | 実行内容 | `Book` 作成 → `model_assignment_snapshot` 確定 → `pipeline.book.marketer` を子 enqueue |
 
+**重複制作ガード (2026-08-10 追加, block-on-any)**: 新規 `Book` 作成の直前に、同一 `theme_id` の `Book` が
+1冊でも存在するか `book.findFirst` で確認する。存在すれば新規作成せず、その Job を `done`（`result_json.skipped='duplicate_theme'`,
+`book_id`=既存本）にして即 return する。**取り下げ済 (`status='retracted'`) の本があるテーマも「制作済み」として扱い、自律運用が
+作り直さない**（運営者の取り下げ判断を尊重）。これは batch/org/手動いずれの起動経路でも効く「1テーマ=1書籍」の choke-point 恒久対策。
+retry 冪等性（`existingJob.book_id` による既存本流用）は本ガードより前段で処理されるため干渉しない。retracted 済テーマの
+作り直しは人間の明示操作（新テーマ作成 or 手動 kickoff）に限る。**背景**: 自律運用(org)の `write` が既出テーマ（特に低品質で
+July に取り下げた競馬シリーズ）を再起票し、8/2 に同一 6 テーマから重複本が生成・一部 KDP 再入稿された事故の恒久対策（docs/06 参照）。
+
 #### 5.3.2 `pipeline.book.marketer` [F-001/F-040]
 
 ```typescript
@@ -1683,7 +1701,29 @@ export const PipelineBookJudgePayload = z.object({ book_id: z.string(), job_id: 
 | timeout | 10 分 |
 | max_attempts | 2 |
 | priority | 10 |
-| 実行内容 | Judge (§6.3.5)。スコア >= 80 で `pipeline.book.export` enqueue。< 80 かつ `retry_count < 2` で `pipeline.book.writer.chapter`（全章）または `pipeline.book.editor` を再キック。3 回目失敗で `Book.status = needs_human_review`。 |
+| 実行内容 | Judge (§6.3.5)。スコア >= 80 で `Book.status = thumbnail`（サムネ承認待ち）。`autopass_cover_enabled` 時は生成済カバーを自動採用のうえ `pipeline.book.seo` enqueue（SEO 再最適化を経て export へ）。通常は運営者のカバー採用操作 (`bulkAdoptCoversCore` SA) が `pipeline.book.export` を直接 enqueue する（**既知の申し送り**: この手動採用経路は現状 `pipeline.book.seo` を経由しない。SEO 再最適化を全経路で必須にする場合は `apps/web/lib/covers-core.ts` 側の enqueue も `pipeline.book.seo` に切り替える設計変更が別途必要）。< 80 かつ `retry_count < 2` で `pipeline.book.writer.chapter`（全章）または `pipeline.book.editor` を再キック。3 回目失敗で `Book.status = needs_human_review`。 |
+
+> **再キック payload の実障害と修正 (2026-09-01)**: 不合格時の editor / writer.chapter 再キックは判定所見
+> (`buildFeedbackText`: 6 軸コメント＋総評) を `feedback: [{ body, priority:'must' }]` で渡すが、受け側の
+> `RevisionFeedbackItemSchema.body` は **max(2000)**。長編では所見が数 KB になり `pipeline.book.editor payload が
+> 不正です` で**再キックが必ず失敗** (editor は max_attempts=2 → 即 exhausted、本は `judging` で無言停止)。
+> つまり 80 点未満の本は一度も改稿されずに止まっていた。修正 = 所見を改行単位で **≤1900 字の複数 item に分割**
+> (`toFeedbackItems`、内容は欠落させない、上限 50 item) して両経路に渡す。§6.3.5 の出力上限引き上げで所見が
+> 長くなったため顕在化した。
+
+#### 5.3.8b `pipeline.book.seo`
+
+```typescript
+export const PipelineBookSeoPayload = z.object({ book_id: z.string(), job_id: z.string() })
+```
+
+| 項目 | 値 |
+|---|---|
+| 想定時間 | 30 秒〜2 分 |
+| timeout | 5 分 |
+| max_attempts | 2 |
+| priority | 10 |
+| 実行内容 | judge PASS 後・export 直前の KDP メタデータ SEO 再最適化。SEO Optimizer (§6.3.5b) に完成原稿ダイジェスト (Outline + 確定章見出し) と現行 `kdp_metadata` (description/keywords/categories) を渡し、Amazon SEO (A9/A10) 観点で再最適化した値を同行に UPDATE する。**NON-FATAL**: SEO 呼出・DB 更新の失敗は warn ログのみで書籍を滞留させず、成否に関わらず必ず `pipeline.book.export` を enqueue する。DB マイグレーション不要 (既存 `kdp_metadata` 列を更新するのみ)。 |
 
 #### 5.3.9 `pipeline.book.export` [F-012/F-013/F-014/F-015]
 
@@ -1698,6 +1738,7 @@ export const PipelineBookExportPayload = z.object({ book_id: z.string(), job_id:
 | max_attempts | 3 |
 | priority | 10 |
 | 実行内容 | `packages/output/word` で docx 生成、`packages/output/pdf` で PDF、`packages/output/image` で KDP 寸法 PNG。`Artifact` 3 件 INSERT。`Book.status = done`、`done_at = now()`、`BookLock` 解放。Resend で完了通知（テンプレ `book-done`）。OQ-01: PDF が 30 秒超なら `alerts` に記録。 |
+| 構成分岐 | **実用書系(ビジネス/自己啓発/実用等)= はじめに→目次→本文→おわりに**、**フィクション(小説系)= 目次なしで本文から**。docx(`build-docx.ts` `isNovel`)/PDF(`build-pdf.tsx`)の両方で分岐し、`isFiction(book.theme.genre)` で判定する（**2026-08 修正**: 以前は `genre==='novel'` のみ判定していたためライトノベル/ミステリー等 7 種のうち novel 以外のフィクションが実用書扱いで目次付きになる不具合があった。`FICTION_GENRES` 全 7 種で判定するよう修正）。はじめに/おわりに章はアウトライン生成プロンプトが非フィクションに必須化している。 |
 
 #### 5.3.10 `revision.book.apply` [F-050]
 
@@ -1811,8 +1852,45 @@ export const KdpSubmitPayload = z.object({
   book_id: z.string(),
   dry_run: z.boolean().optional(),        // 「出版」ボタンを押さず直前で停止
   account_id: z.string().optional(),
+  target_title_id: z.string().optional(), // 上書き対象の KDP 内部 titleId（下記「上書き経路」参照）
 })
 ```
+
+**上書き経路 (`target_title_id`, 追加 2026-08-04)**: `target_title_id`（KDP 本棚 URL の `.../title-setup/kindle/<titleId>/details` に現れる内部 ID、例 `A8U4O04AS52C4`）を渡すと、下書き探索/新規作成を行わず **その既存本（下書き/**販売中(LIVE)**）を book_id の内容で上書き入稿**する（`playwright-publish-port` は `EDIT_BASE + titleId + '/details'` へ直行、mode=`overwrite`）。用途は **二重出版の解消**（重複した LIVE タイトルの片方を、まだ出版できていない別の本で差し替える）。作成枠を消費しない。STEP2 には「新しい原稿または表紙画像をアップロードした」確認チェックの通過処理が既にあり、LIVE 本の原稿/表紙差し替え→再審査(レビュー中)を通す。**注意**: LIVE 出品への上書きは対象 ASIN の販売/レビュー履歴が差し替え後の本に引き継がれ再審査に入る不可逆操作のため、運用者の明示指示時のみ実行する（自動 dispatcher は `target_title_id` を付与しない＝通常経路のみ）。実本棚の titleId↔ASIN 対応は READ-ONLY 巡回（`bookshelf` の `a[href*="editkindledetails"]`）で取得する。
+> **実運用で判明 (2026-08-04)**: 既存本の上書き(原稿/表紙の差し替え)時、STEP2 に新規作成時には出ない
+> 「**新しい原稿または表紙画像をアップロードされたようです。□これをクリックすることで、自分の回答が正しいことを
+> 確認することになります**」の確認チェックが**複数**（AI生成コンテンツ欄・アクセシビリティ欄など）出現し、これを
+> 全て ON にしないと「保存して続行」が STEP3 へ進めず `content_not_advanced` で失敗する。専用の
+> `checkReuploadConfirms`(native input と role=checkbox 両対応・祖先テキスト一致)で毎回入れ直す。
+> 検証成功例: 二重出版の片方 B0HCPHCQ4M を別書籍で上書き→ KDP セレクト登録込みで再出版（reupload confirm 2/2）。
+>
+> **根本原因を特定 (2026-08-25)**: 上記の「回答が正しいことを確認」チェックは、**STEP2 アクセシビリティ質問
+> 「画像にアクセスできますか?」で 4 つ目「(画像の)すべてに代替テキストや詳細な説明が含まれています」を選択
+> していない**（＝既定の「含まれているかどうかわかりません」のまま）ときに出現する。4 つ目を確実に選択すれば
+> チェック自体が出ず、`confirmTotal:0` で素通りする（実測: `step2 options` が `accessibility:true` になると
+> `confirmPresent:false`）。従来コードは name 属性 `data[accessibility][image_reading]` 決め打ち＋**リトライ対象外**
+> だったため再描画で外れると未選択のまま確認チェックが誘発されていた。対策 = **DRM と同様にラベル一致で全 radio
+> から 4 つ目を探し(native click 失敗時はラベルへマウスイベント)、リトライ条件に `!accessibility` を加える**
+> (`scripts/kdp-publish.mjs setStep2Options`)。確認チェック処理は保険として残す(auto/assist の再アップロード時に出る場合に備え)。
+>
+> **上書き（差し替え）運用で判明 (2026-09-01, 9 重複→1 に解消した実績から)**:
+> - **途中で落ちた上書きは「販売中 未出版の変更あり」＋「設定の続行」で止まる**: タイトル等メタは保存されるが
+>   原稿/表紙の差し替えが未提出のドラフト状態で、LIVE は旧内容・旧表紙のまま。スクリプト結果 `publish_unconfirmed`
+>   や強制終了後はこの状態を疑い、**同じ titleId で上書きをもう一度実行**するとドラフトを再開して提出まで通る
+>   （作成枠非消費）。DB を `submitted` にしただけでは実態は未完了。
+> - **提出直後〜審査中(24〜72h)は詳細ページがロックされ題名を取得できない**（本棚スキャンは `(タイトル取得不可)`）。
+>   複数件が同時にこの状態でも重複ではない（スキャナが unreadable を同一題名として誤グループ化する）。
+> - **ローカル実行は 1 冊＝1 プロセス**で回す（運営 PC は空き RAM が常時 1GB 前後。複数冊を 1 プロセスで回すと
+>   Chrome のメモリ蓄積でアップロード中に落ちる）。起動時の Railway env 取得もサービス毎 1 回にまとめて
+>   スパイクを抑える（`scripts/.stage/run-ov.sh` 相当）。
+> - 上書き成功直後の `books.asin` は空のままになりうる（`publish_status` のみ更新）→ ログの `asin=` を補完する。
+> - **`books.asin` は誤紐付けしていることがある (2026-09-02 実測)**: backfill/captureAsin が同時期の別 listing の ASIN を
+>   拾うことがある（例: 「旅がへたな放浪記」に別本「生成AI時代の超時短術」の B0HFFLJSSZ が記録されていた）。
+>   **真偽判定は `https://www.amazon.co.jp/dp/<ASIN>` を `.kdp-userdata` の Chrome で開いて `#productTitle` を読む**
+>   （WebFetch/curl は Amazon の bot 対策で 500）。`books_asin_key` unique 制約があるため付け替えは「先に旧保持者を
+>   別 ASIN へ移してから」の順で行う。重複 listing の解消は 2026-09-01 と同じ「片方を未出版の完成本で
+>   `--overwrite-map` 差し替え」（9/2 に旅がへた 2 重 B0HGLCN8W8/B0HDY8H11X → 後者を残し前者を別本で差し替え済）。
+> - **上書き（LIVE 出品の再提出）も「本の作成数制限」を誘発しうる (2026-09-02 実測)**: 前日に 8 件の LIVE 上書き再提出を行った翌日、新規作成ゼロ・サーバー自動出版ゼロにもかかわらず新規タイトル作成が `creation_limit` でブロックされた。「下書き resume/編集は枠非消費」という従来理解は**新規 CREATE 画面に限る**話で、大量の再提出や審査中タイトルの滞留はアカウント単位のスロットリングとして新規作成をブロックすることがある。対策 = `app_settings.kdp_creation_paused_until` を尊重し時刻経過後に再試行（新規作成のブロックは STEP1 で検知され副作用なし）。解除は**JST 深夜0時**（=15:00 UTC、`nextJstMidnightUtc` どおり。15:05 JST の再試行で再ブロックを実測＝日中リセット説は誤り）。再提出は**完了した JST 日**にカウントされる。
 
 **構成（playwright import 隔離ルール順守）**:
 - `apps/worker/src/tasks/kdp-submit.ts` — オーケストレーション（DI 境界 `KdpPublishPort`）。book+`kdp_metadata`+docx/cover(R2) 取得 → セッション再利用(`accounts.kdp_session_state_enc`) → ポート呼出 → `publish_status` 更新 → 監査。
@@ -1827,6 +1905,76 @@ export const KdpSubmitPayload = z.object({
 | 実行内容 | ①セッション復号→ヘッドレス Chromium 起動（既定データセンター IP、proxy 有効時のみ住宅IP）。②`ensureLoggedIn`（アカウント選択タイル→パスワード実タイプ→2FA: TOTP 自動 or LINE）。③**既存下書き resume**（作成上限を消費しない）→ STEP1 メタデータ（ローマ字は `kanaToRomaji`、カテゴリ階層、非公有・非成人）→ STEP2 原稿/表紙アップロード（`data-assets-interior-file-upload` / `data-assets-cover-jp-file-upload`、変換完了待ち→DRM/アクセシビリティ/AI「いいえ」/確認チェック `role=checkbox` 実クリック）→ STEP3（**KDP セレクトに登録**を先に ON=KU/読み放題対象化 `enrollKdpSelect` role=checkbox 実クリック→ロイヤリティ70%先選択→JP価格実タイプ+Tab→`dry_run` でなければ「出版」）。④出版確認は本棚照合（`verifyPublished`）。⑤`publish_status='submitted'` にし `kdp_publish_queued=false`。⑥`blocked: creation_limit` 検知時は保留し翌日再試行。各段スクショを R2 に保存。 |
 
 **自動運用**: `AppSettings.kdp_auto_submit_enabled=true`＋dispatcher（`kdp.submit.dispatch`, 例 30 分毎）が `kdp_publish_queued=true AND publish_status<>'published'` の本を 1 冊ずつ `kdp.submit` へ enqueue（同時 1 冊。`org.kdp.screen` 合格→queue と連携）。`AMAZON_EMAIL`/`AMAZON_PASSWORD` 未設定時は起動しない。
+
+#### 5.3.15b ペーパーバック展開（2026-09-02 着手・設計確定/ウィザード未検証）
+
+全 Kindle 出品本にペーパーバック版を追加する（ユーザー指示）。狙いは紙の直接売上よりも
+**価格アンカー効果**（紙 ¥1,500 前後の併記で Kindle 価格の割安感→電子転換率向上）と商品ページの信頼性。
+オンデマンド印刷のため在庫リスク・固定費ゼロ。
+
+- **判型 = A5 (148×210mm)**。既存の電子用 PDF（`packages/output/pdf`、A5・左右余白 15mm・ページ番号付き・NotoSansJP 埋め込み）が
+  **〜300 頁ならそのまま印刷内余白要件を満たす**（ノド最小: 〜150頁 9.6mm / 151〜300頁 12.7mm / 301〜500頁 15.9mm。
+  301 頁以上のみ余白拡大の再生成が必要）。頁数許容 24〜828（白黒・白紙）。
+- **ラップカバー**: 幅 = bleed3.2 + 裏148 + 背 + 表148 + bleed3.2 (mm)、高さ = 210 + 6.4 (mm)。
+  **背幅 = 頁数 × 0.0572mm（白紙）**。背文字は 79 頁超のみ可。裏表紙右下 50.8×30.5mm はバーコード領域として空ける。
+- **生成ツール（`scripts/paperback/`）**: `pb-env.sh`（Railway から実行時 env 取得・秘密はファイル化しない）/
+  `pb-plan.cjs`（全対象本の final.pdf を R2 取得→pdf-lib で頁数→背幅・余白適合・頁数レンジ判定→`plan.json`）/
+  `build-wrap-cover.mjs`（採用表紙を sharp で前面パネルへ 300dpi 拡大 + 表紙平均色ベースの裏表紙〔題・`kdp_metadata.description` 抜粋・著者・Kindle 誘導〕+ 背テキスト→react-pdf で一枚 PDF）。
+- **ウィザード実測（2026-09-03 パイロット=血糖値本）**: 本棚行「ペーパーバックの作成」→ `title-setup/paperback/new/details?existing=<KindleTitleId>`
+  で **STEP1 はほぼ全項目 Kindle から自動引き継ぎ**（カテゴリーのみ空＝紙の独自分類で要選択）。STEP2(content):
+  無料 ISBN 取得（ボタン→ダイアログ内同名ボタン）、印刷オプションは既定値が正解（白黒/白紙 `#ink-paper-BW_WHITE`、
+  裁ち落としなし、光沢なし、左→右）、アップロードは filechooser イベント方式、AI 質問 `has-ai-content`=いいえ。
+  STEP3(pricing): `#price-input-jpy` 実タイプ+Tab で他 13 市場自動換算、出版ボタン=「ペーパーバック本を出版」。
+- **未解決＝プレビュー承認ゲート**: content の「本をプレビューして承認してください」が残る限り保存が
+  クライアント側で無言ブロック（ネットワーク POST すら発生しない）され pricing の出版が「以前のページに問題」で
+  止まる。プレビューアーに承認ボタンは無く、自動化 Chrome では previewer が `client-side-error` を連続 POST し
+  「プレビュー済み」が記録されない（trusted クリック・長時間滞在・ページ送りでも不可を実測）。
+  **暫定運用 = プレビューアー起動→終了の 1 操作のみ運営者が実施**し、以降（価格→出版）は自動（`pb-complete.mjs` / `pb-publish.mjs`）。
+- 判明済み: ペーパーバックの下書き作成は Kindle の creation_limit 発動中でも通る日があった（枠関係は引き続き観察）。
+  原稿 PDF のフォント未埋め込みは Amazon が自動埋め込みで補正（警告のみ・非ブロッカー）。
+
+#### 5.3.15c BookWalker 自動出版（2026-09-02 着手・偵察/素材フェーズ）
+
+ユーザー指示による新配信チャネル（Phase 4 系）。BOOK☆WALKER 著者センター (author.bookwalker.jp) へ全書籍を展開する。
+
+- **確定要件（公式サイト確認済）**: 原稿 = **EPUB3 必須**（docx/PDF 不可）/ 表紙 = JPG or PNG（縦 1600px 推奨・横なりゆき）/
+  還元率 **60%**（月末締め翌々月末払い・振込手数料先方負担）/ 登録無料 / 出版フロー = 会員登録→SMS 認証＋サークル名＋
+  振込口座→作品登録→**審査**→配信。
+- **認証**: KDP/note と同じ「初回のみ運営者手動ログイン→永続 Chrome プロファイル再利用」方式。
+  プロファイル `scripts/.bw-userdata`、捕獲 = `scripts/bookwalker/bw-login.mjs`（headful で開き最大 30 分待機・ログイン検知で終了）。
+- **EPUB3 生成**: `scripts/bookwalker/build-epub.mjs` — DB の chapters(Markdown) → marked で XHTML 化 →
+  mimetype(無圧縮先頭)/container.xml/OPF(EPUB3, cover-image properties)/nav.xhtml/章 XHTML/CSS を jszip で梱包、
+  採用表紙(R2)をカバーに使用。将来 `packages/output/epub` へ昇格し worker タスク化（楽天 Kobo 等にも流用）。
+- **入稿自動化（ローカル実証済 2026-09-02〜03, 40冊申請）**: /books/new フォーム (clean id 群:
+  `#book_main_title(_kana)/#authors_0_name(_kana)/#book_copyright/#book_catchphrase/#book_description/#book_keywords/#book_price_notax`、
+  ファイル3点必須 `#book_files_cover(JPG)/#book_files_epub/#book_files_epub_trial`)。
+  **検索キーワードは100文字以下必須**（超過は申請クリックでインラインエラー、無言失敗に見える）。
+  申請 = `#register-book` → 確認モーダルの 2 段階を **信頼済みクリック** (`page.click({force:true,noWaitAfter:true})`;
+  synthetic click / requestSubmit はハンドラ不発火 = isTrusted 罠)。成功判定 = `POST /api/books/register` 2xx + 本棚「申請ステータス：申請中」。
+  EPUB サーバ検証に約 40 秒 — 完了前の申請クリックはモーダルが開かないため追加待機+再クリックで吸収。
+  Cookie 同意バナーはクリック遮蔽するため事前除去。カテゴリ = radio（実用（評論・情報）/文芸・小説/ライトノベル + サブ）。
+
+**F-094 サーバー自動入稿（2026-09-04 実装・デプロイ）** — 「BOOK☆WALKER入稿」タブ (`/bookwalker`, nav=パイプライン):
+
+- **DB**: `books.bw_publish_status`(unlisted|submitted|published|failed) / `bw_publish_queued(_at)` / `bw_submitted_at` /
+  `bw_submit_cooldown_until`(失敗時~6h)。`app_settings.bw_auto_submit_enabled` / `bw_auto_submit_cron`(既定 */30) /
+  `bw_submit_dry_run` / `bw_session_state_enc`(storageState を AES-256-GCM=KDP_CRED_KEY で暗号化。単一アカウントのため AppSettings 保持)。
+- **セッション**: ログインは reCAPTCHA によりサーバー不可 → ローカル手動ログイン(scripts/.bw-userdata2)後
+  `bash scripts/bookwalker/bw-session-push.sh` で storageState を DB へ保存。失効時は bw.submit が
+  `bw_auto_submit_enabled=false` に落として LINE 通知（再 push まで停止）。submit 成功毎に最新 storageState を書き戻して延命。
+- **worker タスク**: `bw.submit`(apps/worker/src/tasks/bw-submit.ts) — 章 Markdown から EPUB3(販売用+試し読み=冒頭2章)を
+  その場生成(bw-submit/build-epub.ts)、採用表紙を sharp で高さ1600px JPG 化、headless Playwright(bw-submit/playwright-submit-port.ts)で
+  上記フォームを申請。価格 = kdp_metadata.price_jpy÷1.1 を10円丸め(税抜、無ければ¥500)。成功で submitted + LINE 通知。
+  `bw.submit.dispatch`(30分毎 cron、`bw_auto_submit_enabled=true` 時のみ登録) がキューから**1冊ずつ** enqueue。
+- **web**: `/bookwalker` = 設定カード(自動入稿ON/ドライラン/セッション状態) + 書籍一覧(ステータスバッジ+キュー登録/取消/一括)。
+  SA = `app/actions/bw-submit.ts` → `lib/bw-submit-core.ts`(kdp-submit-core と同型、ブロック判定 = must コメント/メタデータ/申請済み)。
+- **バックフィル**: ローカル申請済み 40 冊は `scripts/.stage/bw-backfill-applied.cjs` で submitted へ反映済(二重申請防止)。
+
+**F-095/F-096 楽天Kobo・BOOTH 入稿タブ（2026-09-04 UI 先行）** — `/kobo`・`/booth`。
+`books.{kobo,booth}_publish_status/_publish_queued(_at)/_submitted_at` + `app_settings.{kobo,booth}_{auto_submit_enabled,submit_dry_run,session_state_enc}`。
+SA = `app/actions/channel-submit.ts`(チャネル汎用 queue/unqueue)。**入稿エンジンは未実装** — 初回手動ログインのセッション保存後に
+BW と同パターンで worker タスク化する。Kobo (KWL) は `rakutenkwl.kobo.com` が Kobo OAuth (authorize.kobo.com) 経由・未ログイン403、
+BOOTH は pixiv ログイン。どちらも reCAPTCHA 前提でセッション再利用方式。
 
 #### 5.3.16 `kdp.asin.fetch` [F-042] (Phase 3)
 
@@ -1886,7 +2034,7 @@ export const ArchiveJobsPayload = z.object({})
 | timeout | 30 分 |
 | max_attempts | 1 (READ-ONLY・失敗しても次 cron tick で再試行されるため再試行不要) |
 | priority | 60 |
-| 実行内容 | `scripts/kdp-publish.mjs` が入稿成功時に立てる `publish_status='submitted'` は、Amazon 側の審査が通り実際に LIVE (販売中) になったかまでは分からない。本タスクはそのギャップを埋める: 作成日最古の active `Account` の `kdp_session_state_enc` を復号 → `publish_status='submitted'` の `Book` を全件取得 → 各本について `BookshelfPort.readBookStatus({ asin, title, sessionState })` (book-cull の `takedownBook` と同じ本棚検索ロジックを再利用した **READ-ONLY** 追加メソッド。ログイン/出版/取り下げ等の状態変更操作は一切行わない) で KDP 本棚の状態ラベルを 5 値 (`live`/`draft`/`in_review`/`blocked`/`not_found`) に正規化して取得 → `live` なら `Book.publish_status='published'` に更新 + `audit_log` (`action='kdp.publish.published'`) を記録。`session_expired` を検知したら以降の本の走査を即座に打ち切り (連打防止)、LINE 双方向認証リレーが設定済みなら通知のみ行う (**再ログインは行わない** — 別タスクの責務外)。アカウント/セッション未設定時は何もせず正常終了。 |
+| 実行内容 | `scripts/kdp-publish.mjs` が入稿成功時に立てる `publish_status='submitted'` は、Amazon 側の審査が通り実際に LIVE (販売中) になったかまでは分からない。本タスクはそのギャップを埋める: 作成日最古の active `Account` の `kdp_session_state_enc` を復号 → `publish_status='submitted'` の `Book` を全件取得 → 各本について `BookshelfPort.readBookStatus({ asin, title, sessionState })` (book-cull の `takedownBook` と同じ本棚検索ロジックを再利用した **READ-ONLY** 追加メソッド。ログイン/出版/取り下げ等の状態変更操作は一切行わない) で KDP 本棚の状態ラベルを 5 値 (`live`/`draft`/`in_review`/`blocked`/`not_found`) に正規化して取得 → `live` なら `Book.publish_status='published'` に更新 + `audit_log` (`action='kdp.publish.published'`) を記録。**`session_expired` 検知時の自己回復 [F-086 根本対応 2026-08-20]**: 従来は「通知して即打ち切り・再ログインしない」設計だったが、これが6h毎の「本棚セッションが切れています」通知スパムの真源であり、かつ本棚同期(submitted→published 昇格)も黙って停止していた。そこで `refreshSession` を DI し、切れ検知時に**1巡につき1度だけ自動再ログイン**(`refreshKdpSession`・本棚着地・住宅proxyあれば経由)を試行 → 成功なら**新セッションを最古 active `Account` の `kdp_session_state_enc` へ書き戻し**、同じ本を再読込して走査を継続する(＝`sales.fetch` と同型に自己回復し通知は出ない)。再ログインに失敗した(=CAPTCHA等で人手が要る)ときだけ `kdpSessionAlertGate()`(24hクールダウン)を通して LINE 通知し打ち切る。`refreshSession` 未注入時(旧動作)は従来通り通知して打ち切り。アカウント/セッション未設定時は何もせず正常終了。 |
 
 **ウィザード途中(STEP2→3/出版)で `max_auth_age` 再認証が割り込む — 各段で再認証を通す (2026-08-03 発覚・修正)**: `kdp.submit` の実出版検証で `step2 blocked: content_not_advanced` が発生。R2 スクショで **STEP2→STEP3 の「続行」クリック時に Amazon パスワード再認証ウォール(`/ap/signin`)へ飛んでいた**ことを確認(session は browse/STEP1/アップロードには有効だが、出版に近い遷移で `max_auth_age` 再認証が強制される)。旧実装は再認証を **冒頭(`passReauth`)のみ**で処理しており、途中で出たウォールを検知できず「続行」ボタンを押し続けて 8 分でタイムアウト→blocked。**修正**: `isReauthWall(url)` を追加し、STEP2 の続行ループ・STEP3 冒頭・STEP3 出版クリック後で再認証ウォールを検知したら `passReauth`(password 実タイプ＋OTP)を都度実行してから続行/再クリックする。`fillStep2`/`fillStep3` に `args` を渡す。**運用**: 途中再認証は OTP(LINE リレー)を要求しうるので運営者の 6 桁返信が必要になる場合がある。
 
@@ -2200,9 +2348,10 @@ export const MarketerMetadataOutput = z.object({
 | 項目 | 値 |
 |---|---|
 | 責務 | テーマ候補生成 (F-001) / 長期プラン (F-002) / KDP メタデータ (F-040) |
-| 使うツール | `web_search_20250305` (Anthropic server tool — `@anthropic-ai/sdk` の `messages.create({ tools: [{ type: 'web_search_20250305', name: 'web_search' }] })` 経由で利用) / Tavily (フォールバック A-03) / `db.read`（過去出版・売上） |
+| 使うツール | **Tavily API (主検索、2026-08〜)** — `TavilyWebSearch`(`tools/web-search.ts`) を `marketer/tavily-research.ts` から呼び、売れ筋/競合を数秒で取得しプロンプト注入 → server tool 無しの通常補完 (`disableServerTools`) で生成。/ `web_search_20250305` (Anthropic server tool、`max_uses:5`) = **Tavily キー未設定/失敗時のフォールバック** / `db.read`（過去出版・売上） |
 | プロンプト | `role='marketer'` の active 版 + ジャンル特化 |
-| 想定モデル | Claude Opus 4.7 (初期推奨)、F-022/F-023 で切替可 |
+| 想定モデル | Claude Opus 4.7 (初期推奨)、F-022/F-023 で切替可。Tavily 主検索化によりプロバイダ非依存（Gemini/GPT でも Web リサーチ可）|
+| 性能 | テーマ生成の実測は純正 web_search 時 3〜7 分（時々 ~5 分でタイムアウト失敗）。Tavily 事前検索化で数十秒に短縮。キー = DB `api_credentials(provider='tavily')` → env `TAVILY_API_KEY`（`lib/get-tavily-key.ts`）|
 
 #### 6.3.2 Writer [F-003/F-004]
 
@@ -2309,6 +2458,48 @@ export const JudgeOutput = z.object({
 | 使うツール | `db.read`（本文・タイトル・テーマ） |
 | プロンプト | `role='judge'` |
 | 想定モデル | Claude Sonnet 4.6 または Haiku（コスト最優先） |
+| maxOutputTokens | **12288**（2026-09-01 に 4096 から引き上げ） |
+
+> **実障害 (2026-09-01)**: 14 章・入力約 25 万 token の長編で、判定 JSON（6 軸＋コメント）が
+> `maxOutputTokens: 4096` に達して途中で切れ、`judge.invalid_output: failed to parse JSON` が
+> **決定論的に 2/2 回**発生（`token_usage.output_tokens` がちょうど 4096 で判別可能）。graphile 側の
+> judge は `max_attempts=2` なので即 exhausted になり本が judging で止まる。対策として上限を 12288 に
+> 引き上げた（`packages/agents/src/judge/index.ts` `DEFAULT_MAX_OUTPUT_TOKENS`）。長編で再発した場合は
+> まず `output_tokens == 上限` を疑う。
+>
+> **実障害その2 (2026-09-02)**: `JudgeInputSchema.chapters` が `.max(15)` のままで、大容量化後の 16 章以上の本
+> （競馬シリーズ等）が zod `too_big` で審査に入れず exhausted。editor の `.max(10)` と同族のバグ。
+> **章数上限は writer/editor/judge の 3 スキーマとも 30 で統一**（章数仕様を変えるときは 3 箇所同時に変える）。
+
+#### 6.3.5b SEO Optimizer
+
+`packages/agents/src/seo-optimizer/`（`optimizeSeo`）— judge PASS 後・export 直前に挿入される再最適化ステップ (`pipeline.book.seo`, §5.3.8b)。Marketer がテーマ段階 (完成前) に生成した `kdp_metadata` を、**完成原稿**を踏まえて Amazon SEO (A9/A10) 観点で再最適化する。
+
+```typescript
+export const SeoOptimizerInput = z.object({
+  book_id: z.string(), job_id: z.string().optional().nullable(),
+  genre: z.string().nullable(),
+  title: z.string(), subtitle: z.string().optional(), target_reader: z.string(), hook: z.string().optional(),
+  chapter_digest: z.string(),   // 完成原稿のアウトライン/見出し要約 (呼出側で切り詰め)
+  current_metadata: z.object({ description: z.string(), keywords: z.array(z.string()), categories: z.array(z.string()) }),
+})
+export const SeoOptimizerOutput = z.object({
+  description: z.string().max(4000),
+  keywords: z.array(z.string().min(1).max(50)).min(1).max(7),
+  categories: z.array(z.string()).length(2),
+  title_suggestion: z.string().optional(),    // 提案のみ、本体タイトルは自動反映しない
+  subtitle_suggestion: z.string().optional(),
+  rationale: z.string().optional(),
+})
+```
+
+| 項目 | 値 |
+|---|---|
+| 責務 | 完成原稿ベースで `kdp_metadata.description/keywords/categories` を SEO 観点で再最適化 |
+| 使うツール | `db.read`（完成原稿ダイジェスト・現行メタデータ、worker タスク側で取得） |
+| プロンプト | `role='seo_optimizer'`（genre=null 既定 1 本、`{genre_guidance}` で全 29 ジャンルに対応） |
+| 想定モデル | GPT-5（分析的タスク） |
+| DB 変更 | なし（既存 `kdp_metadata` 行の同カラムを UPDATE） |
 
 #### 6.3.6 Revision Applier（既存エージェントの再利用）
 
@@ -2922,14 +3113,66 @@ export const logger = pino({
   (生成/再生成ボタン＋画像プレビュー`/api/promotion/[channel]/[avatar|banner]`)。生成された定番
   ハッシュタグ(`strategy_json.hashtag_strategy.core`)は `promotion.posts.generate` の投稿本文に
   `appendHashtags`(X重み280内)で自動付与される。実投稿はせず、表示名/bio/画像は運営者が各SNSに適用。
-- **F-058 IG/TikTok 実投稿 (中継方式・現行)**: X 以外の SNS は公式投稿 API の要件が重い/動画必須のため、
-  当初は多SNS投稿サービス Ayrshare を検討したが、**現行は IG=Make.com Webhook 中継 / TikTok=Content Posting API
+- **F-058 IG/TikTok 実投稿 (中継方式)**: X 以外の SNS は公式投稿 API の要件が重い/動画必須のため中継方式を採る。
+  > **Zernio(getlate) 中継へ移行 (2026-08-05)**: TikTok 自前 Content Posting API 審査が「個人/社内利用不可」で
+  > **恒久却下**(F-063)。また IG の Make.com 経路はシナリオ自動停止で不安定だった。対策として審査済みパートナー
+  > **Zernio** に IG/TikTok を寄せる。料金は**アカウント課金制で最初の2アカウント無料**＝IG+TikTok は無料
+  > (投稿従量なし)。実装 `apps/worker/src/tasks/promotion-post/zernio-publisher-port.ts`(`createZernioPublisherPort`):
+  > `GET https://zernio.com/api/v1/accounts`(Bearer `ZERNIO_API_KEY`)で channel→platform のアカウントを解決し、
+  > `POST /v1/posts`{content, publishNow:true, profileId, platforms:[{platform,accountId}],
+  > mediaItems:[{type:'image'(IG)|'video'(TikTok), url(公開HTTPS=署名付きR2 URL)}], tiktokSettings(privacy PUBLIC_TO_EVERYONE等)}。
+  > `defaultResolvePort` は **IG/TikTok && `ZERNIO_API_KEY` があれば Zernio を最優先**(Make/Ayrshare/自前TikTokより先)。
+  > 未設定なら従来経路のまま=無破壊で段階移行。**IG 画像は 4:5〜1.91:1 必須**(生成の value 1024²/promo 1080² は正方形でOK、
+  > 本表紙 0.67 は不可)。**IG・TikTok とも本番でエンドツーエンド公開検証済み (2026-08-06)**: `ZERNIO_API_KEY` を
+  > A2P-Worker に登録しデプロイ→`promotion.dispatch`→`promotion.post.publish`→`zernio post published` を確認
+  > (IG=画像1080², TikTok=`ensureTikTokVideoForPost` が publish 直前に 9:16 mp4 をオンデマンド生成→R2署名URL→
+  > `tiktokSettings.privacy_level=PUBLIC_TO_EVERYONE` で公開投稿)。接続アカウントは IG/TikTok とも `goodbooks_intro`。
+  > **IG は Make(webhook) 経由を廃し Zernio 経路が本番デフォルト**。`promotion_channel_settings.tiktok.auto_enabled` を
+  > true に戻して TikTok 自動運用を再開。
+  > X は Zernio の3アカウント目($6/月)。投稿だけなら公式API継続が最安、**インプレッション等の分析が欲しい場合のみ Zernio 移行**が割安
+  > (X公式でデータ取得は $200/月〜)。IG/TikTok は無料枠のため Zernio Analytics のインプレッションが無償で付随。
+  以下は Zernio 移行前の旧構成の記録:
+  当初は多SNS投稿サービス Ayrshare を検討したが、**IG=Make.com Webhook 中継 / TikTok=Content Posting API
   直叩き** に変更 (Ayrshare 経路・`AYRSHARE_API_KEY` は撤去。詳細は F-063)。IG/TikTok はメディア必須のため、
   `promotion.post.publish` が `ensureBookPromoImage`(本ごとに1枚・`books.promo_image_key` にキャッシュ,
   token_usage role=`promo_image`)を生成し、署名URL(1h)を `mediaUrls` に渡す。`defaultResolvePort` は
   **instagram=webhook(Make) / tiktok=`createTikTokPublisherPort`(直API) / note/blog=webhook** を選ぶ。
   接続テストは `probeChannelAuth` で手段別に確認 (F-063 参照)。キャプションは X のみ 280 重み制約、
   IG/TikTok/note/blog はフルキャプション＋全ハッシュタグ (`appendPurchaseLink`/`appendHashtags` を X 限定制約に)。
+  > **Webhook 応答解釈 & 失敗可視化 (2026-08-04)**: Make の既定応答は `200 "Accepted"`(受理しただけで実投稿の
+  > 成否は不明)。この 2xx を一律 posted 扱いにすると、Make のオペ枠切れ/IG接続失効で**黙って投稿が止まっても
+  > 気付けない**。対策: (A) `interpretWebhookBody`(http-publisher-port)で 2xx body を解釈し、JSON `{ok:false}`/
+  > `{error}`/`{status:'error'|'failed'}` は **failed**、`{url}` があれば `external_url` に採用、"Accepted" 等は従来
+  > どおり成功扱い。→ Make シナリオ末尾に **Webhook Response** を足して JSON を返す運用にすれば実成否が DB に乗る。
+  > (B) `promotion.post.publish` は実投稿失敗時に **LINE 通知** (`⚠️ A2P: <channel> の自動投稿に失敗…`)。
+  > 課金面: IG の Make 中継は **Core プラン(≒$9/月, 10,000 オペ)** で十分(Ayrshare Premium ≒$149/月は不採用)。
+  > **note 実投稿 (ブラウザ自動化, 2026-08-04)**: note は公式投稿 API が無いため `note-publisher-port.ts` で
+  > Playwright ログイン→記事投稿する(env `NOTE_EMAIL`/`NOTE_PASSWORD`)。フロー(実地検証済): `note.com/login`
+  > で email+password ログイン(reCAPTCHA v3 は不可視・非ブロック)→ `note.com/notes/new` →
+  > `editor.note.com/notes/<id>/edit/`(タイトル=`textarea[placeholder=記事タイトル]` / 本文=`div[contenteditable=true]`)
+  > → 「公開に進む」→ `.../publish/` → 「投稿する」で公開。`defaultResolvePort` は note に creds があれば
+  > `createNotePublisherPort()` を選ぶ(無ければ webhook フォールバック)。__name シム注入は KDP port と同様。
+  > **接続設定 (2026-08-04)**: note は Webhook/汎用トークンではなく **メール＋パスワード** で接続する。UI(channel-board)は
+  > note のとき専用欄(メール/パスワード)を出し、`setChannelConnectionCore` が **メール→config_json.note_email / パスワード→token_enc(暗号化)** に保存。
+  > note publisher は資格情報を **UI 保存値(config.note_email / config.token) 優先 → env(NOTE_EMAIL/NOTE_PASSWORD) フォールバック** で解決する。
+  > **reCAPTCHA 回避＝セッション再利用 (2026-08-04, 実地確定)**: worker(Railway データセンターIP)から note ログインすると
+  > **ログイン画面で reCAPTCHA を要求されブロック**される(住宅IPでは出ない)。→ note publisher は `config_json.note_session_enc`
+  > (住宅IPで取得した storageState を `API_CRED_KEY` で暗号化したもの)を復号し **storageState として読み込み、エディタ直行で
+  > ログイン自体を回避**する。セッションが無効な時のみログイン試行(=データセンターでは失敗し `debug/note/login-fail-*.png` を R2 保存)。
+  > **セッション取得/更新は住宅IPで実行**(scripts/ローカル実行で login→`ctx.storageState()`→暗号化→DB保存)。KDP と同じ「住宅IPで取得・
+  > worker で再利用」方式。セッション失効時は再取得が必要(失敗時は LINE 失敗アラートで検知)。
+  > **IG 育成(value)画像 (2026-08-04)**: 従来の合成/文字なしムード写真をやめ、**gpt-image-2 で「文字入りバリューカード」を一発生成**
+  > (`buildValueCardImage2Prompt`＋`valueCardTextFromBody`, promo-image.ts)。本文から気づき見出しを抽出し、日本語を正確に描いた
+  > 保存されやすい編集デザインを直接出力(IG は画像が主役＝保存・フォロー起点)。gpt-image-2 は日本語タイポを正確に描けるため合成不要。
+  > **note アイキャッチ (2026-08-04)**: note の book 投稿サムネも合成(`ensureBookPromoImage`)をやめ、**gpt-image-2 で「書名＋見出し入り」の
+  > 横長(3:2)アイキャッチを一発生成**(`buildBookEyecatchImage2Prompt`＋`generateBookEyecatchImage2`, promo-image.ts)。publish の
+  > `defaultBuildMediaUrls` は channel==='note' && book の時だけこの関数を使う(IG/TikTok の book 投稿は従来どおり実表紙合成)。
+  > **note 記事はキュレーター声 (2026-08-04)**: note アカウントは書評/実用書メモ「良い本を読む習慣」。promoter の note_article を
+  > **著者本人の一人称(「宮田海斗です/出版しました」)ではなく、第三者の書店員/読書家が本を紹介する体裁**で書くよう指示変更
+  > (`packages/agents/src/promoter/index.ts` buildPromoterUserMessage)。著者名は「宮田海斗さんの新刊」等の三人称参照のみ。
+  > **promoter 構造化出力の頑健化 (2026-08-04)**: opus 系が nested 配列/オブジェクト(promo_copy/x_posts/*_actions 等)を
+  > **JSON 文字列化して返す**ことがあり zod 検証失敗→プラン空/投稿0件になっていた。`PromotionPlanOutputSchema` の各 nested を
+  > `jsonish()`(検証前に JSON 文字列を parse で復元, promoter.ts)で包み、プロンプトにも「文字列化しない」指示を追加して解消。
   **IG販促画像の刷新 (2026-07)**: 旧「文字なし雰囲気写真」は購買に繋がらないため、
   `packages/output/image/compose-promo.ts` `composePromoCreative()` で **1080² のデザイン販促クリエイティブ**
   (実フォント合成=文字化けゼロ・ジャンル別背景＋採用表紙(影付き)＋新刊/KU無料バッジ＋ベネフィット見出し
@@ -2949,13 +3192,26 @@ export const logger = pino({
 - **F-060 TikTok スライド動画(多エージェント)**: 「続きが気になる(射幸心を煽る)」9:16 縦動画を自動生成。
   台本は5エージェントの直列パイプライン(`packages/agents/src/tiktok-video/`): `tiktok_scenario`(構成台本・強フック→小出し→クリフハンガー)→`tiktok_creator`(絵コンテ・背景画像プロンプト+テロップ)→`tiktok_editor`(尺配分・VideoScript確定)→`tiktok_proofreader`(校閲)→`tiktok_marketer`(フック/CTA/ハッシュタグ強化)。全て generateText+extractLlmJson。prompt=`apply-tiktok-video.ts`(scenario/marketer=Opus, 他=Sonnet)。
   レンダリング(`apps/worker/src/tasks/promotion-post/video-render.ts`): シーン毎に gpt-image-1(1024x1536縦・文字なし)→`composeCoverTypography`でテロップ焼込(Noto Sans JP流用)→OpenAI TTS(`tools/tts.ts` `audio.speech`, gpt-4o-mini-tts, mp3, cost=token_usage role='tts_audio')→ffmpegで画像+音声を1080x1920クリップ化(-shortest=音声尺)→concat。**ffmpegはapps/worker/Dockerfileにapt-getで追加**。child_processはexecFile(archive-db-backup前例)。
+  > **シーン数上限 `MAX_SCENES=6` (2026-08-06 追加)**: シーン数=gpt-image 生成回数のため、台本が多シーンを返すとレンダが極端に遅く・高コストになる(実測: 初回本番検証で **11シーン→約12分・gpt-image 11回**)。`createTikTokVideoScript` に (1) scenario は beats 3〜5 個、(2) editor は「6本以下・各5〜8秒」を指示、(3) 最終出力を**コード側でハード上限**(先頭 `MAX_SCENES-1` 本＋末尾1本=CTAを温存)に間引く、の三重ガードを実装。尺は実際にはナレーション音声長(-shortest)で決まるため、`seconds` フィールドではなくシーン数がコスト/時間の主因。
   worker `promotion.video.generate {topic?,book_id?,target_seconds?}`: 戦略(concept/tone/柱/core hashtags)を材料に台本→レンダ→R2(`promotion/videos/{post_id}.mp4`)→`promotion_posts`(channel='tiktok', kind=book有→promo/無→value, **media_key**=mp4, 本文=caption+ハッシュタグ, status=draft→scheduled)。先にdraft作成してidをキーにし、失敗時はdelete。
   **`promotion_posts.media_key`**(事前レンダ済みメディアのR2キー)を追加。publishの`buildMediaUrls`は media_key最優先で署名URL化(IG/TikTok)→無ければ本の販促画像/投稿ごと画像。TikTok実投稿は当初Make中継を検討したが、Makeに公式のオーガニック投稿モジュールが無い(広告用のみ/第三者Zernioは有料)ため **Content Posting API 直叩き**に変更(F-063)。UI=tiktokチャンネルボードの「TikTok動画を生成」カード＋「TikTok接続(OAuth)」カード。
 - **`promotion_posts`** (F-052 販促投稿キュー)。`book_id`, `channel`, `title?`, `body`, `scheduled_for`,
   `status` (draft/scheduled/posting/posted/failed/skipped/canceled), `external_url?`, `error?`, `posted_at?`。
   channel は **x / instagram / tiktok / note / blog** (旧 sns を X/IG/TikTok に分割)。
-- **`blog_posts`** (F-052b 所有ブログ)。`slug @unique`, `title`, `body_md`, `status`, `published_at?`。
+- **`blog_posts`** (F-052b 所有ブログ)。`slug @unique`, `title`, `body_md`, `meta_description?`, `cover_image_url?`, `status`, `published_at?`。
   ツール自身が公開・運用するブログ (第三者接続・KYC 不要で「作成〜運用まで完全自律」)。公開 URL `/blog`, `/blog/[slug]`。
+  - `cover_image_url` = 良書紹介記事が扱う**実在書籍の表紙画像 URL**。`book_cover` エージェント
+    (`packages/agents/src/book-cover`) が公開時に解決し、一覧/詳細で書影として表示する
+    (自社本 `book_id` がある記事は本棚の R2 書影を優先。無い/未解決なら装丁風 PseudoCover にフォールバック)。
+  - **`book_cover` 解決フロー (誤書影を絶対に出さない設計)**:
+    ① LLM(sonnet-5) で紹介対象書籍を同定 (書名/著者/参考 ISBN) →
+    ② **書名の中核** (`coreTitle`: 副題/レーベルを落とした先頭塊。副題込みだと Amazon 商品名と字句が食い違い照合が外れるため) を作り、
+    「中核 著者」で **Amazon 書籍検索** (`/s?k=…&i=stripbooks`, `data-asin` を抽出) → 「中核」のみでも検索 (0件保険) →
+    ③ **NDL(国会図書館サーチ)OpenSearch** を中核で引き、書名一致書誌の ISBN も候補に足す (Amazon 検索が関連書しか返さない長い和書名等の保険。**常に併用**) →
+    ④ 候補 ASIN(=ISBN-10) を順に **`/dp/<ASIN>` の実商品名を取得し、中核書名を包含するときだけ採用** (＝Amazon 自身の商品名で本人確認。幻覚 ISBN や別の本を機械的に弾く。短い書名は著者名の裏取りも必須) →
+    ⑤ その ASIN の Amazon 書影 (`images-na.ssl-images-amazon.com/images/P/<ISBN10>.09.LZZZZZZZ.jpg` 他) を byte サイズで実在検証 (欠品プレースホルダ ~43byte を除外) して採用。
+    すべて**非致命** (特定不能は null → PseudoCover)。
+    - **重要な設計判断**: キーレス書籍検索 API (Google Books=quota 超過, openBD=収録率低, NDL title=曖昧一致) は単独では対象書を一意特定できない。当初 openBD の負の検証のみで採用したところ、**openBD 未収録書で LLM の幻覚 ISBN が指す別の本の書影を6/12件掴む事故**が発生。対策として「Amazon 検索で実在商品の ASIN を得 → その商品名で本人確認」を核に据え、NDL を ISBN 補完に使う現行方式へ全面刷新した。Amazon への HTTP はデータセンター IP で CAPTCHA ブロックされ得るが、その場合も照合が通らず null(＝誤書影でなくフォールバック)に安全側で倒れる。
 - **`app_settings`** に `promo_auto_on_publish_enabled` / `promo_auto_post_enabled` / `promo_dispatch_cron`。
 - **`bakeoff_runs`** / **`bakeoff_results`** (F-053 モデル比較)。同一役割×同一入力を複数モデルで
   走らせ、出力・コスト(cost_jpy)・レイテンシ(latency_ms)を保存、comparator が rank/quality_score を付与。
@@ -3028,6 +3284,14 @@ gpt-image-2 単価行を seed 済 (`apply-openai-catalog.ts`)。本ドキュメ�
     実 HTTP (Webhook 汎用経路 / X API v2) は http-publisher-port.ts に隔離。env `PROMOTION_PUBLISHER=stub`。
   - **トリガー**: `updateBookPublishStatus` で「未出版→published」かつ `promo_auto_on_publish_enabled` の時に
     `pipeline.book.promotion.generate` を enqueue → プラン生成 → 投稿キュー生成 → dispatcher が自動投稿。
+- **販促プレイブック(市場リサーチ)を生成器に接続 (F-064 拡張, 2026-08-07)**: `promo_strategist`(web_search)が
+  各チャンネルの「今伸びている型/フック/ハッシュタグ/避けること」を調べ `promotion_channel_settings.playbook_json`
+  に保存する `promotion.playbook.refresh` を、これまで **cron 未登録で一度も定期実行されていなかった**ため
+  crontab に**週次(`0 16 * * 1`=火01:00 JST, 静的・常時ON)**で追加(`promotion-playbook-refresh-weekly`)。
+  さらに従来は後段の `content_optimizer`(微修正)だけがプレイブックを参照し、**本体の生成器が市場リサーチ抜きで
+  投稿を作っていた**問題を解消: `promoter`(書籍販促プラン)と `content_creator`(育成投稿)の入力に `playbook_guidance`
+  を追加し、生成時に `playbookToGuidance(playbook_json)` を注入する(promoter は x/instagram/note のプレイブックを
+  チャンネル見出し付きで結合)。これにより SNS 投稿が生成段階から研究に基づく。
 - **SNS 日次見直し (F-061)** `promotion.review.daily`（cron）: 戦略のある各chの直近3日 scheduled 投稿を
   `content_optimizer` で非破壊推敲。promo投稿のURL(購入導線)が消える改善は破棄、changed のみ更新。
   worker 側にメタ漏れガード（`id=`/公開タイミング分散等の文言を除去）。`AppSettings.promo_daily_review_enabled`
@@ -3185,9 +3449,9 @@ ChatGPT ブラウザ版で高品質だった運営者の実証済みフォーマ
   + `audit_log(action='book.content.approve')`) を行う。無効/失敗時は従来通り `Book.status='content_review'`。
 - **`autopass_cover_enabled`**: `pipeline.book.judge` が合格 (score_total>=80) した際、`bulkAdoptCoversCore` SA と
   同じ遷移を単一書籍・単一カバーに対して行う: `status='generated'` のカバーを 1 件 (作成日時最古) 選び
-  `adopted`、同書籍の他カバーを `rejected`、`pipeline.book.export` Job INSERT+enqueue、
-  `audit_log(action='covers.bulk_adopt')`。**生成済カバーが 0 件なら自動採用せず従来通り `Book.status='thumbnail'`
-  で停止**(フォールバック)。
+  `adopted`、同書籍の他カバーを `rejected`、`pipeline.book.seo` Job INSERT+enqueue (SEO 再最適化 §5.3.8b/§6.3.5b
+  を経て `pipeline.book.export` へ進む)、`audit_log(action='covers.bulk_adopt')`。**生成済カバーが 0 件なら
+  自動採用せず従来通り `Book.status='thumbnail'` で停止**(フォールバック)。
 - **`autopass_theme_enabled` + `pipeline_themes_per_day` / `pipeline_theme_direction` / `pipeline_theme_cron`**:
   新規タスク **`pipeline.theme.auto`** (`apps/worker/src/tasks/pipeline-theme-auto.ts`)。有効な `Account`
   (`status='active'`, 作成日昇順の先頭) を解決し、`pipeline.theme.generate` と同じ Marketer 呼出経路

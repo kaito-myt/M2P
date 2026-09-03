@@ -52,6 +52,9 @@ export const navSections: readonly NavSection[] = [
       { key: 'content-review', label: m.itemContentReview, href: '/content-review', enabled: true },
       { key: 'thumbnails', label: m.itemThumbnails, href: '/covers', enabled: true },
       { key: 'kdp', label: m.itemKdpChecklist, href: '/kdp/checklist', enabled: true },
+      { key: 'bookwalker', label: m.itemBwChecklist, href: '/bookwalker', enabled: true },
+      { key: 'kobo', label: m.itemKoboChecklist, href: '/kobo', enabled: true },
+      { key: 'booth', label: m.itemBoothChecklist, href: '/booth', enabled: true },
     ],
   },
   {
@@ -101,7 +104,6 @@ export const navSections: readonly NavSection[] = [
     items: [
       { key: 'jobs', label: m.itemJobLogs, href: '/jobs', enabled: true },
       { key: 'alerts', label: m.itemAlerts, href: '/alerts', enabled: true },
-      { key: 'kdp-auto', label: m.itemKdpAutoSubmit, href: '/kdp/auto', enabled: false },
       { key: 'audit', label: m.itemAuditLog, href: '/audit', enabled: true },
       { key: 'accounts', label: m.itemAccounts, href: '/accounts', enabled: true },
       { key: 'masters', label: m.itemMasters, href: '/masters', enabled: true },

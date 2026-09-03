@@ -41,6 +41,10 @@ export const UpdateSettingsInputSchema = z.object({
   sales_auto_fetch_cron: z.string().optional(),
   promo_auto_on_publish_enabled: z.boolean().optional(),
   promo_auto_post_enabled: z.boolean().optional(),
+  kdp_auto_submit_enabled: z.boolean().optional(),
+  kdp_submit_dry_run: z.boolean().optional(),
+  bw_auto_submit_enabled: z.boolean().optional(),
+  bw_submit_dry_run: z.boolean().optional(),
   kdp_submit_timeout_minutes: z.number().int().min(1).max(60).optional(),
   kdp_submit_retry_count: z.number().int().min(0).max(5).optional(),
   job_log_retention_days: z.number().int().min(7).max(365).optional(),
@@ -70,6 +74,8 @@ export interface AppSettingsRow {
   sales_auto_fetch_cron: string;
   promo_auto_on_publish_enabled: boolean;
   promo_auto_post_enabled: boolean;
+  kdp_auto_submit_enabled: boolean;
+  kdp_submit_dry_run: boolean;
   kdp_submit_timeout_minutes: number;
   kdp_submit_retry_count: number;
   job_log_retention_days: number;
@@ -204,6 +210,18 @@ export async function updateSettingsCore(
     }
     if (data.promo_auto_post_enabled !== undefined) {
       updateData.promo_auto_post_enabled = data.promo_auto_post_enabled;
+    }
+    if (data.kdp_auto_submit_enabled !== undefined) {
+      updateData.kdp_auto_submit_enabled = data.kdp_auto_submit_enabled;
+    }
+    if (data.kdp_submit_dry_run !== undefined) {
+      updateData.kdp_submit_dry_run = data.kdp_submit_dry_run;
+    }
+    if (data.bw_auto_submit_enabled !== undefined) {
+      updateData.bw_auto_submit_enabled = data.bw_auto_submit_enabled;
+    }
+    if (data.bw_submit_dry_run !== undefined) {
+      updateData.bw_submit_dry_run = data.bw_submit_dry_run;
     }
     if (data.kdp_submit_timeout_minutes !== undefined) {
       updateData.kdp_submit_timeout_minutes = data.kdp_submit_timeout_minutes;

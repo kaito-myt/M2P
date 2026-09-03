@@ -166,6 +166,28 @@ model Book {
   // アシスト出版ツール (scripts/kdp-publish.mjs) が対象として拾い、成功後に false + submitted へ。
   kdp_publish_queued        Boolean   @default(false)
   kdp_publish_queued_at     DateTime?
+  // [F-041] creation_limit / no_draft でブロックされた本の再試行クールダウン期限。
+  // KDP は 1 日 5 冊の「作成数制限」があり、CREATE 反復は枠を浪費するだけなので、
+  // ブロック時は ~20h 先を入れて dispatcher が翌日まで再試行をスキップする。
+  kdp_submit_cooldown_until DateTime?
+  // [F-094] BOOK☆WALKER 出版ステータス: unlisted=未対応 | submitted=申請済(審査中) | published=販売中 | failed=申請失敗
+  bw_publish_status         String    @default("unlisted")
+  // [F-094] BOOK☆WALKER 自動入稿キュー。サーバー(bw.submit)が拾い、申請成功で false + submitted へ。
+  bw_publish_queued         Boolean   @default(false)
+  bw_publish_queued_at      DateTime?
+  bw_submitted_at           DateTime?
+  // [F-094] 申請失敗時の再試行クールダウン(~6h)。永久リトライループ防止。
+  bw_submit_cooldown_until  DateTime?
+  // [F-095] 楽天Kobo (Kobo Writing Life) 出版ステータス/キュー。入稿エンジンは準備中(初回ログインのセッション保存待ち)。
+  kobo_publish_status       String    @default("unlisted")
+  kobo_publish_queued       Boolean   @default(false)
+  kobo_publish_queued_at    DateTime?
+  kobo_submitted_at         DateTime?
+  // [F-096] BOOTH (booth.pm) 出版ステータス/キュー。入稿エンジンは準備中(初回ログインのセッション保存待ち)。
+  booth_publish_status      String    @default("unlisted")
+  booth_publish_queued      Boolean   @default(false)
+  booth_publish_queued_at   DateTime?
+  booth_submitted_at        DateTime?
   // [F-058] IG/TikTok 販促投稿に使う AI 生成画像の R2 キー (遅延生成・本ごとに再利用)。
   promo_image_key           String?
   cost_jpy_total            Decimal   @default(0) @db.Decimal(10, 2)
@@ -298,6 +320,11 @@ model PromotionChannelSetting {
   // F-064 研究駆動の販促プレイブック(PromoPlaybook)。web_search リサーチの結果。
   playbook_json        Json?
   playbook_updated_at  DateTime?
+  // [F-077] ブラウザ自動操作(IG/TikTok bot)用のログイン済みセッション。
+  // 運営者がローカル(住宅IP)で 1 回ログイン→ storageState を AES-256-GCM(API_CRED_KEY)で
+  // 暗号化して保存。ワーカーが復号して follow/like に再利用する。未接続なら null。
+  browser_session_enc        String?  @db.Text
+  browser_session_updated_at DateTime?
   created_at   DateTime @default(now())
   updated_at   DateTime @updatedAt
 
@@ -343,6 +370,11 @@ model BlogPost {
   slug         String    @unique
   title        String
   body_md      String    @db.Text
+  // blog_seo エージェントが公開前に生成するメタディスクリプション (検索結果表示用、任意)。
+  meta_description String? @db.Text
+  // 紹介対象の実在書籍の表紙画像 URL (book_cover resolver が openBD 検証→Amazon 書影で解決)。
+  // 自社本(book_id)がある記事は本棚の書影を優先し、これは外部良書紹介記事の書影に使う。
+  cover_image_url String? @db.Text
   status       String    @default("published") // draft | published
   published_at DateTime?
   created_at   DateTime  @default(now())
@@ -377,6 +409,12 @@ model PromotionPost {
   // 販促品質: content_optimizer(ペルソナ×戦略)による総合品質スコア(0-100)と改善根拠。
   quality_score Int? // 生成/日次見直し時に付与
   review_reason String? @db.Text // ペルソナ反応・改善理由(非公開・監査用)
+  // [F-072] 実エンゲージメント実測 (promotion.metrics.fetch が各チャンネルAPIから取得)。
+  impressions        Int? // 表示回数 (X: public_metrics.impression_count)
+  likes              Int? // いいね数
+  reposts            Int? // リポスト/シェア数
+  replies            Int? // 返信/コメント数
+  metrics_fetched_at DateTime? // 最終実測取得時刻 (null=未取得)
   created_at    DateTime  @default(now())
   updated_at    DateTime  @updatedAt
 
@@ -387,6 +425,62 @@ model PromotionPost {
   @@index([book_id])
   @@index([channel, status])
   @@map("promotion_posts")
+}
+
+// =====================================================================
+// [F-073] SNSグロース(フォロワー育成)計測 — フォロワー数の時系列スナップショット
+// =====================================================================
+// promotion.metrics.fetch が各チャンネルの account 統計(フォロワー/フォロー/投稿数)を
+// 日次で記録する。org.promo.tick がこの時系列と promotion_posts の実エンゲージメントを
+// 突き合わせ、到達/成長が危機的なら運営者へアラート(growth_alert)を上げる根拠にする。
+model PromotionGrowthSnapshot {
+  id          String   @id @default(cuid())
+  channel     String // x | instagram | tiktok
+  followers   Int? // フォロワー数
+  following   Int? // フォロー数
+  posts_count Int? // 累計投稿数
+  captured_at DateTime @default(now())
+
+  @@index([channel, captured_at])
+  @@map("promotion_growth_snapshots")
+}
+
+// =====================================================================
+// [F-076] X 能動エンゲージメント(フォロー/いいね/リプ)の実行監査＋重複防止
+// =====================================================================
+// promotion.x.engage が実行した各アクションを記録する。(action_type,target_id) 一意で
+// 同じ相手/投稿への二重実行を防ぎ、created_at で当日件数・ランプアップの起点を数える。
+model PromotionXEngagement {
+  id            String   @id @default(cuid())
+  action_type   String // follow | like | reply
+  target_id     String // follow=user id / like=tweet id / reply=tweet id
+  target_handle String?
+  status        String   @default("done") // done | failed
+  error         String?
+  created_at    DateTime @default(now())
+
+  @@unique([action_type, target_id])
+  @@index([created_at])
+  @@map("promotion_x_engagements")
+}
+
+// [F-077] IG/TikTok ブラウザ自動エンゲージ (フォロー/いいね) の実行記録。
+// 取り込み済みログインセッション(promotion_channel_settings.browser_session_enc)を再利用し、
+// Playwright で growth_scout が特定した対象をフォロー/いいねする。凍結リスク管理のため
+// ランプアップ＋重複防止＋当日上限で運用。channel+action+target_handle で重複を排除。
+model PromotionSnsEngagement {
+  id            String   @id @default(cuid())
+  channel       String // instagram | tiktok
+  action_type   String // follow | like
+  target_handle String // @handle など(重複防止キー)
+  target_url    String?
+  status        String   @default("done") // done | already | failed
+  error         String?
+  created_at    DateTime @default(now())
+
+  @@unique([channel, action_type, target_handle])
+  @@index([created_at])
+  @@map("promotion_sns_engagements")
 }
 
 // =====================================================================
@@ -670,6 +764,12 @@ model ModelCatalog {
   fx_rate_usd_jpy           Decimal  @db.Decimal(10, 4)
   fetched_at                DateTime @default(now())
   source                    String // "anthropic_pricing_page_v1" | "openai_pricing_v2" | "manual_edit"
+  // モデル可用性（実際に呼べるか）。model.health.probe が 1 トークン試行で判定して書く。
+  // null=未検証, true=呼べる, false=呼べない(廃止/権限なし等)。cost_optimizer は true のみ推奨し、
+  // active な model_assignment が false のモデルを指したら自己修復(切替)＋アラートする。
+  available                 Boolean?
+  availability_checked_at   DateTime?
+  availability_note         String?  @db.Text // 失敗時のエラー要約（例: 404 / no longer available）
   raw_json                  Json
   is_current                Boolean  @default(true)
 
@@ -828,6 +928,49 @@ model SalesRecord {
   @@index([year_month], map: "sales_records_month_idx")
   @@index([book_id], map: "sales_records_book_id_idx")
   @@map("sales_records")
+}
+
+// [F-085] 固定月額コスト（サブスク/インフラ）。token_usage(=AI従量) に載らない原価を計上し、
+// 黒字化判定を正しくする。例: X API 有料プラン、Zernio(投稿)、Railway(ホスティング)、LINE 等。
+model RecurringCost {
+  id          String   @id @default(cuid())
+  label       String // 表示名 (例: "X API (pay-per-use)")
+  category    String   @default("api") // api | hosting | posting | other
+  monthly_jpy Int // 月額(円・換算後)。auto_source があれば refresh が再計算する。
+  currency    String   @default("JPY") // JPY | USD
+  amount_usd  Decimal? @db.Decimal(10, 2) // USD建て原価の元額(Railway等)。FX再換算に使う。
+  // 自動最新化の方法: 'fx'=USD建てを最新FXで再換算 / 'x_usage'=X API実使用量から推定 / null=手動固定。
+  auto_source String?
+  active      Boolean  @default(true)
+  note        String?
+  created_at  DateTime @default(now())
+  updated_at  DateTime @updatedAt
+
+  @@map("recurring_costs")
+}
+
+// [F-090] Amazon Ads (スポンサープロダクト等) 広告費。公式 Amazon Advertising API の
+// レポートから日次取得し、当月コスト・純利益に計上する。ROAS(広告費対売上)の分母。
+// 1 profile(広告アカウント) × 1 日 で一意 (upsert)。
+model AdSpend {
+  id              String   @id @default(cuid())
+  ads_date        String // "2026-08-26" (日次)
+  year_month      String // "2026-08" (月次集計用)
+  profile_id      String // Amazon Advertising profile id (広告アカウント)
+  spend_jpy       Int // 広告費 (円換算)
+  impressions     Int      @default(0)
+  clicks          Int      @default(0)
+  sales_jpy       Int      @default(0) // 広告経由売上 (attributed, 円)
+  orders          Int      @default(0)
+  currency        String   @default("JPY")
+  amount_original Decimal? @db.Decimal(12, 2) // 元通貨額(USD等)。FX再換算用
+  source          String   @default("amazon_ads_api")
+  fetched_at      DateTime @default(now())
+  updated_at      DateTime @updatedAt
+
+  @@unique([profile_id, ads_date], map: "ad_spend_profile_date_key")
+  @@index([year_month], map: "ad_spend_year_month_idx")
+  @@map("ad_spend")
 }
 
 // =====================================================================
@@ -1010,6 +1153,8 @@ model AppSettings {
   monthly_budget_exceeded         Boolean  @default(false) // T-07-03: 100% 到達で true、翌月初に reset
   force_continue                  Boolean  @default(false) // T-07-03: 運営者が強制続行を許可
   catalog_price_change_threshold  Decimal  @default(0.10) @db.Decimal(4, 3) // ±10%
+  // [F-086] KDPセッション切れ通知のクールダウン基準時刻(連投防止・既定24h)。
+  kdp_session_alert_at            DateTime?
   prompt_auto_approval_enabled    Boolean  @default(false)
   prompt_auto_approval_rollback_h Int      @default(24)
   sales_auto_fetch_enabled        Boolean  @default(false)
@@ -1018,6 +1163,17 @@ model AppSettings {
   promo_auto_on_publish_enabled   Boolean  @default(false)
   // F-052: 期限到来した投稿を自動投稿するディスパッチャ cron を有効化するマスタスイッチ。
   promo_auto_post_enabled         Boolean  @default(false)
+  // [F-076] X 能動エンゲージメント(自動フォロー/いいね)のマスタスイッチ(既定OFF=キルスイッチ)。
+  x_engage_enabled                Boolean  @default(false)
+  // [F-077] IG/TikTok ブラウザ自動エンゲージ(フォロー/いいね)のマスタスイッチ(既定OFF=キルスイッチ)。
+  sns_engage_enabled              Boolean  @default(false)
+  // [F-091] note ブラウザ自動エンゲージ(フォロー/スキ)のマスタスイッチ。noteはIG/TikTokより制限が緩く
+  // 凍結リスクが低いため既定ON(キルスイッチ)。false で note.engage を no-op 停止。
+  note_engage_enabled             Boolean  @default(true)
+  // [F-081] 販促強化の継続AIループ(promotion.growth.loop)のマスタスイッチ(既定OFF=キルスイッチ)。
+  promo_growth_loop_enabled       Boolean  @default(false)
+  // [F-084] TikTok/IGリール動画の冒頭フックを Veo 3.1 実写級動画にする(ハイブリッド)。既定OFF(コスト管理)。
+  video_use_veo_enabled           Boolean  @default(false)
   promo_dispatch_cron             String   @default("*/30 * * * *") // 30分毎に期限到来分をチェック
   // F-061: 日次で予定投稿の本文を content_optimizer が見直す機能のマスタスイッチ。
   promo_daily_review_enabled      Boolean  @default(false)
@@ -1037,8 +1193,29 @@ model AppSettings {
   // kdp_publish_queued=true の本を1冊ずつ kdp.submit へ enqueue する。既定OFF(誤出版防止)。
   kdp_auto_submit_enabled         Boolean  @default(false)
   kdp_auto_submit_cron            String   @default("*/30 * * * *") // 30分毎に入稿キューを1冊処理
+  // KDP日次作成上限(1日5冊)に到達したら、この時刻まで dispatcher を全体停止する(翌JST0時)。
+  // 到達後も30分毎に別の本でCREATEを試みて7分×浪費＋枠消費するのを防ぐグローバル・バックオフ。
+  kdp_creation_paused_until       DateTime?
   // F-041 Phase3: 完全無人時に「出版」ボタンを押さず直前で止めるドライラン(検証用)。
   kdp_submit_dry_run              Boolean  @default(false)
+  // F-094: BOOK☆WALKER サーバー自動入稿(bw.submit)。true で dispatcher が bw_publish_queued=true の
+  // 本を1冊ずつ bw.submit へ enqueue する。既定OFF(誤申請防止)。
+  bw_auto_submit_enabled          Boolean  @default(false)
+  bw_auto_submit_cron             String   @default("*/30 * * * *")
+  // F-094: 「販売を申請する」を押さず基本情報+ファイル入力の下書き保存で止めるドライラン(検証用)。
+  bw_submit_dry_run               Boolean  @default(false)
+  // F-094: BookWalker著者センターのログインセッション(Playwright storageState JSON, AES-256-GCM 暗号化)。
+  // ログインは reCAPTCHA 付きでサーバーから突破不可 — ローカルで手動ログイン後、
+  // scripts/bookwalker/bw-session-push.mjs で保存する(単一アカウント運用のため AppSettings 保持)。
+  bw_session_state_enc            String?  @db.Text
+  // F-095: 楽天Kobo (KWL) サーバー自動入稿 — エンジン実装前のプレースホルダ(タブUIは先行)。
+  kobo_auto_submit_enabled        Boolean  @default(false)
+  kobo_submit_dry_run             Boolean  @default(false)
+  kobo_session_state_enc          String?  @db.Text
+  // F-096: BOOTH サーバー自動入稿 — エンジン実装前のプレースホルダ(タブUIは先行)。
+  booth_auto_submit_enabled       Boolean  @default(false)
+  booth_submit_dry_run            Boolean  @default(false)
+  booth_session_state_enc         String?  @db.Text
   job_log_retention_days          Int      @default(90)
   r2_archive_threshold_days       Int      @default(365) // T-07-09: R2 アーカイブログ保持日数
   ai_disclosure_text              String   @db.Text // F-005 巻末挿入文
@@ -1053,6 +1230,9 @@ model AppSettings {
   // docs/06 P2: 承認済 org_tasks を担当者が自動実行する dispatcher(org.execute.dispatch)を cron 有効化するか。
   org_auto_execute_enabled        Boolean  @default(false)
   org_execute_cron                String   @default("*/15 * * * *") // 15分毎に承認済タスクをディスパッチ
+  // docs/06: ToDo 自動承認。true=起票された org_tasks を(人手前提kindを除き)即 approved にして自動実行、
+  // false=proposed で留め運営者が /org ボードで承認するまで実行しない。既定 true(従来挙動=完全自律)。
+  org_auto_approve_tasks          Boolean  @default(true)
   // docs/06 P3: 運用の自己復旧監視(org.ops.watch)を cron 有効化するか。
   org_ops_watch_enabled           Boolean  @default(false)
   org_ops_watch_cron              String   @default("*/10 * * * *") // 10分毎にジョブ健全性を走査
@@ -1165,4 +1345,156 @@ model OrgPlaybook {
   updated_at    DateTime @updatedAt
 
   @@map("org_playbook")
+}
+
+/// CEO ⇔ 運営者の対話ログ [docs/06]。運営者が自然言語で会社(CEO)に指示・相談し、
+/// CEO が応答する。CEO は指示から org_tasks を起票して施策に反映できる。
+/// org.plan(日次ティック)は直近の運営者メッセージを CEO への申し送りとして取り込む。
+model OrgCeoMessage {
+  id          String   @id @default(cuid())
+  // 'operator' = 運営者の発話 / 'ceo' = CEO の応答
+  role        String
+  content     String   @db.Text
+  // operator: pending|processing|done|failed(CEO応答の生成状態) / ceo: done
+  status      String   @default("done")
+  // CEO 応答の付随情報: { directive_summary?, created_task_ids?: string[], actions?: string[] }
+  result_json Json?
+  created_at  DateTime @default(now())
+
+  @@index([created_at], map: "org_ceo_messages_time_idx")
+  @@map("org_ceo_messages")
+}
+
+// ─────────────────────────────────────────────────────────────
+// ANP (Automated Note Publishing) — docs/11-anp-design.md §6
+// note 記事のテーマ別マルチアカウント運用。A2P の books 系を note 記事系へ写像。
+// ─────────────────────────────────────────────────────────────
+
+model NoteAccount {
+  id                       String   @id @default(cuid())
+  niche                    String
+  display_name             String
+  handle                   String?
+  target_reader            String?
+  tone                     String?
+  // { free_ratio:number, price_band:[min,max], membership:boolean }
+  monetization_policy_json Json
+  genre_policy_json        Json
+  session_state_enc        String?  @db.Text
+  status                   String   @default("active") // active | paused | archived
+  created_at               DateTime @default(now())
+  updated_at               DateTime @updatedAt
+
+  themes           NoteTheme[]
+  articles         NoteArticle[]
+  membership_stats NoteMembershipStat[]
+
+  @@index([status, created_at(sort: Desc)], map: "note_accounts_status_time_idx")
+  @@map("note_accounts")
+}
+
+model NoteTheme {
+  id               String   @id @default(cuid())
+  note_account_id  String
+  title            String
+  hook             String
+  target_reader    String?
+  recommend_paid   Boolean  @default(false)
+  suggested_price  Int?
+  competitors_json Json?
+  genre            String
+  status           String   @default("pending") // pending | accepted | rejected
+  rejected_reason  String?
+  created_at       DateTime @default(now())
+
+  account  NoteAccount   @relation(fields: [note_account_id], references: [id], onDelete: Cascade)
+  articles NoteArticle[]
+
+  @@index([note_account_id, status, created_at], map: "note_themes_account_status_idx")
+  @@map("note_themes")
+}
+
+model NoteArticle {
+  id                   String    @id @default(cuid())
+  note_account_id      String
+  theme_id             String?
+  title                String
+  lead                 String?   @db.Text
+  body_md              String?   @db.Text
+  paid                 Boolean   @default(false)
+  price_jpy            Int?
+  paywall_line_pos     Int?
+  membership_magazine  String?
+  eyecatch_r2_key      String?
+  status               String    @default("queued") // queued|writing|editing|eyecatch|judging|ready|published|failed|cancelled
+  publish_status       String    @default("draft")  // draft | published
+  note_url             String?
+  cost_jpy_total       Decimal   @default(0) @db.Decimal(12, 2)
+  has_pending_comments Boolean   @default(false)
+  quality_score        Int?
+  published_at         DateTime?
+  created_at           DateTime  @default(now())
+  updated_at           DateTime  @updatedAt
+
+  account NoteAccount       @relation(fields: [note_account_id], references: [id], onDelete: Cascade)
+  theme   NoteTheme?        @relation(fields: [theme_id], references: [id], onDelete: SetNull)
+  sales   NoteSalesRecord[]
+
+  @@index([note_account_id, status, created_at(sort: Desc)], map: "note_articles_account_status_idx")
+  @@index([publish_status], map: "note_articles_publish_idx")
+  @@map("note_articles")
+}
+
+model NoteSalesRecord {
+  id              String   @id @default(cuid())
+  note_article_id String
+  year_month      String // "2026-08"
+  revenue_jpy     Int      @default(0)
+  views           Int      @default(0)
+  likes           Int      @default(0)
+  buyers          Int      @default(0)
+  source          String   @default("scrape")
+  fetched_at      DateTime @default(now())
+
+  article NoteArticle @relation(fields: [note_article_id], references: [id], onDelete: Cascade)
+
+  @@unique([note_article_id, year_month], map: "note_sales_article_month_key")
+  @@index([year_month], map: "note_sales_month_idx")
+  @@map("note_sales")
+}
+
+model NoteMembershipStat {
+  id              String   @id @default(cuid())
+  note_account_id String
+  year_month      String
+  subscribers     Int      @default(0)
+  mrr_jpy         Int      @default(0)
+  fetched_at      DateTime @default(now())
+
+  account NoteAccount @relation(fields: [note_account_id], references: [id], onDelete: Cascade)
+
+  @@unique([note_account_id, year_month], map: "note_membership_account_month_key")
+  @@map("note_membership_stats")
+}
+
+model NoteAuthRequest {
+  id         String    @id @default(cuid())
+  purpose    String    @default("note_login_otp")
+  status     String    @default("pending") // pending | fulfilled | consumed | expired | cancelled
+  prompt     String?
+  code       String?
+  created_at DateTime  @default(now())
+  expires_at DateTime?
+
+  @@index([status, created_at], map: "note_auth_requests_status_idx")
+  @@map("note_auth_requests")
+}
+
+model NoteLock {
+  note_article_id String   @id
+  holder          String
+  acquired_at     DateTime @default(now())
+  expires_at      DateTime
+
+  @@map("note_locks")
 }
