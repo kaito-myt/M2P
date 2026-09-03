@@ -1969,6 +1969,14 @@ export const KdpSubmitPayload = z.object({
 - **web**: `/bookwalker` = 設定カード(自動入稿ON/ドライラン/セッション状態) + 書籍一覧(ステータスバッジ+キュー登録/取消/一括)。
   SA = `app/actions/bw-submit.ts` → `lib/bw-submit-core.ts`(kdp-submit-core と同型、ブロック判定 = must コメント/メタデータ/申請済み)。
 - **バックフィル**: ローカル申請済み 40 冊は `scripts/.stage/bw-backfill-applied.cjs` で submitted へ反映済(二重申請防止)。
+- **サーバー入稿の2大落とし穴 (2026-09-04 解決)**: ①`page.evaluate: __name is not defined` — 本番 worker は
+  tsx(esbuild keepNames)実行で evaluate 内ネスト関数が `__name()` ラップされブラウザに無く落ちる。
+  `ctx.addInitScript({content:'globalThis.__name=globalThis.__name||function(f){return f}'})` で回避(KDP と同一)。
+  ②**EPUB の void 要素未終了で BW `/api/files/epub/check` が 400 → 申請ボタンが永久 disabled**。
+  `mdToXhtml` が `<br><hr><img>` しか閉じず、markdown タスクリスト `- [ ]` が生成する `<input>` で
+  epubcheck FATAL(RSC-016)。全 void 要素(area|base|br|col|embed|hr|img|input|link|meta|param|source|track|wbr)を
+  自己終了して解決。診断ツール: `scripts/bookwalker/bw-epub-check.mjs`(check 400 本文取得)。
+  正常フロー: upload epub/image 200 → epub/check status:OK → register-book 活性化 → 確認 はい → POST /api/books/register 200。
 
 **F-095/F-096 楽天Kobo・BOOTH 入稿タブ（2026-09-04 UI 先行）** — `/kobo`・`/booth`。
 `books.{kobo,booth}_publish_status/_publish_queued(_at)/_submitted_at` + `app_settings.{kobo,booth}_{auto_submit_enabled,submit_dry_run,session_state_enc}`。
