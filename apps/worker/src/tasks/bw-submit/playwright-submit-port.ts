@@ -150,6 +150,12 @@ async function submitOne(args: BwSubmitArgs): Promise<BwSubmitResult> {
     viewport: { width: 1400, height: 1100 },
   });
   ctx.setDefaultTimeout(60_000);
+  // 本番 worker は tsx(esbuild keepNames)実行 — evaluate コールバック内のネスト関数が
+  // __name(...) でラップされブラウザ側に __name が無く ReferenceError で落ちる(2026-08 KDP で実害)。
+  // 全ナビの主コンテキストに no-op シムを注入して回避する。
+  await ctx.addInitScript({
+    content: 'globalThis.__name = globalThis.__name || function (f) { return f; };',
+  });
   const page = await ctx.newPage();
   const shot = (n: string) =>
     page.screenshot({ path: path.join(stageDir, `bw-${n}.png`), fullPage: true }).catch(() => {});
