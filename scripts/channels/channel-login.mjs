@@ -49,8 +49,15 @@ function encrypt(plaintext) {
 console.log(`[${CH}] Chrome を開きます — 表示されたページでログインしてください(最大20分待機)`);
 const ctx = await chromium.launchPersistentContext(path.join(REPO, CONF.userdata), {
   headless: false, channel: 'chrome', locale: 'ja-JP', viewport: { width: 1280, height: 1000 },
+  // hCaptcha/reCAPTCHA が Playwright 制御を自動化として検知しブロックするのを回避。
+  args: ['--disable-blink-features=AutomationControlled'],
+  ignoreDefaultArgs: ['--enable-automation'],
 });
 ctx.setDefaultTimeout(60000);
+// navigator.webdriver を隠す(自動化検知回避の定番)。
+await ctx.addInitScript(() => {
+  Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+});
 const page = ctx.pages()[0] ?? (await ctx.newPage());
 await page.goto(CONF.start, { waitUntil: 'domcontentloaded' }).catch(() => {});
 
