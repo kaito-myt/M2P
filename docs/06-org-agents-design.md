@@ -6,7 +6,7 @@
 > 開発時の Claude Code サブエージェント（`.claude/agents`）とは別物。本ドキュメントでは
 > これらを **Org エージェント** と呼ぶ。
 >
-> ステータス: **P4 進行中（増分1〜6 実装済み。増分6: 2026-07-25）**。増分6 で **自律運用の起動UI＋自己改善ループの
+> ステータス: **P4 進行中（増分1〜7 実装済み。増分7: 2026-08-04 = CEO対話チャット＋ToDo自動承認トグル＋plan_book越境ガード）**。増分6 で **自律運用の起動UI＋自己改善ループの
 > 停滞解消** を追加：5つの自律cronフラグ（CEO自動計画/タスク自動実行/障害自己復旧/予算ガード/KDP事前審査）を
 > `/org` の「自律運用設定」カードからON/OFF・cron編集可能に（従来はDB直接編集のみ）。加えて `org.execute.dispatch`
 > の連鎖起票（改善ToDo）を非人手kindは `approved` で自動着手させ、全社ToDoボードに `blocked`（再実行）／
@@ -64,7 +64,14 @@ P1 で確定した運用: 本部長が起票したタスクは、人手前提 ki
 | analytics | `research_market` | `market_analyst` が機会/テーマ案 → `result_json` → テーマ案を制作の企画ToDo(proposed)へ |
 | publishing | `prepare_metadata` / `set_price` | `metadata_worker` が KDP メタデータ**草案**を `result_json` に（既存 KdpMetadata は上書きしない。公開は人手ゲート）|
 | production | `plan_book` | `pipeline.theme.generate` を enqueue（テーマ候補を生成。以降は既存パイプラインの人手ゲートで進行）|
-| production | `write` | `theme_id`（承認済テーマ）があれば `pipeline.book.kickoff` を enqueue。無ければ `blocked`（要: plan_book→テーマ承認）|
+| production | `write` | `theme_id`（承認済テーマ）があれば `pipeline.book.kickoff` を enqueue。無ければ `blocked`（要: plan_book→テーマ承認）。**重複制作ガード（2026-08-10）**: 同一 `theme_id` に既に `Book` が1冊でも存在すれば（取り下げ済含む）kickoff せず `result_json.action='book_kickoff_skipped'`（`reason='duplicate_theme'`）で `done` にする |
+
+**重複制作の恒久対策（2026-08-10, block-on-any）**: `write` は「1テーマ=1書籍」を守る。同一テーマに `Book` が
+存在すれば（`status='retracted'` の取り下げ済も含む）再制作しない。`handleWrite` の入口ガード＋
+`pipeline.book.kickoff` の choke-point ガード（docs/05 §5.3.1）の二段で防御。**背景**: 自律運用が既出テーマ
+（特に July に低品質で取り下げた競馬シリーズ 6 テーマ）を 8/2 に再度 `write` 起票し、重複本が生成・一部 KDP に再入稿された。
+是正として (1) 二段ガード追加、(2) 当該 6 テーマを `theme_candidates.status='rejected'` に退役、(3) 重複本の
+org タスク/予約投稿/出版フラグを停止。retracted 済テーマの作り直しは人間の明示操作に限る。
 
 実行フロー: CAS で `approved→in_progress` を確保（二重処理防止）→ ハンドラ実行 → 成功なら `done`＋`result_json`＋
 `token_usage.org_task_id` 集計で `cost_jpy` 確定＋改善ToDo連鎖起票、失敗なら `blocked`＋`error`。
@@ -97,12 +104,34 @@ P1 で確定した運用: 本部長が起票したタスクは、人手前提 ki
 
 **P3 の横断cron:**
 
-- **`org.ops.watch`（運用, 10分毎）** — 直近の失敗パイプラインジョブ／長時間スタック(running>30分)を走査し、
+- **`org.ops.watch`（運用, 既定6時間毎）** — 直近の失敗パイプラインジョブ／長時間スタック(running>30分)を走査し、
   リトライ余地あり→`recover_job`(approved, 自動再投入)、上限到達/スタック→`triage_error`(needs_human)を起票。
   1 book につき開いている sysops タスクがあれば重複起票しない。1 回の起票上限 10 件。
+  - **モデル障害の自己修復（2026-08-10 追加, `healModelOutages`）**: 走査した失敗ジョブのエラーが
+    `MODEL_OUTAGE_RE`（`no longer available`／`deprecated|decommissioned`／`model not found`／`exceeded your quota`／
+    `resource_exhausted`／`PERMISSION_DENIED`／`invalid api key` 等）に一致する場合、その kind → 役割（`KIND_TO_ROLE`）を特定し、
+    **その役割の active `model_assignments` が anthropic 以外（=google/openai の障害モデル）なら `claude-sonnet-4-6` へ自動切替**する。
+    `audit_log(action='model_assignment.auto_heal')` ＋ 可視化用 sysops `triage_error`(status=done) を残す。
+    active が既に anthropic の場合は同プロバイダ内フォールバック不可のため切替せず人手 triage に委ねる。画像役(thumbnail_image)は対象外。
+    **背景**: 単純再投入(recover_job)ではモデル廃止/枠枯渇のような「設定起因の停止」は永遠に直らず空回りする欠陥があった
+    （Gemini起因で書籍生成が3回停止、直近は 2026-08-10 に gemini-2.5-flash 廃止で editor/judge が全滅→全書籍が editor 段で凍結）。
+    この自己修復で同種事故は次回 ops.watch 実行時に自動復旧する。cron は責任ある応答性のため daily→6h に短縮。関連: メモリ [[reference-model-assignment-routing]]。
 - **`org.finance.tick`（経営, 毎時）** — token_usage を本部別に集計し、Objective の本部別配分・全社予算・
   月次上限(`monthly_cost_red_jpy`)と突き合わせ。消化100%到達の項目があれば `enforce_limit`(needs_human,
   凍結/再配分の承認要求)を1件起票。開いている `enforce_limit` があれば重複起票しない。
+- **`org.promo.tick`（販促, 日次 `0 16 * * *`＝JST 01:00, 常時ON, F-073）** — 販促本部の自己監視。
+  `promotion.metrics.fetch` が保存した実エンゲージメント(直近14日の平均インプレッション/いいね)＋
+  `promotion_growth_snapshots` のフォロワー推移を **決定的に**評価し、`reach_critical`(サンプル≥10かつ
+  平均インプレッション<50) / `growth_stalled`(スパン≥5日でフォロワー増減≤0) / `cold_start`(フォロワー<100)
+  のいずれかで `growth_alert`(needs_human) を promotion本部に1件起票＋**LINEで運営者へプッシュ**。
+  財務の `enforce_limit` と同型の「組織が異常を自己検知して運営者にエスカレーションする」神経系。
+  開いている `growth_alert` があれば重複起票しない。**背景**: 反応ゼロを組織自身が運営者に上げる仕組みが
+  販促に欠けていた。実測(2026-08-12)で X 到達≒ゼロ(平均インプレッション1)が判明し、対応策としてこのループを追加。
+  施策の実行(価値投稿主役化/エンゲージメント/ターゲットフォロー)は GROW-2〜4(F-074)で段階実装。
+- **`promotion.growth.todo`（販促, 週次 `0 22 * * 1`, 常時ON, F-075）** — IG/TikTok/note はフォロー/いいねの
+  公式APIが無く自動化不可。`growth_scout`(web_search)が**実在の具体ターゲット**(フォローすべき@ハンドル/
+  いいねすべき投稿/理由/優先度)を特定→ **needs_human org_task(kind=`growth_manual`, チャンネル別1件upsert)** で
+  運営者に提示＋LINE通知。人手でしかできないグロース対応を「誰を/何を」まで落として指示する。
 
 **P3 で意図的に人手のまま残した点:** `enforce_limit`（予算凍結/再配分）と `triage_error`（原因不明のジョブ障害）は
 `needs_human` として運営者/CEO/CFO の判断に委ねる。KDP公開・アカウント作成の人手ゲートは P1〜継続。
@@ -201,6 +230,36 @@ ON にできず、また `org.execute.dispatch` の連鎖起票（改善ToDo）�
 
 注意: cron 文字列の変更は worker 起動時に一度だけ `fetchAppSettingsForCron`（`apps/worker/src/runner.ts`）が読み
 `crontab.ts` を組み立てるため、**保存しただけでは反映されず worker 再起動（次回デプロイ）が必要**。UI にもその旨のノートを表示する。
+
+---
+
+### P4 増分7 — CEO対話チャット＋ToDo自動承認トグル＋plan_book越境ガード（2026-08-04）
+
+3 点を追加・修正した。
+
+**(1) plan_book 越境ガード（不具合修正）** — 制作本部長が「本来 promotion 本部の仕事（SNS販促・投稿カレンダー等）」を、
+自分が持つ kind である `plan_book` に当てはめて起票すると、`handlePlanBook` が instruction をそのまま
+`pipeline.theme.generate` の `keyword_or_brief` に渡し **「SNS指示から出版テーマを作る」誤動作**になっていた
+（manager.ts は cross-division kind は除外するが、kind と instruction 意図の不一致は防げていなかった）。対策:
+- worker `org-execute.ts` `handlePlanBook` に販促指示ガード（`looksLikePromotionDirective` 正規表現）を追加。
+  該当時はテーマ生成を起動せず `blocked`（明確なエラーで販促本部への起票し直しを促す）。
+- `editorial_mgr` プロンプトを v2 に更新: **plan_book は新規書籍のコンセプト企画専用**（SNS販促/価格/分析/予算は各本部の領分で起票しない）と明記。
+- 既存の誤起票 plan_book（SNS販促系）は canceled 化。
+
+**(2) ToDo 自動承認トグル** — `AppSettings.org_auto_approve_tasks`（Boolean, 既定 true=従来の完全自律）。
+- OFF 時: `org-plan.ts`／`org-execute.ts` の連鎖起票は非人手 kind でも `approved` ではなく **`proposed`** で留め、
+  運営者が `/org/tasks` ボードで承認（`approveOrgTask`）するまで実行しない。人手前提 kind は常に `needs_human`。
+- UI: `/org`「自律運用設定」にトグル追加（`org-automation-core.ts` に `org_auto_approve_tasks` を追加）。
+
+**(3) CEO 対話チャット** — 運営者が自然言語で CEO に指示・相談できる。
+| 領域 | 実体 |
+| --- | --- |
+| DB | `org_ceo_messages`（role='operator'|'ceo', content, status, result_json）。migration は raw SQL で本番適用済 |
+| contracts | `CeoChatOutputSchema`（reply / directive_summary / new_tasks[]）＋ `CeoChatTaskDraftSchema`。AgentRole に `ceo_chat` 追加 |
+| agent | `packages/agents/src/org/ceo-chat.ts`（`chatWithCeo`）。prompt/model_assignment は role=`ceo_chat`（opus-4.8）を DB seed |
+| worker | `org.ceo.chat`（`org-ceo-chat.ts`）。operator メッセージ(pending)を処理→会社スナップショット＋履歴で CEO 応答生成→`new_tasks` を kind∈division 検証のうえ org_tasks へ起票（自動承認トグルに従う）→CEO返答を保存 |
+| web | `sendCeoMessage` SA（operator保存＋enqueue）／`GET /api/org/ceo/messages`（ポーリング）／`components/org/ceo-chat.tsx`（`/org` 上部のチャットUI、応答待ちの間だけ2.5秒ポーリング）|
+| 方針連携 | `org.plan`（日次ティック）が直近14日の operator メッセージを CEO スナップショットの `notes`（最優先の申し送り）に取り込む |
 
 ---
 

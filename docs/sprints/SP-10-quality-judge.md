@@ -51,7 +51,7 @@ docs/05 §6.3.5 の JudgeInput / JudgeOutput zod schema を参照。
    {genre}, {chapter_count}, {draft_chapters}, {outline_summary}
 4. createAgentClient('judge', genre, { role: 'judge', bookId, jobId }) で
    withTokenLogging ラップ済みクライアント取得
-5. client.complete({ messages, maxOutputTokens: 4096 })
+5. client.complete({ messages, maxOutputTokens: 12288 })  ※2026-09-01 4096→12288: 14章・約25万入力tokenの長編で判定JSONが4096で途中切れし `judge.invalid_output` になった実害を受け引き上げ
    - システムプロンプトで 6 軸採点 JSON を要求
    - JSON 抽出 → zod parse (editor と同実装の extractJson + predicate)
 6. score_total = 6 軸合計の重み付き平均（均等重み）

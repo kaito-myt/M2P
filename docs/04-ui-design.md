@@ -302,27 +302,23 @@ CostMeter / AlertBadge / CommentBadge の 3 つは **どの画面でも常に視
 
 ### S-002 ダッシュボード（ホーム）
 
-- **目的**: 運営者が朝/夜に最初に開く画面。「今やるべきこと」を 30 秒で把握できる集約 HUD。UC-01 / UC-04 / UC-06 の起点。
+- **目的**: 運営者が朝/夜に最初に開く画面。「① 儲かっているか ② AI会社は動いているか ③ 自分がやることは何か」を 30 秒で把握できる経営ミッションコントロール。UC-01 / UC-04 / UC-06 の起点。
+- **実装状態**: 2026-08-20 に**全セクションを実データ接続で再実装**（従来は Quality 以外プレースホルダだった）。RSC で全集計を `Promise.all` 一括取得（`force-dynamic`）。
 - **主要コンテンツセクション**:
-  1. **トップ KPI ストリップ**: 当月出版数 / 月間目標 100 冊、当月売上 / 目標 15 万円、当月コスト / 上限 5 万円、平均 Quality Judge スコア、進行中ジョブ数
-  2. **アクション要求カード（最優先表示）**: 「テーマ候補 N 件 未承認」「アウトライン N 件 承認待ち」「サムネ N 件 採用待ち」「修正コメント N 件（うち must M 件）未反映」「プロンプト改訂提案 N 件」「KDP 入稿待ち N 冊」をカード列で表示。各カードに件数 + 主要 CTA ボタン
-  3. **進行中ジョブ**: 並列実行中の書籍とそのフェーズ（Marketer→Writer→Editor→Thumbnail→Judge）を進捗バーで表示
-  4. **最近の本**: 直近 10 冊（サムネ・タイトル・ステータス・Quality スコア・累計コスト）
-  5. **未読アラート**: 当日発生のアラート上位 5 件（F-034/F-036/F-024 単価変動）
-  6. **コスト推移ミニグラフ**: 当月日次コスト + 上限ライン
-- **主要コンポーネント**:
-  - KPIStripe: 入力 `{period: 'this_month'}` → KPI 集計
-  - ActionRequiredCard × 6: 件数バッジ + CTA。クリックで対応画面へ
-  - JobProgressList: WebSocket または 5 秒ポーリングで進捗更新
-  - RecentBooksTable: ソート可・行クリックで S-010
-  - AlertList: アラート種別アイコン + 1 行サマリ
-  - CostSparkline: 当月日次積み上げ
+  1. **A. 事業サマリ（当月 KPI）**: **当月純利益（＝当月売上−当月コスト、黒字/赤字を色分けしたヒーロー表示）**、当月売上（前月比 %）、当月コスト（/ 予算上限）、出版済み書籍（**累計＝かつてKDPに出版した総数＝`publish_status='published'`（販売中）＋`'retracted'`（出版取消）**。取消も出版実績なので累計に含める＝KDP本棚の見た目と一致。副文言に「販売中 N ・ 取消 M」。※制作完了(`status='done'`)と KDP出版は別ファネルなので done を出版数の増分に混ぜない）、平均 Quality スコア（前月比）。純利益を最上位に置き「黒字化したか」を即断できるようにする。
+  2. **B. AI会社の稼働状況 + 進行中ジョブ**: 自律運用 6 トグル（自律立案/自律実行/運用監視/予算ガード/KDP審査/ToDo自動承認）の現在 ON/OFF をピルで表示＋現在の CEO 方針（`OrgObjective` active）＋全社ToDo（進行中/要人手）件数。右に進行中ジョブのライブリスト（工程ラベル＋書籍タイトル、running 総数）。
+  3. **C. 要対応（人手が必要な項目）**: 実カウント＋実リンクのアクションカード。KDP入稿待ち / 本文承認待ち（`content_review`）/ サムネ採用待ち（`thumbnail`）/ 修正コメント（pending・うち must）/ 全社ToDo要人手（`needs_human`）/ 未読アラート / 要確認の書籍（`needs_human_review`）。0 件はミュート・非リンク、1 件以上はアクセント枠＋クリック可。KDP 再認証待ち（`kdp_auth_requests` pending）は >0 のときのみ先頭に表示。
+  4. **D. 最近の本 / パイプライン内訳 / 未読アラート**: 直近更新 8 冊（状態バッジ、行クリックで S-010）／工程別の進行中件数＋停止・失敗数（danger 色）／未読アラート上位 5 件（種別ラベル＋深刻度ドット）。
+  5. **E. 販促・成長**: SNS チャンネル別フォロワー数（`promotion_growth_snapshots` の最新）＋投稿数。
+- **主要コンポーネント**（`components/dashboard/`）:
+  - `KpiCard`: `tone`（positive/negative/neutral で数値色）＋ `hero`（純利益を一段大きく）対応
+  - `ActionCard`: `count` / `href` / `must`。0=ミュート、>0=アクセント枠のリンクカード
+  - `home-sections.tsx`: `AutonomyStatus` / `RunningJobsList` / `PipelineBreakdown` / `RecentBooksList` / `GrowthStrip` / `AlertMiniList` / `SectionLink`（表示専用、データは page.tsx が供給）
+- **データソース**: `getCostMeterData`（当月コスト/予算）、`salesRecord.aggregate`（当月/前月ロイヤリティ）、`book.groupBy(status)`（工程内訳）、`getCommentCounts`、`alert.count/findMany`、`orgTask.groupBy(status)`、`serializeOrgAutomation`、`kdpAuthRequest.count`、`promotionGrowthSnapshot.findFirst`。MoM 売上は当月/前月の `year_month` 集計比。
 - **ユーザー操作と結果**:
-  - 「テーマ候補 N 件未承認」CTA → S-006
-  - 「修正コメント N 件未反映」CTA → S-013
-  - 進行中ジョブ行クリック → S-026
-  - 最近の本のサムネクリック → S-010
-  - アラート行クリック → S-028
+  - 各アクションカード（>0）クリック → 対応画面（/kdp/checklist, /content-review, /covers, /comments, /org/tasks, /alerts, /books）
+  - 「経営ダッシュボードへ」→ S（/org）、「ジョブログへ」→ /jobs、「進行状況へ」→ /progress
+  - 最近の本クリック → S-010（/books/:id）
 - **空状態 / ローディング / エラー**:
   - 空（初回）: 「最初のアカウントを登録しましょう」ガイド → S-004
   - ローディング: 各セクション skeleton
@@ -870,7 +866,7 @@ CostMeter / AlertBadge / CommentBadge の 3 つは **どの画面でも常に視
   8. CSV エクスポート
 - **主要コンポーネント**:
   - CostKpiStripe
-  - DailyCostStackedChart
+  - **DailyCostChart** — 日別コストの積み上げ棒グラフ（プロバイダ別、SVGベース＝recharts不使用、SalesTrendChart と同方式。2026-08 実装。プレースホルダから昇格）＋ DailyCostTable（明細）
   - BreakdownCharts × 3
   - PredictionAlertStrip
   - TopCostBooksTable
@@ -938,9 +934,9 @@ CostMeter / AlertBadge / CommentBadge の 3 つは **どの画面でも常に視
 - **主要コンテンツセクション**:
   1. 通知設定（通知先メールアドレス、通知種別 ON/OFF: コスト超過 / プロンプト改訂 / ジョブ失敗 / KDP 2FA / 単価変動）
   2. アラート閾値設定（1 冊あたり超過閾値 既定 500 円 / 停止閾値 既定 750 円、月次 80%/95%/100% 閾値、単価変動 ±10%）
-  3. プロンプト自動承認設定（手動 / 自動 + ロールバック猶予時間 既定 24 時間、F-030）
-  4. 売上自動取得設定（Phase 2 以降、F-038 ON/OFF、実行時刻）
-  5. KDP 自動入稿設定（Phase 3、F-041 タイムアウト時間 既定 10 分、リトライ回数）
+  3. プロンプト自動承認設定（F-030、実機能トグル）: 自動承認 ON/OFF（`app_settings.prompt_auto_approval_enabled`）+ ロールバック猶予時間 既定 24 時間（`prompt_auto_approval_rollback_h`、1〜168h）。ON で「直近 5 冊スコア連続改善」の改訂案を自動採用。`updateSettings` SA で保存。
+  4. 売上自動取得設定（F-038 ON/OFF、実行スケジュール = JST 指定 → UTC cron 保存）
+  5. KDP 自動入稿設定（F-041 Phase3、**実機能トグル**）: 自動入稿 ON/OFF（`kdp_auto_submit_enabled`、cron は起動時条件付き登録のため切替はワーカー再起動で反映）+ ドライラン（`kdp_submit_dry_run`）+ タイムアウト 既定 10 分（`kdp_submit_timeout_minutes`）+ リトライ回数 既定 2（`kdp_submit_retry_count`）。日次作成上限で停止中は解除予定時刻（`kdp_creation_paused_until`）を表示。
   6. データ管理（ジョブログ保管期間 既定 90 日、R2 アーカイブ閾値）
   7. **AI プロバイダ API キー (F-051 / F-052)** — Anthropic / OpenAI / Google Gemini / Tavily の 4 行表。各行に：
      - プロバイダ名 + 公式 SDK バージョン
@@ -1073,46 +1069,51 @@ Tailwind config の `theme.extend` に下記をハードコードする。`packa
 
 #### 6.3.1 色トークン
 
+> **2026-08-22 — ダークテーマ化**: A2P (apps/web) は M2P ポータル (`apps/portal`) と同じ
+> **ダーク "管制室" ルック**に統一した。トークン**名**（`cream`/`charcoal`/`border-warm`/…）は
+> 既存コンポーネント互換のため据え置き、**値だけ**をダークへ差し替える方式（warm→cool と同じ手法）。
+> これによりセマンティッククラス（`bg-cream`/`text-charcoal`/`border-border-warm`/`bg-*-bg text-*` 等）を
+> 使う全画面が一括でダーク化する。正本は `packages/ui/src/tokens.ts` と `apps/web/app/globals.css`。
+> 公開ページ（`/blog`・`/shop`・`/legal` = 栞/SHIORI ブランド）は独自の warm 編集ブランドを保持し、本テーマ非対象。
+
 **ベース**
 
 | トークン | 値 | 用途 |
 |---|---|---|
-| `cream` | `#f7f4ed` | ページ背景、カード背景、Cream Surface ボタン |
-| `cream-light` | `#fcfbf8` | dark ボタンの文字色、わずかなハイライト |
-| `charcoal` | `#1c1c1c` | 主要テキスト、見出し、dark ボタン背景 |
-| `border-warm` | `#eceae4` | パッシブな枠線・区切り線・画像縁 |
-| `muted` | `#5f5f5d` | 補助テキスト、キャプション |
+| `cream` | `#0a0c12` | ページ背景キャンバス（deep near-black） |
+| `cream-light` | `#14161f` | カード/サーフェス（わずかに持ち上げたダーク面）。ライト primary ボタン上の暗い文字色も兼ねる |
+| `charcoal` | `#f4f6fb` | 主要テキスト・見出し（**ダークでは明色**）。ライト primary ボタン背景 |
+| `border-warm` | `rgba(244,246,251,0.10)` | ダーク面上のヘアライン・区切り線 |
+| `muted` | `rgba(244,246,251,0.58)` | 補助テキスト・キャプション |
 
-**Charcoal opacity スケール**（全てのグレーは `#1c1c1c` の透明度違いで生成）
+**Charcoal opacity スケール**（全て light ink `#f4f6fb`=(244,246,251) の透明度違い。text 用途では明色テキスト、bg 用途 (`charcoal-04`/`03`) ではダーク面上の淡いライトティント=hover 等として両立）
 
 | トークン | 値 | 用途 |
 |---|---|---|
-| `charcoal/100` | `#1c1c1c` (1.0) | 主要テキスト |
-| `charcoal/83` | `rgba(28,28,28,0.83)` | 強い 2 次テキスト |
-| `charcoal/82` | `rgba(28,28,28,0.82)` | ボディテキスト |
-| `charcoal/40` | `rgba(28,28,28,0.40)` | インタラクティブ枠線（Ghost ボタン等） |
-| `charcoal/04` | `rgba(28,28,28,0.04)` | hover 微背景 |
-| `charcoal/03` | `rgba(28,28,28,0.03)` | overlay、深度補助 |
+| `charcoal/100` | `#f4f6fb` (1.0) | 主要テキスト |
+| `charcoal/83` | `rgba(244,246,251,0.80)` | 強い 2 次テキスト |
+| `charcoal/82` | `rgba(244,246,251,0.68)` | ボディ 2 次テキスト |
+| `charcoal/40` | `rgba(244,246,251,0.40)` | 微弱テキスト・インタラクティブ枠線 |
+| `charcoal/04` | `rgba(244,246,251,0.06)` | hover 微背景（ライトティント） |
+| `charcoal/03` | `rgba(244,246,251,0.035)` | overlay、深度補助 |
 
-**意味的色マッピング**
+**意味的色マッピング**（ダーク調律 = 明色 ink + 低 alpha の tinted 背景）
 
-shadcn/ui の semantic token に下記を割り当てる：
-
-| セマンティック | 用途 | 色（暫定） |
+| セマンティック | 用途 | 色 |
 |---|---|---|
-| `primary` | 主要 CTA、承認ボタン | `charcoal` |
-| `destructive` | 削除・却下・中止、レッドアラート（500/750 円超過、コスト 100%）、コメント `must` | `#b91c1c` (red-700) |
-| `warning` | 80%/95% 到達、単価 ±10% 変動、コメント `should` | `#b45309` (amber-700) |
-| `success` | 承認済み、applied、PASS | `#15803d` (green-700) |
-| `muted` | 補助情報、ジャンル方針、説明文 | `muted` (#5f5f5d) |
-| `accent` | A/B 配信中フラグ、コメント `may` | `#1d4ed8` (blue-700) |
+| `primary` | 主要 CTA、承認ボタン | `charcoal`（=明色。ライトボタン + 暗文字 `cream`） |
+| `destructive` | 削除・却下・中止、レッドアラート、コメント `must` | `#ff6b6b` / bg `rgba(255,107,107,0.14)` |
+| `warning` | 80%/95% 到達、単価 ±10% 変動、コメント `should` | `#fbbf24` (amber-400) / bg 14% |
+| `success` | 承認済み、applied、PASS | `#34d399` (emerald-400) / bg 14% |
+| `muted` | 補助情報、ジャンル方針、説明文 | `muted` |
+| `accent` | 選択・アクティブナビ・リンク、A/B 配信中、コメント `may` | `#6ee7b7` (emerald-300) / bg 15% |
 
-注: アラート色 (red/amber/green/blue) は warm-neutral 基調に対し最小限の彩度に留める。Lovable の哲学に従い**飽和度の高い色は避ける**。
+補足: リッチアクセントは portal 系（emerald / violet / gold）。ステータスバッジ等の多色は「`<色>-500/15` 背景 + `<色>-300` 文字」のダークティント方式で表現する（例: 実行中=sky, 完了=emerald, 失敗=red, 待機=amber, キャンセル=白 6%）。ソリッドな危険ボタン（`bg-red-600 text-white`）は例外的に据え置き。
 
 **フォーカスリング**
 
-- `ring-blue`: `rgba(59,130,246,0.50)` — Tailwind デフォルト focus ring
-- `focus-shadow`: `rgba(0,0,0,0.10) 0px 4px 12px` — 柔らかい温かい影による active/focus 強調
+- `ring-blue`（emerald tint）: `rgba(52,211,153,0.38)`
+- 影は黒基調で深度を作る（`l3-focus` = 黒 55% のドロップ）。login/公開ページはボディ背景のオーロラ（violet/emerald/gold の放射グラデ）が透ける。
 
 #### 6.3.2 タイポグラフィ
 
@@ -1137,7 +1138,8 @@ shadcn/ui の semantic token に下記を割り当てる：
 | display-hero | 3.75 (60px) | 600 | 1.00–1.10 | -1.5px | hero |
 | display-alt | 3.75 (60px) | 480 | 1.00 | normal | 軽い hero variant |
 | section-heading | 3.00 (48px) | 600 | 1.00 | -1.2px | フィーチャーセクション見出し |
-| sub-heading | 2.25 (36px) | 600 | 1.10 | -0.9px | サブセクション |
+| sub-heading | **1.75 (28px)** | 600 | 1.15 | -0.5px | **管理画面のページ H1**（2026-08 に 36→28px へ縮小: 密度の高い業務ツール向けに大見出しの肥大を是正。全 H1 に一括波及） |
+| section-title | **1.125 (18px)** | 600 | 1.30 | -0.2px | **ページ内セクション見出し**（2026-08 追加: card-title(20px) と sub-heading(28px) の間を埋め、「囲まずに」節を分ける。設定・経営などの節見出しに使う） |
 | card-title | 1.25 (20px) | 400 | 1.25 | normal | カード見出し |
 | body-large | 1.13 (18px) | 400 | 1.38 | normal | 導入文 |
 | body | 1.00 (16px) | 400 | 1.50 | normal | 標準本文 |
