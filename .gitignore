@@ -61,3 +61,6 @@ scripts/.stage/
 scripts/.bw-userdata*/
 scripts/.kobo-userdata/
 scripts/.booth-userdata/
+scripts/kobo/out/
+scripts/booth/out/
+scripts/kobo/*.png

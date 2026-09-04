@@ -1,0 +1,41 @@
+/** BOOTH 商品編集/新規登録画面の偵察。保存済みセッションで内部ページを開く。 */
+import { createRequire } from 'module';
+import path from 'path'; import fs from 'fs'; import crypto from 'crypto';
+const SP = new URL(import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, '$1');
+const REPO = path.resolve(path.dirname(SP), '../..');
+const req = createRequire(path.join(REPO, 'apps/worker/package.json'));
+const reqRoot = createRequire(path.join(REPO, 'package.json'));
+const { chromium } = req('playwright');
+const { Client } = reqRoot(path.join(REPO, 'node_modules/.pnpm/pg@8.21.0/node_modules/pg'));
+const OUT = path.join(REPO, 'scripts/booth/out'); fs.mkdirSync(OUT, { recursive: true });
+function dec(b64) { const raw = Buffer.from(b64, 'base64'); const d = crypto.createDecipheriv('aes-256-gcm', Buffer.from(process.env.KDP_CRED_KEY, 'hex'), raw.subarray(0, 12)); d.setAuthTag(raw.subarray(12, 28)); return Buffer.concat([d.update(raw.subarray(28)), d.final()]).toString('utf8'); }
+const c = new Client({ connectionString: process.env.DBURL, ssl: { rejectUnauthorized: false } });
+await c.connect();
+const r = await c.query("SELECT booth_session_state_enc FROM app_settings WHERE id='singleton'");
+await c.end();
+const state = JSON.parse(dec(r.rows[0].booth_session_state_enc));
+const browser = await chromium.launch({ headless: true, args: ['--no-sandbox', '--disable-dev-shm-usage', '--disable-blink-features=AutomationControlled'] });
+const ctx = await browser.newContext({ storageState: state, locale: 'ja-JP', viewport: { width: 1500, height: 1200 } });
+const page = await ctx.newPage();
+const url = process.argv[2] || 'https://manage.booth.pm/items/new';
+await page.goto(url, { waitUntil: 'domcontentloaded' });
+await page.waitForTimeout(8000);
+console.log('URL:', page.url());
+console.log('TITLE:', await page.title().catch(() => '?'));
+const info = await page.evaluate(() => {
+  const vis = (e) => e.offsetParent !== null;
+  const loginWall = /ログイン|sign in|pixiv/i.test(document.body.innerText.slice(0, 200)) && !!document.querySelector('input[type=password]');
+  const fields = [...document.querySelectorAll('input,textarea,select')].filter(vis).map((e) => ({ tag: e.tagName.toLowerCase(), type: e.type || '', name: e.name || '', id: e.id || '', ph: e.placeholder || '', label: (e.labels && e.labels[0]?.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 24) })).slice(0, 40);
+  const fileInputs = [...document.querySelectorAll('input[type=file]')].map((f) => ({ name: f.name, accept: f.accept, id: f.id }));
+  const buttons = [...document.querySelectorAll('button,input[type=submit],a.btn')].filter(vis).map((b) => (b.textContent || b.value || '').replace(/\s+/g, ' ').trim().slice(0, 24)).filter(Boolean).slice(0, 20);
+  const headings = [...document.querySelectorAll('h1,h2,h3,label')].filter(vis).map((h) => (h.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 30)).filter(Boolean).slice(0, 25);
+  return { loginWall, fields, fileInputs, buttons, headings };
+});
+console.log('loginWall:', info.loginWall);
+console.log('FIELDS:', JSON.stringify(info.fields, null, 1));
+console.log('FILE:', JSON.stringify(info.fileInputs));
+console.log('BUTTONS:', JSON.stringify(info.buttons));
+console.log('LABELS/見出し:', JSON.stringify(info.headings));
+await page.screenshot({ path: path.join(OUT, 'new.png'), fullPage: true }).catch(() => {});
+await browser.close();
+process.exit(0);
