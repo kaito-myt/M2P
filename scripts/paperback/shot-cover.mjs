@@ -1,0 +1,15 @@
+import { createRequire } from 'module';
+import path from 'path';
+const SP = new URL(import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, '$1');
+const REPO = path.resolve(path.dirname(SP), '../..');
+const req = createRequire(path.join(REPO, 'apps/worker/package.json'));
+const { chromium } = req('playwright');
+const abs = path.join(REPO, 'scripts/paperback/out', process.argv[2] + '-pb-cover.pdf').replace(/\\/g, '/');
+const pdf = 'file:///' + abs;
+const browser = await chromium.launch({ headless: false, channel: 'chrome' });
+const page = await browser.newPage({ viewport: { width: 1400, height: 1000 } });
+await page.goto(pdf, { waitUntil: 'load' }).catch(() => {});
+await page.waitForTimeout(4000);
+await page.screenshot({ path: path.join(REPO, 'scripts/paperback/out', process.argv[2] + '-cover-check.png') });
+await browser.close();
+process.exit(0);
