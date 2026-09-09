@@ -49,6 +49,12 @@ export interface KdpBookInput {
   /** ローカル tmp の原稿 docx / 表紙 画像パス。 */
   docxPath: string;
   coverPath: string;
+  /**
+   * 上書き対象の KDP 内部 titleId (例: 'A8U4O04AS52C4')。指定時は下書き探索/新規作成を行わず、
+   * その titleId の編集ページ (EDIT_BASE + titleId + '/details') を直接開いて既存本(下書き/販売中)を
+   * この book の内容で上書き入稿する。二重出版の片方を別の本で差し替える運用に使う(作成枠を消費しない)。
+   */
+  targetTitleId?: string | null;
 }
 
 export interface KdpPublishArgs {
@@ -197,11 +203,21 @@ async function publishOne(args: KdpPublishArgs): Promise<KdpPublishResult> {
       return { ok: false, reason: 'reauth_failed', message: 'login/reauth failed' };
     }
 
-    // 2. 既存下書きがあれば resume(作成上限を消費しない)、無ければ新規作成(上限を1消費)。
-    const draftIds = await collectDraftIds(page);
-    const detailsUrl = draftIds.length > 0 ? EDIT_BASE + draftIds[0] + '/details' : CREATE_URL;
-    const mode = draftIds.length > 0 ? 'resume' : 'create';
-    log.info({ drafts: draftIds.length, mode }, 'collected draft slots');
+    // 2. 対象決定。
+    //    (a) targetTitleId 指定時: その既存本(下書き/販売中)を直接 resume して上書き(作成枠を消費しない)。
+    //    (b) 未指定時: 既存下書きがあれば resume、無ければ新規作成(上限を1消費)。
+    let detailsUrl: string;
+    let mode: string;
+    if (b.targetTitleId) {
+      detailsUrl = EDIT_BASE + b.targetTitleId + '/details';
+      mode = 'overwrite';
+      log.info({ targetTitleId: b.targetTitleId, mode }, 'overwrite target title directly');
+    } else {
+      const draftIds = await collectDraftIds(page);
+      detailsUrl = draftIds.length > 0 ? EDIT_BASE + draftIds[0] + '/details' : CREATE_URL;
+      mode = draftIds.length > 0 ? 'resume' : 'create';
+      log.info({ drafts: draftIds.length, mode }, 'collected draft slots');
+    }
 
     // 3. STEP1 詳細ページを開く
     await page.goto(detailsUrl, { waitUntil: 'domcontentloaded' }).catch(() => {});
@@ -537,6 +553,62 @@ async function checkConfirmBoxes(page: Page): Promise<{ total: number; checked: 
   return { total, checked };
 }
 
+/**
+ * 「新しい原稿または表紙画像をアップロードされたようです。…自分の回答が正しいことを確認…」の確認
+ * チェックボックスを堅牢に ON にする。この確認欄は **既存(下書き/販売中)本を上書き再アップロードした
+ * 時だけ複数出現**（AI生成コンテンツ欄・アクセシビリティ欄など）。native input と role=checkbox の
+ * 両方に対応し、祖先テキストで対象を特定してクリック＋イベント発火の両手段で確実に checked にする。
+ */
+async function checkReuploadConfirms(page: Page): Promise<{ total: number; checked: number }> {
+  return page.evaluate(() => {
+    const RE = /新しい原稿または表紙画像をアップロード|自分の回答が正しいこと/;
+    const boxes = [
+      ...document.querySelectorAll('input[type=checkbox], [role=checkbox]'),
+    ] as HTMLElement[];
+    let total = 0;
+    let checked = 0;
+    for (const box of boxes) {
+      if (box.offsetParent === null) continue;
+      let ctx = '';
+      let n: HTMLElement | null = box;
+      for (let i = 0; i < 7 && n; i++) {
+        n = n.parentElement;
+        if (n) {
+          const t = n.textContent || '';
+          if (t.length < 600 && RE.test(t)) {
+            ctx = t;
+            break;
+          }
+        }
+      }
+      if (!ctx) continue;
+      total++;
+      const nat =
+        box.tagName === 'INPUT'
+          ? (box as HTMLInputElement)
+          : (box.querySelector('input[type=checkbox]') as HTMLInputElement | null);
+      const isOn = () =>
+        nat
+          ? nat.checked
+          : box.getAttribute('aria-checked') === 'true' ||
+            /a-checkbox-checked|is-checked/.test(box.className || box.innerHTML || '');
+      if (!isOn()) {
+        const target = (nat || box) as HTMLElement;
+        try {
+          target.click();
+        } catch {
+          /* fall through to events */
+        }
+        ['pointerdown', 'mousedown', 'mouseup', 'click'].forEach((t) =>
+          target.dispatchEvent(new MouseEvent(t, { bubbles: true })),
+        );
+      }
+      if (isOn()) checked++;
+    }
+    return { total, checked };
+  });
+}
+
 async function setStep2Options(page: Page): Promise<{ drm: boolean; accessibility: boolean; confirm: boolean; aiNo: boolean }> {
   await page.click('#a-autoid-0-announce').catch(() => {});
   await page.waitForTimeout(300);
@@ -573,10 +645,22 @@ async function setStep2Options(page: Page): Promise<{ drm: boolean; accessibilit
       radios.find((r) => /デジタル著作権管理を適用します/.test(labelOf(r))) ||
       radios.find((r) => /DRM/.test(labelOf(r)) && /を適用します/.test(labelOf(r)));
     if (drmR && !drmR.checked) drmR.click();
-    const accR = ([...document.querySelectorAll('input[name="data[accessibility][image_reading]"]')] as HTMLInputElement[]).find(
-      (r) => /すべてに代替テキストや詳細な説明が含まれています/.test(labelOf(r)),
-    );
-    if (accR && !accR.checked) accR.click();
+    // アクセシビリティ: 「(画像の)すべてに代替テキストや詳細な説明が含まれています」(4つ目/肯定)を選ぶ。
+    // これを選ばないと「新しい原稿/表紙をアップロード — 回答が正しいことを確認」チェックが誘発され save がブロックされる。
+    // name 属性決め打ちだと再描画で外れて未選択のままになるため、DRM 同様にラベル一致で全 radio から探し、
+    // native click が効かない場合はラベルへマウスイベントも送る(AUI 対策)。
+    let accR = radios.find((r) => /すべてに代替テキストや詳細な説明が含まれています/.test(labelOf(r)));
+    if (!accR) accR = radios.find((r) => /すべて/.test(labelOf(r)) && /代替テキスト/.test(labelOf(r)) && /含まれています/.test(labelOf(r)));
+    if (accR) {
+      if (!accR.checked) accR.click();
+      if (!accR.checked) {
+        const lab =
+          accR.closest('label') ||
+          (accR.id && document.querySelector('label[for="' + accR.id + '"]')) ||
+          accR.parentElement;
+        if (lab) ['pointerdown', 'mousedown', 'mouseup', 'click'].forEach((t) => (lab as HTMLElement).dispatchEvent(new MouseEvent(t, { bubbles: true })));
+      }
+    }
     const cf = (() => {
       const cands = ([...document.querySelectorAll('div, section, fieldset, li')] as HTMLElement[]).filter((el) => {
         const t = el.textContent || '';
@@ -672,7 +756,8 @@ async function fillStep2(
   }
   await page.waitForTimeout(2000);
   let opt = await setStep2Options(page);
-  for (let r = 0; r < 3 && (!opt.aiNo || !opt.drm); r++) {
+  // アクセシビリティ4つ目が外れると確認チェックが誘発され save がブロックされるため、これも再試行対象にする。
+  for (let r = 0; r < 3 && (!opt.aiNo || !opt.drm || !opt.accessibility); r++) {
     await page.waitForTimeout(2500);
     opt = await setStep2Options(page);
   }
@@ -681,6 +766,13 @@ async function fillStep2(
     await page.waitForTimeout(1500);
     cc = await checkConfirmBoxes(page);
   }
+  // 既存本の上書き時に出る「新しい原稿/表紙をアップロードしました」確認チェックを明示的に ON。
+  let rc = await checkReuploadConfirms(page);
+  for (let r = 0; r < 5 && rc.total > 0 && rc.checked < rc.total; r++) {
+    await page.waitForTimeout(1200);
+    rc = await checkReuploadConfirms(page);
+  }
+  if (rc.total > 0) log.info({ total: rc.total, checked: rc.checked }, 'reupload confirm boxes');
   await page.waitForTimeout(800);
   await screenshot(page, stage, 'step2-ready');
   const saveDeadline = Date.now() + 8 * 60 * 1000;
@@ -694,6 +786,8 @@ async function fillStep2(
       await page.waitForTimeout(3000);
       continue;
     }
+    // 上書き時の確認チェックは保存クリック後に再出現することがあるため毎回入れ直す。
+    await checkReuploadConfirms(page);
     await page.click('#save-and-continue-announce').catch(() => {});
     await page.waitForTimeout(6000);
   }

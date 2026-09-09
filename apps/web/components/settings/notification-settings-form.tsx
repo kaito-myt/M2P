@@ -91,7 +91,7 @@ export function NotificationSettingsForm({
       <div className="mb-space-snug">
         <h2
           id="notification-settings-heading"
-          className="text-sub-heading text-foreground"
+          className="text-section-title text-foreground"
         >
           {ms.title}
         </h2>
@@ -114,7 +114,7 @@ export function NotificationSettingsForm({
               onChange={(e) => setEmail(e.target.value)}
               onBlur={handleEmailBlur}
               placeholder={ms.emailToPlaceholder}
-              className="flex-1 rounded-button border border-border-warm bg-white px-3 py-2 text-body text-charcoal placeholder:text-muted focus:outline-none focus-visible:ring-2 focus-visible:ring-foreground"
+              className="flex-1 rounded-default border border-border-warm bg-cream-light px-3 py-2 text-body text-charcoal placeholder:text-muted focus:outline-none focus-visible:ring-2 focus-visible:ring-foreground"
             />
           </div>
           {emailError && (
@@ -131,7 +131,7 @@ export function NotificationSettingsForm({
             {ALERT_KIND_KEYS.map((kind) => (
               <label
                 key={kind}
-                className="flex cursor-pointer items-center gap-2 rounded-button border border-border-warm bg-white px-3 py-2"
+                className="flex cursor-pointer items-center gap-2 py-1.5"
               >
                 <input
                   type="checkbox"
@@ -152,7 +152,7 @@ export function NotificationSettingsForm({
           <button
             type="submit"
             disabled={isPending}
-            className="rounded-button bg-foreground px-4 py-2 text-button-sm font-medium text-white disabled:opacity-50"
+            className="rounded-default bg-foreground px-4 py-2 text-button-sm font-medium text-white disabled:opacity-50"
           >
             {isPending ? m.saving : m.saveButton}
           </button>

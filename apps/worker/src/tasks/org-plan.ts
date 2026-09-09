@@ -14,6 +14,7 @@ import {
   DIVISIONS,
   DIVISION_MANAGER_ROLE,
   isHumanKind,
+  HUMAN_KINDS,
   computeWinningPatterns,
   type BookPerf,
   type CeoPlanOutput,
@@ -82,8 +83,16 @@ export interface OrgPlanPrisma {
   appSettings: {
     findUnique: (args: {
       where: { id: string };
-      select: { monthly_cost_red_jpy: true };
-    }) => Promise<{ monthly_cost_red_jpy: number } | null>;
+      select: { monthly_cost_red_jpy: true; org_auto_approve_tasks: true };
+    }) => Promise<{ monthly_cost_red_jpy: number; org_auto_approve_tasks: boolean } | null>;
+  };
+  orgCeoMessage?: {
+    findMany: (args: {
+      where: { role: string; created_at: { gte: Date } };
+      orderBy: { created_at: 'desc' };
+      take: number;
+      select: { content: true; created_at: true };
+    }) => Promise<Array<{ content: string; created_at: Date }>>;
   };
   promotionChannelSetting: {
     findMany: (args: {
@@ -96,6 +105,10 @@ export interface OrgPlanPrisma {
       select: { division: true; kind: true; title: true; status: true };
     }) => Promise<Array<{ division: string; kind: string; title: string; status: string }>>;
     create: (args: { data: OrgTaskCreateData }) => Promise<{ id: string }>;
+    updateMany?: (args: {
+      where: { status: string; kind: { notIn: string[] } };
+      data: { status: string };
+    }) => Promise<{ count: number }>;
   };
   orgObjective: {
     updateMany: (args: { where: { status: string }; data: { status: string } }) => Promise<{ count: number }>;
@@ -179,6 +192,7 @@ export async function buildCompanySnapshot(
   channels: Array<{ channel: string; auto_enabled: boolean; handle: string | null }>;
   openTasks: Array<{ division: string; kind: string; title: string; status: string }>;
   winningPatterns: WinningPatterns;
+  autoApprove: boolean;
 }> {
   const books = await prisma.book.findMany({
     select: { id: true, title: true, status: true, publish_status: true, theme: { select: { genre: true } } },
@@ -216,8 +230,40 @@ export async function buildCompanySnapshot(
 
   const settings = await prisma.appSettings.findUnique({
     where: { id: 'singleton' },
-    select: { monthly_cost_red_jpy: true },
+    select: { monthly_cost_red_jpy: true, org_auto_approve_tasks: true },
   });
+  const autoApprove = settings?.org_auto_approve_tasks ?? true;
+
+  // [F-082] 全社ToDo自動承認モード: 自動承認ONのとき、滞留している proposed の
+  // 非人手タスク(create_account/growth_manual 等の needs_human kind は除く)を approved へ
+  // 継続スイープする。これにより「提案中のまま止まる」ToDoが無くなり、組織が自走し続ける。
+  if (autoApprove && prisma.orgTask.updateMany) {
+    try {
+      await prisma.orgTask.updateMany({
+        where: { status: 'proposed', kind: { notIn: [...HUMAN_KINDS] } },
+        data: { status: 'approved' },
+      });
+    } catch {
+      // best-effort — スイープ失敗は計画本体を止めない
+    }
+  }
+
+  // 運営者→CEO の直近メッセージ（過去14日・最大8件）を CEO への申し送りとして取り込む。
+  let operatorNotes = '';
+  if (prisma.orgCeoMessage) {
+    const since = new Date(now.getTime() - 14 * 24 * 3600 * 1000);
+    const msgs = await prisma.orgCeoMessage.findMany({
+      where: { role: 'operator', created_at: { gte: since } },
+      orderBy: { created_at: 'desc' },
+      take: 8,
+      select: { content: true, created_at: true },
+    });
+    if (msgs.length > 0) {
+      operatorNotes =
+        '【運営者からの直近の指示（最優先で方針に反映すること）】\n' +
+        msgs.reverse().map((m) => `- ${m.content.slice(0, 300)}`).join('\n');
+    }
+  }
 
   const chRows = await prisma.promotionChannelSetting.findMany({
     select: { channel: true, auto_enabled: true, handle: true, token_mask: true },
@@ -247,6 +293,7 @@ export async function buildCompanySnapshot(
     channels: { connected, auto_enabled: autoEnabled },
     open_tasks: openTasks.length,
     winning_patterns: { top_genres: winningPatterns.top_genres, insights: winningPatterns.insights },
+    ...(operatorNotes ? { notes: operatorNotes } : {}),
   };
 
   const candidateBooks = books
@@ -259,7 +306,7 @@ export async function buildCompanySnapshot(
       genre: b.theme?.genre ?? null,
     }));
 
-  return { snapshot, candidateBooks, channels, openTasks, winningPatterns };
+  return { snapshot, candidateBooks, channels, openTasks, winningPatterns, autoApprove };
 }
 
 export async function runOrgPlan(payload: unknown, deps: OrgPlanDeps = {}): Promise<OrgPlanResult> {
@@ -273,7 +320,7 @@ export async function runOrgPlan(payload: unknown, deps: OrgPlanDeps = {}): Prom
   const now = deps.now ?? (() => new Date());
 
   try {
-    const { snapshot, candidateBooks, channels, openTasks, winningPatterns } = await buildCompanySnapshot(prisma, now());
+    const { snapshot, candidateBooks, channels, openTasks, winningPatterns, autoApprove } = await buildCompanySnapshot(prisma, now());
 
     // 勝ちパターン台帳を更新（蓄積・可視化）。ベストエフォート。
     if (prisma.orgPlaybook) {
@@ -338,7 +385,9 @@ export async function runOrgPlan(payload: unknown, deps: OrgPlanDeps = {}): Prom
 
       for (const draft of result.tasks) {
         const bookId = draft.book_id && candidateIds.has(draft.book_id) ? draft.book_id : null;
-        const status = isHumanKind(draft.kind) ? 'needs_human' : 'approved';
+        // 自動承認 ON: 人手前提kindを除き即 approved で自動実行。
+        // OFF: proposed で留め、運営者が /org ボードで承認するまで実行しない。
+        const status = isHumanKind(draft.kind) ? 'needs_human' : autoApprove ? 'approved' : 'proposed';
         await prisma.orgTask.create({
           data: {
             objective_id: objective.id,

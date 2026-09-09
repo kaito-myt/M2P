@@ -25,7 +25,7 @@ import {
   bulkAdoptCoversCore,
   regenerateCoverCore,
   regenerateCoverTextCore,
-  PIPELINE_BOOK_EXPORT_TASK_NAME,
+  PIPELINE_BOOK_SEO_TASK_NAME,
   PIPELINE_BOOK_THUMBNAIL_IMAGE_TASK_NAME,
   PIPELINE_BOOK_THUMBNAIL_TEXT_TASK_NAME,
   type CoversDeps,
@@ -222,13 +222,13 @@ describe('bulkAdoptCoversCore - 5 items bulk adopt', () => {
     // Verify coverUpdateMany called 2 times (once per book)
     expect(spies.coverUpdateMany).toHaveBeenCalledTimes(2);
 
-    // Verify export Job created per book (2 books)
+    // Verify SEO Job created per book (2 books) — 表紙採用後は seo→export の順
     expect(spies.jobCreate).toHaveBeenCalledTimes(2);
 
     // Verify enqueue called per book (2 books)
     expect(spies.enqueue).toHaveBeenCalledTimes(2);
     for (const call of spies.enqueue.mock.calls) {
-      expect(call[0]).toBe(PIPELINE_BOOK_EXPORT_TASK_NAME);
+      expect(call[0]).toBe(PIPELINE_BOOK_SEO_TASK_NAME);
     }
 
     // Verify audit_log 1 call

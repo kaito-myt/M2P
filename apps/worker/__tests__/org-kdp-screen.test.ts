@@ -13,13 +13,14 @@ const silentLogger = {
 interface Opts {
   gate: boolean;
   taskStatus?: string;
-  book?: { status: string; publish_status: string; has_blocking_comments: boolean } | null;
+  book?: { status: string; publish_status: string; has_blocking_comments: boolean; kdp_publish_queued?: boolean } | null;
   score?: number | null;
   meta?: { price_jpy: number | null; description: string | null; keywords: string[] } | null;
 }
 
 function makeHarness(o: Opts) {
   const updates: Array<{ id: string; data: Record<string, unknown> }> = [];
+  const bookUpdates: Array<{ id: string; data: Record<string, unknown> }> = [];
   const prisma = {
     appSettings: {
       findUnique: vi.fn(async () => ({
@@ -39,9 +40,13 @@ function makeHarness(o: Opts) {
     book: {
       findUnique: vi.fn(async () =>
         o.book === undefined
-          ? { status: 'done', publish_status: 'unlisted', has_blocking_comments: false }
+          ? { status: 'done', publish_status: 'unlisted', has_blocking_comments: false, kdp_publish_queued: false }
           : o.book,
       ),
+      update: vi.fn(async (args: { where: { id: string }; data: Record<string, unknown> }) => {
+        bookUpdates.push({ id: args.where.id, data: args.data });
+        return {};
+      }),
     },
     evalResult: {
       findFirst: vi.fn(async () => (o.score === undefined ? { score_total: 82 } : o.score == null ? null : { score_total: o.score })),
@@ -53,7 +58,7 @@ function makeHarness(o: Opts) {
     },
     job: { update: vi.fn(async () => ({})) },
   } as unknown as OrgKdpScreenPrisma;
-  return { prisma, updates };
+  return { prisma, updates, bookUpdates };
 }
 
 const deps = (prisma: OrgKdpScreenPrisma): OrgKdpScreenDeps => ({
@@ -73,11 +78,36 @@ describe('runOrgKdpScreen', () => {
     expect((data.result_json as { kdp_readiness: { eligible: boolean } }).kdp_readiness.eligible).toBe(true);
   });
 
-  it('ゲートON + 合格: needs_human → approved（公開クリア）', async () => {
-    const { prisma, updates } = makeHarness({ gate: true });
+  it('ゲートON + 合格: needs_human → approved（公開クリア）＋入稿キュー登録', async () => {
+    const { prisma, updates, bookUpdates } = makeHarness({ gate: true });
     const res = await runOrgKdpScreen({}, deps(prisma));
     expect(res.cleared).toBe(1);
+    expect(res.queued).toBe(1);
     expect(updates[0]!.data.status).toBe('approved');
+    // [F-041修正] 実際の入稿キューへ載せる。
+    expect(bookUpdates).toHaveLength(1);
+    expect(bookUpdates[0]!.data.kdp_publish_queued).toBe(true);
+  });
+
+  it('既にキュー済みの本は再度キューに載せない（冪等）', async () => {
+    const { prisma, bookUpdates } = makeHarness({
+      gate: true,
+      book: { status: 'done', publish_status: 'unlisted', has_blocking_comments: false, kdp_publish_queued: true },
+    });
+    const res = await runOrgKdpScreen({}, deps(prisma));
+    expect(res.queued).toBe(0);
+    expect(bookUpdates).toHaveLength(0);
+  });
+
+  it('published 済みの本は入稿キューに載せない（二重出版防止）', async () => {
+    const { prisma, bookUpdates } = makeHarness({
+      gate: true,
+      taskStatus: 'approved',
+      book: { status: 'done', publish_status: 'published', has_blocking_comments: false, kdp_publish_queued: false },
+    });
+    const res = await runOrgKdpScreen({}, deps(prisma));
+    expect(res.queued).toBe(0);
+    expect(bookUpdates).toHaveLength(0);
   });
 
   it('ゲートON でも品質未達なら承認しない（理由記録）', async () => {

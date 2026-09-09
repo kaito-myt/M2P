@@ -206,8 +206,8 @@ export interface PipelineBookWriterOutlineDeps {
 }
 
 /** Writer outline の既定パラメータ (タスク詳細). */
-const DEFAULT_TARGET_CHAPTER_COUNT = 8;
-const DEFAULT_TARGET_TOTAL_CHARS = 50_000;
+const DEFAULT_TARGET_CHAPTER_COUNT = 14;
+const DEFAULT_TARGET_TOTAL_CHARS = 120_000;
 const ALLOWED_GENRES = new Set<string>(GENRE_SLUGS);
 const OUTLINE_CHAR_TOLERANCE = 0.15;
 
@@ -217,7 +217,7 @@ const OUTLINE_CHAR_TOLERANCE = 0.15;
  * per-chapter の制約 (subheadings 2〜10 等) は OutlineReviewOutputSchema が保証済み。
  */
 function isValidRevisedOutline(chapters: ChapterPlan[], targetTotalChars: number): boolean {
-  if (chapters.length < 7 || chapters.length > 10) return false;
+  if (chapters.length < 7 || chapters.length > 18) return false;
   for (let i = 0; i < chapters.length; i++) {
     if (chapters[i]!.index !== i + 1) return false;
   }

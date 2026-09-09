@@ -79,12 +79,12 @@ export function CostTab({ costBreakdown }: CostTabProps) {
                 <td className="px-2 py-1">{formatProvider(row.provider)}</td>
                 <td className="px-2 py-1 font-mono text-caption">{row.model}</td>
                 <td className="px-2 py-1">{formatRole(row.role)}</td>
-                <td className="px-2 py-1 text-right">{row.call_count}</td>
-                <td className="px-2 py-1 text-right">{formatTokenCount(row.input_tokens)}</td>
-                <td className="px-2 py-1 text-right">{formatTokenCount(row.output_tokens)}</td>
-                <td className="px-2 py-1 text-right">{formatTokenCount(row.cached_input_tokens)}</td>
-                <td className="px-2 py-1 text-right">{row.image_count}</td>
-                <td className="px-2 py-1 text-right font-medium">{formatCostJpy(row.cost_jpy)}</td>
+                <td className="px-2 py-1 text-right tabular-nums">{row.call_count}</td>
+                <td className="px-2 py-1 text-right tabular-nums">{formatTokenCount(row.input_tokens)}</td>
+                <td className="px-2 py-1 text-right tabular-nums">{formatTokenCount(row.output_tokens)}</td>
+                <td className="px-2 py-1 text-right tabular-nums">{formatTokenCount(row.cached_input_tokens)}</td>
+                <td className="px-2 py-1 text-right tabular-nums">{row.image_count}</td>
+                <td className="px-2 py-1 text-right font-medium tabular-nums">{formatCostJpy(row.cost_jpy)}</td>
               </tr>
             ))}
           </tbody>
@@ -93,12 +93,12 @@ export function CostTab({ costBreakdown }: CostTabProps) {
               <td className="px-2 py-1" colSpan={3}>
                 {m.totalLabel}
               </td>
-              <td className="px-2 py-1 text-right">{total_call_count}</td>
-              <td className="px-2 py-1 text-right">{formatTokenCount(total_input_tokens)}</td>
-              <td className="px-2 py-1 text-right">{formatTokenCount(total_output_tokens)}</td>
+              <td className="px-2 py-1 text-right tabular-nums">{total_call_count}</td>
+              <td className="px-2 py-1 text-right tabular-nums">{formatTokenCount(total_input_tokens)}</td>
+              <td className="px-2 py-1 text-right tabular-nums">{formatTokenCount(total_output_tokens)}</td>
               <td className="px-2 py-1 text-right" />
               <td className="px-2 py-1 text-right" />
-              <td className="px-2 py-1 text-right">{formatCostJpy(total_cost_jpy)}</td>
+              <td className="px-2 py-1 text-right tabular-nums">{formatCostJpy(total_cost_jpy)}</td>
             </tr>
           </tfoot>
         </table>

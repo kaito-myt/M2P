@@ -69,8 +69,8 @@ export const EditorInputSchema = z.object({
     hook: z.string().min(1).max(800),
     target_reader: z.string().min(1).max(300),
   }),
-  /** Writer chapter 全 N 章。F-003/F-004 整合で 7〜10。 */
-  chapters: z.array(EditorChapterInputSchema).min(7).max(10),
+  /** Writer chapter 全 N 章。writer の章数上限(30)と整合。 */
+  chapters: z.array(EditorChapterInputSchema).min(7).max(30),
   /**
    * AI 開示文 (`AppSettings.ai_disclosure_text`)。呼出側 (worker) が DB から読み出して渡す。
    * Editor は受け取った文字列を巻末挿入する責務を負う。
@@ -109,7 +109,7 @@ export type EditorChapterOutput = z.infer<typeof EditorChapterOutputSchema>;
  * - overall_notes: 任意の総評 (運営者向けメモ)。
  */
 export const EditorOutputSchema = z.object({
-  chapters: z.array(EditorChapterOutputSchema).min(7).max(10),
+  chapters: z.array(EditorChapterOutputSchema).min(7).max(30),
   ai_disclosure_appended: z.boolean(),
   ai_disclosure_text: z.string().min(1).max(500),
   overall_notes: z.string().max(2000).optional(),

@@ -18,7 +18,7 @@ export default function NotFound() {
       </p>
       <Link
         href="/dashboard"
-        className="rounded-default bg-charcoal px-4 py-2 text-button-sm text-cream no-underline hover:opacity-90"
+        className="rounded-default bg-charcoal px-4 py-2 text-button-sm text-white no-underline hover:opacity-90"
       >
         ダッシュボードへ戻る
       </Link>

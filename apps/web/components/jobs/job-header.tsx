@@ -52,14 +52,14 @@ export function JobHeader({
 }: JobHeaderProps) {
   return (
     <section
-      className="rounded-card border border-border-warm bg-white p-space-normal"
+      className="rounded-card border border-border-warm bg-white p-space-relaxed"
       aria-label="ジョブ基本情報"
     >
       {/* Failed banner */}
       {status === 'failed' && (
         <div
           role="alert"
-          className="mb-space-snug flex items-center gap-2 rounded border border-red-300 bg-red-50 px-3 py-2 text-body text-red-800"
+          className="mb-space-snug flex items-center gap-2 rounded border border-red-300 bg-red-100 px-3 py-2 text-body text-red-700"
         >
           <svg
             xmlns="http://www.w3.org/2000/svg"
@@ -78,7 +78,7 @@ export function JobHeader({
         </div>
       )}
 
-      <dl className="grid grid-cols-2 gap-x-space-normal gap-y-space-snug sm:grid-cols-3 lg:grid-cols-4">
+      <dl className="grid grid-cols-2 gap-x-space-relaxed gap-y-space-snug sm:grid-cols-3 lg:grid-cols-4">
         <div>
           <dt className="text-caption text-muted">{m.idLabel}</dt>
           <dd className="mt-0.5 font-mono text-caption text-foreground break-all">{id}</dd>

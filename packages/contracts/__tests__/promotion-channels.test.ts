@@ -15,6 +15,7 @@ import {
   amazonUrlForAsin,
   appendPurchaseLink,
   appendHashtags,
+  pickTopicHashtags,
   sanitizePromoBody,
   priceFactLine,
   finalizePromoBody,
@@ -411,5 +412,39 @@ describe('appendPurchaseLink / appendHashtags — IG/TikTok フルキャプシ�
     expect(out).toContain('#仕事術');
     expect(out).toContain('#タスク管理');
     expect(out).toContain('#朝活');
+  });
+});
+
+describe('pickTopicHashtags — 話題一致の回転タグ選択 (F-078)', () => {
+  const core = ['#読書記録', '#読書好きな人と繋がりたい'];
+  const rotating = ['#自己啓発', '#家計簿', '#貯金', '#話し方', '#競馬', '#福島競馬場', '#Kindle'];
+
+  it('core は常に含む', () => {
+    const tags = pickTopicHashtags('ふつうの本の話', core, rotating);
+    expect(tags).toContain('#読書記録');
+    expect(tags).toContain('#読書好きな人と繋がりたい');
+  });
+
+  it('競馬の本文には競馬系タグを足し、無関係タグは足さない', () => {
+    const tags = pickTopicHashtags('人気馬から買う前に、馬券は回収率で考える。', core, rotating);
+    expect(tags).toContain('#競馬');
+    expect(tags).not.toContain('#貯金');
+    expect(tags).not.toContain('#話し方');
+  });
+
+  it('貯金の本文には家計・貯金タグを足す', () => {
+    const tags = pickTopicHashtags('貯金が続かない人へ。固定費を見直して先取りする。', core, rotating);
+    expect(tags).toContain('#貯金');
+    expect(tags).toContain('#家計簿');
+  });
+
+  it('話し方の本文には話し方タグを足す', () => {
+    const tags = pickTopicHashtags('会議で信頼される伝え方と語彙の話。', core, rotating);
+    expect(tags).toContain('#話し方');
+  });
+
+  it('max で総数を制限する', () => {
+    const tags = pickTopicHashtags('競馬 貯金 家計 話し方 会議 積読 kindle', core, rotating, 4);
+    expect(tags.length).toBeLessThanOrEqual(4);
   });
 });

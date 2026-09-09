@@ -92,11 +92,11 @@ export function PriceChangeHistory({ alerts }: PriceChangeHistoryProps) {
             <tbody>
               {parsed.map((p) => (
                 <tr key={p.id} className="border-t border-border-warm">
-                  <Td>{p.occurredAt}</Td>
+                  <Td nowrap>{p.occurredAt}</Td>
                   <Td>{p.provider}</Td>
                   <Td>{p.model}</Td>
-                  <Td>{p.beforeText}</Td>
-                  <Td>{p.afterText}</Td>
+                  <Td nowrap>{p.beforeText}</Td>
+                  <Td nowrap>{p.afterText}</Td>
                   <Td align="right">
                     {p.deltaPct === null
                       ? '—'
@@ -170,7 +170,7 @@ function Th({
   return (
     <th
       scope="col"
-      className={`px-space-relaxed py-2 text-button-sm font-normal text-charcoal-82 ${
+      className={`whitespace-nowrap px-space-relaxed py-2 text-button-sm font-normal text-charcoal-82 ${
         align === 'right' ? 'text-right' : 'text-left'
       }`}
     >
@@ -182,15 +182,17 @@ function Th({
 function Td({
   children,
   align = 'left',
+  nowrap = false,
 }: {
   children: React.ReactNode;
   align?: 'left' | 'right';
+  nowrap?: boolean;
 }) {
   return (
     <td
       className={`px-space-relaxed py-3 text-body align-middle ${
-        align === 'right' ? 'text-right' : 'text-left'
-      }`}
+        align === 'right' ? 'text-right tabular-nums' : 'text-left'
+      }${nowrap ? ' whitespace-nowrap' : ''}`}
     >
       {children}
     </td>

@@ -8,6 +8,7 @@ import Link from 'next/link';
 
 import { messages } from '@/lib/messages';
 import type { ChecklistBookView } from '@/lib/kdp-checklist-view';
+import { submitEtaLabel, type SubmitEta } from '@/lib/kdp-submit-eta';
 import { Badge } from '@/components/ui/badge';
 
 const m = messages.kdpChecklist;
@@ -24,16 +25,27 @@ const publishVariant: Record<ChecklistBookView['publishStatus'], 'neutral' | 'ma
   published: 'success',
 };
 
-export function ChecklistList({ books }: { books: ChecklistBookView[] }) {
+export function ChecklistList({
+  books,
+  submitSchedule = {},
+}: {
+  books: ChecklistBookView[];
+  /** bookId → 入稿予定。入稿キュー登録済みの本にだけ入る。 */
+  submitSchedule?: Record<string, SubmitEta>;
+}) {
   return (
-    <ul className="flex flex-col gap-space-snug" data-testid="checklist-list">
+    <ul
+      className="border-y border-border-warm divide-y divide-border-warm"
+      data-testid="checklist-list"
+    >
       {books.map((book) => {
         const ready = !book.hasBlockingComments && !book.metadataMissing;
+        const eta = book.kdpPublishQueued ? submitSchedule[book.id] : undefined;
         return (
           <li key={book.id}>
             <Link
               href={`/kdp/checklist/${book.id}`}
-              className="flex items-center justify-between gap-space-snug rounded-card border border-border-warm bg-cream-light p-space-relaxed no-underline transition-colors hover:bg-charcoal-04 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+              className="flex items-center justify-between gap-space-snug px-space-tight py-space-relaxed no-underline transition-colors hover:bg-charcoal-03 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
               data-testid={`checklist-list-item-${book.id}`}
             >
               <div className="flex min-w-0 flex-col gap-1">
@@ -46,6 +58,14 @@ export function ChecklistList({ books }: { books: ChecklistBookView[] }) {
                     {m.completionRate(book.checkedCount, book.totalFieldCount)}
                   </span>
                 </div>
+                {eta && (
+                  <span
+                    className={`text-button-sm ${eta.reason === 'auto_off' ? 'text-muted' : 'text-accent'}`}
+                    data-testid={`checklist-list-eta-${book.id}`}
+                  >
+                    {submitEtaLabel(eta)}
+                  </span>
+                )}
               </div>
               <div className="flex shrink-0 items-center gap-2">
                 <Badge variant={publishVariant[book.publishStatus]}>

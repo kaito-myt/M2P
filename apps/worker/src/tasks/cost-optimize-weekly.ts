@@ -39,8 +39,8 @@ interface CostPrisma {
   modelCatalog: {
     findMany: (args: {
       where: { is_current: boolean };
-      select: { provider: true; model: true; input_price_per_mtok_usd: true; output_price_per_mtok_usd: true; image_price_per_image_usd: true };
-    }) => Promise<Array<{ provider: string; model: string; input_price_per_mtok_usd: unknown; output_price_per_mtok_usd: unknown; image_price_per_image_usd: unknown }>>;
+      select: { provider: true; model: true; input_price_per_mtok_usd: true; output_price_per_mtok_usd: true; image_price_per_image_usd: true; available: true };
+    }) => Promise<Array<{ provider: string; model: string; input_price_per_mtok_usd: unknown; output_price_per_mtok_usd: unknown; image_price_per_image_usd: unknown; available: boolean | null }>>;
   };
   appSettings: {
     findUnique: (args: { where: { id: string }; select: Record<string, boolean> }) => Promise<Record<string, unknown> | null>;
@@ -109,10 +109,13 @@ export async function runCostOptimizeWeekly(
     where: { status: 'active' },
     select: { role: true, genre: true, provider: true, model: true },
   });
-  const catalog = await prisma.modelCatalog.findMany({
+  const catalogAll = await prisma.modelCatalog.findMany({
     where: { is_current: true },
-    select: { provider: true, model: true, input_price_per_mtok_usd: true, output_price_per_mtok_usd: true, image_price_per_image_usd: true },
+    select: { provider: true, model: true, input_price_per_mtok_usd: true, output_price_per_mtok_usd: true, image_price_per_image_usd: true, available: true },
   });
+  // available=false（呼べないと確認済み）のモデルはコスト最適化の推奨候補から除外する。
+  // null（未検証）と true は残す＝死んだモデルを提案してエラーになる事故を防ぐ。
+  const catalog = catalogAll.filter((c) => c.available !== false);
   const settingsRow = await prisma.appSettings.findUnique({
     where: { id: 'singleton' },
     select: { promo_dispatch_cron: true, promo_review_cron: true, promo_daily_review_enabled: true, cost_analyze_cron: true },

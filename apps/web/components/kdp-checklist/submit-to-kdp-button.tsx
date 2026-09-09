@@ -19,11 +19,13 @@ interface SubmitToKdpButtonProps {
   disabled: boolean;
   /** Book.kdp_publish_queued の初期値 */
   queued: boolean;
+  /** 入稿予定の表示ラベル（例「入稿予定 8/27 15:30 頃」/「自動入稿OFF」）。サーバで算出済み。 */
+  etaLabel?: string;
 }
 
 const m = messages.kdpChecklist.submitKdp;
 
-export function SubmitToKdpButton({ bookId, disabled, queued: initialQueued }: SubmitToKdpButtonProps) {
+export function SubmitToKdpButton({ bookId, disabled, queued: initialQueued, etaLabel }: SubmitToKdpButtonProps) {
   const router = useRouter();
   const [queued, setQueued] = useState(initialQueued);
   const [pending, startTransition] = useTransition();
@@ -70,6 +72,11 @@ export function SubmitToKdpButton({ bookId, disabled, queued: initialQueued }: S
         >
           {m.queuedLabel}
         </span>
+        {etaLabel && (
+          <span className="text-button-sm text-accent" data-testid="submit-to-kdp-eta">
+            {etaLabel}
+          </span>
+        )}
         <button
           type="button"
           onClick={handleUnqueue}

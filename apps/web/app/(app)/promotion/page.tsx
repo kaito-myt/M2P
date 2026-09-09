@@ -2,11 +2,11 @@
  * 販促施策 (F-051) — 出版した本を「売れる」状態にする AI 販促プランの一覧。
  */
 import type { Metadata } from 'next';
-import Link from 'next/link';
 
 import { prisma } from '@a2p/db';
 
 import { messages } from '@/lib/messages';
+import { PageHeading } from '@/components/common/page-heading';
 import { PromotionList } from '@/components/promotion/promotion-list';
 import type { PromotionBookRow } from '@/lib/promotion-view';
 
@@ -45,19 +45,7 @@ export default async function PromotionPage() {
 
   return (
     <div className="flex flex-col gap-space-loose" data-testid="promotion-page">
-      <header className="flex flex-col gap-space-snug">
-        <nav aria-label="breadcrumb" className="text-button-sm text-muted">
-          <Link href="/dashboard" className="no-underline hover:underline">
-            {m.breadcrumbHome}
-          </Link>
-          <span aria-hidden="true"> &gt; </span>
-          <span>{m.pageTitle}</span>
-        </nav>
-        <div className="flex flex-col">
-          <h1 className="text-sub-heading text-foreground">{m.pageTitle}</h1>
-          <p className="text-body text-muted">{m.pageSubtitle}</p>
-        </div>
-      </header>
+      <PageHeading eyebrow={messages.nav.sectionPromotion} title={m.pageTitle} description={m.pageSubtitle} />
 
       {books.length === 0 ? (
         <div className="rounded-card border border-border-warm bg-cream-light p-space-loose text-center">

@@ -38,11 +38,11 @@ export function ErrorDetail({ status, error, screenshotUrl }: ErrorDetailProps) 
   return (
     <section
       aria-label={m.errorSection}
-      className={`rounded-card border bg-white ${isFailed ? 'border-red-300' : 'border-border-warm'}`}
+      className={`rounded-card border bg-cream-light ${isFailed ? 'border-red-300' : 'border-border-warm'}`}
     >
       <button
         type="button"
-        className="flex w-full items-center justify-between px-space-normal py-space-snug text-left"
+        className="flex w-full items-center justify-between px-space-relaxed py-space-snug text-left"
         onClick={() => setOpen((o) => !o)}
         aria-expanded={open}
         aria-controls="error-detail-content"
@@ -57,19 +57,19 @@ export function ErrorDetail({ status, error, screenshotUrl }: ErrorDetailProps) 
         </div>
 
         {!isFailed && (
-          <span className="rounded-full bg-green-100 px-2 py-0.5 text-caption text-green-800">
+          <span className="rounded-full bg-green-100 px-2 py-0.5 text-caption text-green-700">
             {m.errorNone}
           </span>
         )}
         {isFailed && (
-          <AlertCircle className="h-4 w-4 text-red-600" aria-hidden="true" aria-label="エラーあり" />
+          <AlertCircle className="h-4 w-4 text-destructive" aria-hidden="true" aria-label="エラーあり" />
         )}
       </button>
 
       {open && (
         <div
           id="error-detail-content"
-          className="border-t border-border-warm px-space-normal py-space-snug"
+          className="border-t border-border-warm px-space-relaxed py-space-snug"
         >
           {!isFailed || !error ? (
             <p className="text-body text-muted">{m.errorNone}</p>
@@ -88,7 +88,7 @@ export function ErrorDetail({ status, error, screenshotUrl }: ErrorDetailProps) 
                 <div>
                   <p className="text-caption font-medium text-muted">{m.stackTrace}</p>
                   <pre
-                    className="mt-1 overflow-x-auto rounded bg-red-50 p-space-snug text-caption text-red-800"
+                    className="mt-1 overflow-x-auto rounded bg-red-100 p-space-snug text-caption text-red-700"
                     style={{ fontFamily: 'monospace', whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}
                   >
                     {parseErrorAndStack(error).stack}

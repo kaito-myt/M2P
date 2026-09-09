@@ -323,6 +323,55 @@ export function appendHashtags(
   return `${trimmed}\n\n${accepted.join(' ')}`;
 }
 
+/**
+ * [F-078] 発見性向上: 戦略の core タグに加え、**本文の話題に合致する rotating タグ**を選ぶ。
+ * 従来は core(#読書記録 等)しか付けず、競馬/貯金/話し方の投稿でもそのニッチ層に一切リーチできず
+ * フォロワーが伸びなかった。core は常時、rotating は本文にキーワードが該当するものだけ足す。
+ * (X は appendHashtags 側で 280 重みに収まる分だけ採用されるので、多めに渡してよい。)
+ */
+const ROTATING_TAG_KEYWORDS: Record<string, RegExp> = {
+  '#貯金': /貯金|貯め|先取り|口座/,
+  '#家計簿': /家計|節約|固定費|変動費|支出|やりくり/,
+  '#競馬': /競馬|馬券|回収率|オッズ|レース|騎手|穴馬|重賞|軸馬|複勝|単勝|逃げ馬|人気馬|差し|追い込み|上がり3|外回り|内回り|馬場|ハロン|GⅠ|Ｇ1|G1/,
+  '#福島競馬場': /福島競馬/,
+  '#新潟競馬場': /新潟競馬/,
+  '#ウマ娘から競馬': /ウマ娘/,
+  '#話し方': /話し方|語彙|伝え方|口ぐせ|口グセ|敬語|会議|商談|雑談|言い換え/,
+  '#ビジネス書': /仕事|ビジネス|上司|部下|職場|報連相|会議|商談/,
+  '#自己啓発': /習慣|生き方|頑張|自己肯定|マインド|考え方|人間関係|疲れ/,
+  '#なろう系': /なろう|異世界|転生/,
+  '#追放系': /追放|パーティ|ざまあ/,
+  '#積読消化': /積読|読書|読み|本棚|読了|一冊/,
+  '#Kindle': /kindle|電子書籍/i,
+};
+
+export function pickTopicHashtags(
+  body: string,
+  core: readonly string[] | null | undefined,
+  rotating: readonly string[] | null | undefined,
+  max = 8,
+): string[] {
+  const norm = (t: string): string => {
+    const s = t.trim();
+    return s.startsWith('#') ? s : `#${s}`;
+  };
+  const coreList = (core ?? []).filter((t): t is string => typeof t === 'string' && t.trim().length > 0).map(norm);
+  const matchedRotating: string[] = [];
+  for (const t of rotating ?? []) {
+    if (typeof t !== 'string' || !t.trim()) continue;
+    const n = norm(t);
+    const kw = ROTATING_TAG_KEYWORDS[n];
+    if (kw ? kw.test(body) : body.includes(n.slice(1))) matchedRotating.push(n);
+  }
+  // 優先順: 先頭core1つ → 話題一致タグ(発見性) → 残りcore。
+  // X は 280 重みで末尾が切られるため、話題タグを前方に置いて必ず生き残らせる
+  // (汎用の2つ目coreより #貯金/#競馬 等の方が新規リーチに効く)。
+  const ordered = [...coreList.slice(0, 1), ...matchedRotating, ...coreList.slice(1)];
+  const out: string[] = [];
+  for (const t of ordered) if (t.length > 1 && !out.includes(t)) out.push(t);
+  return out.slice(0, max);
+}
+
 // ===========================================================================
 // 事実サニタイズ + 検証済み事実の注入 (品質改善 2026-07-29)
 //   LLM は購入URL・価格・セール・ランキング実績を「それらしく」捏造しがち

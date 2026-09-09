@@ -5,14 +5,17 @@
  * ブログ「栞 -SHIORI-」と同一のエディトリアルなテイストで統一した「栞の本棚」。
  * ブランドヘッダ・コンセプト・カタログ・About・フッタ(法務リンク)を備えた
  * 1 枚完結の公式サイトとして構成する (TikTok 等の審査で要求される作り込み)。
- * 配色は A2P デザイントークンに依存せず当ブランド独自:
- *   paper #F7F1E3 / ink #1B1714 / green #1E5B49 / terracotta #C6572E / line #E6DECB
+ * 配色は共通クローム (components/storefront/chrome) と共有:
+ *   paper #F5EFE1 / raised #FBF6EA / ink #221D18 / body #52493B / caption #8B7E68 /
+ *   line #E4DAC6 / green #1E5B49 / terracotta #B4471E / dark #171310 / gold #D8A15E
  */
 import type { Metadata } from 'next';
-import Link from 'next/link';
 
 import { prisma } from '@a2p/db';
 import { getSignedDownloadUrl } from '@a2p/storage';
+
+import { PseudoCover, SectionHeading, SiteFooter, SiteHeader } from '@/components/storefront/chrome';
+import { STOREFRONT_URL } from '@/lib/site';
 
 export const dynamic = 'force-dynamic';
 
@@ -20,6 +23,9 @@ export const metadata: Metadata = {
   title: '栞の本棚 | 栞 -SHIORI-',
   description:
     '栞 -SHIORI- が制作・出版した Kindle 書籍の本棚です。実用書・ビジネス書・自己啓発を中心に、要点がすっと入ってくる読みやすい電子書籍をお届けしています。Kindle Unlimited 対象も。',
+  // 検索結果を管理ツールのルート(/=認証で /dashboard へ転送)ではなく本棚 /shop 自体に向ける。
+  // 栞専用ドメインが有効ならそちらを正規 URL にする。
+  alternates: { canonical: `${STOREFRONT_URL}/shop` },
   openGraph: {
     title: '栞の本棚 | 栞 -SHIORI-',
     description: '栞 -SHIORI- が制作・出版した Kindle 書籍の本棚。実用書・ビジネス書・自己啓発を中心に。',
@@ -31,6 +37,19 @@ export const metadata: Metadata = {
 function amazonUrl(asin: string): string {
   return `https://www.amazon.co.jp/dp/${asin}`;
 }
+
+const HEADER_NAV = [
+  { label: 'レビュー', href: '/blog' },
+  { label: '本棚', href: '#books' },
+  { label: '栞について', href: '#about' },
+];
+const FOOTER_NAV = [
+  { label: 'レビュー', href: '/blog' },
+  { label: '本棚', href: '#books' },
+  { label: 'プライバシー', href: '/legal/privacy' },
+  { label: '利用規約', href: '/legal/terms' },
+  { label: 'お問い合わせ', href: 'mailto:kaito.myt@gmail.com' },
+];
 
 export default async function BooksLandingPage() {
   const books = await prisma.book.findMany({
@@ -54,130 +73,138 @@ export default async function BooksLandingPage() {
     }),
   );
 
-  return (
-    <div className="flex min-h-screen flex-col bg-[#F7F1E3] text-[#1B1714] antialiased">
-      {/* ── ヘッダ ── */}
-      <header className="sticky top-0 z-20 border-b border-[#E6DECB] bg-[#F7F1E3]/90 backdrop-blur">
-        <div className="mx-auto flex max-w-5xl items-center justify-between px-5 py-3.5">
-          <Link href="/blog" className="flex items-center gap-2.5 no-underline">
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src="/blog-mark.png" alt="栞 -SHIORI-" className="h-8 w-8 rounded-md object-cover" />
-            <span className="flex items-baseline gap-1.5">
-              <span className="font-serif text-xl font-bold tracking-tight text-[#1B1714]">栞</span>
-              <span className="text-[10px] font-semibold uppercase tracking-[0.4em] text-[#C6572E]">SHIORI</span>
-            </span>
-          </Link>
-          <nav className="flex items-center gap-5 text-sm text-[#5C554A]">
-            <Link href="/blog" className="no-underline transition-colors hover:text-[#1E5B49]">
-              レビュー
-            </Link>
-            <a href="#books" className="no-underline transition-colors hover:text-[#1E5B49]">
-              本棚
-            </a>
-            <a href="#about" className="no-underline transition-colors hover:text-[#1E5B49]">
-              栞について
-            </a>
-          </nav>
-        </div>
-      </header>
+  const [lead, ...gridItems] = items;
 
-      {/* ── ヒーロー (ダーク・コンセプト) ── */}
-      <section className="w-full bg-[#141210] text-[#F3ECDC]">
-        <div className="mx-auto max-w-5xl px-5 py-16 text-center md:py-20">
-          <div className="mb-6 flex items-center justify-center gap-3">
-            <span className="inline-block h-px w-8 bg-[#C6572E]" />
-            <span className="text-[11px] font-semibold uppercase tracking-[0.35em] text-[#C6572E]">
-              Bookshelf — 栞の本棚
-            </span>
-            <span className="inline-block h-px w-8 bg-[#C6572E]" />
+  return (
+    <div className="flex min-h-screen flex-col bg-[#F5EFE1] text-[#221D18] antialiased">
+      <SiteHeader nav={HEADER_NAV} cta={{ label: 'レビューを読む', href: '/blog' }} width="max-w-5xl" />
+
+      {/* ── ヒーロー (dark・左寄せ・非対称) ── */}
+      <section className="w-full bg-[#171310] text-[#F1E9D8]">
+        <div className="mx-auto max-w-5xl px-5 py-16 sm:px-6 md:py-20">
+          <div className="max-w-2xl">
+            <p className="font-display text-[13px] italic tracking-wide text-[#D8A15E]">The bookshelf</p>
+            <h1 className="mt-5 font-serif text-[2.3rem] font-semibold leading-[1.24] tracking-tight text-[#F4ECDB] md:text-[3rem]">
+              読んで役立つ一冊を、あなたに。
+            </h1>
+            <p className="mt-6 text-[15px] leading-[1.95] text-[#C7BCA6]">
+              栞 -SHIORI- は、良書の要点を紹介するブックジャーナルであると同時に、実用書・ビジネス書・自己啓発を中心に
+              <strong className="font-semibold text-[#F1E9D8]"> Kindle 電子書籍</strong>を制作・出版しているレーベルです。
+              日々の仕事や暮らしにすぐ活かせる、要点がすっと入ってくる本づくりを心がけています。
+            </p>
+            <a
+              href="#books"
+              className="mt-9 inline-flex items-center gap-2 rounded-[2px] bg-[#B4471E] px-6 py-3 text-[13px] font-semibold tracking-wide text-[#F4ECDB] no-underline transition-colors hover:bg-[#973914]"
+            >
+              本棚を見る <span aria-hidden>↓</span>
+            </a>
           </div>
-          <h1 className="font-serif text-4xl font-bold leading-[1.2] tracking-tight text-[#F3ECDC] md:text-5xl">
-            読んで役立つ一冊を、あなたに。
-          </h1>
-          <p className="mx-auto mt-6 max-w-2xl text-base leading-[1.9] text-[#C9C1B1]">
-            栞 -SHIORI- は、良書の要点を紹介するブックジャーナルであると同時に、
-            実用書・ビジネス書・自己啓発を中心に <strong className="font-semibold text-[#F3ECDC]">Kindle 電子書籍</strong>を
-            制作・出版しているレーベルです。日々の仕事や暮らしにすぐ活かせる、
-            要点がすっと入ってくる本づくりを心がけています。
-          </p>
-          <a
-            href="#books"
-            className="mt-8 inline-flex items-center gap-2 rounded-full bg-[#C6572E] px-6 py-2.5 text-sm font-semibold text-[#F3ECDC] no-underline transition-colors hover:bg-[#a8461f]"
-          >
-            本棚を見る <span aria-hidden>↓</span>
-          </a>
         </div>
       </section>
 
-      <main className="mx-auto w-full max-w-5xl flex-1 px-5 py-14">
+      <main className="mx-auto w-full max-w-5xl flex-1 px-5 py-14 sm:px-6 md:py-16">
         {/* ── 書籍カタログ ── */}
-        <section id="books" className="scroll-mt-20">
-          <div className="mb-8 flex items-end justify-between">
-            <h2 className="font-serif text-2xl font-bold text-[#1B1714]">出版書籍一覧</h2>
-            <span className="text-[11px] uppercase tracking-[0.2em] text-[#8A6A45]">Books</span>
-          </div>
+        <section id="books" className="scroll-mt-24">
+          <SectionHeading jp="出版書籍" label="Books" />
+
           {items.length === 0 ? (
-            <p className="py-16 text-center text-[#8B8577]">現在ご紹介できる書籍はまだありません。まもなく公開します。</p>
+            <p className="py-20 text-center text-[#8B7E68]">現在ご紹介できる書籍はまだありません。まもなく公開します。</p>
           ) : (
-            <ul className="grid grid-cols-2 gap-x-6 gap-y-10 sm:grid-cols-3 lg:grid-cols-4">
-              {items.map((b) => (
-                <li key={b.id}>
-                  <a
-                    href={amazonUrl(b.asin as string)}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="group flex h-full flex-col no-underline"
-                  >
-                    <div className="overflow-hidden rounded-sm bg-[#EFE7D4] shadow-[0_12px_30px_-16px_rgba(0,0,0,0.5)] transition-shadow duration-300 group-hover:shadow-[0_20px_44px_-16px_rgba(0,0,0,0.55)]">
-                      {b.coverUrl ? (
+            <>
+              {/* 最新の一冊を大きく (誌面のリズム) */}
+              {lead && (
+                <a
+                  href={amazonUrl(lead.asin as string)}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  aria-label={`${lead.title} を Amazon で見る`}
+                  className="group mt-9 grid grid-cols-1 gap-8 no-underline sm:grid-cols-[minmax(0,220px)_1fr] sm:gap-10"
+                >
+                  <div className="w-full max-w-[220px] overflow-hidden bg-[#EBE3D0] shadow-[0_18px_36px_-22px_rgba(33,20,10,0.6)] transition-transform duration-500 group-hover:-translate-y-1">
+                    <div className="aspect-[10/16] w-full overflow-hidden">
+                      {lead.coverUrl ? (
                         // eslint-disable-next-line @next/next/no-img-element
-                        <img
-                          src={b.coverUrl}
-                          alt={b.title}
-                          className="aspect-[10/16] w-full object-cover transition-transform duration-500 group-hover:scale-[1.04]"
-                        />
+                        <img src={lead.coverUrl} alt={lead.title} className="h-full w-full object-cover" />
                       ) : (
-                        <div className="flex aspect-[10/16] w-full items-center justify-center font-serif text-3xl text-[#1E5B49]">
-                          栞
-                        </div>
+                        <PseudoCover title={lead.title} seedKey={lead.id} />
                       )}
                     </div>
-                    <h3 className="mt-3 line-clamp-3 font-serif text-[15px] font-bold leading-snug text-[#1B1714] transition-colors group-hover:text-[#1E5B49]">
-                      {b.title}
+                  </div>
+                  <div className="flex flex-col justify-center">
+                    <p className="font-display text-[12px] italic tracking-wide text-[#8B7E68]">Latest release</p>
+                    <h3 className="mt-2 font-serif text-[1.6rem] font-semibold leading-snug tracking-tight text-[#221D18] transition-colors group-hover:text-[#1E5B49] md:text-[2rem]">
+                      {lead.title}
                     </h3>
-                    {b.subtitle && <p className="mt-1 line-clamp-2 text-xs text-[#8B8577]">{b.subtitle}</p>}
-                    <span className="mt-2 inline-flex items-center gap-1 text-xs font-semibold text-[#C6572E]">
-                      Amazon で見る <span aria-hidden>→</span>
+                    {lead.subtitle && <p className="mt-3 max-w-lg text-[15px] leading-[1.9] text-[#52493B]">{lead.subtitle}</p>}
+                    <span className="mt-6 inline-flex w-fit items-center gap-2 rounded-[2px] bg-[#1E5B49] px-5 py-2.5 text-[13px] font-semibold tracking-wide text-[#F1E9D8]">
+                      Amazon で見る
                     </span>
-                  </a>
-                </li>
-              ))}
-            </ul>
+                  </div>
+                </a>
+              )}
+
+              {/* 残りを書棚のように並べる */}
+              {gridItems.length > 0 && (
+                <ul className="mt-14 grid grid-cols-2 gap-x-6 gap-y-12 sm:grid-cols-3 lg:grid-cols-4">
+                  {gridItems.map((b) => (
+                    <li key={b.id}>
+                      <a
+                        href={amazonUrl(b.asin as string)}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        aria-label={`${b.title} を Amazon で見る`}
+                        className="group flex h-full flex-col no-underline"
+                      >
+                        <div className="overflow-hidden bg-[#EBE3D0] shadow-[0_14px_28px_-18px_rgba(33,20,10,0.55)] transition-transform duration-500 group-hover:-translate-y-1">
+                          <div className="aspect-[10/16] w-full overflow-hidden">
+                            {b.coverUrl ? (
+                              // eslint-disable-next-line @next/next/no-img-element
+                              <img src={b.coverUrl} alt={b.title} className="h-full w-full object-cover" />
+                            ) : (
+                              <PseudoCover title={b.title} seedKey={b.id} />
+                            )}
+                          </div>
+                        </div>
+                        <h3 className="mt-3 line-clamp-3 font-serif text-[14px] font-semibold leading-snug tracking-tight text-[#221D18] transition-colors group-hover:text-[#1E5B49]">
+                          {b.title}
+                        </h3>
+                        {b.subtitle && <p className="mt-1 line-clamp-2 text-[12px] leading-relaxed text-[#8B7E68]">{b.subtitle}</p>}
+                      </a>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </>
           )}
         </section>
 
         {/* ── 栞について ── */}
-        <section
-          id="about"
-          className="mt-16 scroll-mt-20 overflow-hidden rounded-lg border border-[#E6DECB] bg-[#FCF8EE] shadow-[0_12px_36px_-22px_rgba(0,0,0,0.35)]"
-        >
-          <div className="grid grid-cols-1 md:grid-cols-[220px_1fr]">
-            <div className="flex items-center justify-center bg-[#EFE7D4] p-8">
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img src="/blog-mark.png" alt="栞 -SHIORI-" className="h-28 w-28 rounded-xl object-cover shadow-md" />
-            </div>
-            <div className="p-7 md:p-9">
-              <h2 className="font-serif text-2xl font-bold text-[#1B1714]">栞 -SHIORI- について</h2>
-              <p className="mt-4 leading-[1.9] text-[#5C554A]">
-                栞 -SHIORI- は、実用書・ビジネス書・自己啓発ジャンルを中心に、読者の課題解決に役立つ
-                Kindle 電子書籍を企画・制作・出版しているレーベルであり、良書の要点を紹介するブックジャーナルです。
-                「読む前に価値がわかる」レビューと、「要点がすっと入ってくる」書籍の両方で、
-                あなたの読書習慣を後押しします。
+        <section id="about" className="mt-20 scroll-mt-24 border-t border-[#E4DAC6] pt-14">
+          <div className="grid grid-cols-1 gap-10 md:grid-cols-[1fr_1.5fr] md:gap-14">
+            <div>
+              <div className="w-fit border border-[#E4DAC6] bg-[#FBF6EA] p-3">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img src="/blog-mark.png" alt="栞 -SHIORI-" className="h-24 w-24 object-cover" />
+              </div>
+              <p className="mt-4 font-display text-[12px] italic tracking-wide text-[#8B7E68]">
+                栞 — a bookmark for good books
               </p>
-              <p className="mt-3 text-sm text-[#8B8577]">
+            </div>
+            <div>
+              <p className="font-display text-[12px] italic tracking-wide text-[#B4471E]">About</p>
+              <h2 className="mt-2 font-serif text-[1.7rem] font-semibold tracking-tight text-[#221D18]">栞 -SHIORI- について</h2>
+              <p className="mt-5 text-[15px] leading-[1.95] text-[#52493B]">
+                栞 -SHIORI- は、実用書・ビジネス書・自己啓発ジャンルを中心に、読者の課題解決に役立つ Kindle 電子書籍を企画・制作・出版している
+                レーベルであり、良書の要点を紹介するブックジャーナルです。「読む前に価値がわかる」レビューと、「要点がすっと入ってくる」書籍の
+                両方で、あなたの読書習慣を後押しします。
+              </p>
+              <p className="mt-4 text-[13px] leading-relaxed text-[#8B7E68]">
                 ご感想・お問い合わせは{' '}
-                <a href="mailto:info@festal-inc.com" className="text-[#1E5B49] underline underline-offset-2 hover:no-underline">
-                  info@festal-inc.com
+                <a
+                  href="mailto:kaito.myt@gmail.com"
+                  className="text-[#1E5B49] underline underline-offset-[3px] decoration-[#1E5B49]/40 transition-colors hover:decoration-[#1E5B49]"
+                >
+                  kaito.myt@gmail.com
                 </a>{' '}
                 までお気軽にどうぞ。
               </p>
@@ -186,23 +213,7 @@ export default async function BooksLandingPage() {
         </section>
       </main>
 
-      {/* ── フッタ ── */}
-      <footer className="w-full bg-[#141210] text-[#B9B2A4]">
-        <div className="mx-auto flex max-w-5xl flex-col items-center gap-4 px-5 py-8 text-sm sm:flex-row sm:justify-between">
-          <div className="flex items-baseline gap-2">
-            <span className="font-serif text-xl font-bold text-[#F3ECDC]">栞</span>
-            <span className="text-[10px] uppercase tracking-[0.35em] text-[#C6572E]">SHIORI</span>
-            <span className="ml-2 text-xs text-[#7A7469]">© {new Date().getFullYear()} 良書の要点ブログ</span>
-          </div>
-          <nav className="flex items-center gap-5 text-xs">
-            <Link href="/blog" className="text-[#B9B2A4] no-underline hover:text-[#F3ECDC]">レビュー</Link>
-            <a href="#books" className="text-[#B9B2A4] no-underline hover:text-[#F3ECDC]">本棚</a>
-            <Link href="/legal/privacy" className="text-[#B9B2A4] no-underline hover:text-[#F3ECDC]">プライバシー</Link>
-            <Link href="/legal/terms" className="text-[#B9B2A4] no-underline hover:text-[#F3ECDC]">利用規約</Link>
-            <a href="mailto:info@festal-inc.com" className="text-[#B9B2A4] no-underline hover:text-[#F3ECDC]">お問い合わせ</a>
-          </nav>
-        </div>
-      </footer>
+      <SiteFooter nav={FOOTER_NAV} width="max-w-5xl" />
     </div>
   );
 }

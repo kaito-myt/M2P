@@ -26,6 +26,11 @@ const BOLD_FONT_PATH = fileURLToPath(
   new URL('../assets/fonts/NotoSansJP-Bold.ttf', import.meta.url),
 );
 
+/** ffmpeg drawtext 等で日本語テロップを焼くための Noto Sans JP Bold 絶対パス。 */
+export function notoSansJpBoldPath(): string {
+  return BOLD_FONT_PATH;
+}
+
 let regularFont: opentype.Font | null = null;
 let boldFont: opentype.Font | null = null;
 
@@ -41,6 +46,76 @@ function loadFonts(): { regular: opentype.Font; bold: opentype.Font } {
   if (!regularFont) regularFont = loadFont(REGULAR_FONT_PATH);
   if (!boldFont) boldFont = loadFont(BOLD_FONT_PATH);
   return { regular: regularFont, bold: boldFont };
+}
+
+// ---------------------------------------------------------------------------
+// 文字化け(□ tofu)根絶: フォントが描けない文字を「描ける等価物へ置換 or 除去」する。
+// バンドルの Noto Sans JP は subset のため ～ ① ★ ♪ → や絵文字を持たない。
+// opentype で glyph index 0 (.notdef) になる文字を、そのまま描くと □ になる。
+// ---------------------------------------------------------------------------
+
+/** 描けない可能性が高い記号 → 描ける等価物。空文字は「除去」を意味する。 */
+const GLYPH_SUBSTITUTIONS: Record<string, string> = {
+  '〜': 'ー',
+  '～': 'ー',
+  '→': '>',
+  '←': '<',
+  '⇒': '>',
+  '★': '',
+  '☆': '',
+  '♪': '',
+  '♬': '',
+  '♡': '',
+  '❤': '',
+  '♥': '',
+  '※': '',
+  '✓': '',
+  '✔': '',
+  '✨': '',
+  '📚': '',
+  '☺': '',
+  '・': '・',
+};
+
+/** 丸数字 ①..⑳ → "1".."20"。それ以外は undefined。 */
+function circledNumber(ch: string): string | undefined {
+  const cp = ch.codePointAt(0);
+  if (cp === undefined) return undefined;
+  if (cp >= 0x2460 && cp <= 0x2473) return String(cp - 0x2460 + 1); // ①..⑳
+  return undefined;
+}
+
+/** font が描ける文字だけを残し、描けない記号は等価物へ置換、絵文字等は除去する。 */
+function sanitizeForFont(font: opentype.Font, text: string): string {
+  let out = '';
+  for (const ch of Array.from(text)) {
+    if (ch === '\n') {
+      out += ch;
+      continue;
+    }
+    if (font.charToGlyph(ch).index !== 0) {
+      out += ch; // そのまま描ける
+      continue;
+    }
+    const circ = circledNumber(ch);
+    const sub = circ ?? GLYPH_SUBSTITUTIONS[ch];
+    if (sub) {
+      for (const s of Array.from(sub)) {
+        if (font.charToGlyph(s).index !== 0) out += s;
+      }
+    }
+    // 置換不能(絵文字など)は除去
+  }
+  return out;
+}
+
+/**
+ * ffmpeg drawtext 等、フォントを外部で解決する経路向けのテロップ文字サニタイズ。
+ * バンドル Bold フォントのカバレッジ基準で、描けない文字を除去/置換して □ を防ぐ。
+ */
+export function sanitizeTelopText(text: string): string {
+  const { bold } = loadFonts();
+  return sanitizeForFont(bold, text);
 }
 
 export interface CoverText {
@@ -65,6 +140,13 @@ export interface ComposeCoverOptions {
 // テキスト折返し (日本語は空白が無いので文字単位で幅計測して折る)
 // ---------------------------------------------------------------------------
 
+/** 行頭に来てはいけない文字 (禁則: 句読点・閉じ括弧・長音・小書き等)。 */
+const NO_LINE_START = new Set(
+  Array.from('、。，．・！？：；」』）】〕｝〉》…ー―～〜%）」』！？、。ゃゅょっァィゥェォッャュョ'),
+);
+/** 行末に来てはいけない文字 (禁則: 開き括弧)。 */
+const NO_LINE_END = new Set(Array.from('（「『【〔｛〈《（'));
+
 function wrapByWidth(
   font: opentype.Font,
   text: string,
@@ -81,8 +163,20 @@ function wrapByWidth(
     }
     const test = cur + ch;
     if (cur.length > 0 && font.getAdvanceWidth(test, fontSize) > maxWidth) {
-      lines.push(cur);
-      cur = ch;
+      // 禁則処理: 行頭禁止文字は前行にぶら下げる (わずかな overflow を許容)。
+      if (NO_LINE_START.has(ch)) {
+        cur = test;
+        continue;
+      }
+      // 行末禁止文字が末尾なら、その1文字を次行へ送る。
+      const last = cur[cur.length - 1] ?? '';
+      if (NO_LINE_END.has(last) && cur.length >= 2) {
+        lines.push(cur.slice(0, -1));
+        cur = last + ch;
+      } else {
+        lines.push(cur);
+        cur = ch;
+      }
     } else {
       cur = test;
     }
@@ -154,6 +248,11 @@ export async function composeCoverTypography(
 ): Promise<Buffer> {
   const { regular, bold } = loadFonts();
 
+  // 文字化け根絶: 描けない文字を置換/除去してから組版する。
+  const title = sanitizeForFont(bold, text.title);
+  const subtitle = text.subtitle ? sanitizeForFont(regular, text.subtitle) : undefined;
+  const author = text.author ? sanitizeForFont(regular, text.author) : undefined;
+
   const base = sharp(image);
   const meta = await base.metadata();
   const width = meta.width ?? 1024;
@@ -172,7 +271,7 @@ export async function composeCoverTypography(
   const titleMin = width * 0.058;
   const { size: titleSize, lines: titleLines } = fitTitle(
     bold,
-    text.title,
+    title,
     maxTextWidth,
     titleStart,
     titleMin,
@@ -182,13 +281,13 @@ export async function composeCoverTypography(
 
   const subtitleSize = width * 0.05;
   const subtitleLH = subtitleSize * 1.3;
-  const subtitleLines = text.subtitle
-    ? wrapByWidth(regular, text.subtitle, subtitleSize, maxTextWidth)
+  const subtitleLines = subtitle
+    ? wrapByWidth(regular, subtitle, subtitleSize, maxTextWidth)
     : [];
 
   const authorSize = width * 0.042;
   const authorLH = authorSize * 1.3;
-  const hasAuthor = Boolean(text.author && text.author.trim().length > 0);
+  const hasAuthor = Boolean(author && author.trim().length > 0);
 
   const gapTitleSub = subtitleLines.length > 0 ? titleSize * 0.42 : 0;
   const gapSubAuthor = hasAuthor ? titleSize * 0.5 : 0;
@@ -253,7 +352,7 @@ export async function composeCoverTypography(
   }
   if (hasAuthor) {
     cursorBaseline += gapSubAuthor;
-    pushLine(regular, text.author!.trim(), authorSize, authorLH, authorColor, authorSize * 0.07);
+    pushLine(regular, author!.trim(), authorSize, authorLH, authorColor, authorSize * 0.07);
   }
 
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">

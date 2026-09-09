@@ -1,5 +1,14 @@
 # A2P — Amazon Automated Publishing Tool
 
+> **This repo is the M2P (Money-Making Platform) monorepo.** A2P is its first tool. The platform
+> shell lives in `apps/portal` (`@m2p/portal`, 共通ログイン＋ツール選択) with shared auth in
+> `packages/auth`; future tools are added as more `apps/*`. Folder = `C:\DEV\M2P` (旧 A2P). See
+> `docs/10-platform-portal.md`. A2P-specific packages stay `@a2p/*`.
+>
+> **2nd tool = ANP (Automated Note Publishing Tool)** — note 記事の企画〜執筆〜出版〜販促〜収益化を
+> **テーマ別マルチアカウント**で自動化（＝note版A2P）。ポータルに横並びタイル済（ロゴ `apps/portal/public/tools/anp.png`）。
+> 設計 = `docs/11-anp-design.md`。実装は `apps/anp` 予定、本番サブドメイン案 `anp.m2p.tools`。共通 packages を流用。
+
 This repository builds a personal, web-based tool that automates the end-to-end production of Amazon KDP books (実用書・ビジネス書・自己啓発) using a team of AI agents. It also automates its own development through a harness of Claude Code subagents.
 
 ## Mental model
@@ -108,10 +117,12 @@ PM は最後に `## PHASE_COMPLETE` または `## PHASE_INCOMPLETE: <未消化�
   commands/            ← slash commands (/iterate, etc.)
 docs/                  ← design artifacts produced by harness
 apps/
-  web/                 ← Next.js 15 (App Router) — UI + API routes
+  portal/              ← Next.js 15 — プラットフォームのハブ (共通ログイン + ツール選択, SSO)。docs/10
+  web/                 ← Next.js 15 (App Router) — A2P の UI + API routes
   worker/              ← graphile-worker process — long-running pipelines
 packages/
   agents/              ← Claude Agent SDK subagents (Marketer, Writer, ...)
+  auth/                ← 全アプリ共有の認証基盤 (buildAuthConfig + 認証コア) = SSO の要。docs/10
   db/                  ← Prisma schema + client
   storage/             ← Cloudflare R2 client
   contracts/           ← shared TypeScript types (job payloads, agent IO)

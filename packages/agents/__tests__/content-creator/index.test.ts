@@ -62,6 +62,7 @@ function input(overrides: Partial<ContentCreatorInput> = {}): ContentCreatorInpu
     target_readers: ['20代会社員'],
     sample_titles: ['朝1分の習慣術'],
     count: overrides.count ?? 4,
+    playbook_guidance: overrides.playbook_guidance ?? '',
   };
 }
 

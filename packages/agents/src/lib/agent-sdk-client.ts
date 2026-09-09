@@ -42,6 +42,10 @@ const PROVIDER = 'anthropic' as const;
 const WEB_SEARCH_TOOL = {
   type: 'web_search_20250305',
   name: 'web_search',
+  // max_uses でエージェント的検索ループの回数を上限化する。未設定だとモデルが
+  // 候補ごとに何度も検索し 1 回の生成に 3〜7 分かかりタイムアウトしていた
+  // (実測: pipeline.theme.generate が 320s で failed)。5 回あれば売れ筋/競合調査に十分。
+  max_uses: 5,
 } as const;
 
 const DEFAULT_MAX_TOKENS = 4096;

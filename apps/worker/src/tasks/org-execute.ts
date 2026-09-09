@@ -177,6 +177,12 @@ export interface OrgExecutePrisma {
       where: { org_task_id: string };
     }) => Promise<{ _sum: { cost_jpy: unknown } }>;
   };
+  appSettings?: {
+    findUnique: (args: {
+      where: { id: string };
+      select: { org_auto_approve_tasks: true };
+    }) => Promise<{ org_auto_approve_tasks: boolean } | null>;
+  };
   job: {
     create: (args: { data: Record<string, unknown> }) => Promise<{ id: string }>;
     findMany?: (args: unknown) => Promise<
@@ -462,7 +468,33 @@ async function resolveAccountId(
   return first.id;
 }
 
+/**
+ * plan_book は「新規書籍の企画（テーマ生成に渡す書籍コンセプト）」専用。
+ * 制作本部長エージェントが、本来 promotion 本部の仕事（SNS 販促・投稿カレンダー等）を
+ * 自分が持つ kind (plan_book) に当てはめて起票してしまうと、その指示文がそのまま
+ * pipeline.theme.generate の keyword_or_brief に渡り「SNS 指示から出版テーマを作る」
+ * 誤動作になる。ここで販促アクション系の指示を検出し、テーマ生成を止める（安全網）。
+ *
+ * ※ 「SNS 運用術」等の“SNS を題材にした書籍企画”は誤検出しないよう、
+ *   販促を『実行する』動詞（投稿/配信/カレンダー作成/告知 等）とのセットのみを弾く。
+ */
+const PROMO_DIRECTIVE_RE =
+  /(SNS販促|販促投稿|投稿カレンダー|配信カレンダー|投稿スケジュール|配信スケジュール|販促カレンダー|(?:SNS|X|twitter|instagram|tiktok|note)[^。\n]{0,20}(?:投稿|配信|告知)(?:する|を|案|カレンダー|計画|スケジュール)|クロス告知|ハッシュタグ設計|フォロワー(?:獲得|増))/i;
+
+function looksLikePromotionDirective(text: string): boolean {
+  return PROMO_DIRECTIVE_RE.test(text);
+}
+
 async function handlePlanBook(task: DispatchTaskRow, ctx: HandlerCtx): Promise<HandlerResult> {
+  const scope = `${task.title}\n${task.instruction}`;
+  if (looksLikePromotionDirective(scope)) {
+    throw new Error(
+      'plan_book(企画) に販促/SNS 実行系の指示が混入しています（例: SNS販促投稿カレンダー作成）。' +
+        'plan_book は新規書籍のコンセプト企画専用です。この指示は販促本部(promotion)の ' +
+        'create_content / publish_post / analyze_promo として起票し直してください。' +
+        'テーマ生成(pipeline.theme.generate)は起動しませんでした。',
+    );
+  }
   const accountId = await resolveAccountId(ctx.prisma, task.account_id);
   const themeSessionId = ctx.deps.genId();
   const jobPayload = {
@@ -499,6 +531,28 @@ async function handleWrite(task: DispatchTaskRow, ctx: HandlerCtx): Promise<Hand
     select: { id: true, account_id: true, status: true },
   });
   if (!theme) throw new Error(`theme not found: ${task.theme_id}`);
+
+  // 重複制作ガード: 同一テーマに対し既に Book が1冊でも存在する場合は再制作しない
+  // (取り下げ済 retracted も含む)。自律運用(org)が既出テーマ — とりわけ低品質で取り下げた
+  // 本のテーマ — を再度 write 起票してしまう不具合により、過去に KDP へ二重出版が発生した
+  // ため(docs/06 参照)。retracted 済テーマの作り直しは人間の明示操作に限る。
+  const existingForTheme = await ctx.prisma.book.findMany({
+    where: { theme_id: theme.id },
+    select: { id: true, title: true, status: true, publish_status: true, theme: { select: { genre: true } } },
+  });
+  if (existingForTheme.length > 0) {
+    const b = existingForTheme[0]!;
+    return {
+      result_json: {
+        action: 'book_kickoff_skipped',
+        reason: 'duplicate_theme',
+        theme_id: theme.id,
+        existing_book_id: b.id,
+        existing_status: b.status,
+        note: `テーマ「${b.title}」には既に制作済み/制作中の書籍が存在するため、二重制作を回避しました。`,
+      },
+    };
+  }
 
   const accountId = await resolveAccountId(ctx.prisma, task.account_id ?? theme.account_id);
   const jobPayload = { theme_id: theme.id, account_id: accountId };
@@ -893,6 +947,12 @@ export async function runOrgExecute(payload: unknown, deps: OrgExecuteDeps = {})
 
   const result: OrgExecuteResult = { dispatched: 0, done: 0, blocked: 0, follow_ups_created: 0, by_kind: {} };
 
+  // 自動承認トグル: OFF なら連鎖起票(改善ToDo)も proposed で留める。
+  const autoApprove = prisma.appSettings
+    ? (await prisma.appSettings.findUnique({ where: { id: 'singleton' }, select: { org_auto_approve_tasks: true } }))
+        ?.org_auto_approve_tasks ?? true
+    : true;
+
   try {
     // 1. 候補: approved かつ dispatchable kind。期限(scheduled_for)到来のもの。
     const candidatesRaw = (await prisma.orgTask.findMany({
@@ -985,7 +1045,7 @@ export async function runOrgExecute(payload: unknown, deps: OrgExecuteDeps = {})
               kind: fu.kind,
               title: fu.title,
               instruction: fu.instruction,
-              status: fuIsHuman ? 'needs_human' : 'approved',
+              status: fuIsHuman ? 'needs_human' : autoApprove ? 'approved' : 'proposed',
               priority: 'should',
             },
           });

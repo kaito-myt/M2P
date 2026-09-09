@@ -153,9 +153,9 @@ describe('AgentSdkClient.complete — happy path with web_search server tool', (
     expect(callArg.messages).toEqual([
       { role: 'user', content: 'find me trending self-help topics' },
     ]);
-    // web_search server tool が常に含まれる
+    // web_search server tool が常に含まれる (max_uses でループ回数を上限化)
     expect(callArg.tools).toEqual(
-      expect.arrayContaining([{ type: 'web_search_20250305', name: 'web_search' }]),
+      expect.arrayContaining([{ type: 'web_search_20250305', name: 'web_search', max_uses: 5 }]),
     );
 
     // 結果集計
@@ -181,7 +181,7 @@ describe('AgentSdkClient.complete — happy path with web_search server tool', (
     };
     expect(callArg.tools).toEqual(
       expect.arrayContaining([
-        { type: 'web_search_20250305', name: 'web_search' },
+        { type: 'web_search_20250305', name: 'web_search', max_uses: 5 },
         { name: 'custom_tool', description: 'do something', input_schema: { type: 'object' } },
       ]),
     );

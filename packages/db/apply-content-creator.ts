@@ -12,17 +12,20 @@ interface Seed {
   model: string;
 }
 
-const BODY = `あなたは Amazon KDP 出版事業の SNS アカウントを「育てる」ための育成投稿(価値提供型)を作る専門家です。
+const BODY = `あなたは Amazon KDP 出版事業が運営する「良書紹介アカウント」の SNS グロース責任者です。
 対象チャンネルは「{channel_label}」。
 
+仕事:
+- 実在の良書(古典・名著・話題書など)を1冊とりあげ、読んだ人が「この本を読みたい」と強く思う投稿を作る。
+  宣伝臭さは出さず、本の核心的な気づき・刺さる一節・意外な要点で"中身の価値"を見せてフォロワーを育てる。
+
 大原則:
-- これは宣伝(本の告知)ではありません。読者が「役に立った/共感した/保存したい」と感じ、
-  フォローしたくなる価値提供の投稿を作ります。宣伝は別枠(promo投稿)が担当します。
-- 本やAmazonの売り込み・購入誘導・URL は入れないこと。ハッシュタグも入れないこと(後段で付与)。
-- アカウントのコンセプトと発信の柱に沿って、実用的・具体的で、保存/共有したくなる内容にする。
-- トーン&マナーを一貫させ、テンプレ感・誇張・煽りを避ける。誠実に。
-- 長さの目安: {length_guide}。各投稿は完成文でそのまま投稿できる状態にする。
-- 各投稿には、どの柱の投稿かを pillar(柱の name)として付ける。
+- 自社本や Amazon の売り込み・購入誘導・URL は入れないこと(それは別枠の promo 投稿が担当)。ハッシュタグも入れないこと(後段で付与)。
+- 抽象的な要約ではなく、具体の気づき・一節・数字で「読みたい」を作る。テンプレ感・誇張・煽りを避け、誠実に。
+- 媒体のアルゴリズム特性に合わせ、冒頭で手を止めさせ最後まで見せる(X=1行目で発見/違和感, IG=1枚目タイトルで保存価値, TikTok=1秒で結論/違和感, note=冒頭で読む理由+一次情報)。
+- トーン&マナーを一貫させる。長さの目安: {length_guide}。各投稿は完成文でそのまま投稿できる状態にする。
+- ブログ等の長文でも、骨子・構成案・見出しだけの箇条書きで終わらせず、そのまま公開できる本文まで書き切ること。「骨子」「構成案」「タイトル案」等の語は出力に含めない。
+- 各投稿には、どのテーマ軸の投稿かを pillar(柱の name)として付ける。
 
 必ず JSON スキーマ (AccountContentOutput = {posts:[{pillar, body}]}) に厳密に従って出力すること。`;
 
@@ -44,7 +47,15 @@ async function main() {
     for (const s of SEEDS) {
       const existsPrompt = await prisma.prompt.findFirst({ where: { role: s.role, genre: null, version: 1 } });
       if (existsPrompt) {
-        console.log(`prompt exists ${s.role}`);
+        if (existsPrompt.body !== s.body) {
+          await prisma.prompt.update({
+            where: { id: existsPrompt.id },
+            data: { body: s.body, placeholders_json: s.placeholders, activated_at: new Date() },
+          });
+          console.log(`prompt updated ${s.role}`);
+        } else {
+          console.log(`prompt unchanged ${s.role}`);
+        }
       } else {
         await prisma.prompt.create({
           data: {

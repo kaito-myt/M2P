@@ -3,7 +3,9 @@
  *
  * 独立ブランド「栞 -SHIORI-」の記事ページ。名作・話題書のレビュー本文＋末尾で関連する
  * A2P 書籍へ導線する（他 SNS と同じ戦略）。一覧ページと同一のエディトリアル配色で統一。
- * 配色: paper #F7F1E3 / ink #1B1714 / green #1E5B49 / terracotta #C6572E / line #E6DECB
+ * 配色は共通クローム (components/storefront/chrome) と共有:
+ *   paper #F5EFE1 / raised #FBF6EA / ink #221D18 / body #3B342B / caption #8B7E68 /
+ *   line #E4DAC6 / green #1E5B49 / terracotta #B4471E / dark #171310
  */
 import type { Metadata } from 'next';
 import Link from 'next/link';
@@ -11,6 +13,9 @@ import { notFound } from 'next/navigation';
 
 import { prisma } from '@a2p/db';
 import { getSignedDownloadUrl } from '@a2p/storage';
+
+import { PseudoCover, SiteFooter, SiteHeader } from '@/components/storefront/chrome';
+import { STOREFRONT_URL } from '@/lib/site';
 
 export const dynamic = 'force-dynamic';
 
@@ -26,6 +31,18 @@ function fmtDate(d: Date | null): string {
   return d ? new Date(d).toLocaleDateString('ja-JP', { year: 'numeric', month: 'long', day: 'numeric' }) : '';
 }
 
+const HEADER_NAV = [
+  { label: 'レビュー', href: '/blog' },
+  { label: '本棚', href: '/shop' },
+  { label: '栞について', href: '/shop#about' },
+];
+const FOOTER_NAV = [
+  { label: '記事一覧', href: '/blog' },
+  { label: '書籍一覧', href: '/shop' },
+  { label: 'プライバシー', href: '/legal/privacy' },
+  { label: '利用規約', href: '/legal/terms' },
+];
+
 export async function generateMetadata({ params }: PageProps): Promise<Metadata> {
   const { slug } = await params;
   const post = await prisma.blogPost.findUnique({ where: { slug }, select: { title: true, body_md: true } });
@@ -33,6 +50,7 @@ export async function generateMetadata({ params }: PageProps): Promise<Metadata>
   return {
     title: `${post.title} | 栞 -SHIORI-`,
     description: plain(post.body_md, 140),
+    alternates: { canonical: `${STOREFRONT_URL}/blog/${slug}` },
     openGraph: { title: post.title, description: plain(post.body_md, 140), images: ['/blog-og.png'], type: 'article' },
   };
 }
@@ -48,7 +66,7 @@ function inline(text: string, keyBase: string): React.ReactNode[] {
     if (m.index > last) nodes.push(text.slice(last, m.index));
     if (m[2]) {
       nodes.push(
-        <strong key={`${keyBase}-b${i}`} className="font-semibold text-[#1B1714]">
+        <strong key={`${keyBase}-b${i}`} className="font-semibold text-[#221D18]">
           {m[2]}
         </strong>,
       );
@@ -59,7 +77,7 @@ function inline(text: string, keyBase: string): React.ReactNode[] {
           href={m[5]}
           target="_blank"
           rel="noopener noreferrer"
-          className="text-[#1E5B49] underline underline-offset-2 hover:no-underline"
+          className="text-[#1E5B49] underline underline-offset-[3px] decoration-[#1E5B49]/40 transition-colors hover:decoration-[#1E5B49]"
         >
           {m[4]}
         </a>,
@@ -79,9 +97,12 @@ function renderMarkdown(md: string) {
   const flushList = (key: number) => {
     if (list.length === 0) return;
     blocks.push(
-      <ul key={`ul-${key}`} className="my-5 list-none space-y-2 pl-0">
+      <ul key={`ul-${key}`} className="my-6 list-none space-y-2.5 pl-0">
         {list.map((li, i) => (
-          <li key={i} className="relative pl-6 leading-[1.9] text-[#3A362F] before:absolute before:left-0 before:top-[0.7em] before:h-1.5 before:w-1.5 before:rounded-full before:bg-[#C6572E]">
+          <li
+            key={i}
+            className="relative pl-6 text-[1.02rem] leading-[1.95] text-[#3B342B] before:absolute before:left-0 before:top-[0.85em] before:h-px before:w-3.5 before:bg-[#1E5B49]"
+          >
             {inline(li, `ul-${key}-${i}`)}
           </li>
         ))}
@@ -94,22 +115,27 @@ function renderMarkdown(md: string) {
     if (/^#{1,2}\s+/.test(line)) {
       flushList(idx);
       blocks.push(
-        <h2 key={idx} className="mt-12 mb-4 flex items-center gap-3 font-serif text-2xl font-bold text-[#1B1714]">
-          <span className="inline-block h-6 w-1 rounded-full bg-[#1E5B49]" />
+        <h2
+          key={idx}
+          className="mt-14 mb-5 border-t border-[#E4DAC6] pt-7 font-serif text-[1.55rem] font-semibold leading-snug tracking-tight text-[#221D18]"
+        >
           {line.replace(/^#{1,2}\s+/, '')}
         </h2>,
       );
     } else if (/^#{3,}\s+/.test(line)) {
       flushList(idx);
       blocks.push(
-        <h3 key={idx} className="mt-8 mb-3 font-serif text-xl font-semibold text-[#1B1714]">
+        <h3 key={idx} className="mt-9 mb-3 font-serif text-[1.2rem] font-semibold tracking-tight text-[#221D18]">
           {line.replace(/^#{3,}\s+/, '')}
         </h3>,
       );
     } else if (/^>\s+/.test(line)) {
       flushList(idx);
       blocks.push(
-        <blockquote key={idx} className="my-6 rounded-r-sm border-l-4 border-[#C6572E] bg-[#EFE7D4] py-3 pl-5 pr-4 font-serif text-lg italic leading-relaxed text-[#3A362F]">
+        <blockquote
+          key={idx}
+          className="my-8 border-l-2 border-[#B4471E] pl-6 font-serif text-[1.22rem] italic leading-[1.85] text-[#3B342B]"
+        >
           {inline(line.replace(/^>\s+/, ''), `q-${idx}`)}
         </blockquote>,
       );
@@ -120,7 +146,7 @@ function renderMarkdown(md: string) {
     } else {
       flushList(idx);
       blocks.push(
-        <p key={idx} className="my-5 text-[17px] leading-[2] text-[#3A362F]">
+        <p key={idx} className="my-5 text-[1.0625rem] leading-[1.95] text-[#3B342B]">
           {inline(line, `p-${idx}`)}
         </p>,
       );
@@ -153,37 +179,34 @@ export default async function BlogPostPage({ params }: PageProps) {
   }
 
   return (
-    <div className="flex min-h-screen flex-col bg-[#F7F1E3] text-[#1B1714] antialiased">
-      {/* ── ヘッダ ── */}
-      <header className="sticky top-0 z-20 border-b border-[#E6DECB] bg-[#F7F1E3]/90 backdrop-blur">
-        <div className="mx-auto flex max-w-3xl items-center justify-between px-5 py-4">
-          <Link href="/blog" className="flex items-baseline gap-2 no-underline">
-            <span className="font-serif text-2xl font-bold tracking-tight text-[#1B1714]">栞</span>
-            <span className="text-[11px] font-semibold uppercase tracking-[0.4em] text-[#C6572E]">SHIORI</span>
-          </Link>
-          <nav className="flex items-center gap-5 text-sm text-[#5C554A]">
-            <Link href="/blog" className="no-underline hover:text-[#1E5B49]">記事一覧</Link>
-            <Link href="/shop" className="no-underline hover:text-[#1E5B49]">書籍一覧</Link>
-          </nav>
-        </div>
-      </header>
+    <div className="flex min-h-screen flex-col bg-[#F5EFE1] text-[#221D18] antialiased">
+      <SiteHeader nav={HEADER_NAV} width="max-w-3xl" />
 
-      <main className="mx-auto w-full max-w-3xl flex-1 px-5 py-12">
-        <Link href="/blog" className="text-sm text-[#8A6A45] no-underline transition-colors hover:text-[#1E5B49]">
-          ← 記事一覧へ
+      <main className="mx-auto w-full max-w-[42rem] flex-1 px-5 py-12 sm:px-6">
+        <Link href="/blog" className="text-[13px] tracking-wide text-[#8B7E68] no-underline transition-colors hover:text-[#1E5B49]">
+          ← レビュー一覧へ
         </Link>
 
-        <article className="mt-6">
-          {/* タイトルヘッダ */}
-          <header className="border-b border-[#E6DECB] pb-8">
-            <div className="mb-4 flex items-center gap-3">
-              <span className="inline-block h-px w-8 bg-[#C6572E]" />
-              <span className="text-[11px] font-semibold uppercase tracking-[0.35em] text-[#C6572E]">Book Review</span>
+        <article className="mt-8">
+          {/* タイトルヘッダ (紹介書籍の実表紙があれば横に添える) */}
+          <header className="grid grid-cols-1 items-center gap-7 border-b border-[#E4DAC6] pb-8 sm:grid-cols-[minmax(0,1fr)_140px] sm:gap-9">
+            <div>
+              <p className="font-display text-[13px] italic tracking-wide text-[#B4471E]">Book review</p>
+              <h1 className="mt-4 font-serif text-[2rem] font-semibold leading-[1.28] tracking-tight text-[#221D18] md:text-[2.5rem]">
+                {post.title}
+              </h1>
+              <p className="mt-5 text-[13px] tracking-wide text-[#8B7E68]">{fmtDate(post.published_at)}</p>
             </div>
-            <h1 className="font-serif text-3xl font-bold leading-[1.25] tracking-tight text-[#1B1714] md:text-[2.6rem]">
-              {post.title}
-            </h1>
-            <p className="mt-4 text-sm text-[#8B8577]">{fmtDate(post.published_at)}</p>
+            <figure className="order-first w-[132px] justify-self-start overflow-hidden bg-[#EBE3D0] shadow-[0_18px_36px_-22px_rgba(33,20,10,0.6)] sm:order-none sm:justify-self-end">
+              <div className="aspect-[3/4] w-full overflow-hidden">
+                {post.cover_image_url ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img src={post.cover_image_url} alt={post.title} className="h-full w-full object-cover" />
+                ) : (
+                  <PseudoCover title={post.title} seedKey={post.slug} />
+                )}
+              </div>
+            </figure>
           </header>
 
           {/* 本文 */}
@@ -192,29 +215,30 @@ export default async function BlogPostPage({ params }: PageProps) {
 
         {/* 関連 A2P 書籍への導線 */}
         {related && (
-          <aside className="mt-14 overflow-hidden rounded-sm border border-[#E6DECB] bg-[#FCF8EE] shadow-[0_10px_30px_-18px_rgba(0,0,0,0.35)]">
-            <div className="border-b border-[#E6DECB] bg-[#EFE7D4] px-6 py-3">
-              <p className="text-[11px] font-semibold uppercase tracking-[0.25em] text-[#1E5B49]">
-                この記事を読んだあなたへ — おすすめの一冊
-              </p>
-            </div>
-            <div className="flex gap-5 p-6">
-              <div className="aspect-[10/16] w-24 shrink-0 overflow-hidden rounded-sm bg-[#EFE7D4] shadow-md">
-                {related.coverUrl ? (
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img src={related.coverUrl} alt={related.title} className="h-full w-full object-cover" />
-                ) : (
-                  <div className="flex h-full w-full items-center justify-center font-serif text-2xl text-[#1E5B49]">栞</div>
-                )}
+          <aside className="mt-16 border-t border-[#E4DAC6] pt-10">
+            <p className="font-display text-[12px] italic tracking-wide text-[#8B7E68]">Recommended</p>
+            <h2 className="mt-2 font-serif text-[1.2rem] font-semibold tracking-tight text-[#221D18]">
+              この記事を読んだあなたへ、次の一冊。
+            </h2>
+            <div className="mt-6 flex gap-6">
+              <div className="w-24 shrink-0 overflow-hidden bg-[#EBE3D0] shadow-[0_14px_28px_-18px_rgba(33,20,10,0.55)]">
+                <div className="aspect-[10/16] w-full overflow-hidden">
+                  {related.coverUrl ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img src={related.coverUrl} alt={related.title} className="h-full w-full object-cover" />
+                  ) : (
+                    <PseudoCover title={related.title} compact />
+                  )}
+                </div>
               </div>
-              <div className="flex min-w-0 flex-1 flex-col gap-1.5">
-                <h2 className="font-serif text-lg font-bold leading-snug text-[#1B1714]">{related.title}</h2>
-                <p className="text-sm text-[#5C554A]">Kindle Unlimited なら読み放題対象も。</p>
+              <div className="flex min-w-0 flex-1 flex-col">
+                <h3 className="font-serif text-[1.1rem] font-semibold leading-snug text-[#221D18]">{related.title}</h3>
+                <p className="mt-1.5 text-[13px] leading-relaxed text-[#52493B]">Kindle Unlimited なら読み放題対象も。</p>
                 <a
                   href={`https://www.amazon.co.jp/dp/${related.asin}`}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="mt-auto inline-flex w-fit items-center gap-1.5 rounded-full bg-[#1E5B49] px-4 py-2 text-sm font-semibold text-[#F3ECDC] no-underline transition-colors hover:bg-[#164838]"
+                  className="mt-auto inline-flex w-fit items-center gap-2 rounded-[2px] bg-[#1E5B49] px-5 py-2.5 text-[13px] font-semibold tracking-wide text-[#F1E9D8] no-underline transition-colors hover:bg-[#164838]"
                 >
                   Amazon で見る <span aria-hidden>→</span>
                 </a>
@@ -224,32 +248,17 @@ export default async function BlogPostPage({ params }: PageProps) {
         )}
 
         {/* 戻る導線 */}
-        <div className="mt-12 border-t border-[#E6DECB] pt-8 text-center">
+        <div className="mt-14 border-t border-[#E4DAC6] pt-8">
           <Link
             href="/blog"
-            className="inline-flex items-center gap-2 rounded-full border border-[#1B1714] px-5 py-2 text-sm font-medium text-[#1B1714] no-underline transition-colors hover:bg-[#1B1714] hover:text-[#F7F1E3]"
+            className="inline-flex items-center gap-2 border-b border-[#221D18] pb-1 text-[13px] font-medium tracking-wide text-[#221D18] no-underline transition-colors hover:border-[#1E5B49] hover:text-[#1E5B49]"
           >
-            ほかのレビューを読む
+            ← ほかのレビューを読む
           </Link>
         </div>
       </main>
 
-      {/* ── フッタ ── */}
-      <footer className="w-full bg-[#141210] text-[#B9B2A4]">
-        <div className="mx-auto flex max-w-3xl flex-col items-center gap-4 px-5 py-8 text-sm sm:flex-row sm:justify-between">
-          <div className="flex items-baseline gap-2">
-            <span className="font-serif text-xl font-bold text-[#F3ECDC]">栞</span>
-            <span className="text-[10px] uppercase tracking-[0.35em] text-[#C6572E]">SHIORI</span>
-            <span className="ml-2 text-xs text-[#7A7469]">© {new Date().getFullYear()} 良書の要点ブログ</span>
-          </div>
-          <nav className="flex items-center gap-5 text-xs">
-            <Link href="/blog" className="text-[#B9B2A4] no-underline hover:text-[#F3ECDC]">記事一覧</Link>
-            <Link href="/shop" className="text-[#B9B2A4] no-underline hover:text-[#F3ECDC]">書籍一覧</Link>
-            <Link href="/legal/privacy" className="text-[#B9B2A4] no-underline hover:text-[#F3ECDC]">プライバシー</Link>
-            <Link href="/legal/terms" className="text-[#B9B2A4] no-underline hover:text-[#F3ECDC]">利用規約</Link>
-          </nav>
-        </div>
-      </footer>
+      <SiteFooter nav={FOOTER_NAV} width="max-w-3xl" />
     </div>
   );
 }

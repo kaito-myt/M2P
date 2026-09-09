@@ -267,12 +267,12 @@ export function SalesReportImport({ accounts }: { accounts: AccountOption[] }) {
                     <tbody>
                       {preview.rows.map((r) => (
                         <tr key={r.asin} className="border-t border-border-warm/60">
-                          <td className="px-2 py-1 font-mono text-charcoal-82">{r.asin}</td>
-                          <td className="px-2 py-1">
+                          <td className="whitespace-nowrap px-2 py-1 font-mono text-charcoal-82">{r.asin}</td>
+                          <td className="max-w-[220px] px-2 py-1">
                             {r.bookId ? (
-                              <span className="text-charcoal">{r.bookTitle ?? r.asin}</span>
+                              <span className="block truncate text-charcoal" title={r.bookTitle ?? r.asin}>{r.bookTitle ?? r.asin}</span>
                             ) : (
-                              <span className="text-warning">未突合（{r.title ?? '不明'}）</span>
+                              <span className="block truncate text-warning" title={r.title ?? '不明'}>未突合（{r.title ?? '不明'}）</span>
                             )}
                           </td>
                           <td className="px-2 py-1 text-right tabular-nums">¥{r.royalty_jpy.toLocaleString('ja-JP')}</td>

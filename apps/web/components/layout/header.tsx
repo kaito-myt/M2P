@@ -11,14 +11,32 @@
  */
 import Link from 'next/link';
 import Image from 'next/image';
+import { LayoutGrid } from 'lucide-react';
+import { auth } from '@/auth';
 import { messages } from '@/lib/messages';
 import { CostMeter } from './cost-meter';
 import { AlertBadge } from './alert-badge';
 import { CommentBadgeHeader } from './comment-badge-header';
+import { MobileNav } from './mobile-nav';
+import { UserMenu } from './user-menu';
 
-export function Header() {
+/**
+ * M2P ポータル（ツール選択画面）の URL。
+ * - 本番: `NEXT_PUBLIC_PORTAL_URL`（apps/portal デプロイ後に設定）。未設定なら導線は非表示（壊れたリンクを出さない）。
+ * - ローカル dev: 未設定でも localhost:3002 を既定にして常に導線を出す。
+ */
+const PORTAL_URL =
+  process.env.NEXT_PUBLIC_PORTAL_URL ||
+  (process.env.NODE_ENV !== 'production' ? 'http://localhost:3002' : '');
+
+export async function Header() {
+  const session = await auth();
+  const username = (session?.user as { username?: string } | undefined)?.username;
+
   return (
-    <header className="z-10 flex h-16 shrink-0 items-center gap-space-relaxed border-b border-border-warm bg-cream-light px-space-loose">
+    <header className="z-10 flex h-16 shrink-0 items-center gap-space-relaxed border-b border-border-warm bg-cream-light px-space-relaxed md:px-space-loose">
+      {/* モバイル: ハンバーガー → ドロワー(md 未満のみ表示) */}
+      <MobileNav />
       <Link
         href="/dashboard"
         aria-label={messages.brand.appName}
@@ -46,9 +64,24 @@ export function Header() {
       </div>
 
       <div className="ml-auto flex items-center gap-space-snug">
-        <CostMeter />
-        <AlertBadge />
-        <CommentBadgeHeader />
+        {PORTAL_URL && (
+          <Link
+            href={PORTAL_URL}
+            aria-label={messages.header.portalTitle}
+            title={messages.header.portalTitle}
+            className="flex h-8 items-center gap-1.5 rounded-pill border border-border-warm bg-cream-light px-3 text-button-sm font-medium text-charcoal-82 no-underline hover:bg-charcoal-04 hover:text-charcoal focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            data-testid="header-portal-link"
+          >
+            <LayoutGrid className="h-4 w-4" aria-hidden="true" />
+            <span className="hidden sm:inline">{messages.header.portalLabel}</span>
+          </Link>
+        )}
+        {/* 計器群は狭幅で折返し崩壊するため md 以上でのみ表示（モバイルは各ページで確認できる）。 */}
+        <div className="hidden items-center gap-space-snug md:flex">
+          <CostMeter />
+          <AlertBadge />
+          <CommentBadgeHeader />
+        </div>
         <Link
           href="/help"
           target="_blank"
@@ -60,9 +93,7 @@ export function Header() {
         >
           ?
         </Link>
-        <span aria-label={messages.header.userMenuPlaceholder} className="rounded-pill bg-charcoal-04 px-3 py-1 text-button-sm text-charcoal-82">
-          {messages.header.settingsLabel}
-        </span>
+        <UserMenu username={username} />
       </div>
     </header>
   );

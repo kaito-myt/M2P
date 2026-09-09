@@ -159,7 +159,7 @@ function BannerContent({ latestRun, isRunning, onTrigger }: BannerContentProps) 
       : '—';
     return (
       <div
-        className="flex flex-wrap items-center gap-space-snug rounded-card border border-green-300 bg-green-50 px-3 py-2 text-body-sm text-green-800"
+        className="flex flex-wrap items-center gap-space-snug rounded-card border border-green-300 bg-green-100 px-3 py-2 text-body-sm text-green-700"
         data-testid="sales-fetch-banner-done"
       >
         <span data-testid="sales-fetch-banner-done-message">
@@ -202,7 +202,7 @@ function BannerContent({ latestRun, isRunning, onTrigger }: BannerContentProps) 
   if (latestRun.status === '2fa_waiting') {
     return (
       <div
-        className="flex items-center gap-space-snug rounded-card border border-orange-300 bg-orange-50 px-3 py-2 text-body-sm text-orange-800"
+        className="flex items-center gap-space-snug rounded-card border border-orange-300 bg-orange-100 px-3 py-2 text-body-sm text-orange-800"
         data-testid="sales-fetch-banner-2fa"
         role="status"
       >
@@ -247,7 +247,7 @@ function TriggerButton({
         variant === 'default' &&
           'bg-charcoal text-white hover:bg-charcoal/90',
         variant === 'green' &&
-          'border border-green-400 bg-green-100 text-green-800 hover:bg-green-200',
+          'border border-green-300 bg-green-100 text-green-700 hover:bg-green-200',
         variant === 'destructive' &&
           'border border-destructive/40 bg-destructive/10 text-destructive hover:bg-destructive/20',
       )}

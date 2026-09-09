@@ -6,6 +6,7 @@ import { prisma as defaultPrisma } from '@a2p/db';
 import { parseKdpReportWorkbook, normalizeKdpRows } from '@a2p/kdp-report';
 
 import { isLineRelayConfigured, pushLine, type LineAuthRelayPrisma } from './lib/line-auth-relay.js';
+import { kdpSessionAlertGate } from './lib/kdp-session-alert.js';
 import type { BrowserPort } from './sales-fetch/browser-port.js';
 import { refreshKdpSession } from './sales-fetch/kdp-login-refresh.js';
 import { resolveKdpProxy, type KdpProxyConfig, type KdpProxyPrisma } from './sales-fetch/kdp-proxy.js';
@@ -169,7 +170,9 @@ export async function runSalesFetch(deps: SalesFetchDeps): Promise<SalesFetchRes
     const canAutoRelogin =
       isLineRelayConfigured() && Boolean(process.env.AMAZON_EMAIL) && Boolean(process.env.AMAZON_PASSWORD);
     if (canAutoRelogin) {
-      await pushLine('KDP売上取得: セッション切れを検知。自動再ログインを試みます。').catch(() => {});
+      // [F-086 根本対応] セッション切れは自動再ログインで自己回復するのが常態(3週間 OTP 不要で成功中)。
+      // そのため「検知しました/試みます」の予告通知は出さず、システムは黙って自己回復する。
+      // 通知するのは自己回復に失敗した=人手が必要なときだけ(24hゲートで連投も防止)。
       // 本棚 (kdp.amazon.co.jp) は browse セッションで通ってしまい再認証が起きないため、
       // レポートホスト (kdpreports.amazon.co.jp) を着地先にして OpenID サインイン
       // (→ email/password/OTP) を確実に発火させ、reports 側セッションを確立する。
@@ -198,7 +201,12 @@ export async function runSalesFetch(deps: SalesFetchDeps): Promise<SalesFetchRes
         }
         dl = retryDl;
       } else {
-        await pushLine(`自動再ログイン失敗（${ref.reason}）。手動でセッション再取得が必要です。`).catch(() => {});
+        // 自己回復に失敗したときだけ通知(24hゲートで連投防止)。
+        if (await kdpSessionAlertGate()) {
+          await pushLine(
+            `KDP売上取得: セッション切れを自動再ログインで回復できませんでした（${ref.reason}）。手動でのセッション再取得が必要です。`,
+          ).catch(() => {});
+        }
         log.warn({ runId, reason: ref.reason, message: ref.message }, 'auto kdp re-login failed');
       }
     }

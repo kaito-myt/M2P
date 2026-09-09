@@ -76,7 +76,7 @@ export function RegeneratePlanButton({
             value={months}
             onChange={(e) => setMonths(Number(e.target.value) as PlanMonths)}
             disabled={isPending}
-            className="rounded border border-border-warm bg-white px-2 py-1 text-button-sm text-foreground cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-1"
+            className="rounded border border-border-warm bg-cream-light px-2 py-1 text-button-sm text-foreground cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-1"
           >
             {([3, 6, 12] as PlanMonths[]).map((v) => (
               <option key={v} value={v}>

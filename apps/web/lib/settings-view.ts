@@ -52,8 +52,12 @@ export interface SettingsPageData {
   sales_auto_fetch_cron: string;
   promo_auto_on_publish_enabled: boolean;
   promo_auto_post_enabled: boolean;
+  kdp_auto_submit_enabled: boolean;
+  kdp_submit_dry_run: boolean;
   kdp_submit_timeout_minutes: number;
   kdp_submit_retry_count: number;
+  /** 日次作成上限で全体停止中の解除予定時刻 (ISO8601)。未停止なら null。 */
+  kdp_creation_paused_until: string | null;
   job_log_retention_days: number;
   r2_archive_threshold_days: number;
   ai_disclosure_text: string;
@@ -79,8 +83,11 @@ interface RawAppSettings {
   sales_auto_fetch_cron: string;
   promo_auto_on_publish_enabled: boolean;
   promo_auto_post_enabled: boolean;
+  kdp_auto_submit_enabled: boolean;
+  kdp_submit_dry_run: boolean;
   kdp_submit_timeout_minutes: number;
   kdp_submit_retry_count: number;
+  kdp_creation_paused_until: Date | null;
   job_log_retention_days: number;
   r2_archive_threshold_days: number;
   ai_disclosure_text: string;
@@ -170,8 +177,13 @@ export function serializeSettingsPage(
     sales_auto_fetch_cron: raw.sales_auto_fetch_cron,
     promo_auto_on_publish_enabled: raw.promo_auto_on_publish_enabled,
     promo_auto_post_enabled: raw.promo_auto_post_enabled,
+    kdp_auto_submit_enabled: raw.kdp_auto_submit_enabled,
+    kdp_submit_dry_run: raw.kdp_submit_dry_run,
     kdp_submit_timeout_minutes: raw.kdp_submit_timeout_minutes,
     kdp_submit_retry_count: raw.kdp_submit_retry_count,
+    kdp_creation_paused_until: raw.kdp_creation_paused_until
+      ? raw.kdp_creation_paused_until.toISOString()
+      : null,
     job_log_retention_days: raw.job_log_retention_days,
     r2_archive_threshold_days: raw.r2_archive_threshold_days,
     ai_disclosure_text: raw.ai_disclosure_text,

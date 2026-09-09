@@ -84,10 +84,10 @@ export function ModelCatalogSidePane({ catalog }: Props) {
                     {mp[r.provider] ?? r.provider}
                   </td>
                   <td className="px-2 py-1 text-foreground">{r.model}</td>
-                  <td className="px-2 py-1 text-right text-charcoal-82">
+                  <td className="whitespace-nowrap px-2 py-1 text-right tabular-nums text-charcoal-82">
                     {r.inputPriceLabel}
                   </td>
-                  <td className="px-2 py-1 text-right text-charcoal-82">
+                  <td className="whitespace-nowrap px-2 py-1 text-right tabular-nums text-charcoal-82">
                     {r.outputPriceLabel}
                   </td>
                 </tr>

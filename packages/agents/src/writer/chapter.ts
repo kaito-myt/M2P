@@ -33,7 +33,7 @@
  *    完全整合 (Hard Rule #3)。warnings 等は追加しない。
  *  - AgentSdkClient は responseSchema 非対応 — 自由テキスト → JSON 抽出 → zod の三段
  */
-import { genreLabel } from '@a2p/contracts/agents';
+import { genreLabel, isFiction } from '@a2p/contracts/agents';
 import { AgentError } from '@a2p/contracts/errors';
 import type { LLMClient } from '@a2p/contracts/agents';
 import {
@@ -61,7 +61,7 @@ import type { LoadModelAssignmentDeps } from '../lib/load-model-assignment.js';
  * 章本文 LLM 呼出の既定 max tokens。1 章 ~10000 字想定 (日本語 1.5 tok/char 換算で
  * ~15000 tok) に加え JSON 構造分の余裕を持たせて 16384。
  */
-const DEFAULT_MAX_OUTPUT_TOKENS = 16384;
+const DEFAULT_MAX_OUTPUT_TOKENS = 24000;
 
 /**
  * F-004 受入基準: 章単体の文字数が target_chars の ±20% に収まる (docs/02 L203 / SP-04 §4 T-04-02)。
@@ -70,7 +70,19 @@ const DEFAULT_MAX_OUTPUT_TOKENS = 16384;
  */
 // 章執筆はリトライ濫発を避けるため緩い tolerance。±20% だと創作文で頻繁に外れて
 // 章が恒久失敗し書籍が「実行中」で無限に止まる事故が起きたため ±35% に緩和。
-const CHAR_TOLERANCE = 0.35;
+// ±50%。モデル(sonnet 等)は 1 章 1 発で ~4700〜5600 字が上限で、8000〜9500 字目標には
+// リトライしても構造的に届かない(実障害: 2026-08 増量後)。真の対策は「章あたり目標を
+// 下げ章数を増やす」(下記 contracts の default 変更)。移行期の既存アウトライン(高め目標)も
+// 完成させるため、章単位の許容は広めに取り "本文が書けているのに文字数だけで落ちる" 事故を防ぐ。
+const CHAR_TOLERANCE = 0.5;
+
+/**
+ * 章本文の文字数レンジ補正リトライ回数。長編化(章 8000〜9500 字級)で 1 回の生成では
+ * 目標下限に届かず `chars_out_of_range` で頻繁に失敗していた(実障害: 2026-08 の増量後)。
+ * 実測文字数をフィードバックして「もっと長く/短く」再生成させると多くは収束する。
+ * MAX_CHARS_RETRIES=2 → 最大 3 回試行。
+ */
+const MAX_CHARS_RETRIES = 2;
 
 export interface GenerateChapterDeps {
   loadActivePrompt?: typeof defaultLoadActivePrompt;
@@ -145,70 +157,92 @@ export async function generateChapter(
     factoryDeps,
   );
 
-  // 4. LLM 呼出
-  const completion = await client.complete({
-    role: 'writer',
-    genre: parsedInput.genre,
-    messages: [
-      { role: 'system', content: systemPrompt },
-      {
-        role: 'user',
-        content: buildUserMessage(parsedInput),
-      },
-    ],
-    maxOutputTokens: DEFAULT_MAX_OUTPUT_TOKENS,
-  });
-
-  const rawText = completion.text;
-  if (typeof rawText !== 'string' || rawText.trim().length === 0) {
-    throw new AgentError('writer.chapter.invalid_output: empty response', {
-      details: { rawText: String(rawText) },
-    });
-  }
-
-  // 5. JSON 抽出 — schema-aware predicate で `body_md` を持つブロックを優先選択
-  const parsedJson = extractJson(rawText, hasBodyMd);
-  if (parsedJson === undefined) {
-    throw new AgentError('writer.chapter.invalid_output: failed to parse JSON', {
-      details: { rawText },
-    });
-  }
-
-  // 6. zod 検証前に char_count / heading 欠落を救済 (LLM が省くケース)
-  const normalized = normalizePartialOutput(parsedJson, parsedInput.outlineChapter.heading);
-  const validated = WriterChapterOutputSchema.safeParse(normalized);
-  if (!validated.success) {
-    throw new AgentError('writer.chapter.invalid_output: schema validation failed', {
-      details: { rawText, issues: validated.error.issues },
-      cause: validated.error,
-    });
-  }
-
-  // 7. 文字数集計を呼出側で再計算 (LLM 申告値は信用しない)。
-  //    codepoint 数で数える ([...str].length) — 絵文字 surrogate pair を 2 文字で
-  //    数えない (string.length だと "🎉" が 2 になる)。
-  const actualChars = [...validated.data.body_md].length;
+  // 4-8. 文字数レンジに収めるためのリトライループ。
+  //      章本文の文字数は 1 発では目標に届きにくい (特に長編化で 8000 字級)。
+  //      実測文字数を LLM にフィードバックして「もっと長く/短く」再生成させ、
+  //      MAX_CHARS_RETRIES 回まで補正する。JSON/schema 崩れは即時 throw (retry しない)。
   const target = parsedInput.outlineChapter.target_chars;
   const minChars = Math.floor(target * (1 - CHAR_TOLERANCE));
   const maxChars = Math.ceil(target * (1 + CHAR_TOLERANCE));
-  if (actualChars < minChars || actualChars > maxChars) {
-    throw new AgentError('writer.chapter.chars_out_of_range', {
-      details: {
-        actual: actualChars,
-        expected_min: minChars,
-        expected_max: maxChars,
-        target,
-        tolerance: CHAR_TOLERANCE,
-      },
+  const baseUserMessage = buildUserMessage(parsedInput);
+
+  let lengthNote = '';
+  let lastActual = 0;
+  for (let attempt = 1; attempt <= MAX_CHARS_RETRIES + 1; attempt++) {
+    const userContent = lengthNote ? `${baseUserMessage}\n\n${lengthNote}` : baseUserMessage;
+    const completion = await client.complete({
+      role: 'writer',
+      genre: parsedInput.genre,
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: userContent },
+      ],
+      maxOutputTokens: DEFAULT_MAX_OUTPUT_TOKENS,
     });
+
+    const rawText = completion.text;
+    if (typeof rawText !== 'string' || rawText.trim().length === 0) {
+      throw new AgentError('writer.chapter.invalid_output: empty response', {
+        details: { rawText: String(rawText), attempt },
+      });
+    }
+
+    // JSON 抽出 — schema-aware predicate で `body_md` を持つブロックを優先選択
+    const parsedJson = extractJson(rawText, hasBodyMd);
+    if (parsedJson === undefined) {
+      throw new AgentError('writer.chapter.invalid_output: failed to parse JSON', {
+        details: { rawText, attempt },
+      });
+    }
+
+    // zod 検証前に char_count / heading 欠落を救済 (LLM が省くケース)
+    const normalized = normalizePartialOutput(parsedJson, parsedInput.outlineChapter.heading);
+    const validated = WriterChapterOutputSchema.safeParse(normalized);
+    if (!validated.success) {
+      throw new AgentError('writer.chapter.invalid_output: schema validation failed', {
+        details: { rawText, issues: validated.error.issues, attempt },
+        cause: validated.error,
+      });
+    }
+
+    // 文字数集計を呼出側で再計算 (LLM 申告値は信用しない)。codepoint 数で数える。
+    const actualChars = [...validated.data.body_md].length;
+    lastActual = actualChars;
+    if (actualChars >= minChars && actualChars <= maxChars) {
+      // 収束 → char_count は計算値で上書き
+      return {
+        heading: validated.data.heading,
+        body_md: validated.data.body_md,
+        char_count: actualChars,
+      };
+    }
+
+    // 範囲外 → 実測をフィードバックして次回に長さ補正を促す
+    if (actualChars < minChars) {
+      const need = target - actualChars;
+      lengthNote =
+        `【最重要・文字数の再調整】前回の本文は約 ${actualChars} 字で、目標 ${target} 字に対し約 ${need} 字**不足**しています。` +
+        `内容を薄めず、具体例・エピソード・描写・掘り下げ・言い換えを増やして密度を上げ、必ず **${minChars}〜${maxChars} 字** に収めて全文を書き直してください。` +
+        `話題の水増しや繰り返しではなく、各段落を具体化・深掘りして自然に増量すること。`;
+    } else {
+      const over = actualChars - target;
+      lengthNote =
+        `【最重要・文字数の再調整】前回の本文は約 ${actualChars} 字で、目標 ${target} 字を約 ${over} 字**超過**しています。` +
+        `冗長な繰り返し・脱線を削り、要点を保ったまま必ず **${minChars}〜${maxChars} 字** に収めて全文を書き直してください。`;
+    }
   }
 
-  // 8. char_count は計算値で上書き (LLM 申告値を捨てる、信頼境界の整理)
-  return {
-    heading: validated.data.heading,
-    body_md: validated.data.body_md,
-    char_count: actualChars,
-  };
+  // リトライを尽くしても収束せず
+  throw new AgentError('writer.chapter.chars_out_of_range', {
+    details: {
+      actual: lastActual,
+      expected_min: minChars,
+      expected_max: maxChars,
+      target,
+      tolerance: CHAR_TOLERANCE,
+      retries: MAX_CHARS_RETRIES,
+    },
+  });
 }
 
 /**
@@ -270,7 +304,9 @@ function buildUserMessage(input: WriterChapterInput): string {
     '【執筆対象の章】',
     `第${input.outlineChapter.index}章: ${input.outlineChapter.heading}`,
     `章の要旨: ${input.outlineChapter.summary}`,
-    `小見出し (順守): ${input.outlineChapter.subheadings.map((s, i) => `${i + 1}. ${s}`).join(' / ')}`,
+    isFiction(input.genre)
+      ? `場面(シーン)の流れ: ${input.outlineChapter.subheadings.map((s, i) => `${i + 1}. ${s}`).join(' / ')}`
+      : `小見出し (順守): ${input.outlineChapter.subheadings.map((s, i) => `${i + 1}. ${s}`).join(' / ')}`,
     `目標文字数: ${input.outlineChapter.target_chars} 字 (±20% 厳守)`,
   );
 
@@ -290,14 +326,33 @@ function buildUserMessage(input: WriterChapterInput): string {
     );
   }
 
+  const fiction = isFiction(input.genre);
   lines.push(
     '',
-    '上記の章について本文 (Markdown) を執筆してください。',
+    fiction ? '上記の章(話)の本文を執筆してください。' : '上記の章について本文 (Markdown) を執筆してください。',
     'F-004 受入基準 (必ず遵守):',
-    ` - 文字数: ${input.outlineChapter.target_chars} 字 の ±20% 範囲内 (本文純粋な文字数。Markdown 記号は含む、コードブロックは少なめに)`,
-    ' - 小見出しは指定された順序で `## ` 見出しとして含める',
-    ' - 章冒頭で導入、各小見出しごとに具体例・実践手順を含め、章末でまとめる',
-    ' - 文体は「ですます」調で統一 (Editor が後段で検出するため違反すると差戻しになる)',
+    ` - 文字数: ${input.outlineChapter.target_chars} 字 の ±20% 範囲内 (本文純粋な文字数。Markdown 記号は含む)`,
+  );
+  if (fiction) {
+    lines.push(
+      ' - 文体は「だ・である」調(地の文)で統一する。会話文は自然な口語で書く。ですます調にはしない',
+      ' - 「場面の流れ」は物語の内部メモ。`##` 見出しやラベルとして本文に出さない。地の文・情景描写・会話で、一続きの物語として滑らかに繋ぐ',
+      ' - 箇条書き・手順・「ポイント」「まとめ」等の実用書フォーマットは使わない',
+      ' - 説明や状況の要約に逃げず、情景・心情・五感・具体的な所作・自然な会話、比喩・省略・余韻で「見せる」。常套句や稚拙な直叙を避け、選び抜いた語と細部の描写で文学的・詩的に書く',
+      ' - **改行・段落 (Kindle 小画面での読みやすさ)**: 会話は話者が変わるごとに改行し、地の文は意味・場面の切れ目で短めの段落に区切る。段落の区切りは必ず**空行 (\\n\\n)**。壁のような段落を作らない。文の途中では改行しない',
+    );
+  } else {
+    lines.push(
+      ' - 小見出しは指定された順序で `## ` 見出しとして含める',
+      ' - 章冒頭で導入、各小見出しごとに具体例・実践手順を含め、章末でまとめる',
+      ' - 文体は「ですます」調で統一 (Editor が後段で検出するため違反すると差戻しになる)',
+      ' - **改行・段落 (Kindle 小画面での読みやすさ最優先)**: 1 段落は 1 つの話題に絞り、目安 2〜4 文・全角 120〜200 字程度で短く区切る。' +
+        '段落の区切りは必ず**空行 (\\n\\n)** を入れる (段落内の単純な改行 \\n は表示で無視されるため使わない)。' +
+        '話題・視点・場面が変わる意味の切れ目で改行し、長い一続きの文塊 (壁のような段落) を作らない。' +
+        '会話・列挙・手順は箇条書き (`- ` / `1. `) や短い段落に分けて読みやすくする。文の途中で改行しない。',
+    );
+  }
+  lines.push(
     '',
     '出力形式: JSON で以下を返してください。',
     '{',

@@ -31,6 +31,11 @@ export const KdpSubmitPayload = z.object({
   book_id: z.string(),
   dry_run: z.boolean().optional(),
   account_id: z.string().optional(),
+  /**
+   * 上書き対象の KDP 内部 titleId。指定時は下書き探索/新規作成をせず、その既存本(下書き/販売中)を
+   * book_id の内容で上書き入稿する(二重出版の解消・作成枠非消費)。詳細は docs/05 §5.3.15。
+   */
+  target_title_id: z.string().optional(),
 });
 export type KdpSubmitPayload = z.infer<typeof KdpSubmitPayload>;
 
@@ -177,9 +182,13 @@ export async function runKdpSubmit(deps: KdpSubmitDeps): Promise<KdpSubmitResult
     price_jpy: row.price_jpy,
     docxPath,
     coverPath,
+    targetTitleId: deps.payload.target_title_id ?? null,
   };
 
-  log.info({ book_id, title: row.title, dry_run: !!dry_run, otp: otp.kind, proxy: !!proxy }, 'kdp.submit start');
+  log.info(
+    { book_id, title: row.title, dry_run: !!dry_run, otp: otp.kind, proxy: !!proxy, target_title_id: deps.payload.target_title_id ?? null },
+    'kdp.submit start',
+  );
   let result: KdpPublishResult;
   try {
     result = await deps.publishPort.publishOne({
@@ -230,7 +239,23 @@ export async function runKdpSubmit(deps: KdpSubmitDeps): Promise<KdpSubmitResult
 
   // 失敗系。creation_limit / no_draft は保留(翌日再試行/下書き用意待ち)、その他は要調査通知。
   log.warn({ book_id, reason: result.reason, message: result.message }, 'kdp.submit failed');
-  if (result.reason !== 'creation_limit' && result.reason !== 'no_draft') {
+  if (result.reason === 'creation_limit' || result.reason === 'no_draft') {
+    // KDP は 1 日 5 冊の作成上限があり、30 分毎に CREATE を再試行すると枠を浪費し永久ループになる。
+    // ~20h のクールダウンを入れ、dispatcher が翌日まで同じ本を再試行しないようにする。
+    const cooldownUntil = new Date(Date.now() + 20 * 60 * 60 * 1000);
+    await prisma.book
+      .update({ where: { id: book_id }, data: { kdp_submit_cooldown_until: cooldownUntil } })
+      .catch((err) => log.warn({ err: errMsg(err) }, 'creation_limit クールダウン設定失敗(無視)'));
+    if (result.reason === 'creation_limit') {
+      // 日次作成上限に到達 = 今日はこれ以上どの本も作れない。他の本で 7 分×CREATE を繰り返して
+      // 枠を浪費しないよう、**全体を翌 JST 0 時まで停止**する（グローバル・バックオフ）。
+      const pausedUntil = nextJstMidnightUtc(new Date());
+      await prisma.appSettings
+        .update({ where: { id: 'singleton' }, data: { kdp_creation_paused_until: pausedUntil } })
+        .catch((err) => log.warn({ err: errMsg(err) }, 'kdp_creation_paused_until 設定失敗(無視)'));
+      log.warn({ pausedUntil: pausedUntil.toISOString() }, 'KDP日次作成上限に到達 — 翌JST0時まで自動入稿を全体停止');
+    }
+  } else {
     await pushLine(`⚠️ A2P: 「${row.title}」のKDP自動入稿に失敗 (${result.reason}). スクショ確認要。`).catch(() => {});
   }
   return { ok: false, status: result.reason, reason: result.reason };
@@ -238,6 +263,14 @@ export async function runKdpSubmit(deps: KdpSubmitDeps): Promise<KdpSubmitResult
 
 function errMsg(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
+}
+
+/** 次の JST 0:00（= 15:00 UTC）を返す。KDP 日次作成枠のリセット境界（JP アカウント基準）。 */
+export function nextJstMidnightUtc(now: Date): Date {
+  const d = new Date(now);
+  d.setUTCHours(15, 0, 0, 0); // 15:00 UTC = 翌日 0:00 JST
+  if (d <= now) d.setUTCDate(d.getUTCDate() + 1);
+  return d;
 }
 
 // ---------------------------------------------------------------------------

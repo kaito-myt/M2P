@@ -73,15 +73,15 @@ export function JobHistoryTab({ jobs }: JobHistoryTabProps) {
                   {jobStatusLabel(job.status)}
                 </Badge>
               </td>
-              <td className="px-2 py-1.5">
+              <td className="whitespace-nowrap px-2 py-1.5">
                 {job.started_at ? formatDateTime(job.started_at) : m.noDate}
               </td>
-              <td className="px-2 py-1.5">
+              <td className="whitespace-nowrap px-2 py-1.5">
                 {job.finished_at ? formatDateTime(job.finished_at) : m.noDate}
               </td>
-              <td className="px-2 py-1.5">{job.retries}</td>
-              <td className="px-2 py-1.5 max-w-xs truncate" title={job.error ?? undefined}>
-                {job.error ?? m.noError}
+              <td className="px-2 py-1.5 text-right tabular-nums">{job.retries}</td>
+              <td className="max-w-xs px-2 py-1.5" title={job.error ?? undefined}>
+                <span className="block truncate">{job.error ?? m.noError}</span>
               </td>
             </tr>
           ))}

@@ -36,7 +36,8 @@
     "./bakeoff": "./src/bakeoff/index.ts",
     "./judge": "./src/judge/index.ts",
     "./promoter": "./src/promoter/index.ts",
-    "./optimizer": "./src/optimizer/index.ts"
+    "./optimizer": "./src/optimizer/index.ts",
+    "./seo-optimizer": "./src/seo-optimizer/index.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",

@@ -33,11 +33,11 @@
   --warning-bg: #fffaeb;
   --success: #067647;
   --success-bg: #ecfdf3;
-  --accent: #4f46e5;
-  --accent-bg: #eef2ff;
+  --accent: #b23a1e; /* vermilion — the single editorial accent */
+  --accent-bg: #f8efeb;
 
-  /* Focus / ring (indigo) */
-  --ring-blue: rgba(79, 70, 229, 0.35);
+  /* Focus / ring (vermilion) */
+  --ring-blue: rgba(178, 58, 30, 0.30);
 
   /* Radius */
   --radius-micro: 4px;

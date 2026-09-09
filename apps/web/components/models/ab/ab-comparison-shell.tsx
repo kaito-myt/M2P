@@ -154,7 +154,7 @@ function SampleCountCard({ label, count, insufficient, testId }: SampleCountCard
   const m2 = messages.abComparison.sampleCount;
   return (
     <div
-      className={`rounded-card border p-space-snug ${insufficient ? 'border-red-300 bg-red-50' : 'border-border-warm bg-cream-light'}`}
+      className={`rounded-card border p-space-snug ${insufficient ? 'border-red-300 bg-red-100' : 'border-border-warm bg-cream-light'}`}
       data-testid={testId}
     >
       <p className="text-button-sm text-muted">{label}</p>
@@ -162,7 +162,7 @@ function SampleCountCard({ label, count, insufficient, testId }: SampleCountCard
         {count} {m2.bookCountSuffix}
       </p>
       {insufficient ? (
-        <p className="mt-1 text-caption text-red-600" data-testid={`${testId}-insufficient`}>
+        <p className="mt-1 text-caption text-destructive" data-testid={`${testId}-insufficient`}>
           {m2.insufficient}
         </p>
       ) : (

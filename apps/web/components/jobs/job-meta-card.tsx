@@ -65,7 +65,7 @@ export function JobMetaCard({
   return (
     <section
       aria-label={m.metaSection}
-      className="rounded-card border border-border-warm bg-white p-space-normal"
+      className="rounded-card border border-border-warm bg-white p-space-relaxed"
     >
       <h2 className="text-body font-medium text-foreground">{m.metaSection}</h2>
 
@@ -112,7 +112,7 @@ export function JobMetaCard({
           <dt className="text-caption text-muted">{m.retriable}</dt>
           <dd>
             <span
-              className={`rounded px-1.5 py-0.5 text-caption font-medium ${isRetriable ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-gray-600'}`}
+              className={`rounded px-1.5 py-0.5 text-caption font-medium ${isRetriable ? 'bg-success-bg text-success' : 'bg-charcoal-04 text-charcoal-82'}`}
             >
               {isRetriable ? m.yes : m.no}
             </span>
@@ -123,7 +123,7 @@ export function JobMetaCard({
           <dt className="text-caption text-muted">{m.stepResumable}</dt>
           <dd>
             <span
-              className={`rounded px-1.5 py-0.5 text-caption font-medium ${isStepResumable ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-gray-600'}`}
+              className={`rounded px-1.5 py-0.5 text-caption font-medium ${isStepResumable ? 'bg-success-bg text-success' : 'bg-charcoal-04 text-charcoal-82'}`}
             >
               {isStepResumable ? m.yes : m.no}
             </span>

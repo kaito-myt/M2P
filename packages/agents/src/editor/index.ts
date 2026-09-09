@@ -30,7 +30,9 @@
  *  - schema は DB `chapters` 列 (heading / body_md) + docs/05 §6.3.3 と完全整合 (Hard Rule #3)
  *  - AgentSdkClient は responseSchema 非対応 — 自由テキスト → JSON 抽出 → zod の三段
  */
-import { genreLabel } from '@a2p/contracts/agents';
+import { z } from 'zod';
+
+import { genreLabel, isFiction } from '@a2p/contracts/agents';
 import { AgentError } from '@a2p/contracts/errors';
 import type { LLMClient } from '@a2p/contracts/agents';
 import {
@@ -61,6 +63,14 @@ import type { LoadModelAssignmentDeps } from '../lib/load-model-assignment.js';
  * 各章を要約せず全文返す前提で 32,768 を確保 (JSON 構造分の余裕含む)。
  */
 const DEFAULT_MAX_OUTPUT_TOKENS = 32768;
+
+/**
+ * 章ごとの LLM 出力は非決定的で、稀に JSON 崩れ/スキーマ不一致 (`editor.invalid_output`) を起こす。
+ * 章分割設計では 1 章でも失敗すると editor ジョブ全体が落ちるため、**章単位で最大3回まで再試行**する。
+ * (theme.ts と同じ耐性方針。ProviderError=モデル/API障害 は透過し ops.watch の自己修復/上位retryに委ねる。)
+ * 2026-08-10: editor を Gemini→claude-sonnet-4-6 に切替後、少数章の invalid_output で全書籍が停止したため追加。
+ */
+const MAX_PARSE_RETRIES = 3;
 
 export interface EditBookDeps {
   loadActivePrompt?: typeof defaultLoadActivePrompt;
@@ -149,56 +159,68 @@ export async function editBook(
       genre: genreLabel(parsedInput.genre) ?? 'general',
     });
 
-    const completion = await client.complete({
-      role: 'editor',
-      genre: parsedInput.genre,
-      messages: [
-        { role: 'system', content: systemPrompt },
-        { role: 'user', content: buildUserMessage(chunkInput) },
-      ],
-      maxOutputTokens: DEFAULT_MAX_OUTPUT_TOKENS,
-    });
+    // invalid_output 系失敗のみ最大 MAX_PARSE_RETRIES 回まで LLM 呼出ごと再試行。
+    // ProviderError 等 (モデル/API 障害) は透過して上位 worker / ops.watch 自己修復に委ねる。
+    let editedChapter: z.infer<typeof EditorChapterOutputSchema> | null = null;
+    for (let attempt = 1; attempt <= MAX_PARSE_RETRIES; attempt++) {
+      try {
+        const completion = await client.complete({
+          role: 'editor',
+          genre: parsedInput.genre,
+          messages: [
+            { role: 'system', content: systemPrompt },
+            { role: 'user', content: buildUserMessage(chunkInput) },
+          ],
+          maxOutputTokens: DEFAULT_MAX_OUTPUT_TOKENS,
+        });
 
-    const rawText = completion.text;
-    if (typeof rawText !== 'string' || rawText.trim().length === 0) {
-      throw new AgentError('editor.invalid_output: empty response', {
-        details: { rawText: String(rawText), chapterIndex: chapter.index },
-      });
-    }
+        const rawText = completion.text;
+        if (typeof rawText !== 'string' || rawText.trim().length === 0) {
+          throw new AgentError('editor.invalid_output: empty response', {
+            details: { rawText: String(rawText), chapterIndex: chapter.index },
+          });
+        }
 
-    // 5. JSON 抽出 — schema-aware predicate で `chapters` 配列を持つブロックを優先選択
-    const parsedJson = extractJson(rawText, hasEditorShape);
-    if (parsedJson === undefined) {
-      throw new AgentError('editor.invalid_output: failed to parse JSON', {
-        details: { rawText, chapterIndex: chapter.index },
-      });
-    }
+        // 5. JSON 抽出 — schema-aware predicate で `chapters` 配列を持つブロックを優先選択
+        const parsedJson = extractJson(rawText, hasEditorShape);
+        if (parsedJson === undefined) {
+          throw new AgentError('editor.invalid_output: failed to parse JSON', {
+            details: { rawText, chapterIndex: chapter.index },
+          });
+        }
 
-    // 6. 欠落フィールド救済 → **章要素**を zod 検証。
-    //    出力ラッパ (EditorOutputSchema) は chapters.min(7) を要求するため、
-    //    章分割では要素スキーマ (EditorChapterOutputSchema) で 1 章ずつ検証する。
-    const normalized = normalizePartialOutput(parsedJson, chunkInput);
-    const chaptersRaw = (normalized as { chapters?: unknown }).chapters;
-    const firstRaw = Array.isArray(chaptersRaw) ? chaptersRaw[0] : undefined;
-    if (firstRaw === undefined) {
-      throw new AgentError('editor.invalid_output: missing chapter in output', {
-        details: { rawText, chapterIndex: chapter.index },
-      });
-    }
-    const validated = EditorChapterOutputSchema.safeParse(firstRaw);
-    if (!validated.success) {
-      throw new AgentError('editor.invalid_output: schema validation failed', {
-        details: { rawText, issues: validated.error.issues, chapterIndex: chapter.index },
-        cause: validated.error,
-      });
+        // 6. 欠落フィールド救済 → **章要素**を zod 検証。
+        //    出力ラッパ (EditorOutputSchema) は chapters.min(7) を要求するため、
+        //    章分割では要素スキーマ (EditorChapterOutputSchema) で 1 章ずつ検証する。
+        const normalized = normalizePartialOutput(parsedJson, chunkInput);
+        const chaptersRaw = (normalized as { chapters?: unknown }).chapters;
+        const firstRaw = Array.isArray(chaptersRaw) ? chaptersRaw[0] : undefined;
+        if (firstRaw === undefined) {
+          throw new AgentError('editor.invalid_output: missing chapter in output', {
+            details: { rawText, chapterIndex: chapter.index },
+          });
+        }
+        const validated = EditorChapterOutputSchema.safeParse(firstRaw);
+        if (!validated.success) {
+          throw new AgentError('editor.invalid_output: schema validation failed', {
+            details: { rawText, issues: validated.error.issues, chapterIndex: chapter.index },
+            cause: validated.error,
+          });
+        }
+        editedChapter = validated.data;
+        break;
+      } catch (err) {
+        const isParseErr = err instanceof AgentError && /invalid_output/.test(err.message);
+        if (!isParseErr || attempt === MAX_PARSE_RETRIES) throw err;
+        // それ以外は次 attempt へ (非決定的な出力崩れは再呼出でほぼ通る)。
+      }
     }
 
     // index は入力章のものへ正規化して順序を保証する。
-    const editedChapter = validated.data;
     editedChapters.push(
-      editedChapter.index === chapter.index
-        ? editedChapter
-        : { ...editedChapter, index: chapter.index },
+      editedChapter!.index === chapter.index
+        ? editedChapter!
+        : { ...editedChapter!, index: chapter.index },
     );
   }
 
@@ -473,7 +495,9 @@ function buildUserMessage(input: EditorInput): string {
   lines.push(
     '',
     '上記の全章を校閲してください。F-005 受入基準 (必ず遵守):',
-    ' - 表記ゆれを統一 (例: 「ですます」と「だ・である」混在を「ですます」に統一)',
+    isFiction(input.genre)
+      ? ' - 小説のため文体は「だ・である」調に統一する（会話文は自然な口語のまま）。ですます調に変換しない。実用書的な小見出し・箇条書きへ書き換えない。表記ゆれのみ整える'
+      : ' - 表記ゆれを統一 (例: 「ですます」と「だ・である」混在を「ですます」に統一)',
     ' - 章間の論理整合性を確認し、重複表現や矛盾を解消する',
     ' - 誤字脱字を修正する',
     ' - 各章の `index` / `heading` は入力と完全一致させる (順序・章数を変えない)',
@@ -611,6 +635,14 @@ function tryParse(s: string): unknown {
  * LLM 応答 JSON 内の string 値に混入する生改行 (\n / \r / \t) を escape する
  * defensive helper。state machine で inString 状態を追跡する。
  */
+/**
+ * LLM が生成しがちな不正 JSON を救済する:
+ * 1. 文字列値内の生の改行/タブ → \n /\r /\t にエスケープ。
+ * 2. 文字列値内の**未エスケープのダブルクォート**をエスケープ。
+ *    LLM(Claude 等)が地の文の引用に ASCII `"` を使い `"…なぜ"かわいそう"という…"` のように
+ *    値の途中で `"` を裸で入れると JSON が途中終端して壊れる。閉じ引用は「次の非空白が
+ *    構造文字(`,` `:` `}` `]`)または終端」の時だけと判定し、それ以外の `"` は内容として `\"` に直す。
+ */
 function sanitizeJsonStringNewlines(text: string): string {
   let result = '';
   let inString = false;
@@ -628,8 +660,23 @@ function sanitizeJsonStringNewlines(text: string): string {
       continue;
     }
     if (ch === '"') {
-      result += ch;
-      inString = !inString;
+      if (!inString) {
+        result += ch;
+        inString = true;
+        continue;
+      }
+      // 文字列内の `"`: 次の非空白文字が構造文字/終端なら閉じ引用、それ以外は内容 → エスケープ。
+      let j = i + 1;
+      while (j < text.length && (text[j] === ' ' || text[j] === '\t' || text[j] === '\n' || text[j] === '\r')) {
+        j++;
+      }
+      const next = text[j];
+      if (next === undefined || next === ',' || next === ':' || next === '}' || next === ']') {
+        result += ch;
+        inString = false;
+      } else {
+        result += '\\"';
+      }
       continue;
     }
     if (inString) {

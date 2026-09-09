@@ -57,9 +57,11 @@ export interface GeneratingSession {
   keywordOrBrief: string | null;
   count: number | null;
   accountLabel: string | null;
-  /** queued | running */
+  /** queued | running | failed */
   status: string;
   createdAt: string;
+  /** 失敗時のエラー要約（status='failed' のときのみ）。 */
+  error?: string | null;
 }
 
 function statusOf(s: string): ThemeStatus {

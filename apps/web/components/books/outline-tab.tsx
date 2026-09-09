@@ -226,7 +226,7 @@ export function OutlineTab({ outline, bookId, bookStatus, onAction }: OutlineTab
         <div className="flex gap-space-snug" data-testid="outline-actions">
           <button
             type="button"
-            className="rounded-card bg-foreground px-4 py-2 text-button-sm text-cream hover:bg-charcoal-82 disabled:opacity-50"
+            className="rounded-card bg-foreground px-4 py-2 text-button-sm text-white hover:bg-charcoal-82 disabled:opacity-50"
             onClick={handleApprove}
             disabled={isPending}
             data-testid="outline-approve-btn"
@@ -264,7 +264,7 @@ export function OutlineTab({ outline, bookId, bookStatus, onAction }: OutlineTab
           <div className="mt-space-snug flex gap-space-snug">
             <button
               type="button"
-              className="rounded-card bg-foreground px-4 py-2 text-button-sm text-cream hover:bg-charcoal-82 disabled:opacity-50"
+              className="rounded-card bg-foreground px-4 py-2 text-button-sm text-white hover:bg-charcoal-82 disabled:opacity-50"
               onClick={handleRejectSubmit}
               disabled={isPending}
               data-testid="outline-reject-submit-btn"

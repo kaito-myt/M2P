@@ -27,6 +27,7 @@ import {
   parsePeriodParam,
   buildTrendChartFromAggregates,
   buildHeatmapFromAggregates,
+  buildSalesInsights,
   type BookKpiRowSerialized,
 } from '@/lib/sales-kpi-view';
 import {
@@ -38,10 +39,12 @@ import {
 import { SalesKpiShell } from '@/components/sales/sales-kpi-shell';
 import { SalesKpiStripe } from '@/components/sales/sales-kpi-stripe';
 import { SalesTrendChart } from '@/components/sales/sales-trend-chart';
+import { SalesInsights } from '@/components/sales/sales-insights';
 import { GenreMonthHeatmap } from '@/components/sales/genre-month-heatmap';
 import { BooksKpiTable } from '@/components/sales/books-kpi-table';
 import { SalesFetchStatusBanner } from '@/components/sales/sales-fetch-status-banner';
 import { SalesReportImport } from '@/components/sales/sales-report-import';
+import { PageHeading } from '@/components/common/page-heading';
 
 export const metadata: Metadata = {
   title: `${messages.salesKpi.pageTitle} | ${messages.brand.appName}`,
@@ -105,43 +108,33 @@ export default async function SalesKpiPage({ searchParams }: PageProps) {
 
   const serializedBooks: BookKpiRowSerialized[] = kpiRows.map(serializeBookKpiRow);
 
-  const trendData = buildTrendChartFromAggregates(monthlyGenreSales, months);
   const heatmapMatrix = buildHeatmapFromAggregates(monthlyGenreSales, months);
+  // トレンドの積み上げ順とヒートマップの行順を揃える (同じジャンル=同じ色/順序)。
+  const trendData = buildTrendChartFromAggregates(monthlyGenreSales, months, heatmapMatrix.genres);
+
+  const insights = buildSalesInsights(serializedBooks, trendData);
 
   const isEmpty = summary.total_books === 0 && summary.total_royalty_jpy === 0;
 
   return (
     <div className="flex flex-col gap-space-loose" data-testid="sales-kpi-page">
-      {/* Page header */}
-      <header className="flex flex-col gap-space-snug sm:flex-row sm:items-start sm:justify-between">
-        <div className="flex flex-col gap-space-snug">
-          <nav aria-label="breadcrumb" className="text-button-sm text-muted">
-            <Link href="/dashboard" className="no-underline hover:underline">
-              {m.breadcrumbHome}
+      <PageHeading
+        eyebrow={m.breadcrumbAnalytics}
+        title={m.pageTitle}
+        description={m.pageSubtitle}
+        actions={
+          <>
+            <SalesReportImport accounts={accounts} />
+            <Link
+              href="/sales/manual"
+              className="inline-flex cursor-pointer items-center gap-1.5 rounded-default bg-charcoal px-3 py-2 text-button-sm text-cream-light hover:bg-charcoal/90 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
+              data-testid="manual-input-cta"
+            >
+              {m.manualInputButton}
             </Link>
-            <span aria-hidden="true"> &gt; </span>
-            <span>{m.breadcrumbAnalytics}</span>
-            <span aria-hidden="true"> &gt; </span>
-            <span>{m.breadcrumbSalesKpi}</span>
-          </nav>
-          <div>
-            <h1 className="text-sub-heading text-foreground">{m.pageTitle}</h1>
-            <p className="text-body text-muted">{m.pageSubtitle}</p>
-          </div>
-        </div>
-
-        {/* CTAs */}
-        <div className="flex shrink-0 flex-wrap items-center gap-space-snug">
-          <SalesReportImport accounts={accounts} />
-          <Link
-            href="/sales/manual"
-            className="inline-flex cursor-pointer items-center gap-1.5 rounded-card bg-charcoal px-3 py-2 text-button-sm text-white hover:bg-charcoal/90 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
-            data-testid="manual-input-cta"
-          >
-            {m.manualInputButton}
-          </Link>
-        </div>
-      </header>
+          </>
+        }
+      />
 
       {/* 自動取得ステータスバナー (T-12-07, F-038) */}
       {targetAccountId && (
@@ -180,15 +173,14 @@ export default async function SalesKpiPage({ searchParams }: PageProps) {
           </div>
         ) : (
           <>
-            {/* Chart row */}
-            <div className="grid grid-cols-1 gap-space-loose lg:grid-cols-5">
-              <div className="lg:col-span-3">
-                <SalesTrendChart data={trendData} />
-              </div>
-              <div className="lg:col-span-2">
-                <GenreMonthHeatmap matrix={heatmapMatrix} />
-              </div>
+            {/* 売上推移・ヒートマップ (各横幅いっぱいに縦積み) */}
+            <div className="flex flex-col gap-space-loose">
+              <SalesTrendChart data={trendData} />
+              <GenreMonthHeatmap matrix={heatmapMatrix} />
             </div>
+
+            {/* 分析サマリ (売れ筋 / ジャンル構成 / 前月比 / 黒字・ゼロ売上) */}
+            <SalesInsights insights={insights} />
 
             {/* Books KPI table */}
             <section aria-labelledby="books-kpi-heading">

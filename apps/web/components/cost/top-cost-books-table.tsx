@@ -32,41 +32,42 @@ export function TopCostBooksTable({ books }: TopCostBooksTableProps) {
       <table className="w-full text-body">
         <thead>
           <tr className="border-b border-border-warm bg-cream-light text-left">
-            <th className="w-12 px-space-relaxed py-space-snug text-center font-medium text-charcoal">{m.colRank}</th>
-            <th className="px-space-relaxed py-space-snug font-medium text-charcoal">{m.colTitle}</th>
-            <th className="px-space-relaxed py-space-snug text-right font-medium text-charcoal">{m.colCostJpy}</th>
-            <th className="px-space-relaxed py-space-snug text-right font-medium text-charcoal">{m.colInputTokens}</th>
-            <th className="px-space-relaxed py-space-snug text-right font-medium text-charcoal">{m.colOutputTokens}</th>
-            <th className="px-space-relaxed py-space-snug text-right font-medium text-charcoal">{m.colImages}</th>
+            <th className="w-12 whitespace-nowrap px-space-relaxed py-space-snug text-center font-medium text-charcoal">{m.colRank}</th>
+            <th className="whitespace-nowrap px-space-relaxed py-space-snug font-medium text-charcoal">{m.colTitle}</th>
+            <th className="whitespace-nowrap px-space-relaxed py-space-snug text-right font-medium text-charcoal">{m.colCostJpy}</th>
+            <th className="whitespace-nowrap px-space-relaxed py-space-snug text-right font-medium text-charcoal">{m.colInputTokens}</th>
+            <th className="whitespace-nowrap px-space-relaxed py-space-snug text-right font-medium text-charcoal">{m.colOutputTokens}</th>
+            <th className="whitespace-nowrap px-space-relaxed py-space-snug text-right font-medium text-charcoal">{m.colImages}</th>
           </tr>
         </thead>
         <tbody>
           {books.map((book, i) => (
             <tr key={book.book_id} className="border-b border-border-warm last:border-0">
               <td className="px-space-relaxed py-space-snug text-center text-muted">{i + 1}</td>
-              <td className="px-space-relaxed py-space-snug text-charcoal">
+              <td className="max-w-xs px-space-relaxed py-space-snug text-charcoal">
                 <div className="flex items-center gap-2">
                   <Link
                     href={`/books/${book.book_id}`}
-                    className="text-foreground underline hover:no-underline"
+                    className="min-w-0 truncate text-foreground underline hover:no-underline"
+                    title={book.title}
                   >
                     {book.title}
                   </Link>
                   {book.over_threshold && (
-                    <Badge variant="must">{m.overBadge}</Badge>
+                    <Badge variant="must" className="shrink-0">{m.overBadge}</Badge>
                   )}
                 </div>
               </td>
-              <td className="px-space-relaxed py-space-snug text-right text-charcoal">
+              <td className="whitespace-nowrap px-space-relaxed py-space-snug text-right tabular-nums text-charcoal">
                 {formatCostJpy(book.total_cost_jpy)}
               </td>
-              <td className="px-space-relaxed py-space-snug text-right text-muted">
+              <td className="whitespace-nowrap px-space-relaxed py-space-snug text-right tabular-nums text-muted">
                 {formatTokenCount(book.total_input_tokens)}
               </td>
-              <td className="px-space-relaxed py-space-snug text-right text-muted">
+              <td className="whitespace-nowrap px-space-relaxed py-space-snug text-right tabular-nums text-muted">
                 {formatTokenCount(book.total_output_tokens)}
               </td>
-              <td className="px-space-relaxed py-space-snug text-right text-muted">
+              <td className="whitespace-nowrap px-space-relaxed py-space-snug text-right tabular-nums text-muted">
                 {book.total_image_count}
               </td>
             </tr>

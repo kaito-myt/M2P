@@ -116,8 +116,15 @@ describe('setApiCredentialCore', () => {
 
   it('provider が enum 外で validation', async () => {
     const { deps } = makeDeps();
-    const r = await setApiCredentialCore({ provider: 'tavily', key: 'tvly' }, deps);
+    // tavily は 2026-08 に正式プロバイダ化したため、enum 外の例は 'brave' 等を使う。
+    const r = await setApiCredentialCore({ provider: 'brave', key: 'xxx' }, deps);
     expect(isFail(r)).toBe(true);
+  });
+
+  it('provider=tavily は有効値として受理される', async () => {
+    const { deps } = makeDeps();
+    const r = await setApiCredentialCore({ provider: 'tavily', key: 'tvly-xxxxx' }, deps);
+    expect(isFail(r)).toBe(false);
   });
 
   it('key 空で validation', async () => {

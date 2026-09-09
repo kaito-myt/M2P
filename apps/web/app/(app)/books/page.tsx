@@ -13,6 +13,7 @@ import Link from 'next/link';
 import { prisma } from '@a2p/db';
 
 import { BooksPageShell } from '@/components/books/books-page-shell';
+import { PageHeading } from '@/components/common/page-heading';
 import { messages } from '@/lib/messages';
 import { serializeBookRow } from '@/lib/books-view';
 
@@ -44,30 +45,20 @@ export default async function BooksPage() {
 
   return (
     <div className="flex flex-col gap-space-loose" data-testid="books-library-page">
-      <header className="flex flex-col gap-space-snug">
-        <nav aria-label="breadcrumb" className="text-button-sm text-muted">
-          <Link href="/dashboard" className="no-underline hover:underline">
-            {m.breadcrumbHome}
+      <PageHeading
+        eyebrow={m.breadcrumbBooks}
+        title={m.libraryPageTitle}
+        description={m.libraryPageSubtitle}
+        actions={
+          <Link
+            href="/batches"
+            className="inline-flex items-center rounded-default border border-border-warm bg-cream-light px-4 py-2 text-button-sm font-medium text-charcoal hover:bg-charcoal-04"
+            data-testid="new-project-cta"
+          >
+            {m.newProjectCta}
           </Link>
-          <span aria-hidden="true"> &gt; </span>
-          <span>{m.breadcrumbBooks}</span>
-        </nav>
-        <div className="flex flex-wrap items-start justify-between gap-space-snug">
-          <div className="flex flex-col">
-            <h1 className="text-sub-heading text-foreground">{m.libraryPageTitle}</h1>
-            <p className="text-body text-muted">{m.libraryPageSubtitle}</p>
-          </div>
-          <div className="flex items-center gap-space-snug">
-            <Link
-              href="/batches"
-              className="inline-flex items-center rounded-button border border-border-warm bg-cream-light px-4 py-2 text-button font-medium text-charcoal hover:bg-charcoal-04"
-              data-testid="new-project-cta"
-            >
-              {m.newProjectCta}
-            </Link>
-          </div>
-        </div>
-      </header>
+        }
+      />
 
       {rows.length === 0 ? (
         <div
@@ -79,7 +70,7 @@ export default async function BooksPage() {
           <div className="mt-space-snug flex justify-center">
             <Link
               href="/batches"
-              className="inline-flex items-center rounded-button border border-border-warm bg-cream-light px-4 py-2 text-button font-medium text-charcoal hover:bg-charcoal-04"
+              className="inline-flex items-center rounded-default border border-border-warm bg-cream-light px-4 py-2 text-button-sm font-medium text-charcoal hover:bg-charcoal-04"
             >
               {m.libraryEmpty.cta}
             </Link>

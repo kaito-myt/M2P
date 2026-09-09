@@ -35,11 +35,11 @@ export function PausedJobsTable({ books }: PausedJobsTableProps) {
       <table className="w-full text-body">
         <thead>
           <tr className="border-b border-border-warm bg-cream-light text-left">
-            <th className="px-space-relaxed py-space-snug font-medium text-charcoal">{m.colTitle}</th>
-            <th className="px-space-relaxed py-space-snug font-medium text-charcoal">{m.colAccount}</th>
-            <th className="px-space-relaxed py-space-snug text-right font-medium text-charcoal">{m.colCostJpy}</th>
-            <th className="px-space-relaxed py-space-snug font-medium text-charcoal">{m.colStatus}</th>
-            <th className="px-space-relaxed py-space-snug text-right font-medium text-charcoal">{m.colActions}</th>
+            <th className="whitespace-nowrap px-space-relaxed py-space-snug font-medium text-charcoal">{m.colTitle}</th>
+            <th className="whitespace-nowrap px-space-relaxed py-space-snug font-medium text-charcoal">{m.colAccount}</th>
+            <th className="whitespace-nowrap px-space-relaxed py-space-snug text-right font-medium text-charcoal">{m.colCostJpy}</th>
+            <th className="whitespace-nowrap px-space-relaxed py-space-snug font-medium text-charcoal">{m.colStatus}</th>
+            <th className="whitespace-nowrap px-space-relaxed py-space-snug text-right font-medium text-charcoal">{m.colActions}</th>
           </tr>
         </thead>
         <tbody>
@@ -73,9 +73,11 @@ function PausedBookRow({ book }: { book: PausedBookSerialized }) {
 
   return (
     <tr className="border-b border-border-warm last:border-0">
-      <td className="px-space-relaxed py-space-snug text-charcoal">{book.title}</td>
+      <td className="max-w-xs px-space-relaxed py-space-snug text-charcoal">
+        <span className="line-clamp-2" title={book.title}>{book.title}</span>
+      </td>
       <td className="px-space-relaxed py-space-snug text-muted">{book.account_pen_name}</td>
-      <td className="px-space-relaxed py-space-snug text-right text-charcoal">
+      <td className="whitespace-nowrap px-space-relaxed py-space-snug text-right tabular-nums text-charcoal">
         {formatCostJpy(book.cost_jpy_total)}
       </td>
       <td className="px-space-relaxed py-space-snug text-muted">{book.cost_status}</td>
@@ -87,7 +89,7 @@ function PausedBookRow({ book }: { book: PausedBookSerialized }) {
         ) : (
           <div className="flex justify-end gap-2">
             <button
-              className="rounded-button border border-border-warm bg-cream-light px-3 py-1 text-button-sm font-medium text-charcoal hover:bg-charcoal-04 disabled:opacity-50"
+              className="rounded-default border border-border-warm bg-cream-light px-3 py-1 text-button-sm font-medium text-charcoal hover:bg-charcoal-04 disabled:opacity-50"
               disabled={isPending}
               onClick={() => handleAction('continue')}
               data-testid={`paused-continue-${book.id}`}
@@ -95,7 +97,7 @@ function PausedBookRow({ book }: { book: PausedBookSerialized }) {
               {isPending ? m.continuing : m.continueButton}
             </button>
             <button
-              className="rounded-button border border-destructive bg-cream-light px-3 py-1 text-button-sm font-medium text-destructive hover:bg-destructive-bg disabled:opacity-50"
+              className="rounded-default border border-destructive bg-cream-light px-3 py-1 text-button-sm font-medium text-destructive hover:bg-destructive-bg disabled:opacity-50"
               disabled={isPending}
               onClick={() => handleAction('cancel')}
               data-testid={`paused-cancel-${book.id}`}

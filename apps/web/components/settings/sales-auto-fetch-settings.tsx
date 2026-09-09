@@ -12,8 +12,9 @@ import { useState, useCallback } from 'react';
 import { CheckCircle, XCircle, Info } from 'lucide-react';
 
 import { updateSettings } from '@/app/actions/settings';
-import { isValidCronExpression, nextCronRunJst } from '@/lib/cron-utils';
+import { isValidCronExpression } from '@/lib/cron-utils';
 import { messages } from '@/lib/messages';
+import { ScheduleField } from '@/components/org/schedule-field';
 
 const m = messages.settings;
 const ms = m.sections.salesAutoFetch;
@@ -56,12 +57,6 @@ export function SalesAutoFetchSettings({
     }
   }, [enabled, validateCron]);
 
-  const handleCronBlur = useCallback(() => {
-    if (enabled) {
-      setCronError(validateCron(cron));
-    }
-  }, [cron, enabled, validateCron]);
-
   const handleSubmit = useCallback(async (e: React.FormEvent) => {
     e.preventDefault();
 
@@ -90,8 +85,6 @@ export function SalesAutoFetchSettings({
     }
   }, [enabled, cron, validateCron]);
 
-  const cronLabel = isValidCronExpression(cron.trim()) ? nextCronRunJst(cron.trim()) : null;
-
   return (
     <section
       aria-labelledby="sales-auto-fetch-heading"
@@ -101,7 +94,7 @@ export function SalesAutoFetchSettings({
       <div className="mb-space-snug">
         <h2
           id="sales-auto-fetch-heading"
-          className="text-sub-heading text-foreground"
+          className="text-section-title text-foreground"
         >
           {ms.title}
         </h2>
@@ -137,48 +130,26 @@ export function SalesAutoFetchSettings({
           </label>
         </div>
 
-        {/* Cron input */}
+        {/* 実行スケジュール — JST の時刻/頻度で指定（内部で UTC cron に変換して保存） */}
         <div className="flex flex-col gap-2">
-          <label
-            htmlFor="sales-auto-fetch-cron"
-            className={`text-body font-medium ${enabled ? 'text-charcoal' : 'text-muted'}`}
-          >
+          <span className={`text-body font-medium ${enabled ? 'text-charcoal' : 'text-muted'}`}>
             {ms.cronLabel}
-          </label>
-          <input
-            id="sales-auto-fetch-cron"
-            type="text"
-            value={cron}
+          </span>
+          <ScheduleField
+            cron={cron}
             disabled={!enabled}
-            onChange={(e) => handleCronChange(e.target.value)}
-            onBlur={handleCronBlur}
-            placeholder={ms.cronPlaceholder}
-            data-testid="sales-auto-fetch-cron-input"
-            className={`w-64 rounded-button border px-3 py-2 text-body text-charcoal focus:outline-none focus-visible:ring-2 focus-visible:ring-foreground ${
-              cronError
-                ? 'border-destructive bg-white'
-                : 'border-border-warm bg-white'
-            } disabled:cursor-not-allowed disabled:bg-gray-100 disabled:text-muted disabled:opacity-60`}
+            onChange={handleCronChange}
+            testId="sales-auto-fetch"
           />
-          <p className="text-button-sm text-muted">{ms.cronHint}</p>
-
-          {/* Cron error */}
           {cronError && (
             <p role="alert" className="text-button-sm text-destructive" data-testid="cron-error">
               {cronError}
             </p>
           )}
-
-          {/* Next run label */}
-          {enabled && !cronError && cronLabel && (
-            <p className="text-button-sm text-charcoal" data-testid="next-run-label">
-              {ms.nextRunLabel}: {cronLabel}
-            </p>
-          )}
         </div>
 
         {/* Worker restart note */}
-        <div className="flex items-start gap-2 rounded-button border border-border-warm bg-white px-3 py-2">
+        <div className="flex items-start gap-2 rounded-default border border-border-warm bg-cream-light px-3 py-2">
           <Info aria-hidden="true" className="mt-0.5 h-4 w-4 shrink-0 text-muted" />
           <p className="text-button-sm text-muted" data-testid="worker-restart-note">
             {ms.workerRestartNote}
@@ -190,7 +161,7 @@ export function SalesAutoFetchSettings({
           <button
             type="submit"
             disabled={isPending}
-            className="rounded-button bg-foreground px-4 py-2 text-button-sm font-medium text-white disabled:opacity-50"
+            className="rounded-default bg-foreground px-4 py-2 text-button-sm font-medium text-white disabled:opacity-50"
           >
             {isPending ? m.saving : m.saveButton}
           </button>

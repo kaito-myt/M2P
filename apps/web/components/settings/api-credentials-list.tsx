@@ -91,7 +91,7 @@ export function ApiCredentialsList({ credentials }: ApiCredentialsListProps) {
       <div className="mb-space-snug">
         <h2
           id="api-credentials-heading"
-          className="text-sub-heading text-foreground"
+          className="text-section-title text-foreground"
         >
           {m.title}
         </h2>
@@ -103,7 +103,7 @@ export function ApiCredentialsList({ credentials }: ApiCredentialsListProps) {
         <div
           role="status"
           aria-live="polite"
-          className="mb-space-snug flex items-start gap-2 rounded-button border border-amber-300 bg-amber-50 px-3 py-2 text-button-sm text-amber-800"
+          className="mb-space-snug flex items-start gap-2 rounded-default border border-warning/30 bg-warning-bg px-3 py-2 text-button-sm text-warning"
         >
           <AlertTriangle aria-hidden="true" className="mt-0.5 h-4 w-4 shrink-0" />
           <span>{m.envFallbackBanner}</span>
@@ -113,7 +113,7 @@ export function ApiCredentialsList({ credentials }: ApiCredentialsListProps) {
       <div className="overflow-x-auto rounded-card border border-border-warm">
         <table className="w-full text-body">
           <thead>
-            <tr className="border-b border-border-warm bg-white text-left">
+            <tr className="border-b border-border-warm bg-cream-light text-left">
               <th className="px-space-relaxed py-space-snug font-medium text-charcoal">プロバイダ</th>
               <th className="px-space-relaxed py-space-snug font-medium text-charcoal">状態</th>
               <th className="px-space-relaxed py-space-snug font-medium text-charcoal">{m.maskedKeyLabel}</th>
@@ -192,7 +192,7 @@ function CredentialRow({
           <button
             type="button"
             onClick={onSetClick}
-            className="flex cursor-pointer items-center gap-1 rounded-button border border-border-warm bg-white px-3 py-1 text-button-sm text-charcoal hover:bg-cream-light focus-visible:ring-2 focus-visible:ring-foreground"
+            className="flex cursor-pointer items-center gap-1 rounded-default border border-border-warm bg-cream-light px-3 py-1 text-button-sm text-charcoal hover:bg-cream-light focus-visible:ring-2 focus-visible:ring-foreground"
             aria-label={`${providerLabel} のキーを設定`}
           >
             <Key aria-hidden="true" className="h-3 w-3" />
@@ -207,7 +207,7 @@ function CredentialRow({
             <button
               type="button"
               onClick={onRevokeClick}
-              className="flex cursor-pointer items-center gap-1 rounded-button border border-destructive bg-white px-3 py-1 text-button-sm text-destructive hover:bg-red-50 focus-visible:ring-2 focus-visible:ring-destructive"
+              className="flex cursor-pointer items-center gap-1 rounded-default border border-destructive bg-cream-light px-3 py-1 text-button-sm text-destructive hover:bg-destructive-bg focus-visible:ring-2 focus-visible:ring-destructive"
               aria-label={`${providerLabel} のキーを削除`}
             >
               <Trash2 aria-hidden="true" className="h-3 w-3" />
@@ -227,7 +227,7 @@ function CredentialRow({
 function StatusBadge({ status }: { status: ApiCredentialStatusRow['status'] }) {
   if (status === 'db') {
     return (
-      <span className="inline-flex items-center gap-1 rounded-full bg-green-100 px-2 py-0.5 text-button-sm text-green-800">
+      <span className="inline-flex items-center gap-1 rounded-full bg-success-bg px-2 py-0.5 text-button-sm text-success">
         <Database aria-hidden="true" className="h-3 w-3" />
         {m.statusDb}
       </span>
@@ -235,14 +235,14 @@ function StatusBadge({ status }: { status: ApiCredentialStatusRow['status'] }) {
   }
   if (status === 'env') {
     return (
-      <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-button-sm text-amber-800">
+      <span className="inline-flex items-center gap-1 rounded-full bg-warning-bg px-2 py-0.5 text-button-sm text-warning">
         <AlertTriangle aria-hidden="true" className="h-3 w-3" />
         {m.statusEnv}
       </span>
     );
   }
   return (
-    <span className="inline-flex items-center gap-1 rounded-full bg-gray-100 px-2 py-0.5 text-button-sm text-gray-600">
+    <span className="inline-flex items-center gap-1 rounded-full bg-charcoal-04 px-2 py-0.5 text-button-sm text-charcoal-82">
       <XCircle aria-hidden="true" className="h-3 w-3" />
       {m.statusUnset}
     </span>
@@ -322,7 +322,7 @@ function ApiCredentialTestButton({
         disabled={isPending || !hasDbKey}
         onClick={handleTest}
         title={hasDbKey ? undefined : '先にキーを設定してください'}
-        className="flex cursor-pointer items-center gap-1 rounded-button border border-border-warm bg-white px-3 py-1 text-button-sm text-charcoal hover:bg-cream-light disabled:cursor-not-allowed disabled:opacity-50 focus-visible:ring-2 focus-visible:ring-foreground"
+        className="flex cursor-pointer items-center gap-1 rounded-default border border-border-warm bg-cream-light px-3 py-1 text-button-sm text-charcoal hover:bg-cream-light disabled:cursor-not-allowed disabled:opacity-50 focus-visible:ring-2 focus-visible:ring-foreground"
         aria-label={`${provider} 接続テスト`}
         data-testid={`test-button-${provider}`}
       >
@@ -398,13 +398,13 @@ function ApiCredentialModal({
       role="dialog"
       aria-modal="true"
       aria-labelledby="credential-modal-title"
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-charcoal/50 p-4"
       onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
     >
-      <div className="w-full max-w-md rounded-card border border-border-warm bg-white p-space-loose shadow-lg">
+      <div className="w-full max-w-md rounded-card border border-border-warm bg-cream-light p-space-loose shadow-lg">
         <h3
           id="credential-modal-title"
-          className="mb-space-snug text-sub-heading text-foreground"
+          className="mb-space-snug text-section-title text-foreground"
         >
           {m.modalTitle(providerLabel)}
         </h3>
@@ -422,7 +422,7 @@ function ApiCredentialModal({
               onChange={(e) => setKey(e.target.value)}
               onBlur={() => setKeyError(validateKey(key))}
               placeholder={placeholder}
-              className="rounded-button border border-border-warm bg-white px-3 py-2 text-body text-charcoal placeholder:text-muted focus:outline-none focus-visible:ring-2 focus-visible:ring-foreground"
+              className="rounded-default border border-border-warm bg-cream-light px-3 py-2 text-body text-charcoal placeholder:text-muted focus:outline-none focus-visible:ring-2 focus-visible:ring-foreground"
             />
             {keyError && (
               <p role="alert" className="text-button-sm text-destructive">
@@ -442,14 +442,14 @@ function ApiCredentialModal({
               type="button"
               onClick={onClose}
               disabled={isPending}
-              className="rounded-button border border-border-warm bg-cream-light px-4 py-2 text-button-sm text-charcoal hover:bg-charcoal-04 disabled:opacity-50"
+              className="rounded-default border border-border-warm bg-cream-light px-4 py-2 text-button-sm text-charcoal hover:bg-charcoal-04 disabled:opacity-50"
             >
               {m.modalCancel}
             </button>
             <button
               type="submit"
               disabled={isPending}
-              className="rounded-button bg-foreground px-4 py-2 text-button-sm font-medium text-white disabled:opacity-50"
+              className="rounded-default bg-foreground px-4 py-2 text-button-sm font-medium text-white disabled:opacity-50"
             >
               {isPending ? m.modalSubmitting : m.modalSubmit}
             </button>
@@ -495,12 +495,12 @@ function RevokeConfirmDialog({
       role="dialog"
       aria-modal="true"
       aria-labelledby="revoke-dialog-title"
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-charcoal/50 p-4"
     >
-      <div className="w-full max-w-sm rounded-card border border-border-warm bg-white p-space-loose shadow-lg">
+      <div className="w-full max-w-sm rounded-card border border-border-warm bg-cream-light p-space-loose shadow-lg">
         <h3
           id="revoke-dialog-title"
-          className="mb-space-snug text-sub-heading text-foreground"
+          className="mb-space-snug text-section-title text-foreground"
         >
           {m.revokeConfirmTitle}
         </h3>
@@ -520,7 +520,7 @@ function RevokeConfirmDialog({
             type="button"
             onClick={onCancel}
             disabled={isPending}
-            className="rounded-button border border-border-warm bg-cream-light px-4 py-2 text-button-sm text-charcoal hover:bg-charcoal-04 disabled:opacity-50"
+            className="rounded-default border border-border-warm bg-cream-light px-4 py-2 text-button-sm text-charcoal hover:bg-charcoal-04 disabled:opacity-50"
           >
             {m.revokeConfirmNo}
           </button>
@@ -528,7 +528,7 @@ function RevokeConfirmDialog({
             type="button"
             onClick={handleRevoke}
             disabled={isPending}
-            className="rounded-button border border-destructive bg-white px-4 py-2 text-button-sm font-medium text-destructive hover:bg-red-50 disabled:opacity-50 focus-visible:ring-2 focus-visible:ring-destructive"
+            className="rounded-default border border-destructive bg-cream-light px-4 py-2 text-button-sm font-medium text-destructive hover:bg-destructive-bg disabled:opacity-50 focus-visible:ring-2 focus-visible:ring-destructive"
           >
             {isPending ? '削除中...' : m.revokeConfirmYes}
           </button>

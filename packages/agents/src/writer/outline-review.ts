@@ -113,7 +113,7 @@ function buildUserMessage(input: OutlineReviewInput): string {
     ' - 問題点は issues に severity/category/対象章index/detail/suggestion で列挙する。',
     ' - 章立てに実質的な問題があれば、**直した完全な章立てを revised_chapters に入れる**',
     '   (generateOutline と同じ形式: index 連番/各章 target_chars/subheadings 2〜10、',
-    `    合計 target_chars は ${input.targetTotalChars} 字の ±15% 内、章数 7〜10)。`,
+    `    合計 target_chars は ${input.targetTotalChars} 字の ±15% 内、章数 7〜18)。`,
     '   問題が軽微で修正不要なら revised_chapters は省略し overall_ok=true にする。',
     ' - summary に全体講評を日本語で簡潔に書く。',
     '',

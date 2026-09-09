@@ -176,6 +176,10 @@ export interface PipelineBookKickoffPrisma {
       title: string;
       subtitle: string | null;
     } | null>;
+    findFirst: (args: {
+      where: { theme_id: string };
+      select: { id: true; status: true };
+    }) => Promise<{ id: string; status: string } | null>;
     create: (args: {
       data: {
         account_id: string;
@@ -346,6 +350,44 @@ export async function runPipelineBookKickoff(
         're-running kickoff for existing Book (idempotent retry)',
       );
     } else {
+      // 重複制作ガード (choke-point): 同一 theme に対し既に Book が1冊でも存在する場合は
+      // 新規作成しない (取り下げ済 retracted も含む)。batch/org/手動いずれの経路でも
+      // 「1テーマ=1書籍」を保証する。自律運用(org.write)が既出テーマ — とりわけ低品質で
+      // 取り下げた本のテーマ — を再起票して KDP へ二重出版した不具合の恒久対策
+      // (docs/05 §5.3.1 / docs/06)。retracted 済テーマの再制作は人間の明示操作に限る
+      // (自律で勝手に作り直さない = 運営者の「取り下げ」判断を尊重)。
+      const existingForTheme = await prisma.book.findFirst({
+        where: { theme_id: theme.id },
+        select: { id: true, status: true },
+      });
+      if (existingForTheme) {
+        log.warn(
+          {
+            task: PIPELINE_BOOK_KICKOFF_TASK_NAME,
+            jobId,
+            themeId,
+            existingBookId: existingForTheme.id,
+            existingStatus: existingForTheme.status,
+          },
+          'book already exists for theme — skipping duplicate creation (idempotent)',
+        );
+        await prisma.job.update({
+          where: { id: jobId },
+          data: {
+            status: 'done',
+            finished_at: now(),
+            error: null,
+            book_id: existingForTheme.id,
+            result_json: {
+              skipped: 'duplicate_theme',
+              theme_id: themeId,
+              existing_book_id: existingForTheme.id,
+            },
+          },
+        });
+        return;
+      }
+
       const modelSnapshot = await buildModelAssignmentSnapshot({
         loadModelAssignment: loadModelAssignmentFn,
         genre,

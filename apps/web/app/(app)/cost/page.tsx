@@ -7,7 +7,6 @@
  * Phase 1: recharts 不使用。テーブル/バー表示で代替。
  */
 import type { Metadata } from 'next';
-import Link from 'next/link';
 
 import { prisma } from '@a2p/db';
 import { getTopCostBooks } from '@a2p/db/cost-aggregation';
@@ -26,11 +25,13 @@ import {
 import { CostDashboardShell } from '@/components/cost/cost-dashboard-shell';
 import { CostKpiStripe } from '@/components/cost/cost-kpi-stripe';
 import { DailyCostTable } from '@/components/cost/daily-cost-table';
+import { DailyCostChart } from '@/components/cost/daily-cost-chart';
 import { BreakdownTables } from '@/components/cost/breakdown-tables';
 import { PredictionAlertStrip } from '@/components/cost/prediction-alert-strip';
 import { TopCostBooksTable } from '@/components/cost/top-cost-books-table';
 import { PausedJobsTable } from '@/components/cost/paused-jobs-table';
 import { CostProposalsPanel, type CostProposalSerialized } from '@/components/cost/cost-proposals-panel';
+import { PageHeading } from '@/components/common/page-heading';
 
 export const metadata: Metadata = {
   title: `${messages.costDashboard.pageTitle} | ${messages.brand.appName}`,
@@ -213,21 +214,7 @@ export default async function CostDashboardPage() {
 
   return (
     <div className="flex flex-col gap-space-loose" data-testid="cost-dashboard-page">
-      <header className="flex flex-col gap-space-snug">
-        <nav aria-label="breadcrumb" className="text-button-sm text-muted">
-          <Link href="/dashboard" className="no-underline hover:underline">
-            {m.breadcrumbHome}
-          </Link>
-          <span aria-hidden="true"> &gt; </span>
-          <span>{m.breadcrumbAnalytics}</span>
-          <span aria-hidden="true"> &gt; </span>
-          <span>{m.breadcrumbCost}</span>
-        </nav>
-        <div className="flex flex-col">
-          <h1 className="text-sub-heading text-foreground">{m.pageTitle}</h1>
-          <p className="text-body text-muted">{m.pageSubtitle}</p>
-        </div>
-      </header>
+      <PageHeading eyebrow={m.breadcrumbAnalytics} title={m.pageTitle} description={m.pageSubtitle} />
 
       {isEmpty ? (
         <div
@@ -261,12 +248,16 @@ export default async function CostDashboardPage() {
             <CostProposalsPanel proposals={proposals} />
           </section>
 
-          {/* Daily cost table */}
-          <section aria-labelledby="cost-daily-heading">
-            <h2 id="cost-daily-heading" className="mb-space-snug text-card-title text-foreground">
+          {/* Daily cost: chart + detail table */}
+          <section aria-labelledby="cost-daily-heading" className="flex flex-col gap-space-relaxed">
+            <h2 id="cost-daily-heading" className="text-card-title text-foreground">
               {m.dailyCost.sectionTitle}
             </h2>
-            <DailyCostTable rows={dailyRows} />
+            <DailyCostChart rows={dailyRows} />
+            <div className="flex flex-col gap-space-snug">
+              <h3 className="text-section-title text-foreground">{m.dailyCost.tableTitle}</h3>
+              <DailyCostTable rows={dailyRows} />
+            </div>
           </section>
 
           {/* Breakdown tables */}

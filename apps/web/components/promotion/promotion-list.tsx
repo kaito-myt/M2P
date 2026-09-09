@@ -15,7 +15,10 @@ const m = messages.promotion;
 
 export function PromotionList({ books }: { books: PromotionBookRow[] }) {
   return (
-    <ul className="flex flex-col gap-space-snug" data-testid="promotion-list">
+    <ul
+      className="border-y border-border-warm divide-y divide-border-warm"
+      data-testid="promotion-list"
+    >
       {books.map((b) => (
         <PromotionRow key={b.id} book={b} />
       ))}
@@ -43,7 +46,7 @@ function PromotionRow({ book }: { book: PromotionBookRow }) {
 
   return (
     <li
-      className="flex flex-wrap items-center justify-between gap-space-snug rounded-card border border-border-warm bg-cream-light p-space-relaxed"
+      className="flex flex-wrap items-center justify-between gap-space-snug px-space-tight py-space-relaxed transition-colors hover:bg-charcoal-03"
       data-testid={`promotion-item-${book.id}`}
     >
       <div className="flex min-w-0 flex-col gap-1">
@@ -64,7 +67,7 @@ function PromotionRow({ book }: { book: PromotionBookRow }) {
         {book.hasPlan && (
           <Link
             href={`/promotion/${book.id}`}
-            className="inline-flex items-center rounded-card border border-border-warm bg-cream px-3 py-1.5 text-button-sm text-charcoal hover:bg-charcoal-04"
+            className="inline-flex items-center rounded-default border border-border-warm bg-cream-light px-3 py-1.5 text-button-sm text-charcoal hover:bg-charcoal-04"
           >
             {m.view}
           </Link>
@@ -73,7 +76,7 @@ function PromotionRow({ book }: { book: PromotionBookRow }) {
           type="button"
           onClick={generate}
           disabled={pending}
-          className="inline-flex items-center rounded-card bg-charcoal px-3 py-1.5 text-button-sm text-cream-light shadow-l2-inset hover:opacity-80 disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+          className="inline-flex items-center rounded-default border border-border-warm bg-cream-light px-3 py-1.5 text-button-sm text-charcoal transition-colors hover:bg-charcoal-04 disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
         >
           {pending ? m.generating : book.hasPlan ? m.regenerate : m.generate}
         </button>

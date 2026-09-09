@@ -58,6 +58,7 @@ interface BookRecord {
   title: string;
   subtitle: string | null;
   status: string;
+  theme: { genre: string } | null;
 }
 
 interface ChapterRecord {
@@ -242,6 +243,7 @@ function makeDefaultFixtures(opts?: { jobStatus?: string }): {
     title: 'テスト書籍タイトル',
     subtitle: 'テストサブタイトル',
     status: 'done',
+    theme: { genre: 'practical' },
   };
   const chapters: ChapterRecord[] = [
     { id: 'ch_1', index: 0, heading: '第1章 はじめに', body_md: '# はじめに\n\nテスト本文です。' },

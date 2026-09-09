@@ -12,19 +12,35 @@ const m = messages.jobs.status;
 
 type JobStatus = 'queued' | 'running' | 'done' | 'failed' | 'cancelled';
 
-function badgeClass(status: string): string {
+/**
+ * Monotone-ink + semantic-token palette (docs/04 §6.5). No Tailwind default
+ * blue/green/red/amber/gray — status reads through the same restrained tones
+ * the rest of the app uses: a small dot carries the hue, the label stays ink.
+ */
+function statusDot(status: string): string {
   switch (status as JobStatus) {
     case 'done':
-      return 'bg-green-100 text-green-800';
+      return 'bg-success';
     case 'running':
-      return 'bg-blue-100 text-blue-800';
+      return 'bg-accent';
     case 'failed':
-      return 'bg-red-100 text-red-800';
+      return 'bg-destructive';
     case 'cancelled':
-      return 'bg-gray-100 text-gray-600';
+      return 'bg-charcoal-40';
     case 'queued':
     default:
-      return 'bg-amber-100 text-amber-800';
+      return 'bg-warning';
+  }
+}
+
+function labelTone(status: string): string {
+  switch (status as JobStatus) {
+    case 'failed':
+      return 'text-destructive';
+    case 'cancelled':
+      return 'text-charcoal-40';
+    default:
+      return 'text-charcoal-82';
   }
 }
 
@@ -37,10 +53,11 @@ export function JobStatusBadge({ status, className = '' }: JobStatusBadgeProps) 
   const label = m[status as keyof typeof m] ?? status;
   return (
     <span
-      className={`inline-flex items-center rounded px-2 py-0.5 text-caption font-medium ${badgeClass(status)} ${className}`}
+      className={`inline-flex items-center gap-1.5 whitespace-nowrap text-caption tabular-nums ${labelTone(status)} ${className}`}
       aria-label={`ステータス: ${label}`}
       data-status={status}
     >
+      <span aria-hidden="true" className={`h-1.5 w-1.5 shrink-0 rounded-full ${statusDot(status)}`} />
       {label}
     </span>
   );

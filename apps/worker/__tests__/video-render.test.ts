@@ -56,10 +56,39 @@ describe('renderSlideVideo', () => {
     expect(synthesizeSpeech).toHaveBeenCalledTimes(2);
     expect(composeTelop).toHaveBeenCalledTimes(2);
     expect(logTtsCost).toHaveBeenCalledTimes(2);
-    // ffmpeg: シーン2クリップ + concat1 = 3回
-    expect(runFfmpegReal).toHaveBeenCalledTimes(3);
-    // 最後の呼び出しは concat
-    expect(ffmpegCalls[ffmpegCalls.length - 1]).toContain('concat');
+    // ffmpeg: シーン2クリップ + concat + BGM生成 + BGMミックス = 5回
+    expect(runFfmpegReal).toHaveBeenCalledTimes(5);
+    // concat 呼び出しが存在する
+    expect(ffmpegCalls.some((c) => c.includes('concat'))).toBe(true);
+    // 最後の呼び出しは BGM ミックス(amix を含む filter_complex)
+    expect(ffmpegCalls[ffmpegCalls.length - 1]!.some((a) => a.includes('amix'))).toBe(true);
+  });
+
+  it('PROMO_BGM_ENABLED=0 なら BGM をスキップし concat のみ(=3回)', async () => {
+    const prev = process.env.PROMO_BGM_ENABLED;
+    process.env.PROMO_BGM_ENABLED = '0';
+    try {
+      const { writeFile } = await import('node:fs/promises');
+      const ffmpegCalls: string[][] = [];
+      const runFfmpeg = vi.fn(async (args: string[]) => {
+        ffmpegCalls.push(args);
+        await writeFile(args[args.length - 1]!, Buffer.from('MP4DATA'));
+      });
+      const result = await renderSlideVideo(scenes(2), {
+        generateImage: (vi.fn(async () => ({ images: [Buffer.from('img')], costJpy: 0, usage: { imageCount: 1 } }))) as never,
+        synthesizeSpeech: (vi.fn(async (a: { input: string }) => ({ audio: Buffer.from('mp3'), charCount: a.input.length, model: 'gpt-4o-mini-tts' }))) as never,
+        composeTelop: vi.fn(async (img: Buffer) => img),
+        runFfmpeg,
+        logTtsCost: vi.fn(async () => {}),
+        withImageLoggingDeps: { prisma: { tokenUsage: { create: vi.fn() }, book: { update: vi.fn() } } as never },
+      });
+      expect(result.sceneCount).toBe(2);
+      expect(runFfmpeg).toHaveBeenCalledTimes(3); // 2クリップ + concat のみ
+      expect(ffmpegCalls[ffmpegCalls.length - 1]).toContain('concat');
+    } finally {
+      if (prev === undefined) delete process.env.PROMO_BGM_ENABLED;
+      else process.env.PROMO_BGM_ENABLED = prev;
+    }
   });
 
   it('シーンが空なら例外', async () => {

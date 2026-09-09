@@ -100,7 +100,7 @@ export function GenerateThemesButton({
 
       {open && (
         <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+          className="fixed inset-0 z-50 flex items-center justify-center bg-charcoal/50 p-4"
           role="dialog"
           aria-modal="true"
           onClick={(e) => {
@@ -237,7 +237,7 @@ export function GenerateThemesButton({
             )}
 
             {error && (
-              <p className="mt-space-snug text-button-sm text-red-600" role="alert">
+              <p className="mt-space-snug text-button-sm text-destructive" role="alert">
                 {error}
               </p>
             )}

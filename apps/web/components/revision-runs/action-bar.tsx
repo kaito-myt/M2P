@@ -75,7 +75,7 @@ export function ActionBar({ runStatus, firstBookId, runId }: ActionBarProps) {
       {isComplete && (
         <button
           type="button"
-          className="rounded-default bg-foreground px-4 py-2 text-button-sm text-cream transition-opacity hover:opacity-80"
+          className="rounded-default bg-foreground px-4 py-2 text-button-sm text-white transition-opacity hover:opacity-80"
           title={m.approveTooltip}
           data-testid="action-approve"
           onClick={() => {
@@ -122,7 +122,7 @@ export function ActionBar({ runStatus, firstBookId, runId }: ActionBarProps) {
       {showConfirm && (
         <div
           data-testid="rollback-confirm-dialog"
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40"
+          className="fixed inset-0 z-50 flex items-center justify-center bg-charcoal/50"
           onClick={() => setShowConfirm(false)}
           onKeyDown={(e) => {
             if (e.key === 'Escape') setShowConfirm(false);
@@ -151,7 +151,7 @@ export function ActionBar({ runStatus, firstBookId, runId }: ActionBarProps) {
               </button>
               <button
                 type="button"
-                className="rounded-default bg-destructive px-4 py-2 text-button-sm text-cream"
+                className="rounded-default bg-destructive px-4 py-2 text-button-sm text-white"
                 data-testid="rollback-confirm-yes"
                 disabled={rolling}
                 onClick={handleRollback}

@@ -62,8 +62,8 @@ export interface PromotionPostsGeneratePrisma {
   };
   promotionChannelSetting?: {
     findMany: (args: {
-      select: { channel: true; strategy_json: true };
-    }) => Promise<Array<{ channel: string; strategy_json: unknown }>>;
+      select: { channel: true; strategy_json?: true; auto_enabled?: true };
+    }) => Promise<Array<{ channel: string; strategy_json?: unknown; auto_enabled?: boolean }>>;
   };
   promotionPost: {
     deleteMany: (args: {
@@ -127,7 +127,42 @@ export async function runPromotionPostsGenerate(
   }
 
   const plan = planRow.plan_json as PromotionPlanOutput;
-  const drafts = buildPromotionPosts(plan);
+  // 質重視・量抑制 (2026-08-10, ユーザー指示): 1書籍あたりの SNS 投稿を絞り、間隔も広げる。
+  //   従来: プランの x_posts 全件 × X/IG/TikTok を「毎日」= 新規アカウントに大量投下=反応ゼロで逆効果。
+  //   変更: x_posts を先頭 MAX_SNS_POSTS_PER_BOOK 件に制限し、SNS 間隔を SNS_INTERVAL_DAYS 日に広げる。
+  //   ※全チャンネル横断の総量は「同時進行の書籍数 × 本設定」で決まる。実測(エンゲージメント)導入後に
+  //     反応の良い型へさらに寄せる。docs/08 / [[project_promo_quality]]。
+  const MAX_SNS_POSTS_PER_BOOK = 3;
+  const SNS_INTERVAL_DAYS = 2;
+  const trimmedPlan: PromotionPlanOutput = {
+    ...plan,
+    promo_copy: {
+      ...plan.promo_copy,
+      x_posts: Array.isArray(plan.promo_copy?.x_posts)
+        ? plan.promo_copy.x_posts.slice(0, MAX_SNS_POSTS_PER_BOOK)
+        : plan.promo_copy?.x_posts,
+    },
+  };
+  const allDrafts = buildPromotionPosts(trimmedPlan, {
+    snsIntervalMinutes: SNS_INTERVAL_DAYS * 1440,
+  });
+
+  // 自動投稿 OFF のチャンネルは投稿を生成しない (例: TikTok は API 未承認のため停止)。
+  // 生成しても配信されず、失敗/死蔵キューが溜まるだけなので発生源で止める。
+  const disabledChannels = new Set(
+    prisma.promotionChannelSetting
+      ? (await prisma.promotionChannelSetting.findMany({ select: { channel: true, auto_enabled: true } }))
+          .filter((s) => !s.auto_enabled)
+          .map((s) => s.channel)
+      : [],
+  );
+  const drafts = allDrafts.filter((d) => !disabledChannels.has(d.channel));
+  if (drafts.length < allDrafts.length) {
+    log.info(
+      { task: PROMOTION_POSTS_GENERATE_TASK_NAME, bookId, skipped: [...disabledChannels] },
+      'skipped auto-disabled channels in generation',
+    );
+  }
 
   // 未投稿の既存分を作り直す (再生成対応)。投稿済/処理中/失敗は温存。
   const removed = await prisma.promotionPost.deleteMany({

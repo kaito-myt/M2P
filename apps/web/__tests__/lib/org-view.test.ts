@@ -4,7 +4,9 @@ import {
   canRetryOrgTask,
   computeSpentByDivision,
   divisionTaskCounts,
+  extractGrowthTargets,
   mapOrgTaskRow,
+  resolveGrowthUrl,
   type DbOrgTask,
 } from '../../lib/org-view';
 
@@ -40,6 +42,48 @@ describe('mapOrgTaskRow', () => {
   it('cost_jpy が null / 不正なら null', () => {
     expect(mapOrgTaskRow(db({ cost_jpy: null })).costJpy).toBeNull();
     expect(mapOrgTaskRow(db({ cost_jpy: 'x' })).costJpy).toBeNull();
+  });
+});
+
+describe('resolveGrowthUrl', () => {
+  it('target_url があれば優先', () => {
+    expect(resolveGrowthUrl('instagram', { target_url: 'https://www.instagram.com/p/ABC/' })).toBe('https://www.instagram.com/p/ABC/');
+  });
+  it('handle からプロフィールURLを組み立てる', () => {
+    expect(resolveGrowthUrl('instagram', { target_handle: '@book_lover' })).toBe('https://www.instagram.com/book_lover/');
+    expect(resolveGrowthUrl('tiktok', { target_handle: 'booktok', platform: 'tiktok' })).toBe('https://www.tiktok.com/@booktok');
+  });
+  it('組み立て不可なら空文字', () => {
+    expect(resolveGrowthUrl('note', { target_handle: '日本語名' })).toBe('');
+  });
+});
+
+describe('extractGrowthTargets', () => {
+  it('growth_manual の result_json.actions を行に変換（直リンクが無いものは除外）', () => {
+    const targets = extractGrowthTargets('instagram', {
+      actions: [
+        { action_type: 'follow', platform: 'instagram', target_handle: '@a', target_url: 'https://www.instagram.com/a/', reason: 'r1' },
+        { action_type: 'like', platform: 'instagram', target_handle: '@b', target_url: 'https://www.instagram.com/p/XX/', reason: 'r2' },
+        { action_type: 'follow', platform: 'note', target_handle: '日本語' }, // URL不可 → 除外
+      ],
+    });
+    expect(targets).toHaveLength(2);
+    expect(targets[0]).toMatchObject({ actionType: 'follow', handle: '@a', url: 'https://www.instagram.com/a/', key: 'https://www.instagram.com/a/' });
+    expect(targets[1]!.actionType).toBe('like');
+  });
+  it('mapOrgTaskRow が growth_manual で targets/completed を付与', () => {
+    const row = mapOrgTaskRow(
+      db({
+        kind: 'growth_manual',
+        channel: 'instagram',
+        result_json: {
+          actions: [{ action_type: 'follow', platform: 'instagram', target_handle: '@a', target_url: 'https://www.instagram.com/a/' }],
+          completed: ['https://www.instagram.com/a/'],
+        },
+      }),
+    );
+    expect(row.growthTargets).toHaveLength(1);
+    expect(row.growthCompleted).toEqual(['https://www.instagram.com/a/']);
   });
 });
 

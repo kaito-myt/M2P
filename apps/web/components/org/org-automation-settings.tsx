@@ -72,7 +72,7 @@ function AutomationRow({
   testId: string;
 }) {
   return (
-    <div className="flex flex-col gap-2 rounded-button border border-border-warm bg-white px-4 py-3">
+    <div className="flex flex-col gap-2 rounded-default border border-border-warm bg-white px-4 py-3">
       <div className="flex items-start justify-between gap-space-loose">
         <div className="flex min-w-0 flex-col gap-1">
           <span className="text-body font-medium text-charcoal">{label}</span>
@@ -114,6 +114,8 @@ export function OrgAutomationSettings({ initial }: { initial: OrgAutomationView 
   const [kdpScreenCron, setKdpScreenCron] = useState(initial.org_kdp_screen_cron);
   const [kdpScreenCronError, setKdpScreenCronError] = useState<string | null>(null);
 
+  const [autoApprove, setAutoApprove] = useState(initial.org_auto_approve_tasks);
+
   const [isPending, setIsPending] = useState(false);
   const [feedback, setFeedback] = useState<{ ok: boolean; msg: string } | null>(null);
 
@@ -154,6 +156,7 @@ export function OrgAutomationSettings({ initial }: { initial: OrgAutomationView 
         org_finance_tick_cron: financeTickCron.trim(),
         org_kdp_auto_publish_enabled: kdpScreenEnabled,
         org_kdp_screen_cron: kdpScreenCron.trim(),
+        org_auto_approve_tasks: autoApprove,
       });
       setIsPending(false);
       setFeedback(result.ok ? { ok: true, msg: m.saved } : { ok: false, msg: result.error.message });
@@ -169,6 +172,7 @@ export function OrgAutomationSettings({ initial }: { initial: OrgAutomationView 
       financeTickCron,
       kdpScreenEnabled,
       kdpScreenCron,
+      autoApprove,
       validateCron,
     ],
   );
@@ -180,13 +184,30 @@ export function OrgAutomationSettings({ initial }: { initial: OrgAutomationView 
       data-testid="org-automation-settings"
     >
       <div>
-        <h2 id="org-automation-heading" className="text-sub-heading text-foreground">
+        <h2 id="org-automation-heading" className="text-section-title text-foreground">
           {m.title}
         </h2>
         <p className="text-body text-muted">{m.subtitle}</p>
       </div>
 
       <form onSubmit={handleSubmit} className="flex flex-col gap-space-snug">
+        {/* ToDo 自動承認（cron 無しの単独トグル）。OFF で人手承認ゲートを有効化。 */}
+        <div className="flex items-start justify-between gap-space-loose rounded-default border border-border-warm bg-white px-4 py-3">
+          <div className="flex min-w-0 flex-col gap-1">
+            <span className="text-body font-medium text-charcoal">ToDo 自動承認</span>
+            <span className="text-button-sm text-muted">
+              ON: 起票された ToDo を自動承認して即実行（完全自律）。OFF: 「提案(proposed)」で留め、
+              全社ToDoボードであなたが承認するまで実行しません（人手前提のタスクは常に要承認）。
+            </span>
+          </div>
+          <Toggle
+            checked={autoApprove}
+            onChange={setAutoApprove}
+            label="ToDo 自動承認"
+            testId="org-automation-auto-approve-toggle"
+          />
+        </div>
+
         <AutomationRow
           enabled={planEnabled}
           onToggle={setPlanEnabled}
@@ -238,7 +259,7 @@ export function OrgAutomationSettings({ initial }: { initial: OrgAutomationView 
           testId="org-automation-kdp-screen"
         />
 
-        <div className="flex items-start gap-2 rounded-button border border-border-warm bg-white px-3 py-2">
+        <div className="flex items-start gap-2 rounded-default border border-border-warm bg-white px-3 py-2">
           <Info aria-hidden="true" className="mt-0.5 h-4 w-4 shrink-0 text-muted" />
           <p className="text-button-sm text-muted" data-testid="org-automation-worker-restart-note">
             {m.workerRestartNote}
@@ -250,7 +271,7 @@ export function OrgAutomationSettings({ initial }: { initial: OrgAutomationView 
             type="submit"
             disabled={isPending}
             data-testid="org-automation-save"
-            className="rounded-button bg-foreground px-4 py-2 text-button-sm font-medium text-white disabled:opacity-50"
+            className="rounded-default bg-foreground px-4 py-2 text-button-sm font-medium text-white disabled:opacity-50"
           >
             {isPending ? m.saving : m.saveButton}
           </button>

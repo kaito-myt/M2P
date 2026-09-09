@@ -73,7 +73,7 @@ export interface PipelineThemeGeneratePrisma {
     }) => Promise<{ status: string; payload_json: unknown } | null>;
     updateMany: (args: {
       where: { id: string; status: { in: string[] } };
-      data: { status: string; started_at?: Date };
+      data: { status: string; started_at?: Date; finished_at?: Date | null; error?: string | null };
     }) => Promise<{ count: number }>;
     update: (args: {
       where: { id: string };
@@ -165,10 +165,11 @@ export async function runPipelineThemeGenerate(
     return;
   }
 
-  // 2. CAS で queued/failed → running
+  // 2. CAS で queued/failed → running。リトライ再入時は前回の終了フィールドをクリアし、
+  //    「error/finished_at は残っているが status=running」という矛盾状態を作らない。
   const casResult = await prisma.job.updateMany({
     where: { id: jobId, status: { in: ['queued', 'failed'] } },
-    data: { status: 'running', started_at: now() },
+    data: { status: 'running', started_at: now(), finished_at: null, error: null },
   });
   if (casResult.count === 0) {
     log.info(

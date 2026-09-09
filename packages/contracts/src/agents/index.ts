@@ -10,6 +10,9 @@ export {
   genreLabel,
   genreGuidance,
   isKnownGenre,
+  isFiction,
+  FICTION_GENRES,
+  FICTION_STYLE_DIRECTIVE,
   type GenreDef,
 } from '../genres.js';
 
@@ -104,6 +107,20 @@ export {
   type OptimizerInput,
   type OptimizerOutput,
 } from './optimizer.js';
+
+export {
+  SeoOptimizerInputSchema,
+  SeoOptimizerOutputSchema,
+  type SeoOptimizerInput,
+  type SeoOptimizerOutput,
+} from './seo-optimizer.js';
+
+export {
+  BlogSeoInputSchema,
+  BlogSeoOutputSchema,
+  type BlogSeoInput,
+  type BlogSeoOutput,
+} from './blog-seo.js';
 
 export {
   SnsCatalogSnapshotSchema,

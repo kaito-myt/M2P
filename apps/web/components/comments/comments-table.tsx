@@ -150,12 +150,14 @@ function CommentTableRow({ row, checked, onToggle }: CommentTableRowProps) {
           data-testid={`comment-checkbox-${row.id}`}
         />
       </td>
-      <td className="px-3 py-2 text-charcoal">{row.book_title}</td>
-      <td className="px-3 py-2">
+      <td className="max-w-[16rem] px-3 py-2 text-charcoal">
+        <span className="block truncate" title={row.book_title}>{row.book_title}</span>
+      </td>
+      <td className="whitespace-nowrap px-3 py-2">
         {targetKindLabels[row.target_kind] ?? row.target_kind}
       </td>
-      <td className="max-w-xs truncate px-3 py-2 text-charcoal" title={row.body}>
-        {bodySnippet}
+      <td className="max-w-xs px-3 py-2 text-charcoal" title={row.body}>
+        <span className="block truncate">{bodySnippet}</span>
       </td>
       <td className="px-3 py-2">
         <Badge variant={row.priority as CommentPriority}>

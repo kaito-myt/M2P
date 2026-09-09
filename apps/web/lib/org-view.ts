@@ -22,6 +22,64 @@ export interface OrgTaskRow {
   createdAt: string | null;
   resultSummary: string | null;
   error: string | null;
+  /** [手動グロースToDo] フォロー/いいねの具体ターゲット（ワンタップUI用）。growth_manual のみ。 */
+  growthTargets?: GrowthTargetRow[];
+  /** 完了済みターゲットの key 一覧（チェック状態の永続化）。 */
+  growthCompleted?: string[];
+}
+
+/** 手動グロースToDoの1ターゲット（クリック一発でプロフィール/投稿を開ける形）。 */
+export interface GrowthTargetRow {
+  /** 完了状態の永続キー（url or action:handle）。 */
+  key: string;
+  actionType: 'follow' | 'like' | 'comment';
+  handle: string;
+  /** タップで直接開けるプロフィール/投稿URL。 */
+  url: string;
+  desc: string | null;
+  reason: string | null;
+}
+
+/**
+ * アクションの直接リンクを解決（worker の resolveActionUrl と同仕様）。
+ * target_url があれば優先、無ければ handle からプロフィールURLを組み立てる。
+ */
+export function resolveGrowthUrl(channel: string, a: { platform?: string; target_handle?: string; target_url?: string }): string {
+  const url = (a.target_url ?? '').trim();
+  if (/^https?:\/\//i.test(url)) return url;
+  const handle = (a.target_handle ?? '').replace(/^@/, '').trim();
+  if (handle && /^[A-Za-z0-9._]+$/.test(handle)) {
+    const p = (a.platform || channel).toLowerCase();
+    if (p === 'instagram') return `https://www.instagram.com/${handle}/`;
+    if (p === 'tiktok') return `https://www.tiktok.com/@${handle}`;
+    if (p === 'note') return `https://note.com/${handle}`;
+    if (p === 'x' || p === 'twitter') return `https://x.com/${handle}`;
+  }
+  return '';
+}
+
+/** result_json.actions（growth_scout出力） → ワンタップUI用のターゲット行。 */
+export function extractGrowthTargets(channel: string, result: unknown): GrowthTargetRow[] {
+  if (result == null || typeof result !== 'object') return [];
+  const actions = (result as { actions?: unknown }).actions;
+  if (!Array.isArray(actions)) return [];
+  const out: GrowthTargetRow[] = [];
+  for (const raw of actions) {
+    if (!raw || typeof raw !== 'object') continue;
+    const a = raw as { action_type?: string; platform?: string; target_handle?: string; target_url?: string; target_desc?: string; reason?: string };
+    const url = resolveGrowthUrl(channel, a);
+    if (!url) continue; // 直接開けないものはワンタップUIに出さない
+    const actionType = a.action_type === 'like' ? 'like' : a.action_type === 'comment' ? 'comment' : 'follow';
+    out.push({
+      key: url,
+      actionType,
+      handle: (a.target_handle ?? a.target_desc ?? '対象').trim(),
+      url,
+      desc: a.target_desc?.trim() || null,
+      reason: a.reason?.trim() || null,
+    });
+  }
+  return out;
 }
 
 export interface DbOrgTask {
@@ -109,6 +167,14 @@ export function mapOrgTaskRow(t: DbOrgTask): OrgTaskRow {
     createdAt: t.created_at instanceof Date ? t.created_at.toISOString() : (t.created_at ?? null),
     resultSummary: summarizeResult(t.result_json),
     error: t.error ?? null,
+    ...(t.kind === 'growth_manual'
+      ? {
+          growthTargets: extractGrowthTargets(t.channel ?? '', t.result_json),
+          growthCompleted: Array.isArray((t.result_json as { completed?: unknown })?.completed)
+            ? ((t.result_json as { completed?: string[] }).completed as string[])
+            : [],
+        }
+      : {}),
   };
 }
 

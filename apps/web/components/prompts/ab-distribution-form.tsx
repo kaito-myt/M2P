@@ -137,7 +137,7 @@ export function AbDistributionForm({
               data-testid="ab-baseline-select"
               value={baselineId}
               onChange={(e) => setBaselineId(e.target.value)}
-              className="rounded-default border border-charcoal-40 bg-white px-3 py-2 text-body text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent disabled:opacity-50"
+              className="rounded-default border border-charcoal-40 bg-cream-light px-3 py-2 text-body text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent disabled:opacity-50"
               disabled={isPending}
             >
               <option value="">{m.selectPlaceholder}</option>
@@ -164,7 +164,7 @@ export function AbDistributionForm({
               data-testid="ab-candidate-select"
               value={candidateId}
               onChange={(e) => setCandidateId(e.target.value)}
-              className="rounded-default border border-charcoal-40 bg-white px-3 py-2 text-body text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent disabled:opacity-50"
+              className="rounded-default border border-charcoal-40 bg-cream-light px-3 py-2 text-body text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent disabled:opacity-50"
               disabled={isPending}
             >
               <option value="">{m.selectPlaceholder}</option>

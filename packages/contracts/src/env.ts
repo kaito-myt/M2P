@@ -102,6 +102,15 @@ export const EnvSchema = z.object({
   // --- 32-33. Amazon ログイン情報 (sales.fetch 自動再ログイン用, 任意) -----
   AMAZON_EMAIL: emptyToUndef(z.string().min(1).optional()),
   AMAZON_PASSWORD: emptyToUndef(z.string().min(1).optional()),
+
+  // --- 34. Amazon Advertising (Ads) API [F-090] — 広告費の日次自動計上 (任意) ----
+  // LwA セキュリティプロファイルの Client ID/Secret ＋ OAuth 同意で得た refresh token ＋
+  // 対象広告アカウントの profile id。region は日本=fe(Far East)。全て揃うと ads.spend.fetch が稼働。
+  AMAZON_ADS_CLIENT_ID: emptyToUndef(z.string().min(1).optional()),
+  AMAZON_ADS_CLIENT_SECRET: emptyToUndef(z.string().min(1).optional()),
+  AMAZON_ADS_REFRESH_TOKEN: emptyToUndef(z.string().min(1).optional()),
+  AMAZON_ADS_PROFILE_ID: emptyToUndef(z.string().min(1).optional()),
+  AMAZON_ADS_REGION: emptyToUndef(z.enum(['na', 'eu', 'fe']).optional()),
 });
 
 export type Env = z.infer<typeof EnvSchema>;

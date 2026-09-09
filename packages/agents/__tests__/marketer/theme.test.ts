@@ -642,7 +642,7 @@ describe('generateMarketerThemes — token_usage 記録', () => {
 // ---------------------------------------------------------------------------
 
 describe('generateMarketerThemes — LLM 呼出パラメータ', () => {
-  it('client.complete に role=marketer + maxOutputTokens=8192 + system/user 両方が渡る', async () => {
+  it('client.complete に role=marketer + maxOutputTokens=16384 + system/user 両方が渡る', async () => {
     const text = jsonResponse({ candidates: buildCandidates(2) });
     const fakeClient = makeFakeClient(text);
     const promptRepo = makePromptRepo([defaultPromptRow()]);
@@ -657,7 +657,8 @@ describe('generateMarketerThemes — LLM 呼出パラメータ', () => {
     };
     const args = completeMock.mock.calls[0]![0];
     expect(args.role).toBe('marketer');
-    expect(args.maxOutputTokens).toBe(8192);
+    // theme は Web 検索付きで長い分析文を出すため 16384 が上限（theme.ts の DEFAULT_MAX_OUTPUT_TOKENS）。
+    expect(args.maxOutputTokens).toBe(16384);
     expect(args.messages).toHaveLength(2);
     expect(args.messages[0]!.role).toBe('system');
     expect(args.messages[1]!.role).toBe('user');

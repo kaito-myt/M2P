@@ -39,6 +39,13 @@ export interface CreateAgentClientDeps {
    * モデル比較(バエオフ)で「同じ役割・プロンプトを別モデルで走らせる」ために使用。
    */
   assignmentOverride?: { provider: string; model: string };
+  /**
+   * true のとき、web_search server tool を積む役割 (marketer 等) でも
+   * 純正 web_search を積まない素の `AISdkClient` を返す。
+   * Marketer が Tavily で事前リサーチ済みで、遅いエージェント的検索ループを
+   * 回したくない場合に使う (docs/03 §R-04)。
+   */
+  disableServerTools?: boolean;
 }
 
 const SUPPORTED_PROVIDERS = new Set<string>(['anthropic', 'openai', 'google']);
@@ -67,8 +74,9 @@ export async function createAgentClient(
 
   const apiKey = await fetchKey(assignment.provider);
 
-  const WEB_SEARCH_ROLES = new Set<AgentRole>(['marketer', 'cover_art_direction', 'promo_strategist']);
-  const useAgentSdk = WEB_SEARCH_ROLES.has(role) && assignment.provider === 'anthropic';
+  const WEB_SEARCH_ROLES = new Set<AgentRole>(['marketer', 'cover_art_direction', 'promo_strategist', 'growth_scout']);
+  const useAgentSdk =
+    !deps.disableServerTools && WEB_SEARCH_ROLES.has(role) && assignment.provider === 'anthropic';
   const raw: LLMClient = useAgentSdk
     ? new AgentSdkClient({ model: assignment.model, apiKey })
     : new AISdkClient({

@@ -20,15 +20,16 @@ import {
   type JobChangeNotifyPayload,
 } from '../lib/notify-job-change.js';
 import { PIPELINE_BOOK_EDITOR_TASK_NAME } from './pipeline-book-editor.js';
-import { PIPELINE_BOOK_EXPORT_TASK_NAME } from './pipeline-book-export.js';
+import { PIPELINE_BOOK_SEO_TASK_NAME } from './pipeline-book-seo.js';
 import { PIPELINE_BOOK_WRITER_CHAPTER_TASK_NAME } from './pipeline-book-writer-chapter.js';
 import { readPipelineAutopass } from './lib/pipeline-autopass.js';
 
 /**
  * `pipeline.book.judge` タスク (docs/05 §5.3.8, F-008 / SP-10 T-10-03)
  *
- * Quality Judge (Sonnet) が 6 軸採点を行い、スコア >= 80 なら export enqueue、
- * < 80 かつ retry_count < 2 なら editor or writer.chapter 再キック、
+ * Quality Judge (Sonnet) が 6 軸採点を行い、スコア >= 80 なら (autopass_cover_enabled 時)
+ * pipeline.book.seo enqueue (SEO 再最適化 → 完了後に export へ、通常は Book.status='thumbnail'
+ * でサムネ承認待ち)、< 80 かつ retry_count < 2 なら editor or writer.chapter 再キック、
  * 3 回失敗 (retry_count >= 2) で needs_human_review に遷移しメール送信する。
  *
  * 起動経路: `pipeline.book.thumbnail.image` の全候補完了後 (T-10-04 で変更予定)
@@ -43,7 +44,8 @@ import { readPipelineAutopass } from './lib/pipeline-autopass.js';
  *   6. `judgeBook(input)` 呼出 (token_usage は judgeBook 内で role='judge' INSERT)
  *   7. EvalResult INSERT (triggered_by は payload.triggered_by 優先)
  *   8. 分岐:
- *      A. score_total >= 80 → Book.status='exporting' + pipeline.book.export enqueue
+ *      A. score_total >= 80 → Book.status='thumbnail' (サムネ承認待ち)。autopass_cover_enabled
+ *         時は自動でカバー採用 + pipeline.book.seo enqueue (SEO 再最適化を経て export へ)
  *      B. score_total < 80 かつ retry_count < 2 → editor or writer.chapter 再キック
  *         (style/japanese/logical < 70 → editor 優先、それ以外 → writer 全章)
  *         → 新 Job INSERT(retry_count+1) + addJob + Book.status='judging'
@@ -544,17 +546,17 @@ export async function runPipelineBookJudge(
                 where: { book_id: bookId, id: { notIn: [chosen.id] }, status: { not: 'rejected' } },
                 data: { status: 'rejected' },
               });
-              const exportJob = await prisma.job.create({
+              const seoJob = await prisma.job.create({
                 data: {
-                  kind: PIPELINE_BOOK_EXPORT_TASK_NAME,
+                  kind: PIPELINE_BOOK_SEO_TASK_NAME,
                   book_id: bookId,
                   status: 'queued',
                   payload_json: { book_id: bookId },
                 },
               });
-              await addJob(PIPELINE_BOOK_EXPORT_TASK_NAME, {
+              await addJob(PIPELINE_BOOK_SEO_TASK_NAME, {
                 book_id: bookId,
-                job_id: exportJob.id,
+                job_id: seoJob.id,
               });
               await prisma.auditLog.create({
                 data: {
@@ -566,14 +568,14 @@ export async function runPipelineBookJudge(
                   after_json: {
                     adopted_cover_id: chosen.id,
                     book_id: bookId,
-                    job_id: exportJob.id,
-                    kind: PIPELINE_BOOK_EXPORT_TASK_NAME,
+                    job_id: seoJob.id,
+                    kind: PIPELINE_BOOK_SEO_TASK_NAME,
                   },
                 },
               });
               log.info(
-                { task: PIPELINE_BOOK_JUDGE_TASK_NAME, jobId, bookId, coverId: chosen.id, exportJobId: exportJob.id },
-                'autopass: cover auto-adopted — export enqueued',
+                { task: PIPELINE_BOOK_JUDGE_TASK_NAME, jobId, bookId, coverId: chosen.id, seoJobId: seoJob.id },
+                'autopass: cover auto-adopted — pipeline.book.seo enqueued (export follows on completion)',
               );
             } else {
               log.info(
@@ -599,6 +601,10 @@ export async function runPipelineBookJudge(
 
       const nextRetryCount = retryCount + 1;
       const feedbackText = buildFeedbackText(judgeOutput);
+      // 2026-09-01: 1 件の body に全所見を詰めると RevisionFeedbackItemSchema.body max(2000) を超え
+      // editor/writer.chapter 側で `payload が不正です` になり再キックが必ず失敗していた (長編ほど確実)。
+      // 上限内の複数 item に分割して渡す (内容は欠落させない)。
+      const feedbackItems = toFeedbackItems(feedbackText);
 
       if (needsEditor) {
         // editor 再キック（style/japanese/logical 低い場合は editor 優先）
@@ -611,7 +617,7 @@ export async function runPipelineBookJudge(
             payload_json: {
               book_id: bookId,
               retry_count: nextRetryCount,
-              feedback: [{ body: feedbackText, priority: 'must' }],
+              feedback: feedbackItems,
             },
           },
         });
@@ -620,7 +626,7 @@ export async function runPipelineBookJudge(
           {
             book_id: bookId,
             job_id: editorJob.id,
-            feedback: [{ body: feedbackText, priority: 'must' }],
+            feedback: feedbackItems,
           },
           { maxAttempts: 2 },
         );
@@ -656,7 +662,7 @@ export async function runPipelineBookJudge(
                 outline_id: outline.id,
                 chapter_index: chapter.index,
                 retry_count: nextRetryCount,
-                feedback: [{ body: feedbackText, priority: 'must' }],
+                feedback: feedbackItems,
               },
             },
           });
@@ -667,7 +673,7 @@ export async function runPipelineBookJudge(
               job_id: writerJob.id,
               outline_id: outline.id,
               chapter_index: chapter.index,
-              feedback: [{ body: feedbackText, priority: 'must' }],
+              feedback: feedbackItems,
             },
             { maxAttempts: 2 },
           );
@@ -834,6 +840,40 @@ function serializeError(err: unknown): string {
  * judge_comments を読んで editor/writer へのフィードバック文を生成する。
  * 低スコア軸のコメントを日本語で列挙する。
  */
+/** RevisionFeedbackItemSchema.body は max(2000)。改行単位で詰め、余裕を見て 1900 で区切る。 */
+const FEEDBACK_ITEM_MAX_CHARS = 1900;
+/** 再キック用 feedback 上限 (editor/writer.chapter とも `.max(50)`)。 */
+const FEEDBACK_ITEMS_MAX = 50;
+
+/**
+ * 判定所見テキストを schema 上限内の複数 feedback item に分割する。
+ * 行を跨がず詰める。1 行が上限を超える場合のみ固定長で分割する。
+ */
+export function toFeedbackItems(text: string): Array<{ body: string; priority: 'must' }> {
+  const bodies: string[] = [];
+  let cur = '';
+  for (const line of text.split('\n')) {
+    const pieces =
+      line.length > FEEDBACK_ITEM_MAX_CHARS
+        ? (line.match(new RegExp(`[\\s\\S]{1,${FEEDBACK_ITEM_MAX_CHARS}}`, 'g')) ?? [line])
+        : [line];
+    for (const p of pieces) {
+      const next = cur ? `${cur}\n${p}` : p;
+      if (next.length > FEEDBACK_ITEM_MAX_CHARS && cur) {
+        bodies.push(cur);
+        cur = p;
+      } else {
+        cur = next;
+      }
+    }
+  }
+  if (cur.trim()) bodies.push(cur);
+  return bodies
+    .filter((b) => b.trim().length > 0)
+    .slice(0, FEEDBACK_ITEMS_MAX)
+    .map((body) => ({ body, priority: 'must' as const }));
+}
+
 function buildFeedbackText(output: JudgeOutput): string {
   const bd = output.score_breakdown;
   const lines: string[] = [

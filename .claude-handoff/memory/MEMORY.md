@@ -1,0 +1,40 @@
+- [Autonomous execution](feedback_autonomous.md) — No confirmation needed; user wants finished results only. User feedback is guidance, not mandates.
+- [Spacing token gotcha](reference_spacing_token_gotcha.md) — space-normalは未定義(no-op)! 有効はtight/snug/relaxed/loose; デザイン崩れ主因, 2026-08-25にspace-relaxedへ一括置換。
+- [sonnet-5 no temperature](reference_sonnet5_no_temperature.md) — claude-sonnet-5はtemperature渡すと400(deprecated); 新LLM呼び出しでtemperature省略。
+- [De-AI UI rules](reference_deai_ui_rules.md) — 管理画面の脱AI-UI設計ルール(2026-08, AI感3→2/10); page-title28px/section-title18px/一覧=ヘアライン/カード限定/モバイルヘッダーmd:のみ。
+- [Storefront SEO/favicon](reference_storefront_seo_favicon.md) — 栞は a2p.m2p.tools に管理ツールと同居; 検索は/shop・/blogにcanonical＋sitemap; public/icon.pngがapp/icon.pngを影で上書きする罠。
+- [Blog book covers](project_blog_covers.md) — 栞ブログ良書紹介にAmazon実書影を自動挿入(F-092); book_coverエージェント=LLM同定→openBD負検証→Amazon画像byte検証; blog_posts.cover_image_url。
+- [Amazon Ads cost](project_amazon_ads_cost.md) — 広告費の公式API自動計上(F-090)実装済; 承認後にRailway A2P-Workerへenv5個設定で稼働; 純利益/ROASに算入。
+- [No in-book AI disclosure](feedback_no_ai_disclosure.md) — 生成本の本文にAI開示文を入れない(読者離脱防止); ai_disclosure_text既定空, KDP開示は入稿フォーム。
+- [Fiction writing](project_fiction_writing.md) — 小説は実用書と書き分け(だ・である調＋詩的＋章立て/小見出し廃止); isFiction分岐; 本番稼働済。
+- [SEO agent](project_seo_agent.md) — seo_optimizerがKDP入稿前にメタデータ(keywords7/description/category)再最適化; judge後・export前・2経路配線; gpt-5; 本番稼働。
+- [Phase 1 state](project_phase1_state.md) — Phase 1 code/design/test-complete; sole remaining gate is T-09-08 human real-run (harness+skeleton ready).
+- [Phase 2 state](project_phase2_state.md) — Phase 2 started early; SP-10 quality-judge PHASE_COMPLETE; SP-11/12/13 remaining.
+- [Prod deploy](project_prod_deploy.md) — Railway 本番 web+worker+postgres 稼働(2026-06-17); ログインはDB users表; worker厳格env; サービス間参照配線。
+- [Org agents](project_org_agents.md) — AI company (CEO+6本部長+担当者) P1〜P4 全実装＆デプロイ済; 2026-07-25自律運転化(有効化UI＋ループ自走＋モデルopus-4.8/sonnet-5化)。cron既定OFF/有効化はworker再起動要。
+- [Pipeline settings](project_pipeline_settings.md) — 各工程のAI自動パス設定＋テーマ日次自動生成タブ /pipeline/settings (出荷済 2026-07-25)。
+- [Promotion/image/genre features](project_promotion_features.md) — 2026-07-22 shipped: 投稿失敗の人間可読化, gpt-image-2切替, ジャンル29種; queued(設計確定): SNS日次見直し/コスト分析週次/IGカルーセル.
+- [Promo quality initiative](project_promo_quality.md) — 販促品質改善5インクリメント; Inc1(ハッシュタグ常時/IG導線/books LP)出荷済, Inc2-5未着手; 根拠=docs/08-promo-playbook.md.
+- [KDP bookshelf automation](reference_kdp_bookshelf_automation.md) — セッション再利用で本棚を自動操作(出版取り消し/アーカイブ/削除)する動線・セレクタ; 破壊的なので明示許可必須。
+- [KDP creation limit](reference_kdp_creation_limit.md) — 「本の作成数制限」=1日5冊の作成上限(下書きresume/編集は非消費); 2026-07-27一時解除も検証CREATE反復で再消費; 対策=--assistで下書き上書き。
+- [KDP publish assist tool](project_kdp_publish_assist.md) — scripts/kdp-publish.mjs --assist(下書きresume上書き=枠非消費)でローカル準自動出版; ウィザード全罠(ローマ字/アップロード/表紙jp/AI質問票いいえ/確認チェック)解決済; 実行=bash scripts/kdp-assist.sh。
+- [LINE auth relay](project_line_auth_relay.md) — LINE双方向認証リレー(OTP通知&返信)出荷・疎通済; kdp_auth_requests+/api/line/webhook; 売上worker自動再ログイン+販売中→出版済み同期(kdp.publish.status.sync 6h)。
+- [KDP publish auth wall](reference_kdp_publish_authwall.md) — 新規タイトル作成/出版はmax_auth_age=0で再認証強制→サーバ完全自動出版は不可、運営者アシスト型のみ可(本棚アーカイブ等の閲覧系は再利用セッションで可)。
+- [KDP sales integration](project_kdp_sales.md) — KDP売上取得; Phase1実レポート2形式対応(月別ロイヤリティ=確定/推定=見込み, KENP売上+KPI表示)出荷済2026-07-24, Phase2(Playwright自動DL)未着手; 設計=docs/09。
+- [Model assignment routing](reference_model_assignment_routing.md) — model_assignmentsルーティング仕様＋Gemini無料枠枯渇で書籍パイプラインが4日間静かに停止した事故と復旧手順(各roleにactive1件必須).
+- [SNS engage bot](project_sns_engage_bot.md) — IG/TikTok自動フォローbot(F-077)＋ログイン済セッション取り込み動線; IG稼働・実フォロー検証済, TikTokはGoogle/QRログイン待ち。
+- [SNS reboot](project_sns_reboot.md) — 2026-09-02 SNS全面リブート実装済(スパム判定解消=頻度2/日・同一タグ廃止、栞統一、断言型/カルーセル/制作実録の勝ち型移植、競馬・ラノベ柱凍結)。残=手動リネーム・P3計測・TikTok復旧。調整はexample_post書換→content.generate再enqueue。
+- [Growth autonomy](project_growth_autonomy.md) — 全社ToDo自動承認スイープ(F-082)＋販促強化継続AIループ(F-081)出荷; ベースライン=Xフォロワー2人/到達1.7/当月349円(未黒字化)。
+- [Content=良書紹介](project_growth_autonomy.md) — content_creator v3で全投稿を実在良書紹介化(F-080); 原因はfew-shot例がtipsだった→全チャンネルexample_post書換で解決。
+- [Video pipeline](project_video_pipeline.md) — TikTok/IGリール動画; Veo3.1ハイブリッド(冒頭フックのみ実写級)＋IGリール流用(F-084); 投稿はZernio経由。
+- [Platform portal](project_platform_portal.md) — A2Pはプラットフォーム第1ツール; apps/portal(共通ログイン+ツール選択ハブ)＋packages/auth(共有認証)＋SSO実装済(2026-08-20); フォルダC:\DEV\M2Pリネーム済; A2P→ポータル戻り導線はNEXT_PUBLIC_PORTAL_URL設定時のみ点灯(portal本番未デプロイ); 設計=docs/10。
+- [ANP (note tool)](project_anp.md) — M2P第2ツール=note版A2P; 記事の出版＋販促をテーマ別マルチアカウントで自動化; 設計=docs/11; ポータルタイル追加済(coming_soon), apps/anp実装は未着手。
+- [Pipeline stuck books](reference_pipeline_stuck_books.md) — 停止/滞留診断: 未投入ジョブ(graphile_job_id=null)・status不整合・ジャンル全件practical(theme生成がアカウント既定を刻印)＋復旧手順。
+- [Home dashboard](project_home_dashboard.md) — ホームS-002を実データRSC接続の経営ミッションコントロールへ全面再実装(2026-08-20出荷); 当月純利益ヒーロー中心; docs/04 §S-002・F-088。
+- [OpenAI fallback playbook](project_temp_openai_reroute.md) — Anthropic停止時に仕上げ工程だけgpt-5へ一時切替する手順(reroute-openai.cjs/revert-anthropic.cjs, 2026-09-01実施→同日完全復元済)。実測: editor¥16(vs¥68)/judge¥44(vs¥280)だが採点が甘い; readingsはgpt-5不可; 継続性欠陥は本文走査(namecheck/contcheck)で確認。
+- [Worker DB outage](reference_worker_db_outage.md) — 2026-08-30〜09-01 workerがpostgres.railway.internal到達不能で全停止(public.jobsにエラー出ない/graphile last_errorとrailway logsのみ); 復旧=railway redeploy; 後始末=孤児sales_fetch_runs・障害中の残骸/まだretryableな古いジョブ削除・monthly_budget_exceeded手動リセット; 二重投入(TaskStopで子nodeが生き残る)の教訓。
+- [Tavily search](project_tavily_search.md) — テーマ生成遅延(3〜7分)主因=Anthropic純正web_search無上限ループ; Tavily事前検索化(2026-08-28)で数十秒に; 要TAVILY_API_KEY設定(UIか worker env)。
+- [Paperback rollout](project_paperback.md) — 全書籍PB化; パイロット出版成功(2026-09-04, 血糖値¥1480)＝プレビュー承認ゲート突破; pb-batch.shで全冊直列出版中; 価格式max(1480,…)。
+- [BookWalker publish](project_bookwalker.md) — 40冊申請済→F-094サーバー自動入稿デプロイ(2026-09-04); /bookwalkerタブ; フォームid一式・isTrusted罠・キーワード100字・セッションpush運用。
+- [Channel tabs](project_channel_tabs.md) — /bookwalker稼働・/kobo・/booth UI先行(2026-09-04); Kobo/Boothはユーザー手動ログイン→セッション保存待ち。
+- [Kobo publish](project_kobo.md) — 楽天Kobo自動出版エンジン完成(2026-09-04); ジャンル=トップ展開→一般チェックボックス, 出版可否はAPI status確認, 削除不可UUIDは別作品で上書き。

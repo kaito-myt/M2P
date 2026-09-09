@@ -26,15 +26,42 @@ export interface BuildDocxChapter {
   body_md: string;
 }
 
+export interface BuildDocxOptions {
+  /**
+   * 小説(genre=novel)か。実際のKindle慣習に合わせ、
+   *  - 小説: 目次を付けず本文から始める。
+   *  - 実用書系(既定): 「はじめに → 目次 → 本文」の順にする。
+   */
+  isNovel?: boolean;
+}
+
 export async function buildDocx(
   book: BuildDocxBook,
   chapters: BuildDocxChapter[],
+  opts: BuildDocxOptions = {},
 ): Promise<Buffer> {
   const sorted = [...chapters].sort((a, b) => a.index - b.index);
 
   const titleSection = buildTitleSection(book);
-  const tocSection = buildTocSection(sorted);
   const chapterSections = sorted.map((ch) => buildChapterSection(ch));
+
+  // 構成をジャンルで分岐 (docs/02 F-… 生成本の基本構成)。
+  let contentSections: ISectionOptions[];
+  if (opts.isNovel) {
+    // 小説: 目次なし・本文から。
+    contentSections = chapterSections;
+  } else {
+    // 実用書系: はじめに(先頭) → 目次 → 残り本文。はじめに章が見つからなければ 目次 → 本文。
+    const introIdx = sorted.findIndex((c) => /はじめに/.test(c.heading));
+    const tocSection = buildTocSection(sorted);
+    if (introIdx >= 0) {
+      const intro = chapterSections[introIdx]!;
+      const rest = chapterSections.filter((_, i) => i !== introIdx);
+      contentSections = [intro, tocSection, ...rest];
+    } else {
+      contentSections = [tocSection, ...chapterSections];
+    }
+  }
 
   const doc = new Document({
     styles: {
@@ -80,7 +107,7 @@ export async function buildDocx(
     features: {
       updateFields: true,
     },
-    sections: [titleSection, tocSection, ...chapterSections],
+    sections: [titleSection, ...contentSections],
   });
 
   const buffer = await Packer.toBuffer(doc);

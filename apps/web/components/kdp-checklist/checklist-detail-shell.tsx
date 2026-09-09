@@ -21,7 +21,14 @@ import { SubmitToKdpButton } from './submit-to-kdp-button';
 
 const m = messages.kdpChecklist;
 
-export function ChecklistDetailShell({ book: initialBook }: { book: ChecklistBookView }) {
+export function ChecklistDetailShell({
+  book: initialBook,
+  submitEtaLabel,
+}: {
+  book: ChecklistBookView;
+  /** 入稿予定ラベル（サーバで算出済み。入稿キュー登録済みのときのみ）。 */
+  submitEtaLabel?: string;
+}) {
   const [book, setBook] = useState<ChecklistBookView>(initialBook);
   const [readingsPending, startReadings] = useTransition();
   const [readingsInfo, setReadingsInfo] = useState<string | null>(null);
@@ -136,6 +143,7 @@ export function ChecklistDetailShell({ book: initialBook }: { book: ChecklistBoo
             bookId={book.id}
             disabled={book.hasBlockingComments || book.metadataMissing || book.publishStatus === 'published'}
             queued={book.kdpPublishQueued}
+            etaLabel={submitEtaLabel}
           />
         </div>
       </div>

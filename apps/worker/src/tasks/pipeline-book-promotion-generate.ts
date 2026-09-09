@@ -5,6 +5,7 @@ import { generatePromotionPlan as defaultGeneratePromotionPlan, type GeneratePro
 import type { PromotionInput, PromotionPlanOutput } from '@a2p/contracts/agents/promoter';
 import type { Genre } from '@a2p/contracts/agents';
 import { GENRE_SLUGS } from '@a2p/contracts/agents';
+import { PromoPlaybookSchema, playbookToGuidance } from '@a2p/contracts/agents/promo-strategist';
 import { NotFoundError, ValidationError } from '@a2p/contracts/errors';
 import { createLogger, type Logger } from '@a2p/contracts/logger';
 import { prisma as defaultPrisma } from '@a2p/db';
@@ -79,6 +80,12 @@ export interface PipelineBookPromotionGeneratePrisma {
       update: { plan_json: unknown; status: string };
     }) => Promise<{ id: string }>;
   };
+  promotionChannelSetting: {
+    findMany: (args: {
+      where: { channel: { in: string[] } };
+      select: { channel: true; playbook_json: true };
+    }) => Promise<Array<{ channel: string; playbook_json: unknown }>>;
+  };
 }
 
 export type AddJobLike = (identifier: string, payload: unknown, spec?: Record<string, unknown>) => Promise<unknown>;
@@ -88,6 +95,32 @@ export interface PipelineBookPromotionGenerateDeps {
   logger?: Logger;
   generatePromotionPlan?: (input: PromotionInput, deps?: GeneratePromotionDeps) => Promise<PromotionPlanOutput>;
   now?: () => Date;
+}
+
+/**
+ * F-064: 主要SNSチャンネル(x/instagram/note)の販促プレイブックを読み、
+ * チャンネル見出し付きで結合したガイダンス文字列を返す(無ければ空)。
+ */
+async function loadPromoPlaybookGuidance(
+  prisma: PipelineBookPromotionGeneratePrisma,
+): Promise<string> {
+  try {
+    const rows = await prisma.promotionChannelSetting.findMany({
+      where: { channel: { in: ['x', 'instagram', 'note'] } },
+      select: { channel: true, playbook_json: true },
+    });
+    const parts: string[] = [];
+    for (const r of rows) {
+      if (!r.playbook_json) continue;
+      const pb = PromoPlaybookSchema.safeParse(r.playbook_json);
+      if (!pb.success) continue;
+      const g = playbookToGuidance(pb.data).trim();
+      if (g) parts.push(`# ${r.channel}\n${g}`);
+    }
+    return parts.join('\n\n').slice(0, 6000);
+  } catch {
+    return '';
+  }
 }
 
 export async function runPipelineBookPromotionGenerate(
@@ -149,6 +182,7 @@ export async function runPipelineBookPromotionGenerate(
       jobId,
       bookId,
       genre: normalizeGenre(book.theme?.genre),
+      playbook_guidance: '',
       book: {
         title: book.title,
         keywords: meta?.keywords ?? [],
@@ -167,6 +201,10 @@ export async function runPipelineBookPromotionGenerate(
         ...(latest.avg_stars != null ? { avg_stars: Number(latest.avg_stars) } : {}),
       };
     }
+
+    // F-064: 主要SNSチャンネルの販促プレイブック(web検索リサーチ)を材料として渡す。
+    const guidance = await loadPromoPlaybookGuidance(prisma);
+    if (guidance) input.playbook_guidance = guidance;
 
     const plan = await generate(input);
 

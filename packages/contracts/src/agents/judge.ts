@@ -48,11 +48,12 @@ export const JudgeInputSchema = z.object({
   }),
   /** アウトライン JSON の文字列化（最大 2,000 字）。 */
   outline_summary: z.string().max(2000),
-  /** 採点対象の章リスト（1〜15 章）。 */
+  /** 採点対象の章リスト（1〜30 章）。2026-09-02: 大容量化(10〜28章)で 15 上限が too_big を起こしたため
+   *  writer/editor と同じ 30 に統一。 */
   chapters: z
     .array(JudgeChapterInputSchema)
     .min(1)
-    .max(15),
+    .max(30),
 });
 export type JudgeInput = z.infer<typeof JudgeInputSchema>;
 

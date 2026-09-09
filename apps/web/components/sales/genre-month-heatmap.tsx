@@ -3,7 +3,7 @@
 /**
  * S-017 GenreMonthHeatmap (T-08-07, F-039).
  *
- * 3ジャンル × Nヶ月 のヒートマップ。セル濃淡で売上量を表現。
+ * 全ジャンル × Nヶ月 のヒートマップ。セル濃淡で売上量を表現。
  * 色のみに依存しないアクセシビリティ: title / aria-label にテキスト値。
  * 凡例 + テキスト値 (小さいがホバーで全表示)。
  *
@@ -12,7 +12,7 @@
 
 import { Fragment } from 'react';
 import { messages } from '@/lib/messages';
-import { formatJpy, salesGenreLabel, type HeatmapMatrix } from '@/lib/sales-kpi-view';
+import { formatJpy, formatJpyCompact, salesGenreLabel, type HeatmapMatrix } from '@/lib/sales-kpi-view';
 
 interface GenreMonthHeatmapProps {
   matrix: HeatmapMatrix;
@@ -85,9 +85,9 @@ export function GenreMonthHeatmap({ matrix }: GenreMonthHeatmapProps) {
 
           {/* Visual heatmap grid */}
           <div
-            className="grid gap-0.5"
+            className="grid gap-1"
             style={{
-              gridTemplateColumns: `auto repeat(${matrix.months.length}, minmax(28px, 1fr))`,
+              gridTemplateColumns: `minmax(72px, auto) repeat(${matrix.months.length}, minmax(48px, 1fr))`,
             }}
             aria-hidden="true"
           >
@@ -97,7 +97,6 @@ export function GenreMonthHeatmap({ matrix }: GenreMonthHeatmapProps) {
               <div
                 key={ym}
                 className="text-center text-caption text-muted"
-                style={{ fontSize: '9px' }}
               >
                 {ym.slice(5)}
               </div>
@@ -107,8 +106,8 @@ export function GenreMonthHeatmap({ matrix }: GenreMonthHeatmapProps) {
             {matrix.genres.map((genre) => (
               <Fragment key={genre}>
                 <div
-                  className="flex items-center pr-1 text-button-sm text-muted"
-                  style={{ fontSize: '10px', whiteSpace: 'nowrap' }}
+                  className="flex items-center pr-2 text-button-sm text-muted"
+                  style={{ whiteSpace: 'nowrap' }}
                 >
                   {salesGenreLabel(genre)}
                 </div>
@@ -121,18 +120,18 @@ export function GenreMonthHeatmap({ matrix }: GenreMonthHeatmapProps) {
                   return (
                     <div
                       key={`${genre}-${ym}`}
-                      className="flex items-center justify-center rounded-sm border border-border-warm"
+                      className="flex items-center justify-center overflow-hidden rounded-sm border border-border-warm px-0.5 text-caption"
                       style={{
                         backgroundColor: cellBg(intensity),
                         color: cellFg(intensity),
-                        height: '28px',
-                        fontSize: '8px',
+                        height: '40px',
                         fontVariantNumeric: 'tabular-nums',
                       }}
                       title={label}
                       aria-label={label}
                     >
-                      {value > 0 ? formatJpy(value) : ''}
+                      {/* 狭いセルは短縮表記(¥1.2万)。正確な値は title/aria-label でフル表示。 */}
+                      {value > 0 ? formatJpyCompact(value) : ''}
                     </div>
                   );
                 })}

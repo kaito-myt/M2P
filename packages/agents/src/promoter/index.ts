@@ -106,6 +106,13 @@ function buildUserMessage(input: PromotionInput): string {
       `平均星: ${input.performance.avg_stars ?? '(不明)'}`,
     );
   }
+  if (input.playbook_guidance) {
+    lines.push(
+      '',
+      '【市場リサーチに基づく販促プレイブック(最新の"今伸びている型"。SNS投稿文・フック・ハッシュタグに必ず反映する)】',
+      input.playbook_guidance,
+    );
+  }
   lines.push(
     '',
     '【求める内容】',
@@ -117,11 +124,18 @@ function buildUserMessage(input: PromotionInput): string {
     '   やらせは提案しない)。',
     ' - launch_checklist: 出版直後にやることを timing 付きで。',
     ' - promo_copy: **そのままコピペして使える告知文**。x_posts は複数の X(Twitter) 投稿案',
-    '   (各140字目安・ハッシュタグ込み)、note_article は note 記事の下書き、blog_outline は',
-    '   ブログ告知の骨子。読者の悩みに刺さる訴求にする。誇大表現・虚偽の効能は避ける。',
+    '   (各140字目安・ハッシュタグ込み)、blog_outline はブログ告知の骨子。',
+    '   読者の悩みに刺さる訴求にする。誇大表現・虚偽の効能は避ける。',
+    ' - note_article は note 記事の下書き。**重要: note は書評/実用書キュレーション・アカウント',
+    `   「良い本を読む習慣（大人の実用書メモ）」の視点で書く。著者本人(${b.author ?? '著者'})の一人称`,
+    '   （「こんにちは、○○です」「出版しました」）で書いてはいけない。第三者の書店員/読書家が',
+    '   「この本を読んで良かった点・どんな人に薦めたいか」を紹介する体裁にする。書き出しで著者を',
+    '   名乗らず、本の要点と読者ベネフィットを軸に、最後に購入導線を添える。',
     ' - ongoing_calendar: 出版後に継続すべき施策を when 付きで。',
     '',
     '指定された JSON スキーマに厳密に従って構造化出力してください。日本語で。',
+    '重要: 配列・オブジェクトのフィールド(pricing / promo_copy / x_posts / *_actions / *_checklist / *_calendar)は',
+    '必ず JSON の配列・オブジェクトそのものとして出力し、文字列(\"[...]\" や \"{...}\")に包まないこと。',
   );
   return lines.join('\n');
 }

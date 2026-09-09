@@ -143,6 +143,20 @@ export {
 } from './org/ceo.js';
 
 export {
+  chatWithCeo,
+  buildCeoChatUserMessage,
+  type CeoChatInput,
+  type CeoChatDeps,
+  type CeoChatTurn,
+} from './org/ceo-chat.js';
+
+export {
+  rewriteAgentPrompt,
+  buildPromptEditorUserMessage,
+  type PromptEditorDeps,
+} from './org/prompt-editor.js';
+
+export {
   planDivisionTasks,
   buildManagerUserMessage,
   type ManagerPlanInput,
@@ -226,6 +240,12 @@ export {
 } from './promo-strategist/index.js';
 
 export {
+  generateGrowthTodo,
+  buildScoutUserMessage,
+  type GrowthScoutDeps,
+} from './growth-scout/index.js';
+
+export {
   analyzeCost,
   buildCostOptimizerUserMessage,
   type CostOptimizerDeps,
@@ -250,6 +270,29 @@ export {
   judgeBook,
   type JudgeBookDeps,
 } from './judge/index.js';
+
+export {
+  optimizeSeo,
+  buildUserMessage as buildSeoOptimizerUserMessage,
+  type SeoOptimizerDeps,
+} from './seo-optimizer/index.js';
+
+export {
+  optimizeBlogSeo,
+  buildUserMessage as buildBlogSeoUserMessage,
+  type BlogSeoDeps,
+} from './blog-seo/index.js';
+
+export {
+  resolveBookCoverUrl,
+  isbn13to10,
+  normalizeTitle,
+  titleConfirms,
+  coreTitle,
+  type ResolveBookCoverInput,
+  type ResolveBookCoverDeps,
+  type BookIdentity,
+} from './book-cover/index.js';
 
 export {
   optimizePrompt,

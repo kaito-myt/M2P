@@ -51,13 +51,12 @@ export interface BookKpiRowSerialized {
   roi_display: string;
 }
 
-/** One month/genre cell for the trend chart */
+/** One month for the trend chart. segments は全ジャンル(売上合計の多い順)を保持する。 */
 export interface TrendChartMonth {
   ym: string; // "YYYY-MM"
-  practical: number;
-  business: number;
-  self_help: number;
   total: number;
+  /** 積み上げ用のジャンル別内訳 (全ジャンル。genres 順に対応)。 */
+  segments: Array<{ genre: string; value: number }>;
 }
 
 /** One cell in the genre×month heatmap */
@@ -111,6 +110,20 @@ export function formatJpy(value: number): string {
   return `¥${Math.round(value).toLocaleString('ja-JP')}`;
 }
 
+/**
+ * 狭いセル(ヒートマップ等)向けの短縮円表記。万/億で丸めて桁溢れを防ぐ。
+ * 正確な値は title/aria-label 側でフル表示する前提。
+ */
+export function formatJpyCompact(value: number): string {
+  const v = Math.round(value);
+  if (v === 0) return '¥0';
+  const sign = v < 0 ? '-' : '';
+  const a = Math.abs(v);
+  if (a >= 100_000_000) return `${sign}¥${(a / 100_000_000).toFixed(1).replace(/\.0$/, '')}億`;
+  if (a >= 10_000) return `${sign}¥${(a / 10_000).toFixed(1).replace(/\.0$/, '')}万`;
+  return `${sign}¥${a.toLocaleString('ja-JP')}`;
+}
+
 export function formatStars(value: number | null): string {
   if (value == null) return '—';
   return `${(Math.round(value * 10) / 10).toFixed(1)} ★`;
@@ -148,38 +161,36 @@ export function formatQuality(score: number | null): string {
 // Trend chart builder
 // ---------------------------------------------------------------------------
 
-const GENRE_KEYS = ['practical', 'business', 'self_help'] as const;
-type GenreKey = typeof GENRE_KEYS[number];
-
 /**
  * Builds trend chart data from pre-computed genre-month aggregates
- * (output of getMonthlyGenreSales).
+ * (output of getMonthlyGenreSales)。
+ *
+ * ジャンルはハードコードせず、集計に実際に現れた **全ジャンル** を売上合計の多い順に積み上げる
+ * (旧実装は practical/business/self_help の 3 種に潰し、それ以外を全て practical に混ぜていた不具合)。
+ * `genresOrder` を指定するとその順に固定 (ヒートマップと行順を揃える用途)。
  */
 export function buildTrendChartFromAggregates(
   aggregates: Array<{ ym: string; genre: string; royalty_jpy: number }>,
   months: string[],
+  genresOrder?: string[],
 ): TrendChartMonth[] {
-  const byMonth = new Map<string, Record<GenreKey, number>>();
-  for (const ym of months) {
-    byMonth.set(ym, { practical: 0, business: 0, self_help: 0 });
-  }
-
+  const lookup = new Map<string, number>(); // `${genre}:${ym}` -> value
+  const genreTotals = new Map<string, number>();
   for (const agg of aggregates) {
-    const bucket = byMonth.get(agg.ym);
-    if (!bucket) continue;
-    const genre = normalizeGenre(agg.genre);
-    bucket[genre] += agg.royalty_jpy;
+    const g = agg.genre || 'other';
+    lookup.set(`${g}:${agg.ym}`, (lookup.get(`${g}:${agg.ym}`) ?? 0) + agg.royalty_jpy);
+    genreTotals.set(g, (genreTotals.get(g) ?? 0) + agg.royalty_jpy);
   }
+  const genres =
+    genresOrder ??
+    [...genreTotals.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).map(([g]) => g);
 
   return months.map((ym) => {
-    const b = byMonth.get(ym) ?? { practical: 0, business: 0, self_help: 0 };
-    return {
-      ym,
-      practical: b.practical,
-      business: b.business,
-      self_help: b.self_help,
-      total: b.practical + b.business + b.self_help,
-    };
+    const segments = genres.map((genre) => ({
+      genre,
+      value: Math.round(lookup.get(`${genre}:${ym}`) ?? 0),
+    }));
+    return { ym, total: segments.reduce((s, seg) => s + seg.value, 0), segments };
   });
 }
 
@@ -272,11 +283,87 @@ export function parsePeriodParam(raw: string | undefined): number {
 }
 
 // ---------------------------------------------------------------------------
-// Internal helpers
+// ジャンル表示色パレット (チャート/ヒートマップ共通)。色のみに依存しない (凡例ラベル併記)。
 // ---------------------------------------------------------------------------
 
-function normalizeGenre(genre: string | null | undefined): GenreKey {
-  if (genre === 'business') return 'business';
-  if (genre === 'self_help') return 'self_help';
-  return 'practical';
+const GENRE_PALETTE = [
+  '#c9852f', // gold
+  '#4b8fd0', // blue
+  '#4bb07a', // green
+  '#e07a9a', // pink
+  '#a86fd0', // purple
+  '#e0913a', // orange
+  '#4bb0a6', // teal
+  '#c0954b', // brown
+  '#6b7280', // gray
+] as const;
+
+/** ジャンル一覧(表示順)に対して安定した色を割り当てる。 */
+export function genreColorMap(genres: string[]): Record<string, string> {
+  const map: Record<string, string> = {};
+  genres.forEach((g, i) => {
+    map[g] = GENRE_PALETTE[i % GENRE_PALETTE.length]!;
+  });
+  return map;
+}
+
+// ---------------------------------------------------------------------------
+// 分析サマリ (Sales Insights) — 既存集計から派生インサイトを算出する pure 関数
+// ---------------------------------------------------------------------------
+
+export interface SalesInsights {
+  /** 売れ筋 Top (累計ロイヤリティ降順)。 */
+  topBooks: Array<{ book_id: string; title: string; cumulative_royalty_jpy: number }>;
+  /** ジャンル別売上構成 (期間内合計・降順・pct は総額比)。 */
+  genreShare: Array<{ genre: string; value: number; pct: number }>;
+  /** 前月比成長率 (最新月 vs 前月, 総額)。前月0/データ不足なら null。 */
+  momGrowthPct: number | null;
+  /** 直近月の売上 (総額)。 */
+  latestMonthTotal: number;
+  /** 累計売上が 0 の書籍数 (要改善/取り下げ候補)。 */
+  zeroSalesCount: number;
+  /** ROI>0 (黒字) の書籍数。 */
+  profitableCount: number;
+  /** 集計対象の書籍数。 */
+  totalBooks: number;
+}
+
+export function buildSalesInsights(
+  books: BookKpiRowSerialized[],
+  trend: TrendChartMonth[],
+): SalesInsights {
+  const topBooks = [...books]
+    .filter((b) => b.cumulative_royalty_jpy > 0)
+    .sort((a, b) => b.cumulative_royalty_jpy - a.cumulative_royalty_jpy)
+    .slice(0, 5)
+    .map((b) => ({ book_id: b.book_id, title: b.title, cumulative_royalty_jpy: b.cumulative_royalty_jpy }));
+
+  // ジャンル別合計 (trend segments を全月合算)。
+  const genreTotals = new Map<string, number>();
+  for (const mo of trend) {
+    for (const seg of mo.segments) {
+      if (seg.value > 0) genreTotals.set(seg.genre, (genreTotals.get(seg.genre) ?? 0) + seg.value);
+    }
+  }
+  const grandTotal = [...genreTotals.values()].reduce((s, v) => s + v, 0);
+  const genreShare = [...genreTotals.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .map(([genre, value]) => ({ genre, value, pct: grandTotal > 0 ? value / grandTotal : 0 }));
+
+  const latestMonthTotal = trend.length > 0 ? trend[trend.length - 1]!.total : 0;
+  const prevMonthTotal = trend.length > 1 ? trend[trend.length - 2]!.total : 0;
+  const momGrowthPct = prevMonthTotal > 0 ? (latestMonthTotal - prevMonthTotal) / prevMonthTotal : null;
+
+  const zeroSalesCount = books.filter((b) => b.cumulative_royalty_jpy <= 0).length;
+  const profitableCount = books.filter((b) => b.roi != null && b.roi > 0).length;
+
+  return {
+    topBooks,
+    genreShare,
+    momGrowthPct,
+    latestMonthTotal,
+    zeroSalesCount,
+    profitableCount,
+    totalBooks: books.length,
+  };
 }

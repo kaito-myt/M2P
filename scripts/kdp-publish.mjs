@@ -33,10 +33,14 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 
-const require = createRequire(import.meta.url.startsWith('file:') ? new URL(import.meta.url).pathname.replace(/^\//, '') : 'C:/DEV/A2P/scripts/kdp-publish.mjs');
-const reqWorker = createRequire('C:/DEV/A2P/apps/worker/package.json');
-const reqPg = createRequire('C:/DEV/A2P/node_modules/.pnpm/pg@8.21.0/node_modules/pg/');
-const reqS3 = createRequire('C:/DEV/A2P/packages/storage/index.js');
+// スクリプト自身の位置からリポジトリルートを動的算出（フォルダ名リネームに強い）。
+const SCRIPT_PATH = new URL(import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, '$1');
+const REPO_ROOT = path.resolve(path.dirname(SCRIPT_PATH), '..');
+
+const require = createRequire(import.meta.url);
+const reqWorker = createRequire(path.join(REPO_ROOT, 'apps/worker/package.json'));
+const reqPg = createRequire(path.join(REPO_ROOT, 'node_modules/.pnpm/pg@8.21.0/node_modules/pg/'));
+const reqS3 = createRequire(path.join(REPO_ROOT, 'packages/storage/package.json'));
 
 const pw = reqWorker('playwright');
 const chromium = pw.chromium ?? pw.default?.chromium;
@@ -55,8 +59,16 @@ const ALL_MODE = args.includes('--all');
 const ASSIST = args.includes('--assist');
 // 全自動モード: 既存の下書きをresumeし、保存/出版まで自動クリック。アップロード検証で失敗本はskip(出版しない)。
 const AUTO = args.includes('--auto');
-const USERDATA = 'C:/DEV/A2P/scripts/.kdp-userdata';
+// --adult: KDP STEP1「成人向けコンテンツ」を「はい」にする(既定は「いいえ」)。成人向け作品の出版時に明示指定。
+const ADULT = args.includes('--adult');
+// 上書きモード: 指定した既存 listing(titleId) を、指定の未出版 book で上書き入稿(全自動)。
+// 二重出版の重複listingを未出版本で「差し替え」て枠を無駄にしないための経路。作成枠は消費しない。
+// --overwrite-map=<path.json> : [{ "titleId": "A2...", "bookId": "cm..." }, ...]
+const OVERWRITE_MAP = (args.find((a) => a.startsWith('--overwrite-map=')) || '').split('=')[1] || null;
+const OVERWRITE = !!OVERWRITE_MAP;
+const USERDATA = path.join(REPO_ROOT, 'scripts/.kdp-userdata');
 const CREATE = 'https://kdp.amazon.co.jp/action/mangaactions.createkindle/ja_JP/title-setup/kindle/new/details';
+const EDIT_BASE = 'https://kdp.amazon.co.jp/action/dualbookshelf.editkindledetails/ja_JP/title-setup/kindle/';
 const BOOKSHELF = 'https://kdp.amazon.co.jp/ja_JP/bookshelf';
 const STAGE = path.join(os.tmpdir(), 'kdp-publish-stage');
 fs.mkdirSync(STAGE, { recursive: true });
@@ -187,7 +199,7 @@ async function fetchBooks(c) {
     ? { sql: 'b.id=$1', params: [BOOK_ID] }
     : ALL_MODE
       ? { sql: "b.status='done' AND b.publish_status='unlisted'", params: [] }
-      : { sql: "b.kdp_publish_queued = true AND b.publish_status <> 'published'", params: [] };
+      : { sql: "b.kdp_publish_queued = true AND b.publish_status NOT IN ('published','submitted','retracted')", params: [] };
   const { rows } = await c.query(
     `SELECT b.id, b.title, b.subtitle, acc.pen_name,
        km.description, km.categories, km.keywords, km.price_jpy,
@@ -206,6 +218,30 @@ async function fetchBooks(c) {
     b.docx_key = (art.rows[0] || {}).r2_key;
   }
   return rows;
+}
+
+// 指定 bookId 群を(順序保持で)資産付きで取得。overwrite の差し替え本用。
+async function fetchBooksByIds(c, ids) {
+  if (!ids.length) return [];
+  const { rows } = await c.query(
+    `SELECT b.id, b.title, b.subtitle, acc.pen_name,
+       km.description, km.categories, km.keywords, km.price_jpy,
+       km.title_kana, km.title_romaji, km.subtitle_kana, km.subtitle_romaji,
+       km.author_kana, km.author_romaji
+     FROM books b LEFT JOIN accounts acc ON acc.id=b.account_id
+     LEFT JOIN kdp_metadata km ON km.book_id=b.id
+     WHERE b.id = ANY($1)`,
+    [ids],
+  );
+  const byId = new Map(rows.map((r) => [r.id, r]));
+  const ordered = ids.map((id) => byId.get(id)).filter(Boolean);
+  for (const b of ordered) {
+    const cov = await c.query('SELECT r2_key, status FROM covers WHERE book_id=$1 ORDER BY created_at DESC', [b.id]);
+    const art = await c.query("SELECT kind, r2_key FROM artifacts WHERE book_id=$1 AND kind='docx'", [b.id]);
+    b.cover_key = (cov.rows.find((r) => r.status === 'adopted') || cov.rows[0] || {}).r2_key;
+    b.docx_key = (art.rows[0] || {}).r2_key;
+  }
+  return ordered;
 }
 
 // ---- R2 ----
@@ -284,7 +320,8 @@ async function fillStep1(page, b) {
   await set('#data-primary-author-name-romanized', romajiFor(b.author_romaji, b.author_kana));
   for (let i = 0; i < 7; i++) if (b.keywords?.[i]) await set('#data-keywords-' + i, b.keywords[i]);
   await page.check('#non-public-domain', { force: true }).catch(() => {});
-  await page.check('input[name="data[is_adult_content]-radio"][value="false"]', { force: true }).catch(() => {});
+  await page.check(`input[name="data[is_adult_content]-radio"][value="${ADULT ? 'true' : 'false'}"]`, { force: true }).catch(() => {});
+  if (ADULT) log('  STEP1: 成人向けコンテンツ=はい (--adult)');
   await page.evaluate((t) => { try { if (window.CKEDITOR && CKEDITOR.instances) { const k = Object.keys(CKEDITOR.instances)[0]; if (k) CKEDITOR.instances[k].setData(t.replace(/\n/g, '<br>')); } } catch {} }, b.description || '');
   await page.waitForTimeout(2000);
   // categories
@@ -385,10 +422,19 @@ async function setStep2Options(page) {
     const drmR = radios.find((r) => /デジタル著作権管理を適用します/.test(labelOf(r)))
       || radios.find((r) => /DRM/.test(labelOf(r)) && /を適用します/.test(labelOf(r)));
     if (drmR && !drmR.checked) drmR.click();
-    // アクセシビリティ: すべてに代替テキスト
-    const accR = [...document.querySelectorAll('input[name="data[accessibility][image_reading]"]')]
-      .find((r) => /すべてに代替テキストや詳細な説明が含まれています/.test(labelOf(r)));
-    if (accR && !accR.checked) accR.click();
+    // アクセシビリティ: 「(画像の)すべてに代替テキストや詳細な説明が含まれています」(4つ目/肯定)を選ぶ。
+    // これを選ばないと「新しい原稿/表紙をアップロード — 回答が正しいことを確認」チェックが出て save がブロックされる。
+    // name 属性が変わっても拾えるよう全 radio をラベル一致で探し、native click が効かない場合は
+    // ラベル/コンテナへマウスイベントも送る(AUI 対策)。
+    let accR = radios.find((r) => /すべてに代替テキストや詳細な説明が含まれています/.test(labelOf(r)));
+    if (!accR) accR = radios.find((r) => /すべて/.test(labelOf(r)) && /代替テキスト/.test(labelOf(r)) && /含まれています/.test(labelOf(r)));
+    if (accR) {
+      if (!accR.checked) accR.click();
+      if (!accR.checked) {
+        const lab = accR.closest('label') || (accR.id && document.querySelector('label[for="' + accR.id + '"]')) || accR.parentElement;
+        if (lab) ['pointerdown', 'mousedown', 'mouseup', 'click'].forEach((t) => lab.dispatchEvent(new MouseEvent(t, { bubbles: true })));
+      }
+    }
     // 再アップロード確認チェック(AI・アクセシビリティ各セクション)。native input か AUI 疑似チェック
     // か不明なので、確認テキストを含む最小コンテナ内の checkbox 相当をマウスイベントで押す。
     const cf = (() => {
@@ -481,8 +527,9 @@ async function fillStep2(page, coverPath, docxPath) {
   log('  step2 options:', JSON.stringify({ ...opt, confirmDumps: undefined }));
   if (opt.confirmDumps && opt.confirmDumps.length) for (const d of opt.confirmDumps) log('    confirm-box:', d);
   else log('    confirm-box: (検出0件 — 確認チェック不在の可能性)');
-  // 未設定(AI/DRM)が残っていれば数回まで再設定を試みる。
-  for (let r = 0; r < 3 && (!opt.aiNo || !opt.drm); r++) {
+  // 未設定(AI/DRM/アクセシビリティ)が残っていれば数回まで再設定を試みる。
+  // アクセシビリティ4つ目が外れると確認チェックが出て save がブロックされるため、これも必ず再試行対象にする。
+  for (let r = 0; r < 3 && (!opt.aiNo || !opt.drm || !opt.accessibility); r++) {
     await page.waitForTimeout(2500);
     opt = await setStep2Options(page);
     log('  step2 options(retry ' + (r + 1) + '):', JSON.stringify({ ...opt, confirmDumps: undefined }));
@@ -665,8 +712,8 @@ async function verifyPublished(page, title) {
 
 async function ensureLoggedIn(page, c) {
   // ASSIST時はCREATE(新規作成=下書き発生/制限)を避け、本棚でログイン判定する
-  const target = (ASSIST || AUTO) ? BOOKSHELF : CREATE;
-  const loggedIn = () => ((ASSIST || AUTO) ? /\/bookshelf/.test(page.url()) && !/signin/i.test(page.url()) : isOnDetails(page));
+  const target = (ASSIST || AUTO || OVERWRITE) ? BOOKSHELF : CREATE;
+  const loggedIn = () => ((ASSIST || AUTO || OVERWRITE) ? /\/bookshelf/.test(page.url()) && !/signin/i.test(page.url()) : isOnDetails(page));
   await page.goto(target, { waitUntil: 'domcontentloaded' }); await page.waitForTimeout(6000);
   if (loggedIn()) return true;
   log('*** Amazonログイン処理を開始（LINE認証リレー対応）。最大10分待機します ***');
@@ -927,10 +974,85 @@ async function runAuto(c, page, s3, books) {
   for (const r of results) log(` ${r.status}\t${r.title}${r.asin ? ' ' + r.asin : ''}`);
 }
 
+// 上書きモード: 指定 listing(titleId) を差し替え本(book)で上書き入稿(全自動)。二重出版の重複解消用。
+// 作成枠を消費しない(既存 listing の編集)。審査ロックで詳細ページに入れない listing は skip する。
+async function runOverwrite(c, page, s3, pairs) {
+  log(`上書き対象 ${pairs.length}件`);
+  const results = [];
+  for (let i = 0; i < pairs.length; i++) {
+    const { titleId, book: b } = pairs[i];
+    log(`\n=== [${i + 1}/${pairs.length}] 上書き ${titleId} <- ${b.title} ===`);
+    try {
+      if (!b.cover_key || !b.docx_key) { log('  差し替え本の資産不足 skip'); results.push({ titleId, title: b.title, status: 'skip_no_assets' }); continue; }
+      const coverPath = path.join(STAGE, b.id + '-cover.jpg');
+      const docxPath = path.join(STAGE, b.id + '.docx');
+      await download(s3, b.cover_key, coverPath);
+      await download(s3, b.docx_key, docxPath);
+      await page.goto(EDIT_BASE + titleId + '/details', { waitUntil: 'domcontentloaded' }); await page.waitForTimeout(6000);
+      if (!(await passReauthIfNeeded(page, c))) { log('  再認証失敗 skip'); results.push({ titleId, title: b.title, status: 'reauth_failed' }); continue; }
+      if (!/\/details/.test(page.url()) || !(await page.$('#data-title').catch(() => null))) {
+        await page.goto(EDIT_BASE + titleId + '/details', { waitUntil: 'domcontentloaded' }); await page.waitForTimeout(6000);
+        await passReauthIfNeeded(page, c);
+      }
+      const titleReady = await page.waitForSelector('#data-title', { state: 'visible', timeout: 45000 }).then(() => true).catch(() => false);
+      if (!titleReady) { log('  詳細ページに入れない(審査ロック?) skip'); await page.screenshot({ path: path.join(STAGE, b.id + '-ow-nodetails.png'), fullPage: true }).catch(() => {}); results.push({ titleId, title: b.title, status: 'locked_no_details' }); continue; }
+      const s1 = await fillStep1(page, b);
+      if (s1.blocked) { log('  BLOCKED step1:', s1.blocked); results.push({ titleId, title: b.title, status: 'blocked_' + s1.blocked }); continue; }
+      log('  step1 OK -> content');
+      const s2 = await fillStep2(page, coverPath, docxPath);
+      if (s2.blocked) { log('  BLOCKED step2:', s2.blocked); results.push({ titleId, title: b.title, status: 'blocked_' + s2.blocked }); continue; }
+      log('  step2 OK -> pricing');
+      let s3r;
+      try { s3r = await fillStep3(page, b); }
+      catch (e) { log('  step3例外→本棚確認(' + e.message.slice(0, 40) + ')'); s3r = { verify: true }; }
+      if (s3r.dryRun) { results.push({ titleId, title: b.title, status: 'dry_run_ready' }); continue; }
+      if (s3r.blocked) { log('  BLOCKED step3:', s3r.blocked); results.push({ titleId, title: b.title, status: 'blocked_' + s3r.blocked }); continue; }
+      await page.waitForTimeout(4000);
+      const pubv = await verifyPublished(page, b.title).catch(() => ({ published: false }));
+      if (pubv.published) {
+        // asin は他の本が既に持つ古い値と衝突しうる(captureAsin は不正確)。overwrite では asin を更新せず
+        // publish_status/queue のみ更新する(asin は後の kdp.publish.status.sync が埋める)。
+        await dbExec("UPDATE books SET publish_status='submitted', kdp_publish_queued=false WHERE id=$1", [b.id]);
+        log('  ✅ 上書き出版確認(' + pubv.label + ') asin=' + (pubv.asin || '-') + ' -> submitted');
+        results.push({ titleId, title: b.title, status: 'submitted', asin: pubv.asin || null });
+      } else {
+        log('  出版未確認 → 要手動確認');
+        await page.screenshot({ path: path.join(STAGE, b.id + '-ow-unconfirmed.png'), fullPage: true }).catch(() => {});
+        results.push({ titleId, title: b.title, status: 'publish_unconfirmed' });
+      }
+    } catch (e) {
+      log('  ERROR:', e.message);
+      await page.screenshot({ path: path.join(STAGE, b.id + '-ow-error.png'), fullPage: true }).catch(() => {});
+      results.push({ titleId, title: b.title, status: 'error', error: e.message });
+    }
+  }
+  log('\n===== OVERWRITE RESULT =====');
+  for (const r of results) log(` ${r.status}\t${r.titleId}\t${r.title}${r.asin ? ' ' + r.asin : ''}`);
+}
+
 async function main() {
   const c = db();
   c.on('error', (e) => { try { log('  (DB接続エラー(無視): ' + e.message + ')'); } catch {} }); // アイドル切断でプロセスを落とさない
   await c.connect();
+
+  // ---- 上書きモード(重複listingの差し替え) ----
+  if (OVERWRITE) {
+    const map = JSON.parse(fs.readFileSync(OVERWRITE_MAP, 'utf8'));
+    const bookIds = map.map((m) => m.bookId);
+    const books = await fetchBooksByIds(c, bookIds);
+    const byId = new Map(books.map((b) => [b.id, b]));
+    const pairs = map.map((m) => ({ titleId: m.titleId, book: byId.get(m.bookId) })).filter((p) => p.book);
+    log(`上書きペア: ${pairs.length}/${map.length}${DRY_RUN ? ' (DRY RUN)' : ''}`);
+    if (!pairs.length) { log('有効な差し替え本が無い — 中止'); await c.end(); return; }
+    const s3 = r2();
+    const ctx = await chromium.launchPersistentContext(USERDATA, { headless: false, channel: 'chrome', locale: 'ja-JP', viewport: { width: 1500, height: 1200 }, args: ['--disable-blink-features=AutomationControlled'] });
+    const page = ctx.pages()[0] ?? await ctx.newPage();
+    page.setDefaultTimeout(60000);
+    if (!(await ensureLoggedIn(page, c))) { log('ログイン未完了 — 中止'); await ctx.close(); await c.end(); return; }
+    await runOverwrite(c, page, s3, pairs);
+    await page.waitForTimeout(2000); await ctx.close(); await c.end(); return;
+  }
+
   const books = await fetchBooks(c);
   log(`対象書籍: ${books.length}冊${DRY_RUN ? ' (DRY RUN)' : ''}${AUTO ? ' (AUTO)' : ASSIST ? ' (ASSIST)' : ''}`);
   if (!books.length) { await c.end(); return; }
@@ -948,6 +1070,24 @@ async function main() {
     log(`\n=== ${b.title} ===`);
     try {
       if (!b.cover_key || !b.docx_key) { results.push({ id: b.id, title: b.title, status: 'skip_no_assets' }); log('  資産不足 skip'); continue; }
+      // 【二重出版防止ガード】CREATE(新規タイトル作成)の前に本棚を検索し、同名の本が
+      // 既に存在すれば新規作成しない。publish_status の書き戻しが失敗して 'unlisted' のまま
+      // 残った本を --all が毎回 CREATE で再出版し、Amazon 側に重複 listing を量産する事故を
+      // 防ぐ(実害: 「ChatGPT仕事術『時短テンプレ』100」等が複数出版)。
+      // 「本棚に無い(not_found)」と確認できた時だけ新規作成する(不確実な時は作らない=重複回避優先)。
+      const pre = await verifyPublished(page, b.title).catch(() => ({ published: false, label: 'verify_error', asin: null }));
+      if (pre.label !== 'not_found') {
+        if (pre.published) {
+          await c.query("UPDATE books SET publish_status='submitted', kdp_publish_queued=false, asin=COALESCE($2,asin) WHERE id=$1", [b.id, pre.asin || null]);
+          log('  既に本棚に存在(' + pre.label + ') → 新規作成せず submitted に整合して skip');
+          results.push({ id: b.id, title: b.title, status: 'already_published', asin: pre.asin || null });
+        } else {
+          log('  本棚に同名あり/確認不能(' + pre.label + ') → 重複作成を避け skip(差し替えは --overwrite、下書き上書きは --assist)');
+          results.push({ id: b.id, title: b.title, status: 'exists_or_uncertain_skip' });
+        }
+        continue;
+      }
+
       const coverPath = path.join(STAGE, b.id + '-cover.jpg');
       const docxPath = path.join(STAGE, b.id + '.docx');
       await download(s3, b.cover_key, coverPath);
@@ -966,16 +1106,23 @@ async function main() {
       const s2 = await fillStep2(page, coverPath, docxPath);
       if (s2.blocked) { results.push({ id: b.id, title: b.title, status: 'blocked_' + s2.blocked }); log('  BLOCKED at step2:', s2.blocked); continue; }
       log('  step2 OK -> pricing');
-      const s3r = await fillStep3(page, b);
+      // fillStep3 は「出版」クリック後のナビゲーションで evaluate context が破棄され throw することがある
+      // (実際には出版成功しているケースが多い)。AUTO 経路と同様に step3 例外は本棚確認へ委ねる。
+      let s3r;
+      try { s3r = await fillStep3(page, b); }
+      catch (e) { log('  step3例外→本棚確認(' + e.message.slice(0, 40) + ')'); s3r = { verify: true }; }
       if (s3r.dryRun) { await page.screenshot({ path: path.join(STAGE, b.id + '-dryrun-pricing.png') }).catch(() => {}); results.push({ id: b.id, title: b.title, status: 'dry_run_ready' }); continue; }
-      const asin = await captureAsin(page, b.title);
-      log('  PUBLISHED asin=', asin);
-      if (asin) {
-        await c.query("UPDATE books SET publish_status='submitted', kdp_publish_queued=false, asin=$2 WHERE id=$1", [b.id, asin]);
+      if (s3r.blocked) { log('  BLOCKED at step3:', s3r.blocked); await page.screenshot({ path: path.join(STAGE, b.id + '-step3blocked.png') }).catch(() => {}); results.push({ id: b.id, title: b.title, status: 'blocked_' + s3r.blocked }); continue; }
+      // 本棚で出版状態(レビュー中/出版準備中/販売中/ライブ)を確認してから submitted に確定する。
+      const pubv = await verifyPublished(page, b.title).catch(() => ({ published: false, label: 'verify_error', asin: null }));
+      if (pubv.published) {
+        await c.query("UPDATE books SET publish_status='submitted', kdp_publish_queued=false, asin=COALESCE($2,asin) WHERE id=$1", [b.id, pubv.asin || null]);
+        log('  PUBLISHED (' + pubv.label + ') asin=' + (pubv.asin || '?'));
+        results.push({ id: b.id, title: b.title, status: 'published', asin: pubv.asin });
       } else {
-        await c.query("UPDATE books SET publish_status='submitted', kdp_publish_queued=false WHERE id=$1", [b.id]);
+        log('  未確認(本棚に出版状態が見えず) — 下書きは作成済み、--auto で再開可能');
+        results.push({ id: b.id, title: b.title, status: 'draft_created_unverified' });
       }
-      results.push({ id: b.id, title: b.title, status: 'published', asin });
     } catch (e) {
       log('  ERROR:', e.message);
       await page.screenshot({ path: path.join(STAGE, b.id + '-error.png') }).catch(() => {});

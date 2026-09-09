@@ -8,13 +8,13 @@
  *        DataRetention / KdpSubmissionSettings (disabled) / ApiCredentialsList.
  */
 import type { Metadata } from 'next';
-import Link from 'next/link';
 
 import { prisma } from '@a2p/db';
 
 import { messages } from '@/lib/messages';
 import { serializeSettingsPage } from '@/lib/settings-view';
 import { SettingsPageShell } from '@/components/settings/settings-page-shell';
+import { PageHeading } from '@/components/common/page-heading';
 
 export const metadata: Metadata = {
   title: `${messages.settings.pageTitle} | ${messages.brand.appName}`,
@@ -37,6 +37,9 @@ const DEFAULT_SETTINGS = {
   prompt_auto_approval_rollback_h: 24,
   sales_auto_fetch_enabled: false,
   sales_auto_fetch_cron: '0 17 * * *',
+  kdp_auto_submit_enabled: false,
+  kdp_submit_dry_run: false,
+  kdp_creation_paused_until: null,
   kdp_submit_timeout_minutes: 10,
   kdp_submit_retry_count: 2,
   job_log_retention_days: 90,
@@ -63,21 +66,7 @@ export default async function SettingsPage() {
 
   return (
     <div className="flex flex-col gap-space-loose" data-testid="settings-page">
-      <header className="flex flex-col gap-space-snug">
-        <nav aria-label="breadcrumb" className="text-button-sm text-muted">
-          <Link href="/dashboard" className="no-underline hover:underline">
-            {m.breadcrumbHome}
-          </Link>
-          <span aria-hidden="true"> &gt; </span>
-          <span>{m.breadcrumbOps}</span>
-          <span aria-hidden="true"> &gt; </span>
-          <span>{m.breadcrumbSettings}</span>
-        </nav>
-        <div className="flex flex-col">
-          <h1 className="text-sub-heading text-foreground">{m.pageTitle}</h1>
-          <p className="text-body text-muted">{m.pageSubtitle}</p>
-        </div>
-      </header>
+      <PageHeading eyebrow={m.breadcrumbOps} title={m.pageTitle} description={m.pageSubtitle} />
 
       <SettingsPageShell data={pageData} />
     </div>

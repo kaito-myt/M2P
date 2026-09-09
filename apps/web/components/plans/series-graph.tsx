@@ -113,7 +113,7 @@ export function SeriesGraph({ months }: SeriesGraphProps) {
                       className={[
                         'rounded-sm px-3 py-1.5 text-button-sm text-foreground',
                         node.isCandidate
-                          ? 'border border-dashed border-charcoal bg-white'
+                          ? 'border border-dashed border-charcoal bg-cream-light'
                           : 'border border-charcoal bg-cream-light font-medium',
                       ].join(' ')}
                       aria-label={node.isCandidate ? `${node.label}（候補）` : `${node.label}（既存）`}

@@ -79,7 +79,7 @@ export function DataRetentionForm({ initialData }: DataRetentionFormProps) {
       <div className="mb-space-snug">
         <h2
           id="data-retention-heading"
-          className="text-sub-heading text-foreground"
+          className="text-section-title text-foreground"
         >
           {ms.title}
         </h2>
@@ -100,7 +100,7 @@ export function DataRetentionForm({ initialData }: DataRetentionFormProps) {
             value={jobLogDays}
             onChange={(e) => setJobLogDays(e.target.value)}
             onBlur={() => setErrors((p) => ({ ...p, jobLogDays: validateJobDays(jobLogDays) ?? '' }))}
-            className="w-40 rounded-button border border-border-warm bg-white px-3 py-2 text-body text-charcoal focus:outline-none focus-visible:ring-2 focus-visible:ring-foreground"
+            className="w-40 rounded-default border border-border-warm bg-cream-light px-3 py-2 text-body text-charcoal focus:outline-none focus-visible:ring-2 focus-visible:ring-foreground"
           />
           <p className="text-button-sm text-muted">{ms.jobLogRetentionHint}</p>
           {errors.jobLogDays && (
@@ -121,7 +121,7 @@ export function DataRetentionForm({ initialData }: DataRetentionFormProps) {
             value={r2Days}
             onChange={(e) => setR2Days(e.target.value)}
             onBlur={() => setErrors((p) => ({ ...p, r2Days: validateR2Days(r2Days) ?? '' }))}
-            className="w-40 rounded-button border border-border-warm bg-white px-3 py-2 text-body text-charcoal focus:outline-none focus-visible:ring-2 focus-visible:ring-foreground"
+            className="w-40 rounded-default border border-border-warm bg-cream-light px-3 py-2 text-body text-charcoal focus:outline-none focus-visible:ring-2 focus-visible:ring-foreground"
           />
           <p className="text-button-sm text-muted">{ms.r2ArchiveThresholdHint}</p>
           {errors.r2Days && (
@@ -141,7 +141,7 @@ export function DataRetentionForm({ initialData }: DataRetentionFormProps) {
             maxLength={2000}
             rows={4}
             placeholder={ms.aiDisclosurePlaceholder}
-            className="rounded-button border border-border-warm bg-white px-3 py-2 text-body text-charcoal placeholder:text-muted focus:outline-none focus-visible:ring-2 focus-visible:ring-foreground"
+            className="rounded-default border border-border-warm bg-cream-light px-3 py-2 text-body text-charcoal placeholder:text-muted focus:outline-none focus-visible:ring-2 focus-visible:ring-foreground"
           />
         </div>
 
@@ -150,7 +150,7 @@ export function DataRetentionForm({ initialData }: DataRetentionFormProps) {
           <button
             type="submit"
             disabled={isPending}
-            className="rounded-button bg-foreground px-4 py-2 text-button-sm font-medium text-white disabled:opacity-50"
+            className="rounded-default bg-foreground px-4 py-2 text-button-sm font-medium text-white disabled:opacity-50"
           >
             {isPending ? m.saving : m.saveButton}
           </button>

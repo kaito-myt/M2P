@@ -215,6 +215,35 @@ export const GENERIC_GENRE_POLICY =
   '対象ジャンルはユーザーメッセージで指定される。読者の課題解決を最優先し、具体性と再現性を担保する。';
 
 /**
+ * フィクション(物語)ジャンルの slug 集合。実用書とは書き方(構成・文体・表現)を分岐するのに使う。
+ * 小説はダ・デアル調＋詩的描写で書き、章立て/小見出し/箇条書き等の実用書フォーマットを課さない。
+ */
+export const FICTION_GENRES: ReadonlySet<string> = new Set([
+  'novel',
+  'light_novel',
+  'mystery',
+  'sf_fantasy',
+  'romance_fiction',
+  'historical_novel',
+  'horror',
+]);
+
+/** そのジャンルが小説・フィクション(物語)か。実用書系の構成・文体を課さないための判定。 */
+export function isFiction(slug: string | null | undefined): boolean {
+  return !!slug && FICTION_GENRES.has(slug);
+}
+
+/**
+ * フィクション共通の文体・表現指針。genreGuidance がフィクションジャンルに追記し、
+ * 全役割プロンプト ({genre_guidance}) に注入される。
+ */
+export const FICTION_STYLE_DIRECTIVE =
+  '文体は「だ・である」調で統一する（ですます調にしない）。物語であり実用書ではないため、' +
+  '章立て・小見出し・箇条書き・「ポイント」「まとめ」等の実用書フォーマットは使わない。' +
+  '説明や状況の要約に逃げず、情景・心情・五感・具体的な所作・自然な会話、比喩・省略・余韻で「見せる」。' +
+  '常套句や稚拙な直叙を避け、選び抜いた語と細部の描写で立ち上げる、文学的で詩的な文章にする。';
+
+/**
  * プロンプトの `{genre_guidance}` に注入する 1 行を返す。
  * 例: 「【ジャンル方針：投資・資産運用】根拠とリスクを必ず明示し…」
  * null / 未知 slug は汎用方針にフォールバックする。
@@ -223,6 +252,9 @@ export function genreGuidance(slug: string | null | undefined): string {
   if (!slug) return `【ジャンル方針：汎用】${GENERIC_GENRE_POLICY}`;
   const policy = GENRE_POLICIES[slug];
   const label = GENRE_LABELS[slug] ?? slug;
-  if (!policy) return `【ジャンル方針：${label}】${GENERIC_GENRE_POLICY}`;
-  return `【ジャンル方針：${label}】${policy}`;
+  const base = policy
+    ? `【ジャンル方針：${label}】${policy}`
+    : `【ジャンル方針：${label}】${GENERIC_GENRE_POLICY}`;
+  // フィクションは共通の文体・表現指針を必ず付与する（実用書フォーマット/ですます調を排除）。
+  return isFiction(slug) ? `${base}\n【文体・表現】${FICTION_STYLE_DIRECTIVE}` : base;
 }

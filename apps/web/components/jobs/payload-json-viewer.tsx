@@ -36,7 +36,7 @@ export function PayloadJsonViewer({ payload }: PayloadJsonViewerProps) {
 
   return (
     <section aria-label={m.payloadSection} className="rounded-card border border-border-warm bg-white">
-      <div className="flex items-center justify-between border-b border-border-warm px-space-normal py-space-snug">
+      <div className="flex items-center justify-between border-b border-border-warm px-space-relaxed py-space-snug">
         <button
           type="button"
           className="flex items-center gap-1.5 text-body font-medium text-foreground hover:text-accent focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
@@ -76,7 +76,7 @@ export function PayloadJsonViewer({ payload }: PayloadJsonViewerProps) {
             aria-label={copied ? m.copied : m.copyClipboard}
           >
             {copied ? (
-              <Check className="h-3.5 w-3.5 text-green-600" aria-hidden="true" />
+              <Check className="h-3.5 w-3.5 text-emerald-400" aria-hidden="true" />
             ) : (
               <Copy className="h-3.5 w-3.5" aria-hidden="true" />
             )}
@@ -88,7 +88,7 @@ export function PayloadJsonViewer({ payload }: PayloadJsonViewerProps) {
       {!collapsed && (
         <div id="payload-json-content">
           <pre
-            className="overflow-x-auto p-space-normal text-caption leading-relaxed text-foreground"
+            className="overflow-x-auto p-space-relaxed text-caption leading-relaxed text-foreground"
             style={{ fontFamily: 'monospace', whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}
           >
             {prettyJson}

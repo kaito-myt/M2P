@@ -683,10 +683,13 @@ function ConnectionCard({ setting }: { setting: ChannelSettingView }) {
   const isX = setting.channel === 'x';
   const isTikTok = setting.channel === 'tiktok';
   const isInstagram = setting.channel === 'instagram';
-  // Webhook / 汎用トークン欄は、専用フローを持つ X・TikTok では出さない。
-  const showWebhook = !isX && !isTikTok;
-  const showTokenField = !isX && !isTikTok;
+  const isNote = setting.channel === 'note';
+  // Webhook / 汎用トークン欄は、専用フローを持つ X・TikTok・note では出さない。
+  // note はブラウザ自動化なので「メール＋パスワード」の専用欄を出す。
+  const showWebhook = !isX && !isTikTok && !isNote;
+  const showTokenField = !isX && !isTikTok && !isNote;
   const [handle, setHandle] = useState(setting.handle ?? '');
+  const [noteEmail, setNoteEmail] = useState(setting.noteEmail ?? '');
   const [webhook, setWebhook] = useState(setting.webhookUrl ?? '');
   const [token, setToken] = useState('');
   // X 用 OAuth 1.0a の4値。
@@ -744,6 +747,7 @@ function ConnectionCard({ setting }: { setting: ChannelSettingView }) {
           channel: setting.channel,
           handle,
           ...(webhookTouched ? { webhook_url: webhook } : {}),
+          ...(isNote && unlocked.has('note-email') ? { note_email: noteEmail } : {}),
           ...(isX && xTouched
             ? {
                 x_api_key: xApiKey,
@@ -809,17 +813,51 @@ function ConnectionCard({ setting }: { setting: ChannelSettingView }) {
       )}
       {isTikTok && <TikTokConnect setting={setting} inputCls={inputCls} />}
       {isTikTok && <TikTokPostSettings setting={setting} inputCls={inputCls} />}
-      <label className="flex flex-col gap-1">
-        <span className="text-button-sm text-charcoal-82">{m.connSection.handleLabel}</span>
-        <input
-          className={inputCls}
-          value={handle}
-          onChange={(e) => setHandle(e.target.value)}
-          placeholder={m.connSection.handlePlaceholder}
-          autoComplete="off"
-          name={`handle-${setting.channel}`}
-        />
-      </label>
+      {isNote && (
+        <div className="flex flex-col gap-space-snug rounded-default border border-border-warm/70 bg-cream p-space-snug">
+          <span className="text-button-sm font-medium text-charcoal-82">note ログイン（ブラウザ自動投稿）</span>
+          <p className="text-caption text-muted">
+            note は公式APIが無いため、あなたのメール＋パスワードで自動ログインして投稿します。ここで保存すると暗号化して保管します。
+          </p>
+          <label className="flex flex-col gap-1">
+            <span className="text-caption text-charcoal-82">メールアドレス</span>
+            <input
+              className={inputCls}
+              type="email"
+              value={noteEmail}
+              onChange={(e) => setNoteEmail(e.target.value)}
+              placeholder="note のログインメール"
+              name="note-email"
+              {...noAutofill('note-email')}
+            />
+          </label>
+          <label className="flex flex-col gap-1">
+            <span className="text-caption text-charcoal-82">パスワード</span>
+            <input
+              type={unlocked.has('token') ? 'password' : 'text'}
+              className={inputCls}
+              value={unlocked.has('token') ? token : setting.tokenMask ?? ''}
+              onChange={(e) => setToken(e.target.value)}
+              placeholder={setting.tokenMask ? '設定済み（変更する場合のみ入力）' : 'note のパスワード'}
+              {...noAutofill('token')}
+            />
+            {setting.tokenMask && <span className="text-caption text-muted">パスワードは設定済みです。</span>}
+          </label>
+        </div>
+      )}
+      {!isNote && (
+        <label className="flex flex-col gap-1">
+          <span className="text-button-sm text-charcoal-82">{m.connSection.handleLabel}</span>
+          <input
+            className={inputCls}
+            value={handle}
+            onChange={(e) => setHandle(e.target.value)}
+            placeholder={m.connSection.handlePlaceholder}
+            autoComplete="off"
+            name={`handle-${setting.channel}`}
+          />
+        </label>
+      )}
       {showWebhook && (
         <label className="flex flex-col gap-1">
           <span className="text-button-sm text-charcoal-82">{m.connSection.webhookLabel}</span>

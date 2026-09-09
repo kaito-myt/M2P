@@ -61,13 +61,14 @@ export interface PromotionChannelsDeps {
     channel: string;
     token: string | null;
     webhookUrl: string | null;
+    noteEmail?: string | null;
   }) => Promise<ChannelProbeResult>;
 }
 
 /** 接続テスト結果 (probe が返す判別結果を薄く再エクスポート)。 */
 export interface ChannelProbeResult {
   ok: boolean;
-  method: 'x_api' | 'tiktok' | 'webhook' | 'owned' | 'none';
+  method: 'x_api' | 'tiktok' | 'webhook' | 'browser' | 'owned' | 'none';
   message: string;
   http_status?: number;
   latency_ms?: number;
@@ -118,6 +119,8 @@ const SetConnectionSchema = z.object({
   webhook_url: z.string().url().max(500).optional().or(z.literal('')),
   /** 空文字は「変更なし」。新規トークンのときだけ暗号化して保存する。 */
   token: z.string().max(4000).optional(),
+  /** note (ブラウザ自動化) のログインメール。config_json.note_email に保存。パスワードは token 欄を流用。 */
+  note_email: z.string().max(200).optional(),
   /** X 用 OAuth 1.0a の4値 (全て揃ったときだけ JSON 化して token として保存)。 */
   x_api_key: z.string().max(400).optional(),
   x_api_secret: z.string().max(400).optional(),
@@ -136,6 +139,7 @@ export async function setChannelConnectionCore(
     handle,
     webhook_url,
     token,
+    note_email,
     x_api_key,
     x_api_secret,
     x_access_token,
@@ -147,6 +151,7 @@ export async function setChannelConnectionCore(
   const config = {
     ...((existing?.config_json as Record<string, unknown> | null) ?? {}),
     ...(webhook_url !== undefined ? { webhook_url: webhook_url || null } : {}),
+    ...(note_email !== undefined ? { note_email: note_email.trim() || null } : {}),
   };
 
   const update: Record<string, unknown> = {
@@ -235,8 +240,10 @@ export async function testChannelConnectionCore(
     }
   }
   const webhookUrl = readWebhookUrl(existing?.config_json);
+  const noteEmail =
+    ((existing?.config_json as Record<string, unknown> | null)?.note_email as string | undefined) ?? null;
 
-  const result = await deps.probe({ channel, token, webhookUrl });
+  const result = await deps.probe({ channel, token, webhookUrl, noteEmail });
 
   await deps.auditLogRepo.create({
     data: {

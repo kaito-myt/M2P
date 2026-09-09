@@ -30,26 +30,23 @@ export function DailyCostTable({ rows }: DailyCostTableProps) {
       <table className="w-full text-body">
         <thead>
           <tr className="border-b border-border-warm bg-cream-light text-left">
-            <th className="px-space-relaxed py-space-snug font-medium text-charcoal">{m.colDate}</th>
-            <th className="px-space-relaxed py-space-snug font-medium text-charcoal">{m.colProvider}</th>
-            <th className="px-space-relaxed py-space-snug text-right font-medium text-charcoal">{m.colCostJpy}</th>
-            <th className="px-space-relaxed py-space-snug text-right font-medium text-charcoal">{m.colCallCount}</th>
+            <th className="whitespace-nowrap px-space-relaxed py-space-snug font-medium text-charcoal">{m.colDate}</th>
+            <th className="whitespace-nowrap px-space-relaxed py-space-snug font-medium text-charcoal">{m.colProvider}</th>
+            <th className="whitespace-nowrap px-space-relaxed py-space-snug text-right font-medium text-charcoal">{m.colCostJpy}</th>
+            <th className="whitespace-nowrap px-space-relaxed py-space-snug text-right font-medium text-charcoal">{m.colCallCount}</th>
           </tr>
         </thead>
         <tbody>
           {rows.map((row, i) => (
             <tr key={`${row.date}-${row.provider}-${i}`} className="border-b border-border-warm last:border-0">
-              <td className="px-space-relaxed py-space-snug text-charcoal">{row.date}</td>
+              <td className="whitespace-nowrap px-space-relaxed py-space-snug text-charcoal">{row.date}</td>
               <td className="px-space-relaxed py-space-snug text-charcoal">{row.provider}</td>
-              <td className="px-space-relaxed py-space-snug text-right text-charcoal">{formatCostJpy(row.cost_jpy)}</td>
-              <td className="px-space-relaxed py-space-snug text-right text-muted">{row.call_count}</td>
+              <td className="whitespace-nowrap px-space-relaxed py-space-snug text-right tabular-nums text-charcoal">{formatCostJpy(row.cost_jpy)}</td>
+              <td className="whitespace-nowrap px-space-relaxed py-space-snug text-right tabular-nums text-muted">{row.call_count}</td>
             </tr>
           ))}
         </tbody>
       </table>
-      <div className="bg-cream-light px-space-relaxed py-space-snug text-center">
-        <p className="text-caption text-muted">{m.chartPlaceholder}</p>
-      </div>
     </div>
   );
 }

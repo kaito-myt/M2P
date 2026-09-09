@@ -121,8 +121,8 @@ export function AlertsTable({
                     {getSeverityLabel(row.severity)}
                   </span>
                 </td>
-                <td className="max-w-xs truncate px-3 py-2 text-charcoal">
-                  {row.message}
+                <td className="max-w-xs px-3 py-2 text-charcoal">
+                  <span className="block truncate" title={row.message}>{row.message}</span>
                 </td>
                 <td className="px-3 py-2">
                   {linkLabel && (

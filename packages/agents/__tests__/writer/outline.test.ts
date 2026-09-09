@@ -232,12 +232,15 @@ describe('generateOutline — 章数バリデーション', () => {
   });
 
   // ---------------------------------------------------------------------------
-  // 3. 章数 11 (上限超) → AgentError
+  // 3. 章数 31 (上限 30 超) → AgentError
+  //    2026-08: モデルの 1 章あたり出力上限(~5000字)に合わせ「章あたり目標を下げ章数で
+  //    総量を稼ぐ」方針に変更し、章数上限を 18→30 に拡張。境界は「31 章で invalid_output」。
   // ---------------------------------------------------------------------------
 
-  it('章数 11 (上限 10 超) → AgentError(invalid_output)', async () => {
-    const chapters = buildChapters(11, 50000);
-    const text = jsonResponse({ chapters, totalCharsEstimate: 50000 });
+  it('章数 31 (上限 30 超) → AgentError(invalid_output)', async () => {
+    // 各章 target_chars を 2000 以上に保つため総字数を上げる (章数超過のみを検証)。
+    const chapters = buildChapters(31, 93000);
+    const text = jsonResponse({ chapters, totalCharsEstimate: 93000 });
     const fakeClient = makeFakeClient(text);
     const promptRepo = makePromptRepo([defaultPromptRow()]);
 
@@ -587,7 +590,7 @@ describe('generateOutline — token_usage 記録 (T-03-01 教訓回帰防止)', 
 // ---------------------------------------------------------------------------
 
 describe('generateOutline — LLM 呼出パラメータ', () => {
-  it('client.complete に role=writer + maxOutputTokens=8192 + system/user 両方が渡る', async () => {
+  it('client.complete に role=writer + maxOutputTokens=16384 + system/user 両方が渡る', async () => {
     const chapters = buildChapters(8, 50000);
     const text = jsonResponse({ chapters, totalCharsEstimate: 50000 });
     const fakeClient = makeFakeClient(text);
@@ -603,7 +606,7 @@ describe('generateOutline — LLM 呼出パラメータ', () => {
     };
     const args = completeMock.mock.calls[0]![0];
     expect(args.role).toBe('writer');
-    expect(args.maxOutputTokens).toBe(8192);
+    expect(args.maxOutputTokens).toBe(16384);
     expect(args.messages).toHaveLength(2);
     expect(args.messages[0]!.role).toBe('system');
     expect(args.messages[1]!.role).toBe('user');

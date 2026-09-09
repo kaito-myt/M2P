@@ -255,6 +255,79 @@ describe('runKdpPublishStatusSync', () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  it('(d-2) セッション切れ → refreshSession 成功で同じ本を再読込し継続 (通知しない)', async () => {
+    process.env.LINE_CHANNEL_ACCESS_TOKEN = 'line-token-test';
+    process.env.LINE_ALLOWED_USER_ID = 'U-test-user';
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, text: async () => '' });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const { prisma, bookUpdates } = makeMockPrisma({
+      books: [
+        { id: 'book-9', asin: 'B0EXPIRED9', title: '1冊目(初回だけ切れ)' },
+        { id: 'book-10', asin: 'B0LIVE0010', title: '2冊目(継続して処理される)' },
+      ],
+    });
+
+    // 1冊目の1回目だけ session_expired、再ログイン後の再読込では live を返す。
+    const calls: string[] = [];
+    let firstCall = true;
+    const port: BookshelfPort = {
+      async takedownBook() {
+        throw new Error('not used');
+      },
+      async readBookStatus(args) {
+        const key = args.asin ?? args.title;
+        calls.push(key);
+        if (key === 'B0EXPIRED9' && firstCall) {
+          firstCall = false;
+          return { ok: false, reason: 'session_expired', message: 'redirect' };
+        }
+        return { ok: true, status: 'live' };
+      },
+    };
+
+    const refreshSession = vi.fn().mockResolvedValue({ ok: true, storageState: '{"cookies":[],"origins":[]}' });
+
+    const res = await runKdpPublishStatusSync({ bookshelfPort: port, prisma, logger: silent, refreshSession });
+
+    expect(refreshSession).toHaveBeenCalledTimes(1);
+    // 1冊目は 切れ→再ログイン→再読込(live) の2回、2冊目は1回。
+    expect(calls).toEqual(['B0EXPIRED9', 'B0EXPIRED9', 'B0LIVE0010']);
+    expect(res).toEqual({ checked: 2, promoted: 2 });
+    expect(bookUpdates).toHaveLength(2);
+    // 自己回復したので「セッション切れ」通知は出ない(出版完了通知は出てよい)。
+    const sentTexts = fetchMock.mock.calls.map((c) => String((c[1] as { body: string }).body));
+    expect(sentTexts.some((b) => b.includes('セッション'))).toBe(false);
+  });
+
+  it('(d-3) セッション切れ → refreshSession 失敗なら通知して中断', async () => {
+    process.env.LINE_CHANNEL_ACCESS_TOKEN = 'line-token-test';
+    process.env.LINE_ALLOWED_USER_ID = 'U-test-user';
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, text: async () => '' });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const { prisma, bookUpdates } = makeMockPrisma({
+      books: [
+        { id: 'book-11', asin: 'B0EXPIR011', title: '1冊目' },
+        { id: 'book-12', asin: 'B0NEVER012', title: '2冊目(到達しない)' },
+      ],
+    });
+    const { port, calls } = makePort({
+      B0EXPIR011: { ok: false, reason: 'session_expired', message: 'redirect' },
+    });
+    const refreshSession = vi.fn().mockResolvedValue({ ok: false, reason: 'captcha' });
+
+    const res = await runKdpPublishStatusSync({ bookshelfPort: port, prisma, logger: silent, refreshSession });
+
+    expect(refreshSession).toHaveBeenCalledTimes(1);
+    expect(calls).toEqual(['B0EXPIR011']); // 2冊目には到達しない
+    expect(res).toEqual({ checked: 1, promoted: 0 });
+    expect(bookUpdates).toHaveLength(0);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const body = JSON.parse(String(fetchMock.mock.calls[0]![1].body));
+    expect(body.messages[0].text).toContain('自動再ログインにも失敗');
+  });
+
   it('action_failed 等の一時的失敗はスキップして次の本を継続する', async () => {
     const { prisma, bookUpdates } = makeMockPrisma({
       books: [

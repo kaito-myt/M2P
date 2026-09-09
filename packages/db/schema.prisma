@@ -1208,6 +1208,10 @@ model AppSettings {
   // ログインは reCAPTCHA 付きでサーバーから突破不可 — ローカルで手動ログイン後、
   // scripts/bookwalker/bw-session-push.mjs で保存する(単一アカウント運用のため AppSettings 保持)。
   bw_session_state_enc            String?  @db.Text
+  // F-094b: 却下(AI生成タグ欠落等)書籍の自動再申請(bw.retag.tick)。true で日次cronが
+  // 本棚の却下書籍にAI生成サブカテゴリ付与+内容紹介整形+クリーンEPUB再アップして再申請する。
+  // BWは AI作品の申請を「月3作品」に制限(faq/9999)するため 403(rate_limited)で当tickは停止。既定OFF。
+  bw_retag_enabled                Boolean  @default(false)
   // F-095: 楽天Kobo (KWL) サーバー自動入稿 — エンジン実装前のプレースホルダ(タブUIは先行)。
   kobo_auto_submit_enabled        Boolean  @default(false)
   kobo_submit_dry_run             Boolean  @default(false)

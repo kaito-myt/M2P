@@ -36,7 +36,7 @@ export function CsvExportButton({ year, month }: CsvExportButtonProps) {
 
   return (
     <button
-      className="inline-flex items-center rounded-button border border-border-warm bg-cream-light px-4 py-2 text-button font-medium text-charcoal hover:bg-charcoal-04 disabled:opacity-50"
+      className="inline-flex items-center rounded-default border border-border-warm bg-cream-light px-4 py-2 text-button font-medium text-charcoal hover:bg-charcoal-04 disabled:opacity-50"
       disabled={isExporting}
       onClick={handleClick}
       data-testid="csv-export-button"

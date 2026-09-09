@@ -30,29 +30,36 @@ const mStatus = messages.jobs.status;
 
 type JobStatus = 'queued' | 'running' | 'done' | 'failed' | 'cancelled';
 
-function statusBadgeClass(status: string): string {
+function statusDot(status: string): string {
   switch (status as JobStatus) {
     case 'done':
-      return 'bg-green-100 text-green-800';
+      return 'bg-success';
     case 'running':
-      return 'bg-blue-100 text-blue-800';
+      return 'bg-accent';
     case 'failed':
-      return 'bg-red-100 text-red-800';
+      return 'bg-destructive';
     case 'cancelled':
-      return 'bg-gray-100 text-gray-600';
+      return 'bg-charcoal-40';
     case 'queued':
     default:
-      return 'bg-amber-100 text-amber-800';
+      return 'bg-warning';
   }
+}
+
+function statusLabelTone(status: string): string {
+  if (status === 'failed') return 'text-destructive';
+  if (status === 'cancelled') return 'text-charcoal-40';
+  return 'text-charcoal-82';
 }
 
 function StatusBadge({ status }: { status: string }) {
   const label = mStatus[status as keyof typeof mStatus] ?? status;
   return (
     <span
-      className={`inline-flex items-center rounded px-1.5 py-0.5 text-caption font-medium ${statusBadgeClass(status)}`}
+      className={`inline-flex items-center gap-1.5 whitespace-nowrap text-caption ${statusLabelTone(status)}`}
       aria-label={`ステータス: ${label}`}
     >
+      <span aria-hidden="true" className={`h-1.5 w-1.5 shrink-0 rounded-full ${statusDot(status)}`} />
       {label}
     </span>
   );
@@ -241,7 +248,7 @@ export function JobsTable({
             {pageRows.map((row) => (
               <tr
                 key={row.id}
-                className={`cursor-pointer transition-colors hover:bg-cream-light focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent ${selectedIds.has(row.id) ? 'bg-amber-50' : ''}`}
+                className={`cursor-pointer transition-colors hover:bg-cream-light focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent ${selectedIds.has(row.id) ? 'bg-accent-bg' : ''}`}
                 onClick={(e) => handleRowClick(row.id, e)}
                 tabIndex={0}
                 onKeyDown={(e) => {
@@ -287,7 +294,7 @@ export function JobsTable({
                 </td>
                 <td className="px-3 py-2">
                   {row.error_summary ? (
-                    <span className="text-caption text-red-700" title={row.error_summary}>
+                    <span className="text-caption text-destructive" title={row.error_summary}>
                       {row.error_summary.slice(0, 40)}
                       {row.error_summary.length > 40 ? '...' : ''}
                     </span>
@@ -306,7 +313,7 @@ export function JobsTable({
         {pageRows.map((row) => (
           <div
             key={row.id}
-            className={`flex gap-3 rounded-card border border-border-warm p-space-snug ${selectedIds.has(row.id) ? 'bg-amber-50' : 'bg-white'}`}
+            className={`flex gap-3 rounded-card border border-border-warm p-space-snug ${selectedIds.has(row.id) ? 'bg-accent-bg' : 'bg-cream-light'}`}
           >
             <div className="pt-0.5">
               <input
@@ -342,7 +349,7 @@ export function JobsTable({
                 </span>
               </div>
               {row.error_summary && (
-                <div className="mt-1 text-caption text-red-700">{row.error_summary}</div>
+                <div className="mt-1 text-caption text-destructive">{row.error_summary}</div>
               )}
             </button>
           </div>

@@ -1,0 +1,81 @@
+/*
+ * apps/portal/app/globals.css
+ * プラットフォーム共通のデザイントークン CSS 変数（apps/web と同期）。
+ * 単一の真実は packages/ui/src/tokens.ts。
+ */
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --cream: #f6f7f9;
+  --cream-light: #ffffff;
+  --charcoal: #101828;
+  --charcoal-82: rgba(16, 24, 40, 0.72);
+  --charcoal-40: rgba(16, 24, 40, 0.40);
+  --charcoal-04: rgba(16, 24, 40, 0.04);
+  --border-warm: #e6e8ec;
+  --muted: #667085;
+
+  --destructive: #d92d20;
+  --destructive-bg: #fef3f2;
+  --accent: #4f46e5;
+  --accent-bg: #eef2ff;
+  --success: #067647;
+  --ring-blue: rgba(79, 70, 229, 0.35);
+
+  --radius-card: 10px;
+  --radius-container: 14px;
+
+  --background: var(--cream);
+  --foreground: var(--charcoal);
+  --border: var(--border-warm);
+  --ring: var(--ring-blue);
+
+  --font-sans: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto,
+    'Hiragino Kaku Gothic ProN', 'Noto Sans JP', Meiryo, sans-serif;
+
+  /* login UI 互換 alias */
+  --color-cream: var(--cream);
+  --color-cream-light: var(--cream-light);
+  --color-charcoal: var(--charcoal);
+  --color-muted: var(--muted);
+  --color-border-warm: var(--border-warm);
+  --color-destructive: var(--destructive);
+  --color-destructive-bg: var(--destructive-bg);
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  background-color: var(--cream);
+  color: var(--charcoal);
+  font-family: var(--font-sans);
+  font-size: 16px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+button {
+  font-family: inherit;
+  font-size: inherit;
+  cursor: pointer;
+}
+
+[lang='ja'] {
+  font-feature-settings: 'palt';
+}

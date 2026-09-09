@@ -953,8 +953,8 @@ async function handleOutlineComment(
     genre,
     themeContext,
     rejectNote: `[修正コメント] ${comment.body}`,
-    targetChapterCount: 8,
-    targetTotalChars: 50000,
+    targetChapterCount: 14,
+    targetTotalChars: 120000,
   };
 
   const result = await generateOutlineFn(outlineInput);

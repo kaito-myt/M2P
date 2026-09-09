@@ -50,10 +50,14 @@ export const WriterOutlineInputSchema = z.object({
     .optional(),
   /** F-018 差戻し時の運営者コメント。Writer 再実行プロンプトに注入する。 */
   rejectNote: z.string().max(2000).optional(),
-  /** 想定章数 (既定 8、F-003 既定 7〜10)。 */
-  targetChapterCount: z.number().int().min(7).max(10).default(8),
-  /** 想定総文字数 (既定 50,000、§13 設計判断 #1 既定 45,000〜55,000)。 */
-  targetTotalChars: z.number().int().min(30000).max(80000).default(50000),
+  /**
+   * 想定章数 (既定 22、10〜30 章の範囲)。
+   * モデルは 1 章 1 発で ~5000 字前後が上限のため、200ページ級の総量は「章あたり ~5000〜6000 字 ×
+   * 多めの章数」で稼ぐ。既定 120,000 字 ÷ 22 章 ≒ 5,500 字/章 (達成可能域)。
+   */
+  targetChapterCount: z.number().int().min(7).max(30).default(22),
+  /** 想定総文字数 (既定 120,000 = 約200ページ)。 */
+  targetTotalChars: z.number().int().min(30000).max(200000).default(120000),
 });
 export type WriterOutlineInput = z.infer<typeof WriterOutlineInputSchema>;
 
@@ -72,7 +76,7 @@ export const ChapterPlanSchema = z.object({
   /** 章要旨 (1〜800 字、過去章サマリの種にもなる)。 */
   summary: z.string().min(1).max(800),
   /** 章の想定文字数。F-004 で ±20% 範囲チェックに使われる。 */
-  target_chars: z.number().int().min(2000).max(15000),
+  target_chars: z.number().int().min(2000).max(16000),
   /** 章で扱う主要トピック / 小見出し (2〜10、§6.3.2 の subheadings 最小 2 制約と整合)。 */
   subheadings: z.array(z.string().min(1).max(200)).min(2).max(10),
 });
@@ -87,7 +91,7 @@ export type ChapterPlan = z.infer<typeof ChapterPlanSchema>;
  * - notes: 任意の総評 (運営者向けメモ)
  */
 export const WriterOutlineOutputSchema = z.object({
-  chapters: z.array(ChapterPlanSchema).min(7).max(10),
+  chapters: z.array(ChapterPlanSchema).min(7).max(30),
   totalCharsEstimate: z.number().int(),
   notes: z.string().optional(),
 });
@@ -113,9 +117,9 @@ export const OutlineReviewInputSchema = z.object({
     target_reader: z.string().min(1).max(300),
   }),
   /** 校正対象のアウトライン (generateOutline の出力の chapters)。 */
-  chapters: z.array(ChapterPlanSchema).min(1).max(20),
+  chapters: z.array(ChapterPlanSchema).min(1).max(30),
   /** 想定総文字数 — revised を出す場合に合計を合わせる基準。 */
-  targetTotalChars: z.number().int().min(30000).max(80000).default(50000),
+  targetTotalChars: z.number().int().min(30000).max(200000).default(120000),
 });
 export type OutlineReviewInput = z.infer<typeof OutlineReviewInputSchema>;
 
@@ -132,7 +136,7 @@ export const OutlineIssueSchema = z.object({
     'other',
   ]),
   /** 対象章の index (全体に関わる指摘なら空配列)。 */
-  chapter_indices: z.array(z.number().int()).max(20),
+  chapter_indices: z.array(z.number().int()).max(30),
   /** 何が問題か (日本語)。 */
   detail: z.string().min(1).max(600),
   /** どう直すべきか (日本語)。 */
@@ -152,7 +156,7 @@ export const OutlineReviewOutputSchema = z.object({
   /** 総評 (日本語)。 */
   summary: z.string().min(1).max(1000),
   /** 改善版アウトライン (章立てを直した場合のみ)。generateOutline と同 schema。 */
-  revised_chapters: z.array(ChapterPlanSchema).min(7).max(10).optional(),
+  revised_chapters: z.array(ChapterPlanSchema).min(7).max(30).optional(),
 });
 export type OutlineReviewOutput = z.infer<typeof OutlineReviewOutputSchema>;
 

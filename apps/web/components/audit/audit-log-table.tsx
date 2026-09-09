@@ -85,7 +85,7 @@ export function AuditLogTable({
               return (
                 <Fragment key={row.id}>
                   <tr
-                    className={`border-b border-border-warm last:border-0 hover:bg-cream-light ${expanded ? 'bg-cream-light' : 'bg-white'}`}
+                    className={`border-b border-border-warm last:border-0 hover:bg-cream-light ${expanded ? 'bg-cream-light' : 'bg-cream-light'}`}
                     data-testid={`audit-row-${row.id}`}
                   >
                     <td className="whitespace-nowrap px-space-snug py-space-snug tabular-nums text-caption text-muted">
@@ -164,7 +164,7 @@ export function AuditLogTable({
           return (
             <li
               key={row.id}
-              className="rounded-card border border-border-warm bg-white"
+              className="rounded-card border border-border-warm bg-cream-light"
               data-testid={`audit-card-${row.id}`}
             >
               <div className="flex items-start justify-between gap-2 px-space-snug py-space-snug">
@@ -233,7 +233,7 @@ export function AuditLogTable({
       {/* Pagination */}
       {totalRows > pageSize && (
         <nav
-          className="flex items-center justify-between rounded-card border border-border-warm bg-cream-light px-space-normal py-space-snug"
+          className="flex items-center justify-between rounded-card border border-border-warm bg-cream-light px-space-relaxed py-space-snug"
           aria-label="ページネーション"
         >
           <span className="text-caption text-muted">
@@ -242,7 +242,7 @@ export function AuditLogTable({
           <div className="flex gap-2">
             <button
               type="button"
-              className="rounded px-2 py-1 text-button-sm text-foreground hover:bg-white disabled:opacity-40 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
+              className="rounded px-2 py-1 text-button-sm text-foreground hover:bg-cream-light disabled:opacity-40 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
               onClick={() => onPageChange(currentPage - 1)}
               disabled={currentPage === 0}
               aria-label="前のページ"
@@ -254,7 +254,7 @@ export function AuditLogTable({
             </span>
             <button
               type="button"
-              className="rounded px-2 py-1 text-button-sm text-foreground hover:bg-white disabled:opacity-40 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
+              className="rounded px-2 py-1 text-button-sm text-foreground hover:bg-cream-light disabled:opacity-40 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
               onClick={() => onPageChange(currentPage + 1)}
               disabled={currentPage >= totalPages - 1}
               aria-label="次のページ"

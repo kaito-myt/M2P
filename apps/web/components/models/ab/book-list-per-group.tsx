@@ -75,11 +75,12 @@ function GroupBookList({ heading, bookIds, insufficient, testId }: GroupBookList
           <p className="text-body text-muted">{m.empty}</p>
         </div>
       ) : (
+        <div className="overflow-x-auto">
         <table className="w-full text-body" data-testid={`${testId}-table`}>
           <thead>
             <tr className="border-b border-border-warm bg-cream-light">
-              <th className="px-3 py-2 text-left text-button-sm text-muted">書籍 ID</th>
-              <th className="px-3 py-2 text-right text-button-sm text-muted">{m.colAction}</th>
+              <th className="whitespace-nowrap px-3 py-2 text-left text-button-sm text-muted">書籍 ID</th>
+              <th className="whitespace-nowrap px-3 py-2 text-right text-button-sm text-muted">{m.colAction}</th>
             </tr>
           </thead>
           <tbody>
@@ -105,6 +106,7 @@ function GroupBookList({ heading, bookIds, insufficient, testId }: GroupBookList
             ))}
           </tbody>
         </table>
+        </div>
       )}
     </div>
   );

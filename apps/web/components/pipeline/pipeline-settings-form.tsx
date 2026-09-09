@@ -62,7 +62,7 @@ function StageRow({
   testId: string;
 }) {
   return (
-    <div className="flex items-start justify-between gap-space-loose rounded-button border border-border-warm bg-white px-4 py-3">
+    <div className="flex items-start justify-between gap-space-loose rounded-default border border-border-warm bg-cream-light px-4 py-3">
       <div className="flex min-w-0 flex-col gap-1">
         <span className="text-body font-medium text-charcoal">{title}</span>
         <span className="text-button-sm text-muted">{help}</span>
@@ -112,7 +112,7 @@ export function PipelineSettingsForm({ initial }: { initial: PipelineSettingsVie
         aria-labelledby="pipeline-theme-heading"
         className="flex flex-col gap-space-snug rounded-card border border-border-warm bg-cream-light p-space-loose"
       >
-        <h2 id="pipeline-theme-heading" className="text-sub-heading text-foreground">
+        <h2 id="pipeline-theme-heading" className="text-section-title text-foreground">
           {m.themeHeading}
         </h2>
         <StageRow
@@ -136,7 +136,7 @@ export function PipelineSettingsForm({ initial }: { initial: PipelineSettingsVie
             onChange={(e) => setPerDay(Number(e.target.value))}
             onBlur={() => setPerDay((v) => clampPerDay(v))}
             data-testid="pipeline-themes-per-day"
-            className="w-28 rounded-button border border-border-warm bg-white px-3 py-2 text-body text-charcoal focus:outline-none focus-visible:ring-2 focus-visible:ring-foreground disabled:cursor-not-allowed disabled:bg-gray-100 disabled:opacity-60"
+            className="w-28 rounded-default border border-border-warm bg-cream-light px-3 py-2 text-body text-charcoal focus:outline-none focus-visible:ring-2 focus-visible:ring-foreground disabled:cursor-not-allowed disabled:bg-charcoal-04 disabled:opacity-60"
           />
         </div>
         <div className={`flex flex-col gap-2 ${theme ? '' : 'opacity-60'}`}>
@@ -151,7 +151,7 @@ export function PipelineSettingsForm({ initial }: { initial: PipelineSettingsVie
             onChange={(e) => setDirection(e.target.value)}
             placeholder={m.themeDirectionPlaceholder}
             data-testid="pipeline-theme-direction"
-            className="w-full rounded-button border border-border-warm bg-white px-3 py-2 text-body text-charcoal focus:outline-none focus-visible:ring-2 focus-visible:ring-foreground disabled:cursor-not-allowed disabled:bg-gray-100 disabled:opacity-60"
+            className="w-full rounded-default border border-border-warm bg-cream-light px-3 py-2 text-body text-charcoal focus:outline-none focus-visible:ring-2 focus-visible:ring-foreground disabled:cursor-not-allowed disabled:bg-charcoal-04 disabled:opacity-60"
           />
           <p className="text-button-sm text-muted">{m.themeDirectionHelp}</p>
         </div>
@@ -162,7 +162,7 @@ export function PipelineSettingsForm({ initial }: { initial: PipelineSettingsVie
         aria-labelledby="pipeline-stages-heading"
         className="flex flex-col gap-space-snug rounded-card border border-border-warm bg-cream-light p-space-loose"
       >
-        <h2 id="pipeline-stages-heading" className="text-sub-heading text-foreground">
+        <h2 id="pipeline-stages-heading" className="text-section-title text-foreground">
           {m.stagesHeading}
         </h2>
         <StageRow checked={outline} onChange={setOutline} title={m.outlineLabel} help={m.outlineHelp} testId="pipeline-autopass-outline" />
@@ -176,7 +176,7 @@ export function PipelineSettingsForm({ initial }: { initial: PipelineSettingsVie
           type="submit"
           disabled={isPending}
           data-testid="pipeline-settings-save"
-          className="rounded-button bg-foreground px-4 py-2 text-button-sm font-medium text-white disabled:opacity-50"
+          className="rounded-default bg-foreground px-4 py-2 text-button-sm font-medium text-white disabled:opacity-50"
         >
           {isPending ? m.saving : m.saveButton}
         </button>

@@ -23,10 +23,45 @@ const ORG_EXECUTE_TASK = 'org.execute.dispatch';
 const ORG_OPS_WATCH_TASK = 'org.ops.watch';
 const ORG_FINANCE_TICK_TASK = 'org.finance.tick';
 const ORG_KDP_SCREEN_TASK = 'org.kdp.screen';
+const ORG_CEO_CHAT_TASK = 'org.ceo.chat';
 
 function revalidateOrg(): void {
   revalidatePath('/org');
   revalidatePath('/org/tasks');
+}
+
+const CeoMessageSchema = z.object({ message: z.string().trim().min(1).max(4000) });
+
+/**
+ * 運営者 → CEO のメッセージを送信し、CEO 応答生成タスク(org.ceo.chat)を enqueue する。
+ * 応答は非同期（worker が生成）。UI は /api/org/ceo/messages をポーリングして表示する。
+ */
+export async function sendCeoMessage(input: unknown): Promise<ActionResult<{ message_id: string }>> {
+  try {
+    await getSessionOrThrow();
+  } catch (err) {
+    if (isA2PError(err)) return err.toActionResult();
+    return fail('unknown', messages.org.dashboard.runError);
+  }
+
+  const parsed = CeoMessageSchema.safeParse(input);
+  if (!parsed.success) return fail('validation', messages.org.dashboard.runError);
+
+  try {
+    const msg = await prisma.orgCeoMessage.create({
+      data: { role: 'operator', content: parsed.data.message, status: 'pending' },
+      select: { id: true },
+    });
+    const job = await prisma.job.create({
+      data: { kind: ORG_CEO_CHAT_TASK, status: 'queued', payload_json: { message_id: msg.id } },
+    });
+    await enqueueJob(ORG_CEO_CHAT_TASK, { message_id: msg.id, job_id: job.id });
+    revalidateOrg();
+    return ok({ message_id: msg.id });
+  } catch (err) {
+    if (isA2PError(err)) return err.toActionResult();
+    return fail('unknown', messages.org.dashboard.runError);
+  }
 }
 
 export async function runOrgPlan(): Promise<ActionResult<{ job_id: string }>> {
@@ -187,6 +222,44 @@ async function transitionTask(
     });
     revalidateOrg();
     return ok({ task_id, status: next });
+  } catch (err) {
+    if (isA2PError(err)) return err.toActionResult();
+    return fail('unknown', messages.org.board.actionError);
+  }
+}
+
+const ToggleGrowthTargetSchema = z.object({
+  task_id: z.string().min(1),
+  key: z.string().min(1),
+  done: z.boolean(),
+});
+
+/**
+ * [F-075 UX] 手動グロースToDoの1ターゲットの「フォロー/いいね済み」チェックを永続化する。
+ * org_task.result_json.completed（key配列）を更新。ワンタップUIの進捗保存用。
+ */
+export async function toggleGrowthTarget(input: unknown): Promise<ActionResult<{ completed: string[] }>> {
+  try {
+    await getSessionOrThrow();
+  } catch (err) {
+    if (isA2PError(err)) return err.toActionResult();
+    return fail('unknown', messages.org.board.actionError);
+  }
+  const parsed = ToggleGrowthTargetSchema.safeParse(input);
+  if (!parsed.success) return fail('validation', messages.org.board.actionError);
+  const { task_id, key, done } = parsed.data;
+
+  try {
+    const task = await prisma.orgTask.findUnique({ where: { id: task_id }, select: { id: true, kind: true, result_json: true } });
+    if (!task || task.kind !== 'growth_manual') return fail('not_found', messages.org.board.actionError);
+    const rj = (task.result_json && typeof task.result_json === 'object' ? task.result_json : {}) as Record<string, unknown>;
+    const set = new Set(Array.isArray(rj.completed) ? (rj.completed as string[]) : []);
+    if (done) set.add(key);
+    else set.delete(key);
+    const completed = [...set];
+    await prisma.orgTask.update({ where: { id: task_id }, data: { result_json: { ...rj, completed } } });
+    revalidateOrg();
+    return ok({ completed });
   } catch (err) {
     if (isA2PError(err)) return err.toActionResult();
     return fail('unknown', messages.org.board.actionError);

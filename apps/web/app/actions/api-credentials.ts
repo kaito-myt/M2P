@@ -34,7 +34,7 @@ import {
  * 失敗は throw せず `{ ok: false, message }` で返す (UI が表示)。
  */
 const PROVIDER_TEST_ENDPOINTS: Record<
-  ApiProvider,
+  Exclude<ApiProvider, 'tavily'>,
   (key: string) => { url: string; headers: Record<string, string> }
 > = {
   anthropic: (key) => ({
@@ -54,7 +54,38 @@ const PROVIDER_TEST_ENDPOINTS: Record<
   }),
 };
 
+/** Tavily は GET の models 相当が無いため /search を最小クエリで叩いて疎通確認する。 */
+async function testTavily(key: string): Promise<{ ok: boolean; message: string; http_status?: number; latency_ms?: number }> {
+  const started = Date.now();
+  try {
+    const res = await fetch('https://api.tavily.com/search', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${key}` },
+      body: JSON.stringify({ query: 'test', max_results: 1, search_depth: 'basic' }),
+    });
+    const latency = Date.now() - started;
+    if (res.ok) return { ok: true, message: 'OK', http_status: res.status, latency_ms: latency };
+    let body = '';
+    try {
+      body = (await res.text()).slice(0, 300);
+    } catch {
+      // ignore body read failure
+    }
+    return { ok: false, message: body || `HTTP ${res.status}`, http_status: res.status, latency_ms: latency };
+  } catch (err) {
+    return {
+      ok: false,
+      message:
+        err && typeof err === 'object' && 'message' in err && typeof err.message === 'string'
+          ? err.message
+          : messages.apiCredentials.testFailureGeneric,
+      latency_ms: Date.now() - started,
+    };
+  }
+}
+
 const defaultTestClient: ProviderTestClient = async (provider, plain) => {
+  if (provider === 'tavily') return testTavily(plain);
   const started = Date.now();
   const { url, headers } = PROVIDER_TEST_ENDPOINTS[provider](plain);
   try {

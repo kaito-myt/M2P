@@ -35,6 +35,7 @@ import { ThemeCandidatesTable } from './theme-candidates-table';
 interface ThemesPageShellProps {
   rows: readonly ThemeRowSerialized[];
   generatingSessions?: readonly GeneratingSession[];
+  failedGenerations?: readonly GeneratingSession[];
 }
 
 type ThemeStatusFilter = ThemeStatus | 'all';
@@ -68,7 +69,7 @@ function periodCutoffIso(period: PeriodFilter): string | null {
   return new Date(now.getTime() - days * 24 * 60 * 60 * 1000).toISOString();
 }
 
-export function ThemesPageShell({ rows, generatingSessions = [] }: ThemesPageShellProps) {
+export function ThemesPageShell({ rows, generatingSessions = [], failedGenerations = [] }: ThemesPageShellProps) {
   const [selected, setSelected] = useState<ReadonlySet<string>>(() => new Set());
   // 既定は「未採用」のみ表示。採用済み・却下はフィルタで切り替える。
   const [statusFilter, setStatusFilter] = useState<ThemeStatusFilter>('pending');
@@ -126,7 +127,7 @@ export function ThemesPageShell({ rows, generatingSessions = [] }: ThemesPageShe
 
   return (
     <div className="flex flex-col gap-space-snug">
-      <GeneratingSessionsBanner sessions={generatingSessions} />
+      <GeneratingSessionsBanner sessions={generatingSessions} failed={failedGenerations} />
 
       <div
         className="flex flex-wrap items-end gap-x-space-relaxed gap-y-space-snug"

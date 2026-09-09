@@ -77,7 +77,7 @@ export function BooksTable({
           <select
             value={statusFilter}
             onChange={(e) => setStatusFilter(e.target.value as BookStatus | 'all')}
-            className="rounded-button border border-border-warm bg-cream-light px-3 py-1.5 text-button-sm text-charcoal"
+            className="rounded-default border border-border-warm bg-cream-light px-3 py-1.5 text-button-sm text-charcoal"
             data-testid="books-status-filter"
           >
             {STATUS_OPTIONS.map((opt) => (
@@ -141,26 +141,26 @@ export function BooksTable({
                       data-testid={`book-checkbox-${row.id}`}
                     />
                   </Td>
-                  <Td>
+                  <Td className="min-w-[15rem] max-w-[24rem]">
                     <Link
                       href={`/books/${row.id}`}
-                      className="font-medium text-charcoal underline-offset-4 hover:underline"
+                      className="line-clamp-2 font-medium text-charcoal underline-offset-4 hover:underline"
                       data-testid={`book-title-${row.id}`}
                     >
                       {row.title}
                     </Link>
                   </Td>
-                  <Td>{row.account.pen_name}</Td>
-                  <Td>{formatGenre(row.genre) ?? '—'}</Td>
+                  <Td nowrap>{row.account.pen_name}</Td>
+                  <Td nowrap>{formatGenre(row.genre) ?? '—'}</Td>
                   <Td>
                     <BookStatusBadge status={row.status} />
                   </Td>
                   <Td>
                     <PublishStatusControl bookId={row.id} value={row.publish_status} />
                   </Td>
-                  <Td align="right">
+                  <Td align="right" nowrap>
                     <span
-                      className={row.cost_jpy_total > 500 ? 'text-destructive font-medium' : ''}
+                      className={`tabular-nums ${row.cost_jpy_total > 500 ? 'text-destructive font-medium' : ''}`}
                     >
                       {`¥${Math.round(row.cost_jpy_total).toLocaleString()}`}
                     </span>
@@ -185,8 +185,8 @@ export function BooksTable({
                       <span className="text-muted">—</span>
                     )}
                   </Td>
-                  <Td>{formatDateTime(row.updated_at)}</Td>
-                  <Td>
+                  <Td nowrap>{formatDateTime(row.updated_at)}</Td>
+                  <Td nowrap>
                     <ArtifactDownloadGroup artifacts={row.artifacts} />
                   </Td>
                   <Td align="right">
@@ -220,7 +220,7 @@ function Th({
   return (
     <th
       scope="col"
-      className={`px-space-relaxed py-2 text-button-sm font-normal text-charcoal-82 ${
+      className={`whitespace-nowrap px-space-relaxed py-2 text-button-sm font-normal text-charcoal-82 ${
         align === 'right' ? 'text-right' : 'text-left'
       } ${className ?? ''}`}
     >
@@ -232,15 +232,17 @@ function Th({
 function Td({
   children,
   align = 'left',
+  nowrap = false,
   className,
 }: {
   children: React.ReactNode;
   align?: 'left' | 'right';
+  nowrap?: boolean;
   className?: string;
 }) {
   return (
     <td
-      className={`px-space-relaxed py-3 text-body align-middle ${
+      className={`px-space-relaxed py-2.5 text-body align-middle ${nowrap ? 'whitespace-nowrap' : ''} ${
         align === 'right' ? 'text-right' : 'text-left'
       } ${className ?? ''}`}
     >

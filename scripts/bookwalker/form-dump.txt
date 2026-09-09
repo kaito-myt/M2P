@@ -1,0 +1,62 @@
+初期URL: https://author.bookwalker.jp/books/new
+最終URL: https://author.bookwalker.jp/books/new
+HEADINGS: ["同人誌・個人出版サービス著者センター","電子書籍の登録","基本情報","メインタイトル","メインタイトル（カタカナ）","著者名とヨミガナ 著者を追加","コピーライト","キャッチコピー","内容紹介","ファイル登録","表紙画像","EPUBファイル（販売用）","EPUBファイル（試し読み用）","カテゴリ","カテゴリ","マンガ","文芸・小説","ライトノベル","実用（評論・情報）","ゲーム","画集","写真集","サブカテゴリ","少年マンガ","青年マンガ","少女マンガ","女性マンガ","4コマ","ＳＦ","ファンタジー","ミステリー","ホラー","エッセイ","その他・男性向け","その他・女性向け","AI生成","SF","ラブストーリー","恋愛","女性向け","ファンタジー","ミステリー","ホラー","学園","歴史","時代小説","海外文学","児童文学","エッセイ","ノンフィクション","詩集","俳句・短歌","官能小説","AI生成","男性向け","女性向け","ＳＦ","ミステリー","ホラー","ファンタジー"]
+{"tag":"textarea","type":"textarea","id":"book_main_title","name":"book[book_main_title]","label":"メインタイトル","value":"","text":""}
+{"tag":"textarea","type":"textarea","id":"book_main_title_kana","name":"book[book_main_title_kana]","label":"メインタイトル（カタカナ）","value":"","text":""}
+{"tag":"input","type":"text","id":"authors_0_name","name":"authors[0][name]","label":"著者名","value":"","text":""}
+{"tag":"input","type":"text","id":"authors_0_name_kana","name":"authors[0][name_kana]","label":"ヨミガナ（全角カタカナ）","value":"","text":""}
+{"tag":"select","type":"select-one","id":"authors_0_type","name":"authors[0][type]","label":"","value":"1","text":""}
+{"tag":"textarea","type":"textarea","id":"book_copyright","name":"book[book_copyright]","label":"コピーライト","value":"","text":""}
+{"tag":"textarea","type":"textarea","id":"book_catchphrase","name":"book[book_catchphrase]","label":"キャッチコピー","value":"","text":""}
+{"tag":"textarea","type":"textarea","id":"book_description","name":"book[book_description]","label":"内容紹介","value":"","text":""}
+{"tag":"input","type":"file","id":"book_files_cover","name":"book[cover]","label":"表紙画像","value":"","text":""}
+{"tag":"input","type":"file","id":"book_files_epub","name":"book[epub]","label":"EPUBファイル（販売用）","value":"","text":""}
+{"tag":"input","type":"file","id":"book_files_epub_trial","name":"book[epub_sample]","label":"EPUBファイル（試し読み用）","value":"","text":""}
+{"tag":"input","type":"radio","id":"book_book_main_category_2","name":"book_main_category","label":"マンガ","value":"2","text":""}
+{"tag":"input","type":"radio","id":"book_book_main_category_1","name":"book_main_category","label":"文芸・小説","value":"1","text":""}
+{"tag":"input","type":"radio","id":"book_book_main_category_3","name":"book_main_category","label":"ライトノベル","value":"3","text":""}
+{"tag":"input","type":"radio","id":"book_book_main_category_4","name":"book_main_category","label":"実用（評論・情報）","value":"4","text":""}
+{"tag":"input","type":"radio","id":"book_book_main_category_6","name":"book_main_category","label":"ゲーム","value":"6","text":""}
+{"tag":"input","type":"radio","id":"book_book_main_category_7","name":"book_main_category","label":"画集","value":"7","text":""}
+{"tag":"input","type":"radio","id":"book_book_main_category_8","name":"book_main_category","label":"写真集","value":"8","text":""}
+{"tag":"input","type":"checkbox","id":"","name":"book_genre","label":"BL","value":"15","text":""}
+{"tag":"input","type":"checkbox","id":"","name":"book_genre","label":"百合","value":"14","text":""}
+{"tag":"input","type":"checkbox","id":"","name":"book_genre","label":"TL","value":"16","text":""}
+{"tag":"input","type":"checkbox","id":"","name":"book_event","label":"C104(2024年夏)","value":"9392","text":""}
+{"tag":"input","type":"checkbox","id":"","name":"book_event","label":"C105(2024年冬)","value":"10118","text":""}
+{"tag":"input","type":"checkbox","id":"","name":"book_event","label":"C106(2025年夏)","value":"10928","text":""}
+{"tag":"input","type":"checkbox","id":"","name":"book_event","label":"C107(2025年冬)","value":"11583","text":""}
+{"tag":"input","type":"checkbox","id":"","name":"book_event","label":"C108(2026年夏)","value":"12064","text":""}
+{"tag":"input","type":"checkbox","id":"","name":"book_event","label":"第31回いっせい配信「創作同人2026年7月」","value":"12219","text":""}
+{"tag":"input","type":"checkbox","id":"","name":"book_event","label":"COMITIA154","value":"11453","text":""}
+{"tag":"input","type":"checkbox","id":"","name":"book_event","label":"COMITIA155","value":"11840","text":""}
+{"tag":"input","type":"checkbox","id":"","name":"book_event","label":"COMITIA156","value":"12065","text":""}
+{"tag":"input","type":"checkbox","id":"","name":"book_event","label":"COMITIA157","value":"12446","text":""}
+{"tag":"input","type":"checkbox","id":"","name":"book_event","label":"関西コミティア74","value":"12061","text":""}
+{"tag":"input","type":"checkbox","id":"","name":"book_event","label":"関西コミティア75","value":"12062","text":""}
+{"tag":"input","type":"checkbox","id":"","name":"book_event","label":"関西コミティア76","value":"12063","text":""}
+{"tag":"input","type":"checkbox","id":"","name":"book_event","label":"J.GARDEN58","value":"11287","text":""}
+{"tag":"input","type":"checkbox","id":"","name":"book_event","label":"J.GARDEN59","value":"12066","text":""}
+{"tag":"input","type":"checkbox","id":"","name":"book_event","label":"第十回 博麗神社秋季例大祭","value":"8527","text":""}
+{"tag":"input","type":"checkbox","id":"","name":"book_event","label":"第二十一回 博麗神社例大祭","value":"9180","text":""}
+{"tag":"input","type":"checkbox","id":"","name":"book_event","label":"第十一回 博麗神社秋季例大祭","value":"9734","text":""}
+{"tag":"input","type":"checkbox","id":"","name":"book_event","label":"第二十二回 博麗神社例大祭","value":"10588","text":""}
+{"tag":"input","type":"checkbox","id":"","name":"book_event","label":"第十二回博麗神社秋季例大祭","value":"11289","text":""}
+{"tag":"input","type":"checkbox","id":"","name":"book_event","label":"第二十三回 博麗神社例大祭","value":"12067","text":""}
+{"tag":"textarea","type":"textarea","id":"book_keywords","name":"book[book_keywords]","label":"検索キーワード","value":"","text":""}
+{"tag":"input","type":"checkbox","id":"book_adult_flg","name":"book[book_adult_flg]","label":"含まれている","value":"1","text":""}
+{"tag":"input","type":"checkbox","id":"touhou_doujin_flg","name":"book[touhou_doujin_flg]","label":"該当する","value":"true","text":""}
+{"tag":"input","type":"text","id":"book_series","name":"book[book_series]","label":"シリーズ","value":"","text":""}
+{"tag":"input","type":"text","id":"book_series_kana","name":"book[book_series_kana]","label":"シリーズ（カタカナ）","value":"","text":""}
+{"tag":"input","type":"text","id":"book_series_volume","name":"book[book_series_volume]","label":"巻数（シリーズ番号）","value":"","text":""}
+{"tag":"input","type":"text","id":"book_price_notax","name":"book[book_price_notax]","label":"税抜き価格","value":"","text":""}
+{"tag":"input","type":"checkbox","id":"pricezero","name":"","label":"価格を０円にする","value":"on","text":""}
+{"tag":"input","type":"checkbox","id":"book_duplication","name":"book[book_duplication]","label":"販売していた","value":"1","text":""}
+{"tag":"input","type":"text","id":"book_salesdate","name":"book[book_salesdate]","label":"yyyy-mm-dd","value":"","text":""}
+{"tag":"button","type":"button","id":"","name":"","label":"","value":"","text":""}
+{"tag":"button","type":"button","id":"back-shelf","name":"","label":"","value":"","text":"本棚に戻る"}
+{"tag":"button","type":"button","id":"save-book","name":"","label":"","value":"","text":"保存"}
+{"tag":"button","type":"button","id":"check-book","name":"","label":"","value":"","text":"プレビュー"}
+{"tag":"button","type":"submit","id":"register-book","name":"","label":"","value":"","text":"利用規約に同意して、販売を申請する"}
+{"tag":"button","type":"submit","id":"campaign-book","name":"","label":"","value":"","text":"保存して割引販売を設定する"}
+BW RECON DONE (何も提出していません)

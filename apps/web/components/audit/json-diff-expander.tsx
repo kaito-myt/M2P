@@ -39,7 +39,7 @@ export function JsonDiffExpander({
 
   return (
     <div
-      className="border-t border-border-warm bg-cream-light px-space-normal py-space-snug"
+      className="border-t border-border-warm bg-cream-light px-space-relaxed py-space-snug"
       data-testid="json-diff-expander"
     >
       {/* Meta row */}
@@ -65,22 +65,22 @@ export function JsonDiffExpander({
       {/* Legend */}
       <div className="mb-space-snug flex gap-3 text-caption">
         <span className="flex items-center gap-1">
-          <span className="font-mono text-green-700">+</span>
+          <span className="font-mono text-success">+</span>
           <span className="text-muted">追加</span>
         </span>
         <span className="flex items-center gap-1">
-          <span className="font-mono text-red-700">−</span>
+          <span className="font-mono text-destructive">−</span>
           <span className="text-muted">削除</span>
         </span>
         <span className="flex items-center gap-1">
-          <span className="font-mono text-amber-700">~</span>
+          <span className="font-mono text-warning">~</span>
           <span className="text-muted">変更</span>
         </span>
       </div>
 
       {/* Diff grid */}
       {hasChanges || beforeJson !== null || afterJson !== null ? (
-        <div className="flex flex-col gap-space-snug md:flex-row md:gap-space-normal">
+        <div className="flex flex-col gap-space-snug md:flex-row md:gap-space-relaxed">
           {/* Before */}
           <JsonPane
             label={m.beforeLabel}
@@ -130,7 +130,7 @@ function JsonPane({ label, content, nullLabel, side, diffEntries }: JsonPaneProp
   const copyLabel = side === 'before' ? m.copyBefore : m.copyAfter;
 
   return (
-    <div className="min-w-0 flex-1 rounded-card border border-border-warm bg-white">
+    <div className="min-w-0 flex-1 rounded-card border border-border-warm bg-cream-light">
       {/* Pane header */}
       <div className="flex items-center justify-between border-b border-border-warm px-space-snug py-1.5">
         <span className="text-caption font-medium text-charcoal">{label}</span>
@@ -142,7 +142,7 @@ function JsonPane({ label, content, nullLabel, side, diffEntries }: JsonPaneProp
             aria-label={copied ? m.copied : copyLabel}
           >
             {copied ? (
-              <Check className="h-3 w-3 text-green-600" aria-hidden="true" />
+              <Check className="h-3 w-3 text-emerald-400" aria-hidden="true" />
             ) : (
               <Copy className="h-3 w-3" aria-hidden="true" />
             )}
@@ -153,7 +153,7 @@ function JsonPane({ label, content, nullLabel, side, diffEntries }: JsonPaneProp
 
       {/* JSON content */}
       {content === null ? (
-        <p className="px-space-snug py-space-normal text-caption italic text-muted">{nullLabel}</p>
+        <p className="px-space-snug py-space-relaxed text-caption italic text-muted">{nullLabel}</p>
       ) : (
         <DiffHighlightedPre
           content={content}
@@ -188,11 +188,11 @@ function diffKindForLine(line: string, side: 'before' | 'after', diffEntries: Di
 function lineStyle(kind: DiffKind | null): string {
   switch (kind) {
     case 'added':
-      return 'bg-green-50 text-green-800';
+      return 'bg-success-bg text-success';
     case 'removed':
-      return 'bg-red-50 text-red-800';
+      return 'bg-destructive-bg text-destructive';
     case 'changed':
-      return 'bg-amber-50 text-amber-900';
+      return 'bg-warning-bg text-warning';
     default:
       return '';
   }

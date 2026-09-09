@@ -50,6 +50,9 @@ import { messages } from './messages';
 // ---------------------------------------------------------------------------
 
 export const PIPELINE_BOOK_EXPORT_TASK_NAME = 'pipeline.book.export';
+// 表紙採用(手動)後は SEO 最適化を経由してから export する（judge autopass 経路と揃える）。
+// seo タスクは non-fatal で、成否に関わらず必ず pipeline.book.export を enqueue して完走させる。
+export const PIPELINE_BOOK_SEO_TASK_NAME = 'pipeline.book.seo';
 export const PIPELINE_BOOK_THUMBNAIL_IMAGE_TASK_NAME = 'pipeline.book.thumbnail.image';
 export const PIPELINE_BOOK_THUMBNAIL_TEXT_TASK_NAME = 'pipeline.book.thumbnail.text';
 
@@ -273,7 +276,7 @@ export async function bulkAdoptCoversCore(
           .map((r) => r.id);
         const job = await tx.jobRepo.create({
           data: {
-            kind: PIPELINE_BOOK_EXPORT_TASK_NAME,
+            kind: PIPELINE_BOOK_SEO_TASK_NAME,
             book_id: bookId,
             status: 'queued',
             payload_json: {
@@ -303,7 +306,7 @@ export async function bulkAdoptCoversCore(
             jobs: createdJobs.map((j) => ({
               book_id: j.book_id,
               job_id: j.job_id,
-              kind: PIPELINE_BOOK_EXPORT_TASK_NAME,
+              kind: PIPELINE_BOOK_SEO_TASK_NAME,
             })),
           } as unknown as Prisma.InputJsonValue,
         },
@@ -318,7 +321,7 @@ export async function bulkAdoptCoversCore(
 
     for (const j of txResult.createdJobs) {
       try {
-        await deps.enqueueJob(PIPELINE_BOOK_EXPORT_TASK_NAME, {
+        await deps.enqueueJob(PIPELINE_BOOK_SEO_TASK_NAME, {
           book_id: j.book_id,
           job_id: j.job_id,
         });

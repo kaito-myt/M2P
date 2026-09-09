@@ -145,12 +145,12 @@ function KpiCard({
       : rawDiff > 0
         ? 'text-green-700'
         : rawDiff < 0
-          ? 'text-red-600'
+          ? 'text-accent'
           : 'text-muted';
 
   return (
     <div
-      className="flex flex-col gap-1 rounded-card border border-border-warm bg-white p-space-snug shadow-sm"
+      className="flex flex-col gap-1 rounded-card border border-border-warm bg-cream-light p-space-snug shadow-sm"
       data-testid={testId}
     >
       <p className="text-button-sm text-muted">{label}</p>

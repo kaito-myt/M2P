@@ -82,28 +82,103 @@ export class AnthropicNativeWebSearch implements WebSearchAdapter {
 
 export interface TavilyWebSearchOptions {
   apiKey: string;
+  /** タイムアウト (ms)。既定 15s。Anthropic 純正のエージェント的ループより遥かに速い。 */
+  timeoutMs?: number;
+  /** 検索深度。'advanced' はより丁寧に探すが遅く高価。既定 'basic'。 */
+  searchDepth?: 'basic' | 'advanced';
+  /** DI: テスト用に fetch を差し替える。 */
+  fetchImpl?: typeof fetch;
+}
+
+/** Tavily `/search` レスポンス (必要な部分のみ)。 */
+interface TavilyApiResponse {
+  results?: Array<{
+    title?: string;
+    url?: string;
+    content?: string;
+    published_date?: string | null;
+  }>;
+  answer?: string | null;
 }
 
 /**
- * Tavily フォールバックアダプタ。Phase 2 で本実装する (docs/03 §R-04)。
- * 現段階では I/F 確定のみで search() は ConfigError を throw する。
+ * Tavily フォールバック/主検索アダプタ (docs/03 §R-04 / R-04 本実装)。
+ *
+ * Anthropic 純正 `web_search_20250305` は「モデルが tool_use を何度も回すエージェント的
+ * ループ」で、テーマ生成 1 回に 3〜7 分かかり時々タイムアウトする。Tavily は専用検索 API
+ * を **1 回の HTTP リクエスト**で叩くため数秒で返る。Marketer はこの結果を根拠として
+ * 通常の LLM 補完 (server tool 無し) に注入する → 高速・安価・プロバイダ非依存。
  */
 export class TavilyWebSearch implements WebSearchAdapter {
   readonly provider: WebSearchProvider = 'tavily';
+  private readonly apiKey: string;
+  private readonly timeoutMs: number;
+  private readonly searchDepth: 'basic' | 'advanced';
+  private readonly fetchImpl: typeof fetch;
 
-  // apiKey を constructor で受け取って格納する形だけ用意 (Phase 2 で実装)。
-  constructor(_opts: TavilyWebSearchOptions) {
-    // intentional no-op (I/F only)
+  constructor(opts: TavilyWebSearchOptions) {
+    this.apiKey = opts.apiKey;
+    this.timeoutMs = opts.timeoutMs ?? 15_000;
+    this.searchDepth = opts.searchDepth ?? 'basic';
+    this.fetchImpl = opts.fetchImpl ?? fetch;
   }
 
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  async search(_query: WebSearchQuery): Promise<WebSearchResult> {
-    throw new ConfigError('web_search.tavily_not_implemented', {
-      details: {
-        reason:
-          'Tavily fallback is planned in Phase 2; currently use Anthropic native via AgentSdkClient.',
-      },
-    });
+  async search(query: WebSearchQuery): Promise<WebSearchResult> {
+    const parsed = WebSearchQuerySchema.parse(query);
+
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), this.timeoutMs);
+    let res: Response;
+    try {
+      res = await this.fetchImpl('https://api.tavily.com/search', {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          authorization: `Bearer ${this.apiKey}`,
+        },
+        body: JSON.stringify({
+          query: parsed.query,
+          max_results: parsed.maxResults,
+          search_depth: this.searchDepth,
+          topic: parsed.topic ?? 'general',
+          include_answer: false,
+        }),
+        signal: controller.signal,
+      });
+    } catch (err) {
+      throw new ConfigError('web_search.tavily_request_failed', {
+        details: {
+          reason: err instanceof Error ? err.message : String(err),
+          aborted: controller.signal.aborted,
+        },
+        cause: err,
+      });
+    } finally {
+      clearTimeout(timer);
+    }
+
+    if (!res.ok) {
+      const bodyText = await res.text().catch(() => '');
+      throw new ConfigError('web_search.tavily_http_error', {
+        details: { status: res.status, body: bodyText.slice(0, 500) },
+      });
+    }
+
+    const json = (await res.json()) as TavilyApiResponse;
+    const items: WebSearchResultItem[] = (json.results ?? [])
+      .filter((r): r is { title: string; url: string; content?: string; published_date?: string | null } =>
+        typeof r?.title === 'string' && typeof r?.url === 'string',
+      )
+      .map((r) => {
+        const item: WebSearchResultItem = { title: r.title, url: r.url };
+        if (typeof r.content === 'string' && r.content.length > 0) item.snippet = r.content;
+        if (typeof r.published_date === 'string' && r.published_date.length > 0) {
+          item.published_at = r.published_date;
+        }
+        return item;
+      });
+
+    return { items, provider: 'tavily', query: parsed.query };
   }
 }
 

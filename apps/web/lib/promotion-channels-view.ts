@@ -38,6 +38,8 @@ export interface ChannelSettingView {
   webhookUrl: string | null;
   tokenMask: string | null;
   connected: boolean;
+  /** note (ブラウザ自動化) のログインメール。config_json.note_email。 */
+  noteEmail?: string | null;
   /** TikTok: Client Key/Secret を保存済みか (OAuth 接続を開始できる)。 */
   tiktokAppCredsSaved?: boolean;
   /** TikTok: OAuth 認可が完了しているか (refreshToken あり=投稿可能)。 */

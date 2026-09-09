@@ -33,6 +33,13 @@ import type { LoadModelAssignmentDeps } from '../lib/load-model-assignment.js';
 
 const MAX_OUTPUT_TOKENS = 8192;
 
+/**
+ * 1 本の動画に含めるシーンの上限。シーン数 = gpt-image 生成回数 なので、
+ * 多すぎるとレンダリングが極端に遅く・高コストになり（実測: 11 シーンで約12分）、
+ * 30 秒動画としてもテロップが 2〜3 秒で切り替わりチカチカする。理想は 4〜6 本。
+ */
+const MAX_SCENES = 6;
+
 type Role =
   | 'tiktok_scenario'
   | 'tiktok_creator'
@@ -118,7 +125,8 @@ export async function createTikTokVideoScript(
     'tiktok_scenario',
     ph,
     `${fmtInput(input)}\n\n出力: VideoScenario の JSON（hook, beats[], cliffhanger）。` +
-      `冒頭2秒で心を掴む強フックと、途中で答えを小出しにして「続きが気になる」引きを作ること。`,
+      `冒頭2秒で心を掴む強フックと、途中で答えを小出しにして「続きが気になる」引きを作ること。` +
+      `beats は 3〜5 個に絞る（1 ビート＝1 シーンになる。多すぎると尺が細切れでチカチカする）。`,
     deps,
   );
   const scenario = VideoScenarioSchema.parse(extractLlmJsonOrThrow(scenarioRaw, 'tiktok_scenario'));
@@ -139,7 +147,8 @@ export async function createTikTokVideoScript(
     ph,
     `${fmtInput(input)}\n\n【絵コンテ】\n${JSON.stringify(storyboard)}\n\n` +
       `出力: VideoScript の JSON（title, scenes[]: narration/caption/image_prompt/seconds, caption(TikTok本文), hashtags[]）。` +
-      `合計尺が約 ${input.target_seconds} 秒になるよう各 seconds を配分。先頭シーンを最強フックに。`,
+      `合計尺が約 ${input.target_seconds} 秒になるよう各 seconds を配分。先頭シーンを最強フックに。` +
+      `シーン数は必ず ${MAX_SCENES} 本以下（理想 4〜6 本、各シーン 5〜8 秒）に収める。冗長・重複するビートは統合する。`,
     deps,
   );
   let script = VideoScriptSchema.parse(extractLlmJsonOrThrow(editedRaw, 'tiktok_editor'));
@@ -165,6 +174,19 @@ export async function createTikTokVideoScript(
     deps,
   );
   script = VideoScriptSchema.parse(extractLlmJsonOrThrow(finalRaw, 'tiktok_marketer'));
+
+  // ハード上限: LLM が大量シーンを返しても gpt-image 生成回数を抑える。
+  // ただし「先頭+末尾」だけ残すと中間の承・転(起承転結の山場)が消え物語が痩せるため、
+  // 先頭と末尾を固定しつつ中間を等間隔サンプリングして「起承転結の骨格」を保って間引く。
+  if (script.scenes.length > MAX_SCENES) {
+    const n = script.scenes.length;
+    const picked = new Set<number>();
+    for (let i = 0; i < MAX_SCENES; i++) {
+      picked.add(Math.round((i * (n - 1)) / (MAX_SCENES - 1)));
+    }
+    const idx = [...picked].sort((a, b) => a - b);
+    script = { ...script, scenes: idx.map((i) => script.scenes[i]!) };
+  }
 
   return script;
 }

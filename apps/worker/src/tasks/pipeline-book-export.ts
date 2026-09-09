@@ -5,6 +5,7 @@ import {
   acquireBookLock as defaultAcquireBookLock,
   releaseBookLock as defaultReleaseBookLock,
 } from '@a2p/agents/lib/book-lock';
+import { isFiction } from '@a2p/contracts/agents';
 import { NotFoundError, ValidationError } from '@a2p/contracts/errors';
 import { normalizeChapters } from '@a2p/contracts/book/chapter-title';
 import { createLogger, type Logger } from '@a2p/contracts/logger';
@@ -86,12 +87,14 @@ export interface PipelineBookExportPrisma {
         title: true;
         subtitle: true;
         status: true;
+        theme: { select: { genre: true } };
       };
     }) => Promise<{
       id: string;
       title: string;
       subtitle: string | null;
       status: string;
+      theme: { genre: string } | null;
     } | null>;
     update: (args: {
       where: { id: string };
@@ -266,7 +269,7 @@ export async function runPipelineBookExport(
     // 4. Fetch Book + Chapters
     const book = await prisma.book.findUnique({
       where: { id: bookId },
-      select: { id: true, title: true, subtitle: true, status: true },
+      select: { id: true, title: true, subtitle: true, status: true, theme: { select: { genre: true } } },
     });
     if (!book) {
       throw new NotFoundError(`Book not found: ${bookId}`, {
@@ -315,6 +318,13 @@ export async function runPipelineBookExport(
       body_md: c.body_md,
     }));
 
+    // 生成本の基本構成をジャンルで分岐: フィクション(小説系)=目次なし本文から /
+    // 実用書系(ビジネス・自己啓発等)=はじめに→目次→本文→おわりに。
+    // isFiction() で 7 種のフィクションジャンル(novel/light_novel/mystery/sf_fantasy/
+    // romance_fiction/historical_novel/horror)を判定する。以前は genre==='novel' のみ
+    // 判定していたため、ライトノベル等が実用書扱いで目次付きになる不具合があった。
+    const isNovel = isFiction(book.theme?.genre ?? null);
+
     const artifactIds: string[] = [];
 
     // 4b. 既存 artifact を削除して再出力を冪等にする。
@@ -328,6 +338,7 @@ export async function runPipelineBookExport(
     const docxBuffer = await buildDocxFn(
       { title: book.title, subtitle: book.subtitle },
       exportChapters,
+      { isNovel },
     );
     const docxKey = bookArtifact(bookId, 'docx');
     const docxUpload = await uploadBufferFn(
@@ -354,6 +365,7 @@ export async function runPipelineBookExport(
     const pdfBuffer = await buildPdfFn(
       { title: book.title, subtitle: book.subtitle },
       exportChapters,
+      { isNovel },
     );
     const pdfKey = bookArtifact(bookId, 'pdf');
     const pdfUpload = await uploadBufferFn(pdfKey, pdfBuffer, 'application/pdf');

@@ -77,7 +77,7 @@ export function PlanGenerationParams({ onChange }: PlanGenerationParamsProps) {
               max={30}
               value={params.target_count_per_month}
               onChange={(e) => updateParam('target_count_per_month', Math.max(1, Number(e.target.value)))}
-              className="w-24 rounded border border-border-warm bg-white px-2 py-1 text-body text-foreground focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-1"
+              className="w-24 rounded border border-border-warm bg-cream-light px-2 py-1 text-body text-foreground focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-1"
             />
             <span className="text-button-sm text-muted">{m.targetCountUnit}</span>
           </div>
@@ -94,7 +94,7 @@ export function PlanGenerationParams({ onChange }: PlanGenerationParamsProps) {
             value={params.focus_categories}
             onChange={(e) => updateParam('focus_categories', e.target.value)}
             placeholder={m.focusCategoriesPlaceholder}
-            className="rounded border border-border-warm bg-white px-3 py-1.5 text-body text-foreground placeholder:text-muted focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-1"
+            className="rounded border border-border-warm bg-cream-light px-3 py-1.5 text-body text-foreground placeholder:text-muted focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-1"
           />
         </div>
 
@@ -109,7 +109,7 @@ export function PlanGenerationParams({ onChange }: PlanGenerationParamsProps) {
             onChange={(e) => updateParam('series_policy', e.target.value)}
             placeholder={m.seriesPolicyPlaceholder}
             rows={3}
-            className="rounded border border-border-warm bg-white px-3 py-2 text-body text-foreground placeholder:text-muted focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-1 resize-none"
+            className="rounded border border-border-warm bg-cream-light px-3 py-2 text-body text-foreground placeholder:text-muted focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-1 resize-none"
           />
         </div>
       </div>

@@ -3,6 +3,7 @@ import {
   TextRun,
   HeadingLevel,
   AlignmentType,
+  LineRuleType,
   type IParagraphOptions,
   type ParagraphChild,
   ExternalHyperlink,
@@ -129,7 +130,12 @@ function tokensToElements(tokens: Token[]): Paragraph[] {
       }
       case 'paragraph': {
         const t = token as Tokens.Paragraph;
-        paragraphs.push(inlineTokensToParagraph(t.tokens));
+        // 段落間に余白＋行間をゆったり取り、Kindle/紙面での可読性を上げる。
+        paragraphs.push(
+          inlineTokensToParagraph(t.tokens, {
+            spacing: { after: 180, line: 336, lineRule: LineRuleType.AUTO },
+          }),
+        );
         break;
       }
       case 'list': {

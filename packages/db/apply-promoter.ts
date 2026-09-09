@@ -17,7 +17,18 @@ async function main() {
       const exists = await prisma.prompt.findFirst({
         where: { role: s.role, genre: s.genre, version: s.version },
       });
-      if (exists) { console.log(`prompt exists ${s.genre ?? 'null'}`); continue; }
+      if (exists) {
+        if (exists.body !== s.body) {
+          await prisma.prompt.update({
+            where: { id: exists.id },
+            data: { body: s.body, placeholders_json: s.placeholders_json, activated_at: new Date() },
+          });
+          console.log(`prompt updated ${s.genre ?? 'null'}`);
+        } else {
+          console.log(`prompt unchanged ${s.genre ?? 'null'}`);
+        }
+        continue;
+      }
       await prisma.prompt.create({
         data: {
           role: s.role, genre: s.genre, version: s.version, body: s.body,

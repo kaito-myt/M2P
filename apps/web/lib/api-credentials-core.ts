@@ -29,7 +29,9 @@ import { messages } from './messages';
 // zod schemas
 // ---------------------------------------------------------------------------
 
-const providerSchema = z.enum(['anthropic', 'openai', 'google']);
+// tavily を含む: Marketer の Web 検索を Tavily に切替 (docs/03 §A-03) したため、
+// UI から TAVILY_API_KEY を保存/テストできるようにする。
+const providerSchema = z.enum(['anthropic', 'openai', 'google', 'tavily']);
 export type ApiProvider = z.infer<typeof providerSchema>;
 
 export const setApiCredentialInput = z.object({

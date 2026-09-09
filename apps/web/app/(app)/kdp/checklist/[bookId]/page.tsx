@@ -11,6 +11,8 @@ import { prisma } from '@a2p/db';
 
 import { messages } from '@/lib/messages';
 import { serializeChecklistBook } from '@/lib/kdp-checklist-view';
+import { loadSubmitSchedule } from '@/lib/kdp-submit-schedule-loader';
+import { submitEtaLabel } from '@/lib/kdp-submit-eta';
 import { ChecklistDetailShell } from '@/components/kdp-checklist/checklist-detail-shell';
 
 export const metadata: Metadata = {
@@ -84,6 +86,9 @@ export default async function KdpChecklistDetailPage({
   }
 
   const book = serializeChecklistBook(bookRaw);
+  // 入稿キュー登録済みなら入稿予定を算出（一覧と同じロジック）。
+  const eta = book.kdpPublishQueued ? (await loadSubmitSchedule())[book.id] : undefined;
+  const etaLabel = eta ? submitEtaLabel(eta) : undefined;
 
   return (
     <div className="flex flex-col gap-space-loose" data-testid="kdp-checklist-detail-page">
@@ -98,7 +103,7 @@ export default async function KdpChecklistDetailPage({
               {m.pageTitle}
             </Link>
             <span aria-hidden="true"> &gt; </span>
-            <span className="max-w-[20ch] truncate align-bottom">{book.title}</span>
+            <span className="inline-block max-w-[20ch] truncate align-bottom" title={book.title}>{book.title}</span>
           </nav>
           <h1 className="text-sub-heading text-foreground">{m.pageTitle}</h1>
         </div>
@@ -113,7 +118,7 @@ export default async function KdpChecklistDetailPage({
         </a>
       </header>
 
-      <ChecklistDetailShell book={book} />
+      <ChecklistDetailShell book={book} submitEtaLabel={etaLabel} />
     </div>
   );
 }

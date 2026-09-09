@@ -175,7 +175,7 @@ export function EvaluationHistoryTable({ results }: EvaluationHistoryTableProps)
                 <td className="px-2 py-2">
                   <span
                     className={[
-                      'font-medium',
+                      'font-medium tabular-nums',
                       low ? 'text-destructive' : 'text-foreground',
                     ].join(' ')}
                     data-testid={low ? 'eval-score-low' : 'eval-score-ok'}

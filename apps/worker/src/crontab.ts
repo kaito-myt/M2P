@@ -14,6 +14,7 @@ import { KDP_PUBLISH_STATUS_SYNC_TASK_NAME } from './tasks/kdp-publish-status-sy
 import { PIPELINE_THEME_AUTO_TASK_NAME } from './tasks/pipeline-theme-auto.js';
 import { KDP_SUBMIT_DISPATCHER_TASK_NAME } from './tasks/kdp-submit-dispatcher.js';
 import { BW_SUBMIT_DISPATCHER_TASK_NAME } from './tasks/bw-submit-dispatcher.js';
+import { BW_RETAG_TASK_NAME } from './tasks/bw-retag.js';
 import { PROMOTION_DISPATCH_TASK_NAME } from './tasks/promotion-dispatch.js';
 import { PROMOTION_REVIEW_DAILY_TASK_NAME } from './tasks/promotion-review-daily.js';
 import { COST_OPTIMIZE_WEEKLY_TASK_NAME } from './tasks/cost-optimize-weekly.js';
@@ -263,6 +264,10 @@ export const BW_SUBMIT_DISPATCHER_CRON_ITEM: CronItem = {
   match: BW_SUBMIT_DISPATCHER_CRON_DEFAULT,
   identifier: 'bw-submit-dispatch',
 };
+
+// F-094b: 却下書籍の自動再申請 tick。日次 05:00 JST(20:00 UTC)。タスク側で bw_retag_enabled を
+// 見て自己ゲートするため静的 cron でよい(無効/セッション無しなら本棚を開く前に即 return)。
+export const BW_RETAG_CRON = '0 20 * * *';
 
 /**
  * F-052: 販促投稿の自動ディスパッチ cron (既定 30分毎)。
@@ -568,6 +573,12 @@ export const CRON_ITEMS: CronItem[] = [
     match: ADS_SPEND_FETCH_CRON,
     identifier: 'ads-spend-fetch-daily',
     // payload 不要 (creds は env AMAZON_ADS_* を内部で読む。未設定なら no-op)
+  },
+  {
+    // F-094b: 却下書籍の自動再申請(bw.retag.tick)。bw_retag_enabled=false なら即 no-op。
+    task: BW_RETAG_TASK_NAME,
+    match: BW_RETAG_CRON,
+    identifier: 'bw-retag-tick-daily',
   },
   {
     task: CATALOG_FETCH_TASK_NAME,

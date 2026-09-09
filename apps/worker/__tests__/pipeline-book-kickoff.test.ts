@@ -70,6 +70,8 @@ interface BookRecord {
   theme_id: string | null;
   title: string;
   subtitle: string | null;
+  /** dedup ガード(findFirst)検証用。省略時は findFirst の対象外扱い。 */
+  status?: string;
 }
 
 interface PrismaCaptures {
@@ -206,6 +208,14 @@ function buildPrisma(args: BuildPrismaArgs): {
               subtitle: b.subtitle,
             }
           : null;
+      },
+      findFirst: async ({ where }) => {
+        // dedup ガード: theme_id 一致の Book を1冊返す (status は問わない=block-on-any)。
+        // status 未設定の BookRecord は対象外 (既存テストの互換維持)。
+        const b = books.find(
+          (x) => x.theme_id === where.theme_id && x.status !== undefined,
+        );
+        return b ? { id: b.id, status: b.status! } : null;
       },
       create: async ({ data }) => {
         captures.bookCreates.push({
@@ -1039,5 +1049,66 @@ describe('runPipelineBookKickoff A/B distribution (T-11-06)', () => {
     expect(promptSnapshot['writer']).toBe('prompt_candidate_writer_default');
     // 他の role は active prompt のまま (genre=null → loadActivePrompt(role, null))
     expect(promptSnapshot['marketer']).toBe('prompt_marketer_all');
+  });
+
+  it('dedup ガード: 同一 theme に非 retracted な Book が既存 → 新規作成せず Job=done(skipped)', async () => {
+    const { job, theme } = makeJobAndTheme(); // theme_1
+    // 既に theme_1 に紐づく 'done' な Book が存在する状況を再現
+    const existing: BookRecord = {
+      id: 'book_existing_1',
+      account_id: 'acc_1',
+      theme_id: 'theme_1',
+      title: '既存書籍',
+      subtitle: null,
+      status: 'done',
+    };
+    const { prisma, captures } = buildPrisma({ jobs: [job], themes: [theme], books: [existing] });
+    const { deps } = buildDeps(prisma);
+    const { addJob, calls: addJobCalls } = makeAddJob();
+
+    await runPipelineBookKickoff(
+      { theme_id: 'theme_1', account_id: 'acc_1', job_id: 'job_1' },
+      addJob,
+      deps,
+    );
+
+    // 新規 Book を作らない
+    expect(captures.bookCreates.length).toBe(0);
+    // marketer 子 Job を enqueue しない
+    expect(addJobCalls.length).toBe(0);
+    // Job は done + skipped=duplicate_theme + 既存 book_id を指す
+    const doneUpdate = captures.jobUpdates.find(
+      (u) => (u.data as { status?: string }).status === 'done',
+    );
+    expect(doneUpdate).toBeDefined();
+    const result = (doneUpdate!.data as { result_json?: Record<string, unknown> }).result_json;
+    expect(result?.skipped).toBe('duplicate_theme');
+    expect(result?.existing_book_id).toBe('book_existing_1');
+    expect((doneUpdate!.data as { book_id?: string }).book_id).toBe('book_existing_1');
+  });
+
+  it('dedup ガード: 既存 Book が retracted でも自律再制作しない (block-on-any=取り下げ判断を尊重)', async () => {
+    const { job, theme } = makeJobAndTheme(); // theme_1
+    const retracted: BookRecord = {
+      id: 'book_retracted_1',
+      account_id: 'acc_1',
+      theme_id: 'theme_1',
+      title: '取り下げ済書籍',
+      subtitle: null,
+      status: 'retracted',
+    };
+    const { prisma, captures } = buildPrisma({ jobs: [job], themes: [theme], books: [retracted] });
+    const { deps } = buildDeps(prisma);
+    const { addJob, calls: addJobCalls } = makeAddJob();
+
+    await runPipelineBookKickoff(
+      { theme_id: 'theme_1', account_id: 'acc_1', job_id: 'job_1' },
+      addJob,
+      deps,
+    );
+
+    // retracted 済でも新規作成しない (人間の取り下げ判断を自律運用が上書きしない)
+    expect(captures.bookCreates.length).toBe(0);
+    expect(addJobCalls.length).toBe(0);
   });
 });

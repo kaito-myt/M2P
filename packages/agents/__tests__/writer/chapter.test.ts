@@ -201,13 +201,53 @@ describe('generateChapter — happy path', () => {
 });
 
 // ---------------------------------------------------------------------------
+// 1b. ジャンル別の文体・構成指示 (小説=だ・である+詩的 / 実用書=ですます+小見出し)
+// ---------------------------------------------------------------------------
+
+describe('generateChapter — ジャンル別の文体・構成指示', () => {
+  async function runAndCaptureUserMessage(genre: string | null): Promise<string> {
+    const body = buildBody(8000);
+    const text = jsonResponse({ heading: '第1章', body_md: body, char_count: 8000 });
+    const fakeClient = makeFakeClient(text);
+    const promptRepo = makePromptRepo([defaultPromptRow()]);
+    await generateChapter(baseInput({ genre }), {
+      createAgentClient: vi.fn(async () => fakeClient),
+      promptLoaderDeps: { prisma: promptRepo },
+    });
+    const args = vi.mocked(fakeClient.complete).mock.calls[0]![0];
+    return args.messages[1]!.content as string;
+  }
+
+  it('小説(novel)では「だ・である」調を指示し、ですます統一・##小見出し・場面ラベルの実用書要素を課さない', async () => {
+    const userMsg = await runAndCaptureUserMessage('novel');
+    expect(userMsg).toContain('だ・である');
+    expect(userMsg).toContain('場面(シーン)の流れ');
+    expect(userMsg).not.toContain('「ですます」調で統一');
+    expect(userMsg).not.toContain('見出しとして含める');
+  });
+
+  it('他のフィクション(mystery)でも「だ・である」調を指示する', async () => {
+    const userMsg = await runAndCaptureUserMessage('mystery');
+    expect(userMsg).toContain('だ・である');
+    expect(userMsg).not.toContain('「ですます」調で統一');
+  });
+
+  it('実用書(practical)では従来どおり「ですます」調で統一・小見出しを指示する', async () => {
+    const userMsg = await runAndCaptureUserMessage('practical');
+    expect(userMsg).toContain('「ですます」調で統一');
+    expect(userMsg).toContain('見出しとして含める');
+    expect(userMsg).not.toContain('だ・である');
+  });
+});
+
+// ---------------------------------------------------------------------------
 // 2. 文字数下限未満 → AgentError
 // ---------------------------------------------------------------------------
 
 describe('generateChapter — 文字数レンジ検証', () => {
-  it('target 8000 / actual 5000 字 (下限 5200 未満) → AgentError(chars_out_of_range)', async () => {
-    const body = buildBody(5000);
-    const text = jsonResponse({ heading: '第1章', body_md: body, char_count: 5000 });
+  it('target 8000 / actual 3000 字 (下限 4000 未満) → AgentError(chars_out_of_range)', async () => {
+    const body = buildBody(3000);
+    const text = jsonResponse({ heading: '第1章', body_md: body, char_count: 3000 });
     const fakeClient = makeFakeClient(text);
     const promptRepo = makePromptRepo([defaultPromptRow()]);
 
@@ -225,10 +265,10 @@ describe('generateChapter — 文字数レンジ検証', () => {
     const details = (caught as AgentError).details as {
       actual: number; expected_min: number; expected_max: number; target: number;
     };
-    expect(details.actual).toBe(5000);
-    // ±35%: 8000 × 0.65 = 5200, 8000 × 1.35 = 10800
-    expect(details.expected_min).toBe(5200);
-    expect(details.expected_max).toBe(10800);
+    expect(details.actual).toBe(3000);
+    // ±50%: 8000 × 0.5 = 4000, 8000 × 1.5 = 12000
+    expect(details.expected_min).toBe(4000);
+    expect(details.expected_max).toBe(12000);
     expect(details.target).toBe(8000);
   });
 
@@ -236,9 +276,9 @@ describe('generateChapter — 文字数レンジ検証', () => {
   // 3. 文字数上限超 → AgentError
   // -------------------------------------------------------------------------
 
-  it('target 8000 / actual 11000 字 (上限 10800 超) → AgentError(chars_out_of_range)', async () => {
-    const body = buildBody(11000);
-    const text = jsonResponse({ heading: '第1章', body_md: body, char_count: 11000 });
+  it('target 8000 / actual 13000 字 (上限 12000 超) → AgentError(chars_out_of_range)', async () => {
+    const body = buildBody(13000);
+    const text = jsonResponse({ heading: '第1章', body_md: body, char_count: 13000 });
     const fakeClient = makeFakeClient(text);
     const promptRepo = makePromptRepo([defaultPromptRow()]);
 
@@ -328,20 +368,20 @@ describe('generateChapter — SP-04 §4 T-04-02 完了判定 (target 5000 字 / 
     );
   }
 
-  it('target 5000 / actual 4000 字 (下限丁度) → PASS', async () => {
-    const result = await runWithActual(4000);
-    expect(result.char_count).toBe(4000);
+  it('target 5000 / actual 2500 字 (下限丁度 ±50%) → PASS', async () => {
+    const result = await runWithActual(2500);
+    expect(result.char_count).toBe(2500);
   });
 
-  it('target 5000 / actual 6000 字 (上限丁度) → PASS', async () => {
-    const result = await runWithActual(6000);
-    expect(result.char_count).toBe(6000);
+  it('target 5000 / actual 7500 字 (上限丁度 ±50%) → PASS', async () => {
+    const result = await runWithActual(7500);
+    expect(result.char_count).toBe(7500);
   });
 
-  it('target 5000 / actual 3200 字 (下限 3250 未満) → AgentError(chars_out_of_range)', async () => {
+  it('target 5000 / actual 2000 字 (下限 2500 未満) → AgentError(chars_out_of_range)', async () => {
     let caught: unknown;
     try {
-      await runWithActual(3200);
+      await runWithActual(2000);
     } catch (e) {
       caught = e;
     }
@@ -350,17 +390,17 @@ describe('generateChapter — SP-04 §4 T-04-02 完了判定 (target 5000 字 / 
     const details = (caught as AgentError).details as {
       actual: number; expected_min: number; expected_max: number; target: number;
     };
-    expect(details.actual).toBe(3200);
-    // ±35%: 5000 × 0.65 = 3250, 5000 × 1.35 = 6750
-    expect(details.expected_min).toBe(3250);
-    expect(details.expected_max).toBe(6750);
+    expect(details.actual).toBe(2000);
+    // ±50%: 5000 × 0.5 = 2500, 5000 × 1.5 = 7500
+    expect(details.expected_min).toBe(2500);
+    expect(details.expected_max).toBe(7500);
     expect(details.target).toBe(5000);
   });
 
-  it('target 5000 / actual 7000 字 (上限 6750 超) → AgentError(chars_out_of_range)', async () => {
+  it('target 5000 / actual 8000 字 (上限 7500 超) → AgentError(chars_out_of_range)', async () => {
     let caught: unknown;
     try {
-      await runWithActual(7000);
+      await runWithActual(8000);
     } catch (e) {
       caught = e;
     }
@@ -369,9 +409,9 @@ describe('generateChapter — SP-04 §4 T-04-02 完了判定 (target 5000 字 / 
     const details = (caught as AgentError).details as {
       actual: number; expected_min: number; expected_max: number;
     };
-    expect(details.actual).toBe(7000);
-    expect(details.expected_min).toBe(3250);
-    expect(details.expected_max).toBe(6750);
+    expect(details.actual).toBe(8000);
+    expect(details.expected_min).toBe(2500);
+    expect(details.expected_max).toBe(7500);
   });
 });
 
@@ -693,7 +733,7 @@ describe('generateChapter — token_usage 記録 (T-03-01 教訓回帰防止)', 
 // ---------------------------------------------------------------------------
 
 describe('generateChapter — LLM 呼出パラメータ', () => {
-  it('client.complete に role=writer + maxOutputTokens=16384 + system/user 両方が渡る', async () => {
+  it('client.complete に role=writer + maxOutputTokens=24000 + system/user 両方が渡る', async () => {
     const body = buildBody(8000);
     const text = jsonResponse({ heading: '第1章', body_md: body, char_count: 8000 });
     const fakeClient = makeFakeClient(text);
@@ -709,7 +749,7 @@ describe('generateChapter — LLM 呼出パラメータ', () => {
     };
     const args = completeMock.mock.calls[0]![0];
     expect(args.role).toBe('writer');
-    expect(args.maxOutputTokens).toBe(16384);
+    expect(args.maxOutputTokens).toBe(24000);
     expect(args.messages).toHaveLength(2);
     expect(args.messages[0]!.role).toBe('system');
     expect(args.messages[1]!.role).toBe('user');

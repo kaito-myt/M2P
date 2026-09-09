@@ -29,7 +29,7 @@ export function TokenUsageInline({
   return (
     <section
       aria-label={m.tokenSection}
-      className="rounded-card border border-border-warm bg-white p-space-normal"
+      className="rounded-card border border-border-warm bg-white p-space-relaxed"
     >
       <h2 className="text-body font-medium text-foreground">{m.tokenSection}</h2>
 

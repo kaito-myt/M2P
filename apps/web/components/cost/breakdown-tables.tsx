@@ -54,7 +54,7 @@ export function BreakdownTables({ byProvider, byModel, byRole }: BreakdownTables
             aria-selected={activeTab === tab.key}
             className={`rounded-snug px-3 py-1.5 text-button-sm font-medium transition-colors ${
               activeTab === tab.key
-                ? 'bg-charcoal text-cream'
+                ? 'bg-charcoal text-white'
                 : 'bg-cream-light text-charcoal hover:bg-charcoal-04'
             }`}
             onClick={() => setActiveTab(tab.key)}
@@ -73,12 +73,12 @@ export function BreakdownTables({ byProvider, byModel, byRole }: BreakdownTables
           <table className="w-full text-body">
             <thead>
               <tr className="border-b border-border-warm bg-cream-light text-left">
-                <th className="px-space-relaxed py-space-snug font-medium text-charcoal">{colLabel[activeTab]}</th>
-                <th className="px-space-relaxed py-space-snug text-right font-medium text-charcoal">{m.colInputTokens}</th>
-                <th className="px-space-relaxed py-space-snug text-right font-medium text-charcoal">{m.colOutputTokens}</th>
-                <th className="px-space-relaxed py-space-snug text-right font-medium text-charcoal">{m.colCostJpy}</th>
-                <th className="px-space-relaxed py-space-snug text-right font-medium text-charcoal">{m.colCallCount}</th>
-                <th className="px-space-relaxed py-space-snug text-right font-medium text-charcoal">{m.colShare}</th>
+                <th className="whitespace-nowrap px-space-relaxed py-space-snug font-medium text-charcoal">{colLabel[activeTab]}</th>
+                <th className="whitespace-nowrap px-space-relaxed py-space-snug text-right font-medium text-charcoal">{m.colInputTokens}</th>
+                <th className="whitespace-nowrap px-space-relaxed py-space-snug text-right font-medium text-charcoal">{m.colOutputTokens}</th>
+                <th className="whitespace-nowrap px-space-relaxed py-space-snug text-right font-medium text-charcoal">{m.colCostJpy}</th>
+                <th className="whitespace-nowrap px-space-relaxed py-space-snug text-right font-medium text-charcoal">{m.colCallCount}</th>
+                <th className="whitespace-nowrap px-space-relaxed py-space-snug text-right font-medium text-charcoal">{m.colShare}</th>
               </tr>
             </thead>
             <tbody>
@@ -87,11 +87,11 @@ export function BreakdownTables({ byProvider, byModel, byRole }: BreakdownTables
                   <td className="px-space-relaxed py-space-snug text-charcoal">
                     {activeTab === 'role' ? (m.roles[row.key] ?? row.key) : row.key}
                   </td>
-                  <td className="px-space-relaxed py-space-snug text-right text-charcoal">{formatTokenCount(row.input_tokens)}</td>
-                  <td className="px-space-relaxed py-space-snug text-right text-charcoal">{formatTokenCount(row.output_tokens)}</td>
-                  <td className="px-space-relaxed py-space-snug text-right text-charcoal">{formatCostJpy(row.cost_jpy)}</td>
-                  <td className="px-space-relaxed py-space-snug text-right text-muted">{row.call_count}</td>
-                  <td className="px-space-relaxed py-space-snug text-right text-muted">{row.share_pct}%</td>
+                  <td className="whitespace-nowrap px-space-relaxed py-space-snug text-right tabular-nums text-charcoal">{formatTokenCount(row.input_tokens)}</td>
+                  <td className="whitespace-nowrap px-space-relaxed py-space-snug text-right tabular-nums text-charcoal">{formatTokenCount(row.output_tokens)}</td>
+                  <td className="whitespace-nowrap px-space-relaxed py-space-snug text-right tabular-nums text-charcoal">{formatCostJpy(row.cost_jpy)}</td>
+                  <td className="whitespace-nowrap px-space-relaxed py-space-snug text-right tabular-nums text-muted">{row.call_count}</td>
+                  <td className="whitespace-nowrap px-space-relaxed py-space-snug text-right tabular-nums text-muted">{row.share_pct}%</td>
                 </tr>
               ))}
             </tbody>

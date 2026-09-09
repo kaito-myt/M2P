@@ -71,7 +71,14 @@ export function CompetitorsTable({ competitors }: CompetitorsTableProps) {
                   <Td>{c.author ?? mc.emptyCell}</Td>
                   <Td>{c.asin ?? mc.emptyCell}</Td>
                   <Td align="right">{c.rank ?? mc.emptyCell}</Td>
-                  <Td>{c.review_summary ?? mc.emptyCell}</Td>
+                  <Td>
+                    <span
+                      className="line-clamp-2 block max-w-sm break-words"
+                      title={c.review_summary ?? undefined}
+                    >
+                      {c.review_summary ?? mc.emptyCell}
+                    </span>
+                  </Td>
                   <Td>
                     {c.url ? (
                       <a

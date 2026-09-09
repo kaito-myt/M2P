@@ -830,12 +830,12 @@ describe('runPipelineBookJudge — autopass_cover_enabled', () => {
     expect(captures.coverUpdateManys).toHaveLength(1);
     expect(state.covers.find((c) => c.id === 'cover_2')?.status).toBe('rejected');
 
-    // export enqueue
-    const exportJobCreate = captures.jobCreates.find((c) => c.data.kind === 'pipeline.book.export');
-    expect(exportJobCreate).toBeDefined();
-    const exportCall = addJobCalls.find((c) => c.identifier === 'pipeline.book.export');
-    expect(exportCall).toBeDefined();
-    expect(exportCall?.payload).toMatchObject({ book_id: 'book_1' });
+    // pipeline.book.seo enqueue (SEO 再最適化 → 完了後に export へ進む)
+    const seoJobCreate = captures.jobCreates.find((c) => c.data.kind === 'pipeline.book.seo');
+    expect(seoJobCreate).toBeDefined();
+    const seoCall = addJobCalls.find((c) => c.identifier === 'pipeline.book.seo');
+    expect(seoCall).toBeDefined();
+    expect(seoCall?.payload).toMatchObject({ book_id: 'book_1' });
 
     // audit_log
     expect(captures.auditLogCreates).toHaveLength(1);

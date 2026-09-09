@@ -28,6 +28,13 @@ export interface CostMeterPrisma {
       _sum: { cost_jpy: true };
     }) => Promise<{ _sum: { cost_jpy: unknown } }>;
   };
+  // [F-090] 当月の Amazon Ads 広告費。当月コスト・純利益に算入する。
+  adSpend?: {
+    aggregate: (args: {
+      where: { year_month: string };
+      _sum: { spend_jpy: true };
+    }) => Promise<{ _sum: { spend_jpy: unknown } }>;
+  };
   book: {
     count: (args: { where: { cost_status: string } }) => Promise<number>;
   };
@@ -72,11 +79,16 @@ export async function getCostMeterData(
   const start = new Date(Date.UTC(year, month, 1));
   const end = new Date(Date.UTC(year, month + 1, 1));
 
-  const [costResult, warnCount, pausedCount, settings] = await Promise.all([
+  const ym = `${year}-${String(month + 1).padStart(2, '0')}`;
+  const [costResult, adResult, warnCount, pausedCount, settings] = await Promise.all([
     prisma.tokenUsage.aggregate({
       where: { created_at: { gte: start, lt: end } },
       _sum: { cost_jpy: true },
     }),
+    // [F-090] 当月の Amazon Ads 広告費 (year_month = "YYYY-MM")。未計上/未接続なら 0。
+    prisma.adSpend
+      ? prisma.adSpend.aggregate({ where: { year_month: ym }, _sum: { spend_jpy: true } })
+      : Promise.resolve({ _sum: { spend_jpy: 0 } }),
     prisma.book.count({ where: { cost_status: 'warn' } }),
     prisma.book.count({ where: { cost_status: 'paused' } }),
     prisma.appSettings.findUnique({
@@ -85,7 +97,8 @@ export async function getCostMeterData(
     }),
   ]);
 
-  const monthlyCostJpy = toNumber(costResult._sum.cost_jpy);
+  // 当月コスト = AI 従量(token_usage) + Amazon Ads 広告費。
+  const monthlyCostJpy = toNumber(costResult._sum.cost_jpy) + toNumber(adResult._sum.spend_jpy);
   const budgetJpy = settings?.monthly_cost_red_jpy ?? DEFAULT_BUDGET_JPY;
   const ratioPct = budgetJpy > 0 ? (monthlyCostJpy / budgetJpy) * 100 : 0;
   const remaining = Math.max(budgetJpy - monthlyCostJpy, 0);

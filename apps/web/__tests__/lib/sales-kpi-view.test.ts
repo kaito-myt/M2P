@@ -293,42 +293,45 @@ describe('buildHeatmapFromAggregates', () => {
 
 describe('buildTrendChartFromAggregates', () => {
   const months = ['2026-01', '2026-02', '2026-03'];
+  const segVal = (mo: { segments: Array<{ genre: string; value: number }> }, genre: string): number =>
+    mo.segments.find((s) => s.genre === genre)?.value ?? 0;
 
-  it('maps genre aggregates to correct month buckets', () => {
+  it('maps genre aggregates to correct month buckets (全ジャンル動的)', () => {
     const aggs = [
       { ym: '2026-01', genre: 'practical', royalty_jpy: 5000 },
       { ym: '2026-01', genre: 'business', royalty_jpy: 3000 },
       { ym: '2026-02', genre: 'self_help', royalty_jpy: 2000 },
+      { ym: '2026-01', genre: 'gambling', royalty_jpy: 1500 },
     ];
     const data = buildTrendChartFromAggregates(aggs, months);
     const jan = data.find((d) => d.ym === '2026-01')!;
-    expect(jan.practical).toBe(5000);
-    expect(jan.business).toBe(3000);
-    expect(jan.self_help).toBe(0);
+    expect(segVal(jan, 'practical')).toBe(5000);
+    expect(segVal(jan, 'business')).toBe(3000);
+    // 旧実装は gambling を practical に潰していた。全ジャンルが個別に出ること。
+    expect(segVal(jan, 'gambling')).toBe(1500);
+    expect(segVal(jan, 'self_help')).toBe(0);
 
     const feb = data.find((d) => d.ym === '2026-02')!;
-    expect(feb.self_help).toBe(2000);
-    expect(feb.practical).toBe(0);
+    expect(segVal(feb, 'self_help')).toBe(2000);
+    expect(segVal(feb, 'practical')).toBe(0);
   });
 
-  it('total = sum of all genres', () => {
+  it('total = sum of all genre segments', () => {
     const aggs = [
       { ym: '2026-01', genre: 'practical', royalty_jpy: 1000 },
       { ym: '2026-01', genre: 'business', royalty_jpy: 2000 },
-      { ym: '2026-01', genre: 'self_help', royalty_jpy: 3000 },
+      { ym: '2026-01', genre: 'gambling', royalty_jpy: 3000 },
     ];
     const data = buildTrendChartFromAggregates(aggs, months);
     const jan = data.find((d) => d.ym === '2026-01')!;
     expect(jan.total).toBe(6000);
   });
 
-  it('returns zeros for months with no data', () => {
+  it('returns zero totals for months with no data', () => {
     const data = buildTrendChartFromAggregates([], months);
     for (const d of data) {
-      expect(d.practical).toBe(0);
-      expect(d.business).toBe(0);
-      expect(d.self_help).toBe(0);
       expect(d.total).toBe(0);
+      expect(d.segments.every((s) => s.value === 0)).toBe(true);
     }
   });
 
@@ -336,6 +339,12 @@ describe('buildTrendChartFromAggregates', () => {
     const data = buildTrendChartFromAggregates([], months);
     expect(data).toHaveLength(3);
     expect(data.map((d) => d.ym)).toEqual(months);
+  });
+
+  it('respects explicit genre order', () => {
+    const aggs = [{ ym: '2026-01', genre: 'business', royalty_jpy: 100 }];
+    const data = buildTrendChartFromAggregates(aggs, months, ['business', 'practical']);
+    expect(data[0]!.segments.map((s) => s.genre)).toEqual(['business', 'practical']);
   });
 });
 

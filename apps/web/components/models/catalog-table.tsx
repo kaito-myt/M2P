@@ -31,6 +31,20 @@ export interface CatalogTableRow {
   source: string;
   /** 前回 (旧 is_current=false 行) との変動率 (%) — null = 比較不可。 */
   delta_pct: number | null;
+  /** モデル可用性 (model.health.probe 判定)。null=未検証, true=呼べる, false=呼べない。 */
+  available: boolean | null;
+  /** 可用性を最後に検証した時刻 (ISO)。 */
+  availability_checked_at: string | null;
+}
+
+/** 可用性バッジ (使用可/使用不可/未検証)。 */
+function AvailabilityBadge({ available, checkedAt }: { available: boolean | null; checkedAt: string | null }) {
+  const title = checkedAt ? `最終確認 ${formatDateTime(checkedAt)}` : '未確認';
+  if (available === true)
+    return <span title={title} className="inline-flex items-center gap-1 rounded-default bg-success-bg px-2 py-0.5 text-caption text-success">● 使用可</span>;
+  if (available === false)
+    return <span title={title} className="inline-flex items-center gap-1 rounded-default bg-destructive-bg px-2 py-0.5 text-caption text-destructive">● 使用不可</span>;
+  return <span title={title} className="inline-flex items-center gap-1 text-caption text-muted">— 未検証</span>;
 }
 
 interface CatalogTableProps {
@@ -170,6 +184,7 @@ export function CatalogTable({ rows }: CatalogTableProps) {
                 dir={sortDir}
                 onClick={() => toggleSort('model')}
               />
+              <Th>状態</Th>
               <SortableTh
                 label={m.table.inputPrice}
                 align="right"
@@ -215,10 +230,11 @@ export function CatalogTable({ rows }: CatalogTableProps) {
                 >
                   <Td>{providerLabel(r.provider)}</Td>
                   <Td>{r.model}</Td>
+                  <Td><AvailabilityBadge available={r.available} checkedAt={r.availability_checked_at} /></Td>
                   <Td align="right">{pricePer1k(r.input_price_per_mtok_usd)}</Td>
                   <Td align="right">{pricePer1k(r.output_price_per_mtok_usd)}</Td>
                   <Td align="right">{formatJpy(predictPerBookJpy(r))}</Td>
-                  <Td>{formatDateTime(r.fetched_at)}</Td>
+                  <Td nowrap>{formatDateTime(r.fetched_at)}</Td>
                   <Td>{r.source}</Td>
                   <Td align="right">
                     <span className={cn(deltaWarn && 'text-destructive font-medium')}>
@@ -273,7 +289,7 @@ function Th({
   return (
     <th
       scope="col"
-      className={`px-space-relaxed py-2 text-button-sm font-normal text-charcoal-82 ${
+      className={`whitespace-nowrap px-space-relaxed py-2 text-button-sm font-normal text-charcoal-82 ${
         align === 'right' ? 'text-right' : 'text-left'
       }`}
     >
@@ -298,7 +314,7 @@ function SortableTh({
   return (
     <th
       scope="col"
-      className={`px-space-relaxed py-2 text-button-sm font-normal text-charcoal-82 ${
+      className={`whitespace-nowrap px-space-relaxed py-2 text-button-sm font-normal text-charcoal-82 ${
         align === 'right' ? 'text-right' : 'text-left'
       }`}
     >
@@ -321,15 +337,17 @@ function SortableTh({
 function Td({
   children,
   align = 'left',
+  nowrap = false,
 }: {
   children: React.ReactNode;
   align?: 'left' | 'right';
+  nowrap?: boolean;
 }) {
   return (
     <td
       className={`px-space-relaxed py-3 text-body align-middle ${
-        align === 'right' ? 'text-right' : 'text-left'
-      }`}
+        align === 'right' ? 'text-right tabular-nums' : 'text-left'
+      }${nowrap ? ' whitespace-nowrap' : ''}`}
     >
       {children}
     </td>

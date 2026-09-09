@@ -44,7 +44,7 @@ Xキー情報
 scripts/.kdp-session.json
 scripts/.kdp-captures/
 kdp-session.json
-scripts/.kdp-userdata/
+scripts/.kdp-userdata*/
 
 # KDP home proxy secrets
 scripts/.kdp-proxy.env

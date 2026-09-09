@@ -66,7 +66,7 @@ export function AuditFilterBar({
   );
 
   const selectClass =
-    'cursor-pointer rounded-card border border-border-warm bg-white px-2 py-1 text-body text-charcoal focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent disabled:opacity-50';
+    'cursor-pointer rounded-card border border-border-warm bg-cream-light px-2 py-1 text-body text-charcoal focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent disabled:opacity-50';
 
   return (
     <div
@@ -153,7 +153,7 @@ export function AuditFilterBar({
         <span className="sr-only">{m.searchLabel}</span>
         <input
           type="search"
-          className="rounded-card border border-border-warm bg-white px-2 py-1 text-body text-charcoal placeholder:text-muted focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent disabled:opacity-50"
+          className="rounded-card border border-border-warm bg-cream-light px-2 py-1 text-body text-charcoal placeholder:text-muted focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent disabled:opacity-50"
           placeholder={m.searchPlaceholder}
           value={currentSearch}
           disabled={isPending}

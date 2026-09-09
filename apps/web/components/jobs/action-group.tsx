@@ -108,7 +108,7 @@ export function ActionGroup({ jobId, status, kind, bookId }: ActionGroupProps) {
       {errorMsg && (
         <div
           role="alert"
-          className="rounded border border-red-300 bg-red-50 px-3 py-2 text-caption text-red-700"
+          className="rounded-default border border-destructive/30 bg-destructive-bg px-3 py-2 text-caption text-destructive"
         >
           {errorMsg}
         </div>
@@ -145,7 +145,7 @@ export function ActionGroup({ jobId, status, kind, bookId }: ActionGroupProps) {
         type="button"
         onClick={() => setShowConfirm(true)}
         disabled={!canCancel || isPending}
-        className={`${btnBase(!canCancel || isPending)} border-red-300 bg-red-50 text-red-700 hover:bg-red-100`}
+        className={`${btnBase(!canCancel || isPending)} border-destructive/30 bg-destructive-bg text-destructive hover:bg-destructive-bg`}
         title={!canCancel ? m.disabledTerminal : undefined}
         aria-disabled={!canCancel || isPending}
       >
@@ -170,9 +170,9 @@ export function ActionGroup({ jobId, status, kind, bookId }: ActionGroupProps) {
           role="dialog"
           aria-modal="true"
           aria-labelledby={cancelDialogTitleId}
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+          className="fixed inset-0 z-50 flex items-center justify-center bg-charcoal/50 p-4"
         >
-          <div className="w-full max-w-sm rounded-card border border-border-warm bg-white p-space-normal shadow-lg">
+          <div className="w-full max-w-sm rounded-card border border-border-warm bg-white p-space-relaxed shadow-lg">
             <h3
               id={cancelDialogTitleId}
               className="text-body font-medium text-foreground"
@@ -182,7 +182,7 @@ export function ActionGroup({ jobId, status, kind, bookId }: ActionGroupProps) {
             <p className="mt-space-snug text-caption text-muted">
               {m.actionCancelConfirmBody}
             </p>
-            <div className="mt-space-normal flex justify-end gap-2">
+            <div className="mt-space-relaxed flex justify-end gap-2">
               <button
                 type="button"
                 onClick={() => setShowConfirm(false)}
@@ -193,7 +193,7 @@ export function ActionGroup({ jobId, status, kind, bookId }: ActionGroupProps) {
               <button
                 type="button"
                 onClick={handleCancelConfirmed}
-                className="rounded border border-red-400 bg-red-600 px-3 py-1.5 text-body font-medium text-white hover:bg-red-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-red-400"
+                className="rounded-default border border-transparent bg-destructive px-3 py-1.5 text-body font-medium text-cream-light hover:bg-destructive/90 focus-visible:outline focus-visible:outline-2 focus-visible:outline-destructive"
               >
                 {m.actionCancelConfirm}
               </button>

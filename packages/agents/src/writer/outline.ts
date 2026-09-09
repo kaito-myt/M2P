@@ -32,7 +32,7 @@
  *  - schema は DB `outlines.chapters_json` + docs/05 §6.3.2 と完全整合 (Hard Rule #3)
  *  - AgentSdkClient は responseSchema 非対応 — 自由テキスト → JSON 抽出 → zod の三段
  */
-import { genreLabel } from '@a2p/contracts/agents';
+import { genreLabel, isFiction } from '@a2p/contracts/agents';
 import { AgentError } from '@a2p/contracts/errors';
 import type { LLMClient } from '@a2p/contracts/agents';
 import {
@@ -43,6 +43,7 @@ import {
 } from '@a2p/contracts/agents/writer';
 
 import { createAgentClient as defaultCreateAgentClient } from '../lib/llm-client-factory.js';
+import { sanitizeLlmJson } from '../lib/sanitize-llm-json.js';
 import {
   fillPlaceholders,
   loadActivePrompt as defaultLoadActivePrompt,
@@ -55,7 +56,7 @@ import type {
 import type { LoadModelAssignmentDeps } from '../lib/load-model-assignment.js';
 
 /** Writer アウトライン LLM 呼出の既定 max tokens。10 章分の構造化 JSON に余裕。 */
-const DEFAULT_MAX_OUTPUT_TOKENS = 8192;
+const DEFAULT_MAX_OUTPUT_TOKENS = 16384;
 
 /**
  * F-003 受入基準: 章合計の想定文字数が指示の ±15% に収まる。
@@ -255,8 +256,9 @@ function buildUserMessage(input: WriterOutlineInput): string {
     `差別化フック: ${input.themeContext.hook}`,
     `想定読者: ${input.themeContext.target_reader}`,
     `ジャンル: ${genreLabel(input.genre) ?? 'general'}`,
-    `想定章数: ${input.targetChapterCount} (7〜10 章の範囲で調整可)`,
-    `想定総文字数: ${input.targetTotalChars} 字 (各章合計 ±15% 範囲を厳守)`,
+    `想定章数: ${input.targetChapterCount} (10〜28 章の範囲で調整可)`,
+    `想定総文字数: ${input.targetTotalChars} 字 (各章合計 ±15% 範囲を厳守。ボリュームのある読み応え重視)`,
+    `各章の target_chars は 4,000〜6,500 字を目安にする (1 章が長すぎると本文生成が目標字数に届かず失敗するため。総量は章数で稼ぐ)`,
   );
   if (input.kdpMetadata?.keywords && input.kdpMetadata.keywords.length > 0) {
     lines.push(`参考キーワード: ${input.kdpMetadata.keywords.join(', ')}`);
@@ -270,12 +272,16 @@ function buildUserMessage(input: WriterOutlineInput): string {
   }
   lines.push(
     '',
-    '上記の書籍について章立てアウトラインを生成してください。',
+    isFiction(input.genre) ? '上記の小説の構成(話/章の流れ)を設計してください。' : '上記の書籍について章立てアウトラインを生成してください。',
     'F-003 受入基準 (必ず遵守):',
-    ` - 章数: ${input.targetChapterCount} を中心に 7〜10 章`,
-    ` - 各章 target_chars の合計が ${input.targetTotalChars} 字の ±15% 範囲内`,
-    ' - 各章には小見出し (subheadings) を 2〜10 個含める',
-    ' - 「はじめに」「おわりに」相当の章を必ず含める',
+    ` - 章(話)数: ${input.targetChapterCount} を中心に 10〜28`,
+    ` - 各章 target_chars の合計が ${input.targetTotalChars} 字の ±15% 範囲内。ただし 1 章は 4,000〜6,500 字に収める(長すぎる章は本文生成が失敗する)`,
+    isFiction(input.genre)
+      ? ' - subheadings は各章(話)で描く「場面(シーン)の流れ」を 2〜10 個。実用書の小見出しではなく、物語の内部メモとして書く'
+      : ' - 各章には小見出し (subheadings) を 2〜10 個含める',
+    isFiction(input.genre)
+      ? ' - 小説のため「はじめに」「目次」「まとめ」等の実用書要素は付けない。プロローグ/第1話など物語本文から始め、heading も物語の章題にする'
+      : ' - 「はじめに」「おわりに」相当の章を必ず含める',
     ' - index は 1 始まりの連番 (1, 2, ..., N)',
     '',
     '出力形式: JSON で以下を返してください。',
@@ -409,42 +415,7 @@ function tryParse(s: string): unknown {
  * LLM 応答 JSON 内の string 値に混入する生改行 (\n / \r / \t) を escape する
  * defensive helper。state machine で inString 状態を追跡する。
  */
+/** 生改行/タブ + 文字列値内の未エスケープ二重引用符を復旧(共有ヘルパへ委譲)。 */
 function sanitizeJsonStringNewlines(text: string): string {
-  let result = '';
-  let inString = false;
-  let escapeNext = false;
-  for (let i = 0; i < text.length; i++) {
-    const ch = text[i]!;
-    if (escapeNext) {
-      result += ch;
-      escapeNext = false;
-      continue;
-    }
-    if (ch === '\\') {
-      result += ch;
-      escapeNext = true;
-      continue;
-    }
-    if (ch === '"') {
-      result += ch;
-      inString = !inString;
-      continue;
-    }
-    if (inString) {
-      if (ch === '\n') {
-        result += '\\n';
-        continue;
-      }
-      if (ch === '\r') {
-        result += '\\r';
-        continue;
-      }
-      if (ch === '\t') {
-        result += '\\t';
-        continue;
-      }
-    }
-    result += ch;
-  }
-  return result;
+  return sanitizeLlmJson(text);
 }

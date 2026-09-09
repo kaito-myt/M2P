@@ -1,0 +1,37 @@
+---
+name: reference-model-assignment-routing
+description: model_assignments のルーティング仕様と、Gemini無料枠枯渇で書籍パイプラインが静かに停止した事故の教訓
+metadata:
+  updated_2026_08_24: |
+    ジャンル別モデル最適化を本番適用(apply-model-routing-books.ts)。実用書=GPT系/小説=Claude Opus系。
+    writer: null既定=openai/gpt-5, 小説7ジャンル=anthropic/claude-opus-5。
+    editor: null既定=anthropic/claude-sonnet-5(校正はClaude), 小説7=claude-opus-5(リライト)。
+    judge: openai/gpt-5(整合性/最終レビュー)。marketer: claude-sonnet-5(web_search=Anthropic専用のためGPT不可)。
+    genre別行がnull既定に優先→小説だけClaude。DB設定のみで即効(デプロイ不要)。
+    ※温度は未指定なので gpt-5 の temperature 制約は回避済。実用書bulkがgpt-5でコスト増→cost meter監視。
+    カタログ実在ID: openai=gpt-5/gpt-5-mini/gpt-4.1/gpt-4o, anthropic=claude-opus-5/opus-4-8/sonnet-5/sonnet-4-6/haiku-4-5。GPT-5.6 Sol/Terra/Lunaは未登録→gpt-5へ写像。 
+  node_type: memory
+  type: reference
+  originSessionId: dbaf6a1f-f78c-456b-b7a9-4a5f4fae6ebf
+  modified: 2026-09-01T09:55:16.070Z
+---
+
+**現在の割当 (2026-09-01 時点・ユーザー承認)**: editor = **全ジャンル anthropic/claude-sonnet-5**(小説7ジャンルの opus-5 行を archived、`created_by='editor-sonnet5-2026-09-01'` で sonnet-5 行を追加)。理由: 43冊再開時に小説の Opus 5 編集だけで 2h ¥14k を消費したため、ユーザー「Sonnetに変更していいよ」。実用書の editor は元々 sonnet-5(null既定)。judge=sonnet-5、writer=opus-5(小説)/sonnet-5、thumbnail_text/cover_text_check/outline_review/readings=sonnet-4-6、cover_art_direction=opus-4-8、seo/blog_seo=gpt-5、thumbnail_image=gpt-image-1、promo_image=imagen-4。**戻すには** `created_by='editor-sonnet5-2026-09-01'` を archived にし、同日 archived された editor/opus-5 行を active に戻す。緊急時の OpenAI 退避手順は [[reference_openai_fallback]]。
+
+**4回目の停止＋恒久対策「動く・安い・止まらない」(2026-08-28)**: 再び `gemini-2.5-flash`(editor/judge active)＋`gemini-2.5-pro`(writer/growth_scout)＋`gemini-2.0-flash/lite`(廃止)でmarketer/pipeline失敗→本がバッチ計画で**オレンジ停止**・テーマ生成失敗。運営者「動く・安い・止まらない」。**即修正**: 書籍/販促の要7ロール(writer/editor/judge/growth_scout→claude-sonnet-5, content_optimizer/outline_review/tiktok_creator→claude-sonnet-4-6)をDB即切替(active Google=0件に)。**恒久対策=新規 `model.health.probe`タスク**(`apps/worker/src/tasks/model-health-probe.ts`, cron `20 4,16 * * *`): ①active割当∪is_currentカタログの各テキストモデルを**実際に1トークン叩いて**可用性判定(404/no longer available/deprecated=false, 429/5xx/timeout=不明で据置) ②`model_catalog.available/availability_checked_at/availability_note`(新カラム, prod ALTER済)に記録 ③**active割当が available=false を指したら critical alert＋自動切替**(同provider最安available→無ければ anthropic/claude-sonnet-4-6) ④cost_optimizer は available!=false のみ推奨(死んだモデル提案→エラーの再発防止)。カタログ画面に「使用可/使用不可/未検証」バッジ追加。実測: probe 38件中14件がunavailable検出(gemini-2.0系EOL等)、healed=0(割当は先に手修正済)。既存の reactive `healModelOutages`(org.ops.watch)を補完する**proactive**版。**教訓の要**: モデルは「listされていても呼べない」ことがある(gemini-2.5-flashはListModelsに出るがgenerateContentは404)→存在確認でなく**実呼び出しprobeが必須**。[[reference-deai-ui-rules]]
+
+**runtimeエージェントのモデルは prod DB `model_assignments`(role, genre, provider, model, status) が唯一の真実。** `loadModelAssignment`(packages/agents/src/lib/load-model-assignment.ts)が `status='active'` かつ role一致(genre指定値 or NULL既定)を **findFirst** で1件取得。orderByは `genre desc nulls last` のみ＝**同一genreに複数activeがあるとタイブレークは非決定的**(Postgres任意順)。キャッシュ無し(毎回DB参照)＝DB変更は即反映(worker再起動不要)。
+
+**事故(2026-07-28に発見・修復)**: editor/judge/marketer/optimizer/outline_review の5ロールが、A/B実験で **Claude割当をarchived・Geminiをactive化** されていた(2026-07-24)。Gemini無料枠が `limit: 0`(枠ゼロ/課金未設定)で全滅 → これら5ロールが07-24以降ずっと失敗し、書籍生成パイプライン(marketer→writer→editor→judge)が**静かに停止**していた。症状=ジョブが `google request failed ... You exceeded your current quota` で焼ける。
+
+**復旧手順(再発時の対処)**: 該当roleごとに `UPDATE model_assignments SET status='archived' WHERE provider='google'...`(Gemini退避)＋`UPDATE ... SET status='active', archived_at=NULL WHERE role=X AND model='claude-...' AND provider='anthropic'`(Claude1件を再有効化)。**各roleに必ずactiveを1件残す**(0件だと `ConfigError: no active ModelAssignment` で即死)。検証SQL: `GROUP BY role HAVING count(*) FILTER(WHERE status='active')=0` が空であること。復旧後の既定: editor=sonnet-4-6, judge/marketer/optimizer=opus-4-8, outline_review=sonnet-4-6。
+
+**3回目の「静かな停止」(2026-08-10に発見・修復)**: 症状=08-06以降の全書籍が `status='running'` のまま停止(直近doneは08-03)、テーマ生成/バッチ計画は正常(3冊/日・22:00 kick)なのに本が完成しない。真因=**editor と judge の active が再び `google/gemini-2.5-flash` になっており、そのモデルをGoogleが廃止**(quota枯渇ではなく `This model models/gemini-2.5-flash is no longer available to new users`)→editorジョブ100%失敗→全書籍がeditor段で凍結(chapter段で `chars_out_of_range` の少数失敗も併発、これはCHAR_TOLERANCE=0.35のLLM変動でリトライ自己回復)。07-30にGoogle課金を入れてGemini再利用可にした後、editor/judgeが安価なGeminiに再割当され、モデル廃止で再燃したパターン。**修正**: `UPDATE model_assignments SET provider='anthropic', model='claude-sonnet-4-6' WHERE status='active' AND role IN ('editor','judge') AND provider='google'`(DB即反映・worker再起動不要=createAgentClientがloadModelAssignmentをライブ参照)＋停止中16ジョブ(editor/writer.chapter失敗)を `graphile_worker.add_job` で再投入(payload=保存payload_json+job_id、CASはfailed許容)。**教訓: editor/judge は Gemini に載せない**(安価だがモデル廃止/枠枯渇で繰り返し書籍生成を止める常習犯)。model_assignment_snapshot は provenance 用でランタイムは常にライブ参照。
+
+**再発防止の恒久ハードニング(2026-08-10 実装・デプロイ)**: (1) **org.ops.watch に自己修復を追加**(`healModelOutages`, `apps/worker/src/tasks/org-ops-watch.ts`)=失敗ジョブのエラーが `MODEL_OUTAGE_RE`(no longer available/deprecated/model not found/exceeded quota/resource_exhausted/PERMISSION_DENIED/invalid api key)に一致したら kind→role(`KIND_TO_ROLE`)を特定し、その role の active 割当が **anthropic 以外なら claude-sonnet-4-6 へ自動切替**＋audit_log(`model_assignment.auto_heal`)＋可視化sysops task。従来の recover_job は「同じ壊れたモデルで再投入」を無限反復するだけで直せなかった欠陥への対策。**ops.watch cron を daily→6時間毎に短縮**(`app_settings.org_ops_watch_cron='0 */6 * * *'`)。(2) **editor に章ごとparse-retry追加**(`MAX_PARSE_RETRIES=3`, `packages/agents/src/editor/index.ts`)=editorを sonnet-4-6 に切替後、少数章の `editor.invalid_output: failed to parse JSON`(sonnetの非決定的なJSON崩れ)で **1章失敗=書籍ジョブ全体失敗** となり全書籍が停止したため、章単位でLLM再呼出を最大3回(theme.tsと同方針、ProviderErrorは透過)。**教訓**: Gemini向けに書かれたエージェント(全章一括32768トークン等)をClaudeへ移すと出力仕様差でparse失敗しやすい→retry耐性を持たせる。
+
+**販促/コンテンツ系8ロールが非現行opus-4-7に固着(2026-08-27発見・修復)**: `content_creator / promoter / sns_strategist / promo_strategist / tiktok_scenario / tiktok_marketer / marketer_plan / cover_art_direction` の8ロールがactiveで `anthropic/claude-opus-4-7`(非現行モデル。現行はopus-4-8/opus-5/sonnet-5/haiku-4-5)になっていた→良書紹介ブログ/SNS/TikTok台本等の生成が不調(ブログが「骨子」だらけ・投稿停滞)の一因。**修正**: `UPDATE model_assignments SET model='claude-opus-4-8' WHERE model='claude-opus-4-7' AND status='active'`(8件、DB即反映)。**教訓**: モデル世代が上がったら旧世代(opus-4-7等)に残った割当を棚卸しする。カタログ取得が壊れてても割当は生きるので、非現行IDが active に残りやすい。[[project-promo-quality]]
+
+**注意**: Geminiを使うなら Google APIキーに課金設定が必要。無料枠は実質使えない。同じ枯渇は marketer が Vercel AI SDK 経由で `google request failed` を出す形でも現れる。（2026-07-30: 運営者がGoogle API課金設定済→Gemini再利用可に）関連: [[project-org-agents]]
+
+**2回目の「静かな停止」(2026-07-30に発見・修復)**: 症状は同じ(テーマ07-23以降0件・token_usage 07-29以降ゼロ)だが**原因は別**。model_assignmentsは健全(全roleにactiveなanthropic/openai)。真因は `pipeline.theme.generate` が連日 `marketer.theme.invalid_output: failed to parse JSON` で失敗。theme.autoは日次cron1回のみ・リトライ無しのため1度のパース失敗=その日テーマ0件=全工程停止に直結していた(07-27まではGemini枠枯渇も重複)。実API再現ではopus-4-8は正しいJSONを返す(stop_reason=end_turn, ~3.5k tokens)ため失敗は非決定的。**修正(commit)**: `packages/agents/src/marketer/theme.ts` でLLM呼出+JSON抽出+zod検証を invalid_output 失敗時に最大3回リトライ(MAX_PARSE_RETRIES=3、ProviderErrorは透過)。**罠**: max_tokensを32768に上げると Anthropic SDK が「非ストリーミングで10分超過しうる」と判断し messages.create を即エラー(`Streaming is required...`)にする→16384に据置(実測3.5kで十分)。**併発の落とし穴**: `app_settings.monthly_budget_exceeded=true` が古い赤閾値(¥50k)で誤ラッチしたまま固着(実コスト¥51,828 < 現赤¥100,000)。ただしこのフラグは実際にはパイプラインを止めない(batches-coreは予測コストvs red閾値+force_continueで判定、latchフラグは非参照)＝停止の主因ではないが翌月まで固着するのでリセット推奨。診断の勘所: `jobs` 表(kind like '%theme%', status, error) で連日の失敗理由を見る / token_usage の途絶時刻。

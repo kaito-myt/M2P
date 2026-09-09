@@ -6,12 +6,13 @@
 import { useMemo, useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
 
+import { GENRE_GROUPS, genreLabel } from '@a2p/contracts';
+
 import { startBakeoff } from '@/app/actions/bakeoff';
 import { messages } from '@/lib/messages';
 import { cn } from '@/lib/cn';
 import {
   BAKEOFF_ROLES,
-  BAKEOFF_GENRES,
   type BakeoffRunRow,
   type BakeoffResultRow,
   type CandidateModel,
@@ -115,10 +116,14 @@ function StartForm({ candidates }: { candidates: CandidateModel[] }) {
           <span className="text-button-sm text-charcoal-82">{m.form.genre}</span>
           <select className={inputCls} value={genre} onChange={(e) => setGenre(e.target.value)}>
             <option value="">{m.form.genreAny}</option>
-            {BAKEOFF_GENRES.map((g) => (
-              <option key={g} value={g}>
-                {g}
-              </option>
+            {GENRE_GROUPS.map(({ group, items }) => (
+              <optgroup key={group} label={group}>
+                {items.map((g) => (
+                  <option key={g.slug} value={g.slug}>
+                    {g.label}
+                  </option>
+                ))}
+              </optgroup>
             ))}
           </select>
         </label>
@@ -230,7 +235,7 @@ function RunCard({ run }: { run: BakeoffRunRow }) {
           <span className="truncate text-card-title font-medium text-charcoal">{run.inputLabel}</span>
           <span className="text-caption text-muted">
             {run.role}
-            {run.genre ? ` / ${run.genre}` : ''} · {run.createdAt ? new Date(run.createdAt).toLocaleString('ja-JP') : ''}
+            {run.genre ? ` / ${genreLabel(run.genre) ?? run.genre}` : ''} · {run.createdAt ? new Date(run.createdAt).toLocaleString('ja-JP') : ''}
           </span>
         </div>
         <span className={cn('rounded-pill px-2 py-0.5 text-caption', statusClass(run.status))}>{run.status}</span>
@@ -243,9 +248,9 @@ function RunCard({ run }: { run: BakeoffRunRow }) {
               <tr className="border-b border-border-warm text-left text-caption text-muted">
                 <th className="py-2 pr-3 font-medium">{m.result.rank}</th>
                 <th className="py-2 pr-3 font-medium">{m.result.model}</th>
-                <th className="py-2 pr-3 font-medium">{m.result.score}</th>
-                <th className="py-2 pr-3 font-medium">{m.result.cost}</th>
-                <th className="py-2 pr-3 font-medium">{m.result.latency}</th>
+                <th className="py-2 pr-3 text-right font-medium">{m.result.score}</th>
+                <th className="py-2 pr-3 text-right font-medium">{m.result.cost}</th>
+                <th className="py-2 pr-3 text-right font-medium">{m.result.latency}</th>
                 <th className="py-2 font-medium">{m.result.rationale}</th>
               </tr>
             </thead>
@@ -280,10 +285,12 @@ function ResultRow({ r, yen }: { r: BakeoffResultRow; yen: (n: number | null) =>
           <div className="text-caption text-muted">{r.provider}</div>
           {r.error && <div className="text-caption text-destructive">{m.result.failed}: {r.error}</div>}
         </td>
-        <td className="py-2 pr-3 font-medium text-charcoal">{r.qualityScore ?? '—'}</td>
-        <td className="py-2 pr-3 text-charcoal-82">{yen(r.costJpy)}</td>
-        <td className="py-2 pr-3 text-charcoal-82">{r.latencyMs != null ? `${(r.latencyMs / 1000).toFixed(1)}s` : '—'}</td>
-        <td className="py-2 text-charcoal-82">{r.rationale ?? '—'}</td>
+        <td className="py-2 pr-3 text-right font-medium tabular-nums text-charcoal">{r.qualityScore ?? '—'}</td>
+        <td className="whitespace-nowrap py-2 pr-3 text-right tabular-nums text-charcoal-82">{yen(r.costJpy)}</td>
+        <td className="whitespace-nowrap py-2 pr-3 text-right tabular-nums text-charcoal-82">{r.latencyMs != null ? `${(r.latencyMs / 1000).toFixed(1)}s` : '—'}</td>
+        <td className="py-2 text-charcoal-82">
+          <span className="line-clamp-3 block max-w-md break-words" title={r.rationale ?? undefined}>{r.rationale ?? '—'}</span>
+        </td>
       </tr>
       {showOut && r.outputText && (
         <tr>

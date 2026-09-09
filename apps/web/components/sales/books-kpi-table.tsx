@@ -177,9 +177,15 @@ export function BooksKpiTable({ books }: BooksKpiTableProps) {
                 {/* Thumbnail */}
                 <td className="w-12 px-space-relaxed py-space-snug">
                   {book.thumbnail_r2_key ? (
-                    <div className="h-10 w-8 rounded-sm bg-charcoal-04 text-center text-caption text-muted leading-10">
-                      {m.thumbnailAlt}
-                    </div>
+                    // eslint-disable-next-line @next/next/no-img-element -- 署名付きURLリダイレクト、Cookie必須のため素の img
+                    <img
+                      src={`/api/books/${book.book_id}/thumbnail`}
+                      alt={book.title}
+                      width={32}
+                      height={40}
+                      loading="lazy"
+                      className="h-10 w-8 rounded-sm border border-border-warm object-cover"
+                    />
                   ) : (
                     <div className="h-10 w-8 rounded-sm bg-cream border border-border-warm" />
                   )}
@@ -259,7 +265,7 @@ export function BooksKpiTable({ books }: BooksKpiTableProps) {
                     book.roi != null && book.roi >= 1
                       ? 'text-green-700'
                       : book.roi != null && book.roi < 1
-                        ? 'text-red-600'
+                        ? 'text-accent'
                         : 'text-muted'
                   }`}
                 >

@@ -90,7 +90,7 @@ export const DIVISION_KINDS: Record<Division, readonly string[]> = {
   production: ['plan_book', 'write', 'edit', 'design_cover', 'qa'],
   publishing: ['prepare_metadata', 'set_price', 'publish_kdp'],
   analytics: ['analyze_sales', 'research_market', 'report'],
-  promotion: ['plan_accounts', 'create_content', 'publish_post', 'analyze_promo', 'create_account', 'connect_account'],
+  promotion: ['plan_accounts', 'create_content', 'publish_post', 'analyze_promo', 'growth_alert', 'growth_manual', 'growth_loop', 'create_account', 'connect_account'],
   sysops: ['monitor', 'recover_job', 'triage_error', 'optimize_model'],
   finance: ['budget_review', 'cost_report', 'enforce_limit'],
 };
@@ -111,6 +111,9 @@ export const KIND_LABELS: Record<string, string> = {
   create_content: 'コンテンツ作成',
   publish_post: '投稿',
   analyze_promo: '効果検証',
+  growth_alert: 'グロース警告',
+  growth_manual: '手動グロースToDo',
+  growth_loop: '販促強化ループ',
   create_account: 'アカウント作成',
   connect_account: 'アカウント接続',
   monitor: '監視',
@@ -139,6 +142,10 @@ export const HUMAN_KINDS = new Set<string>([
   'triage_error',
   // P4 増分5: モデル割当の切替は影響が大きいため人手承認。
   'optimize_model',
+  // [F-073] SNS到達/成長が危機的なとき運営者へ判断を仰ぐ(戦略転換 or 施策承認)。
+  'growth_alert',
+  // [F-075] IG/TikTok/note は自動フォロー不可のため、手動フォロー/いいねToDoは運営者が実行。
+  'growth_manual',
 ]);
 
 export function isHumanKind(kind: string): boolean {
@@ -255,6 +262,71 @@ export const ManagerPlanOutputSchema = z.object({
   tasks: z.array(ManagerTaskDraftSchema).max(30).default([]),
 });
 export type ManagerPlanOutput = z.infer<typeof ManagerPlanOutputSchema>;
+
+// ---------------------------------------------------------------------------
+// CEO 対話（運営者 ⇔ CEO チャット）I/O スキーマ
+// ---------------------------------------------------------------------------
+
+/** CEO がチャットから起票する 1 タスクのドラフト。 */
+export const CeoChatTaskDraftSchema = z.object({
+  division: z.enum(DIVISIONS),
+  kind: z.string().min(1).max(40),
+  title: z.string().min(1).max(160),
+  instruction: z.string().min(1).max(3900),
+  book_id: z.string().max(40).nullable().optional(),
+  priority: z.enum(TASK_PRIORITIES).default('should'),
+});
+export type CeoChatTaskDraft = z.infer<typeof CeoChatTaskDraftSchema>;
+
+/**
+ * F-089 — CEO が起票する「プロンプト改訂」要求。運営者が「あるエージェントの
+ * 振る舞い/書き方を変えたい」と伝えたとき、CEO は対象 role と改訂指示を出す。
+ * 実際の本文改訂は worker 側で prompt_editor が現行プロンプトを最小改訂して適用する。
+ * role は AgentRole 文字列（例 content_creator / promoter / sns_strategist 等）。
+ * ceo / ceo_chat / prompt_editor 自身は worker 側で対象外にガードする。
+ */
+export const CeoPromptEditRequestSchema = z.object({
+  role: z.string().min(1).max(60),
+  instruction: z.string().min(1).max(2000),
+});
+export type CeoPromptEditRequest = z.infer<typeof CeoPromptEditRequestSchema>;
+
+/**
+ * F-089 — prompt_editor エージェントの I/O。対象 role の現行システムプロンプト本文と
+ * 改訂指示を受け取り、プレースホルダを厳守したまま最小改訂した新本文を返す。
+ */
+export const PromptEditorInputSchema = z.object({
+  target_role: z.string().min(1).max(60),
+  current_body: z.string().min(1),
+  instruction: z.string().min(1).max(2000),
+  /** 現行本文に含まれ、新本文でも必ず保持すべきプレースホルダ（例 {channel_label}）。 */
+  placeholders: z.array(z.string().max(60)).max(30).default([]),
+});
+export type PromptEditorInput = z.infer<typeof PromptEditorInputSchema>;
+
+export const PromptEditorOutputSchema = z.object({
+  new_body: z.string().min(1),
+  rationale: z.string().max(1200).default(''),
+  summary: z.string().max(300).default(''),
+});
+export type PromptEditorOutput = z.infer<typeof PromptEditorOutputSchema>;
+
+/**
+ * CEO のチャット応答。運営者の指示に対話で応じつつ、施策として起票すべきタスクを
+ * new_tasks に出す。directive_summary は今後の方針(org.plan)へ引き継ぐ要約。
+ * prompt_edits は F-089 — エージェントのプロンプト改訂要求（worker が適用）。
+ */
+export const CeoChatOutputSchema = z.object({
+  reply: z.string().min(1).max(4000),
+  directive_summary: z.string().max(600).optional(),
+  new_tasks: z.array(CeoChatTaskDraftSchema).max(8).default([]),
+  prompt_edits: z.array(CeoPromptEditRequestSchema).max(5).optional(),
+});
+export type CeoChatOutput = z.infer<typeof CeoChatOutputSchema>;
+
+/** CEO チャットの 1 発話（DB org_ceo_messages 1 行の表示用）。 */
+export const CEO_CHAT_ROLES = ['operator', 'ceo'] as const;
+export type CeoChatRole = (typeof CEO_CHAT_ROLES)[number];
 
 // ---------------------------------------------------------------------------
 // 担当者エージェント I/O スキーマ (P2 — 実行レイヤー)

@@ -6,6 +6,59 @@ import {
   type BookLockLogger,
 } from '@a2p/agents';
 import { createLogger, type Logger } from '@a2p/contracts/logger';
+import { prisma as defaultJobPrisma } from '@a2p/db';
+
+/**
+ * 内部 `jobs` 行が running/queued のまま取り残される閾値（分）。
+ * worker のデプロイ/再起動で実行中タスクが中断されると、graphile 側はリトライ上限で
+ * 諦める一方、内部 Job 行は running のまま残り、UI（例: テーマ「生成中」バナー）が
+ * 永久に生成中を表示してしまう。どの単一ステップも 2 時間は走らないため、
+ * これを超えて running/queued の行は孤児とみなし failed に落とす。
+ */
+const STALE_JOB_MINUTES = 120;
+
+interface StaleJobPrisma {
+  job: {
+    updateMany: (args: {
+      where: Record<string, unknown>;
+      data: Record<string, unknown>;
+    }) => Promise<{ count: number }>;
+  };
+}
+
+/**
+ * running/queued のまま閾値を超えた内部 Job を failed に落とす（孤児掃除）。
+ * 長時間の正当なジョブを誤って殺さないよう閾値は十分大きく取る。
+ */
+export async function sweepStaleJobs(deps: {
+  prisma?: StaleJobPrisma;
+  logger?: Logger;
+  now?: () => Date;
+} = {}): Promise<{ sweptCount: number }> {
+  const log = deps.logger ?? createLogger(`worker.${LOCKS_SWEEP_TASK_NAME}.jobs`);
+  const prisma = deps.prisma ?? (defaultJobPrisma as unknown as StaleJobPrisma);
+  const now = deps.now?.() ?? new Date();
+  const cutoff = new Date(now.getTime() - STALE_JOB_MINUTES * 60_000);
+
+  const res = await prisma.job.updateMany({
+    where: {
+      status: { in: ['running', 'queued'] },
+      created_at: { lt: cutoff },
+    },
+    data: {
+      status: 'failed',
+      finished_at: now,
+      error: `orphaned: worker restart or lost job — swept after ${STALE_JOB_MINUTES}min`,
+    },
+  });
+  if (res.count > 0) {
+    log.warn(
+      { task: LOCKS_SWEEP_TASK_NAME, sweptCount: res.count, staleMinutes: STALE_JOB_MINUTES },
+      'swept orphaned internal jobs stuck in running/queued',
+    );
+  }
+  return { sweptCount: res.count };
+}
 
 /**
  * `locks.sweep` タスク (T-02-07, docs/05 OQ-D-05)
@@ -27,6 +80,8 @@ export interface LocksSweepDeps {
   logger?: Logger;
   /** 「今」を固定するフック (テスト用)。 */
   now?: () => Date;
+  /** 孤児ジョブ掃除の prisma 差し替え (テスト用)。未指定なら @a2p/db 既定。 */
+  jobPrisma?: StaleJobPrisma;
 }
 
 /**
@@ -52,6 +107,16 @@ export async function runLocksSweep(
 
   log.info({ task: LOCKS_SWEEP_TASK_NAME }, 'locks sweep start');
   const result = await sweepExpiredLocks(sweepDeps);
+  // ロック掃除と同じ毎時 tick で、孤児化した内部 Job も掃除する。
+  // ジョブ掃除の失敗はロック掃除の成功を巻き戻さない(非致命・ログのみ)。
+  try {
+    const staleDeps: Parameters<typeof sweepStaleJobs>[0] = { logger: log };
+    if (deps.now !== undefined) staleDeps.now = deps.now;
+    if (deps.jobPrisma !== undefined) staleDeps.prisma = deps.jobPrisma;
+    await sweepStaleJobs(staleDeps);
+  } catch (err) {
+    log.warn({ task: LOCKS_SWEEP_TASK_NAME, err }, 'sweepStaleJobs failed — continuing');
+  }
   log.info(
     { task: LOCKS_SWEEP_TASK_NAME, deletedCount: result.deletedCount },
     'locks sweep done',

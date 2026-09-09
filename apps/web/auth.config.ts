@@ -1,91 +1,25 @@
 /**
- * Auth.js v5 共通設定 (middleware + Node auth で共有)
+ * Auth.js v5 設定 (A2P web) — 共通ファクトリ @a2p/auth.buildAuthConfig を利用。
  *
- * Auth.js v5 では Credentials Provider と Prisma が Edge Runtime で動かないため、
- * - middleware.ts は **この auth.config.ts のみ** を import する（Edge 互換）
- * - apps/web/auth.ts は config + providers を追加して Node ランタイムで動く NextAuth を export する
+ * middleware.ts は Edge 互換のため **この auth.config.ts のみ** を import する。
+ * providers は apps/web/auth.ts で Credentials Provider を足して Node ランタイムで動かす。
  *
- * 詳細: https://authjs.dev/guides/edge-compatibility
+ * 公開パス（未認証で閲覧可）:
+ * - `/`          : page.tsx が「未認証→/shop / 認証済→/dashboard」に振り分ける（rootPublic）
+ * - `/blog(/*)`  : 販促用の公開ブログ [F-052b]
+ * - `/shop(/*)`  : SNS プロフィール導線先の書籍カタログ
+ * - `/legal(/*)` : プライバシー/利用規約（外部審査の URL 提出用）
+ *
+ * SSO: `AUTH_COOKIE_DOMAIN`（例 `.example.com`）を全アプリで揃えると、ポータルの
+ * ログインセッションを A2P が同一 cookie で共有する（再ログイン不要）。
  */
+// Edge 互換: bcrypt を含む auth-service を巻き込まないよう、config サブパスから直接 import する。
 import type { NextAuthConfig } from 'next-auth';
+import { buildAuthConfig } from '@a2p/auth/config';
 
-export const authConfig: NextAuthConfig = {
-  // リバースプロキシ (Railway 等) 配下で Host ヘッダを信頼する。
-  // 未設定だと Auth.js v5 が UntrustedHost エラーを投げ、/api/auth/session 解決が
-  // 失敗して /login が 500 になる。AUTH_TRUST_HOST env でも可だがコードで明示する。
-  trustHost: true,
-  // セッション期限 30 日 [F-043 受け入れ基準]
-  session: {
-    strategy: 'jwt',
-    maxAge: 30 * 24 * 60 * 60, // 30 days (seconds)
-  },
-  pages: {
-    signIn: '/login',
-  },
-  callbacks: {
-    /**
-     * middleware から呼ばれる認可コールバック。
-     * - `/login` 以外を未認証で叩いたら false → middleware が signIn ページへ redirect
-     * - `/api/auth/*` と公開リソースは matcher 側で除外
-     */
-    authorized({ auth, request }) {
-      const isLoggedIn = Boolean(auth?.user);
-      const { pathname } = request.nextUrl;
-
-      // F-052b: 所有ブログ (/blog, /blog/*) は販促用の公開ページ — 未認証で閲覧可。
-      if (pathname === '/blog' || pathname.startsWith('/blog/')) {
-        return true;
-      }
-
-      // 書籍カタログ (/shop) は SNS プロフィールリンクの導線先 — 未認証で閲覧可。
-      // (/books は認証必須の管理画面=書籍ライブラリなので公開しない)
-      if (pathname === '/shop' || pathname.startsWith('/shop/')) {
-        return true;
-      }
-
-      // 法務ページ (/legal/*) は公開必須 — プライバシーポリシー/利用規約は
-      // TikTok 等の外部審査で URL 提出に使うため、未認証で閲覧可。
-      if (pathname === '/legal' || pathname.startsWith('/legal/')) {
-        return true;
-      }
-
-      // ルート (/) は公開可 — page.tsx が「未認証→公開サイト(/shop) / 認証済→/dashboard」に振り分ける。
-      // ドメイン直打ち (外部審査のレビュアー等) がログイン画面に落ちないようにするため。
-      if (pathname === '/') {
-        return true;
-      }
-
-      const isLoginPage = pathname === '/login';
-      if (isLoginPage) {
-        // 既にログイン済みでログイン画面に来たらダッシュボードへ
-        if (isLoggedIn) {
-          const dashboard = new URL('/', request.nextUrl);
-          return Response.redirect(dashboard);
-        }
-        return true;
-      }
-      return isLoggedIn;
-    },
-    /** JWT に user.id / user.username を埋め込む。 */
-    jwt({ token, user }) {
-      if (user) {
-        token.id = user.id;
-        // user.username はカスタムフィールド (auth.ts authorize で付与)
-        const candidate = (user as { username?: unknown }).username;
-        if (typeof candidate === 'string') {
-          token.username = candidate;
-        }
-      }
-      return token;
-    },
-    /** session.user.id / username を露出する。 */
-    session({ session, token }) {
-      if (session.user) {
-        if (typeof token.id === 'string') session.user.id = token.id;
-        if (typeof token.username === 'string') session.user.username = token.username;
-      }
-      return session;
-    },
-  },
-  providers: [], // 実 provider は apps/web/auth.ts で追加
-};
+export const authConfig: NextAuthConfig = buildAuthConfig({
+  publicPathPrefixes: ['/blog', '/shop', '/legal'],
+  rootPublic: true,
+  signedInRedirect: '/',
+  cookieDomain: process.env.AUTH_COOKIE_DOMAIN,
+});

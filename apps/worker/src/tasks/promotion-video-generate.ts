@@ -14,6 +14,7 @@ import { prisma as defaultPrisma } from '@a2p/db';
 import { promotionPostVideo } from '@a2p/storage/keys';
 
 import { renderSlideVideo, type RenderVideoDeps } from './promotion-post/video-render.js';
+import { generateVeoClip, type VeoTier } from './promotion-post/veo-clip.js';
 
 /**
  * `promotion.video.generate` タスク (F-060)
@@ -36,9 +37,16 @@ export const PromotionVideoGeneratePayloadSchema = z.object({
   target_seconds: z.number().int().min(10).max(90).optional(),
   /** 予約時刻(ISO)。未指定なら翌日 20:00 JST。 */
   scheduled_for: z.string().optional(),
+  /** [F-084] 同じ動画を IG リールにも投稿するか（既定 true）。 */
+  also_reels: z.boolean().optional(),
+  /** [F-084] 冒頭フックを Veo 実写級動画にするか（未指定なら app_settings フラグに従う）。 */
+  use_veo: z.boolean().optional(),
 });
 
 interface VideoGeneratePrisma {
+  appSettings?: {
+    findUnique: (args: { where: { id: string }; select: { video_use_veo_enabled: true } }) => Promise<{ video_use_veo_enabled: boolean } | null>;
+  };
   promotionChannelSetting: {
     findUnique: (args: { where: { channel: string }; select: { strategy_json: true } }) => Promise<{ strategy_json: unknown } | null>;
   };
@@ -71,12 +79,28 @@ export interface PromotionVideoGenerateDeps {
   renderVideo?: (script: VideoScript) => Promise<Buffer>;
   renderDeps?: RenderVideoDeps;
   uploadBuffer?: UploadBufferFn;
+  /** [F-084] Veo フッククリップ生成（テスト差し替え）。既定は Veo 3.1 fast。 */
+  generateHookClip?: (prompt: string) => Promise<Buffer>;
+  /** Veo ティア（既定 fast=ハイブリッド低コスト）。 */
+  veoTier?: VeoTier;
+}
+
+/** scene[0] から Veo 用の動画プロンプトを組み立てる（動き・カメラ・縦型・文字なしを明示）。 */
+export function buildVeoHookPrompt(imagePrompt: string): string {
+  return (
+    `${imagePrompt} ` +
+    'Cinematic vertical 9:16 short clip, subtle camera motion (slow push-in or gentle pan), ' +
+    'natural lighting, shallow depth of field, photoreal. ' +
+    'Absolutely no text, no captions, no logos, no numbers on screen.'
+  );
 }
 
 export interface PromotionVideoGenerateResult {
   post_id: string;
   media_key: string;
   scenes: number;
+  /** [F-084] 同じ動画で作成した IG リール投稿の id（作成した場合）。 */
+  reel_post_id?: string;
 }
 
 async function defaultUploadBuffer(key: string, buffer: Buffer, contentType: string): Promise<{ key: string }> {
@@ -108,10 +132,10 @@ export async function runPromotionVideoGenerate(
   const prisma = deps.prisma ?? (defaultPrisma as unknown as VideoGeneratePrisma);
   const now = deps.now ?? (() => new Date());
   const createScript = deps.createScript ?? ((input: TikTokVideoInput) => defaultCreateScript(input));
-  const renderVideo =
-    deps.renderVideo ??
-    (async (script: VideoScript) => (await renderSlideVideo(script.scenes, deps.renderDeps)).video);
   const uploadBuffer = deps.uploadBuffer ?? defaultUploadBuffer;
+  const veoTier = deps.veoTier ?? 'fast';
+  const generateHookClip =
+    deps.generateHookClip ?? ((prompt: string) => generateVeoClip(prompt, { tier: veoTier, seconds: 8 }));
 
   // 1. アカウント戦略(コンセプト/トーン/柱/ハッシュタグ)を取得。
   const setting = await prisma.promotionChannelSetting.findUnique({
@@ -175,8 +199,23 @@ export async function runPromotionVideoGenerate(
   });
 
   try {
-    // 6. レンダリング → R2。
-    const video = await renderVideo(script);
+    // 6. レンダリング → R2。ハイブリッド: フラグON かつ scene0 があれば冒頭を Veo 実写級に。
+    let hookClip: Buffer | undefined;
+    let useVeo = parsed.data.use_veo;
+    if (useVeo === undefined && prisma.appSettings) {
+      const s = await prisma.appSettings.findUnique({ where: { id: 'singleton' }, select: { video_use_veo_enabled: true } });
+      useVeo = s?.video_use_veo_enabled ?? false;
+    }
+    if (useVeo && script.scenes[0]) {
+      try {
+        hookClip = await generateHookClip(buildVeoHookPrompt(script.scenes[0].image_prompt));
+      } catch (err) {
+        log.warn({ task: PROMOTION_VIDEO_GENERATE_TASK_NAME, err }, 'Veo フック生成失敗 — 画像スライドで続行');
+      }
+    }
+    const video = deps.renderVideo
+      ? await deps.renderVideo(script)
+      : (await renderSlideVideo(script.scenes, deps.renderDeps, hookClip ? { hookClip } : {})).video;
     const mediaKey = promotionPostVideo(post.id);
     await uploadBuffer(mediaKey, video, 'video/mp4');
 
@@ -186,11 +225,39 @@ export async function runPromotionVideoGenerate(
       data: { media_key: mediaKey, status: 'scheduled' },
     });
 
+    // 8. [F-084] 同じ動画を IG リールにも予約（別枠・TikTokより2時間ずらす）。
+    //    同一 media_key(mp4)を参照。publish 側で .mp4 を検知し IG も Reel(video)で投稿する。
+    let reelPostId: string | undefined;
+    const alsoReels = parsed.data.also_reels ?? true;
+    if (alsoReels) {
+      try {
+        const tiktokAt = parsed.data.scheduled_for ? new Date(parsed.data.scheduled_for) : tomorrow20Jst(now());
+        const reelAt = new Date(tiktokAt.getTime() + 2 * H);
+        const reel = await prisma.promotionPost.create({
+          data: {
+            book_id: bookId ?? null,
+            channel: 'instagram',
+            kind: bookId ? 'promo' : 'value',
+            account_id: null,
+            title: null,
+            body,
+            scheduled_for: reelAt,
+            status: 'scheduled',
+            media_key: mediaKey,
+          },
+          select: { id: true },
+        });
+        reelPostId = reel.id;
+      } catch (err) {
+        log.warn({ task: PROMOTION_VIDEO_GENERATE_TASK_NAME, err }, 'IG リール投稿の作成に失敗（TikTokは成功）');
+      }
+    }
+
     log.info(
-      { task: PROMOTION_VIDEO_GENERATE_TASK_NAME, postId: post.id, scenes: script.scenes.length, asin },
+      { task: PROMOTION_VIDEO_GENERATE_TASK_NAME, postId: post.id, reelPostId, scenes: script.scenes.length, asin },
       'tiktok video generated',
     );
-    return { post_id: post.id, media_key: mediaKey, scenes: script.scenes.length };
+    return { post_id: post.id, media_key: mediaKey, scenes: script.scenes.length, ...(reelPostId ? { reel_post_id: reelPostId } : {}) };
   } catch (err) {
     // レンダリング失敗時は draft を掃除。
     await prisma.promotionPost.delete({ where: { id: post.id } }).catch(() => {});

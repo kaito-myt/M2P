@@ -32,6 +32,11 @@ import {
 } from '@a2p/contracts/agents/marketer';
 
 import { createAgentClient as defaultCreateAgentClient } from '../lib/llm-client-factory.js';
+import { sanitizeLlmJson } from '../lib/sanitize-llm-json.js';
+import {
+  researchMarketWithTavily,
+  type TavilyResearchDeps,
+} from './tavily-research.js';
 import {
   fillPlaceholders,
   loadActivePrompt as defaultLoadActivePrompt,
@@ -70,6 +75,10 @@ export interface GenerateThemesDeps {
   withTokenLoggingDeps?: WithTokenLoggingDeps;
   /** factory 内 getApiKey 差し替え (テストで env / DB を引かない)。 */
   getApiKey?: (provider: string) => Promise<string>;
+  /** Tavily 事前リサーチ関数の差し替え (テストで HTTP を叩かない)。 */
+  researchMarket?: typeof researchMarketWithTavily;
+  /** researchMarketWithTavily に渡す deps (fetch / キー解決の差し替え)。 */
+  tavilyResearchDeps?: TavilyResearchDeps;
 }
 
 /**
@@ -114,10 +123,24 @@ export async function generateMarketerThemes(
     themeSessionId: parsedInput.themeSessionId,
     jobId: parsedInput.jobId,
   };
+  // 3.5. Tavily 事前リサーチ (docs/03 §R-04)。キーがあれば数秒で売れ筋/競合を取得し、
+  //      その結果をプロンプトに注入して純正 web_search (遅いエージェント的ループ) を回避する。
+  //      キー未設定/失敗時は null → 従来どおり Anthropic 純正 web_search にフォールバック。
+  const research = deps.researchMarket ?? researchMarketWithTavily;
+  const researchBlock = await research(
+    {
+      genreLabel: genreLabel(parsedInput.genre) ?? 'general',
+      keywordOrBrief: parsedInput.keywordOrBrief,
+    },
+    deps.tavilyResearchDeps,
+  );
+
   const factoryDeps: Parameters<typeof makeClient>[3] = {};
   if (deps.loadAssignmentDeps) factoryDeps.loadAssignmentDeps = deps.loadAssignmentDeps;
   if (deps.withTokenLoggingDeps) factoryDeps.withTokenLoggingDeps = deps.withTokenLoggingDeps;
   if (deps.getApiKey) factoryDeps.getApiKey = deps.getApiKey;
+  // Tavily でリサーチ済みなら server tool を積まない素のクライアント (高速) を使う。
+  if (researchBlock) factoryDeps.disableServerTools = true;
 
   const client: LLMClient = await makeClient(
     'marketer',
@@ -128,7 +151,7 @@ export async function generateMarketerThemes(
 
   // 4-5. LLM 呼出 + JSON 抽出 + zod 検証 を invalid_output 失敗時に最大 MAX_PARSE_RETRIES 回まで再試行。
   //      モデルは非決定的なので、1 度崩れた出力でも再呼出でほぼ通る。ProviderError は透過。
-  const userMessage = buildUserMessage(parsedInput);
+  const userMessage = buildUserMessage(parsedInput, researchBlock);
   let validated: ReturnType<typeof MarketerThemeOutputSchema.safeParse> | undefined;
   let lastError: AgentError | undefined;
   for (let attempt = 1; attempt <= MAX_PARSE_RETRIES; attempt++) {
@@ -215,7 +238,7 @@ function normalizeTitle(t: string): string {
   return t.normalize('NFKC').trim().toLowerCase();
 }
 
-function buildUserMessage(input: MarketerThemeInput): string {
+function buildUserMessage(input: MarketerThemeInput, researchBlock?: string | null): string {
   const lines = [
     `キーワード/ブリーフ: ${input.keywordOrBrief}`,
     `生成数: ${input.count}`,
@@ -224,15 +247,31 @@ function buildUserMessage(input: MarketerThemeInput): string {
   if (input.excludeTitlesRecent.length > 0) {
     lines.push(`直近採用済みタイトル (避ける):\n${input.excludeTitlesRecent.map((t) => ` - ${t}`).join('\n')}`);
   }
+  if (researchBlock) {
+    // Tavily で事前リサーチ済み: web_search を指示せず、渡した根拠だけで判断させる。
+    lines.push(
+      '',
+      researchBlock,
+      '',
+      ' - 上記リサーチ結果を根拠に、需要があり競合と差別化できる企画を優先してレコメンドする。',
+      '   需要が薄い/競合が飽和しているテーマは market_score を下げる。',
+      ' - 各 candidate の signals.bestseller_evidence に、上記から観測した売れ筋の類書を入れる。',
+      '',
+    );
+  } else {
+    // フォールバック: Anthropic 純正 web_search server tool を使って自分で調べる。
+    lines.push(
+      '',
+      '【必須リサーチ — Amazon の売れ筋を見てからレコメンドする】',
+      ' - web_search で **Amazon Kindle の「売れ筋ランキング」(有料タイトル)** や、',
+      '   このジャンル/キーワードの上位表示・ベストセラー類書を調べること。',
+      ' - 「実際に売れている本(ランキング上位・レビュー多数)が何か」を根拠に、需要のある',
+      '   企画を優先してレコメンドする。需要が薄い/競合が飽和しているテーマは market_score を下げる。',
+      ' - 各 candidate の signals.bestseller_evidence に、観測した売れ筋の類書を入れる。',
+      '',
+    );
+  }
   lines.push(
-    '',
-    '【必須リサーチ — Amazon の売れ筋を見てからレコメンドする】',
-    ' - web_search で **Amazon Kindle の「売れ筋ランキング」(有料タイトル)** や、',
-    '   このジャンル/キーワードの上位表示・ベストセラー類書を調べること。',
-    ' - 「実際に売れている本(ランキング上位・レビュー多数)が何か」を根拠に、需要のある',
-    '   企画を優先してレコメンドする。需要が薄い/競合が飽和しているテーマは market_score を下げる。',
-    ' - 各 candidate の signals.bestseller_evidence に、観測した売れ筋の類書を入れる。',
-    '',
     '出力形式: JSON で `{ "candidates": [...], "notes"?: string }` を返してください。',
     '各 candidate は以下のキーを必ず含めます (docs/05 §6.3.1 準拠):',
     ' - title: string (200 字以内)',
@@ -416,42 +455,7 @@ function tryParse(s: string): unknown {
  * `\\n` / `\\r` / `\\t` に置換する。文字列外の改行/インデントには触れない。
  * バックスラッシュ escape (例: `\"`, `\\`) は維持し、二重 escape しない。
  */
+/** 生改行/タブ + 文字列値内の未エスケープ二重引用符を復旧(共有ヘルパへ委譲)。 */
 function sanitizeJsonStringNewlines(text: string): string {
-  let result = '';
-  let inString = false;
-  let escapeNext = false;
-  for (let i = 0; i < text.length; i++) {
-    const ch = text[i]!;
-    if (escapeNext) {
-      result += ch;
-      escapeNext = false;
-      continue;
-    }
-    if (ch === '\\') {
-      result += ch;
-      escapeNext = true;
-      continue;
-    }
-    if (ch === '"') {
-      result += ch;
-      inString = !inString;
-      continue;
-    }
-    if (inString) {
-      if (ch === '\n') {
-        result += '\\n';
-        continue;
-      }
-      if (ch === '\r') {
-        result += '\\r';
-        continue;
-      }
-      if (ch === '\t') {
-        result += '\\t';
-        continue;
-      }
-    }
-    result += ch;
-  }
-  return result;
+  return sanitizeLlmJson(text);
 }

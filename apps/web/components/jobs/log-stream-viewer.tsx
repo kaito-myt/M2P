@@ -146,7 +146,7 @@ export function LogStreamViewer({
 
   return (
     <section aria-label={m.logSection} className="rounded-card border border-border-warm bg-white">
-      <div className="flex items-center justify-between border-b border-border-warm px-space-normal py-space-snug">
+      <div className="flex items-center justify-between border-b border-border-warm px-space-relaxed py-space-snug">
         <h2 className="text-body font-medium text-foreground">{m.logSection}</h2>
         <div className="flex items-center gap-2">
           {!isTerminal && (
@@ -175,7 +175,7 @@ export function LogStreamViewer({
       </div>
 
       {/* Phase 1 log limitation note */}
-      <div className="border-b border-border-warm bg-amber-50 px-space-normal py-1.5">
+      <div className="border-b border-border-warm bg-amber-100 px-space-relaxed py-1.5">
         <p className="text-caption text-amber-700">{m.logNote}</p>
       </div>
 
@@ -187,7 +187,7 @@ export function LogStreamViewer({
       ) : (
         <div
           ref={scrollRef}
-          className="h-64 overflow-y-auto bg-gray-900 p-space-normal font-mono text-caption leading-relaxed"
+          className="h-64 overflow-y-auto bg-gray-900 p-space-relaxed font-mono text-caption leading-relaxed"
           style={{ fontFamily: 'monospace' }}
           role="log"
           aria-live="polite"
@@ -195,11 +195,11 @@ export function LogStreamViewer({
         >
           {lines.map((line, i) => (
             <div key={i} className="flex gap-2">
-              <span className="shrink-0 text-gray-500 tabular-nums">{line.ts}</span>
+              <span className="shrink-0 text-charcoal-82 tabular-nums">{line.ts}</span>
               <span className={`shrink-0 ${levelClass(line.level)}`}>
                 [{line.level.toUpperCase()}]
               </span>
-              <span className={line.level === 'error' ? 'text-red-300' : 'text-gray-200'}>
+              <span className={line.level === 'error' ? 'text-red-700' : 'text-gray-200'}>
                 {line.message}
               </span>
             </div>
@@ -207,7 +207,7 @@ export function LogStreamViewer({
         </div>
       )}
 
-      <div className="border-t border-border-warm px-space-normal py-1.5">
+      <div className="border-t border-border-warm px-space-relaxed py-1.5">
         <span className="text-caption text-muted">
           ステータス: <span className="font-medium">{liveStatus}</span>
         </span>

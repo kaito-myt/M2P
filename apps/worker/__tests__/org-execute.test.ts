@@ -48,6 +48,8 @@ interface HarnessOpts {
   doneIds?: string[];
   /** promotion_accounts 台帳の既存行（plan_accounts の重複判定用）。 */
   ledger?: Array<{ channel: string; niche: string; handle: string | null; status: string }>;
+  /** theme_id → 既存 Book 群（handleWrite の重複制作ガード検証用）。 */
+  booksByTheme?: Record<string, Array<{ id: string; title: string; status: string; publish_status: string; theme: { genre: string } | null }>>;
 }
 
 function makeHarness(opts: HarnessOpts) {
@@ -80,9 +82,18 @@ function makeHarness(opts: HarnessOpts) {
       }),
     },
     book: {
-      findMany: vi.fn(async () => [
-        { id: 'b1', title: '実用書A', status: 'done', publish_status: 'published', theme: { genre: 'practical' } },
-      ]),
+      findMany: vi.fn(async (args?: { where?: { theme_id?: string } }) => {
+        // handleWrite の重複制作ガード (where.theme_id 指定) は既定で「既存なし」を返す。
+        // opts.booksByTheme に theme_id をセットすると「既存あり」= skip を再現できる。
+        if (args?.where?.theme_id !== undefined) {
+          const themeId = args.where.theme_id;
+          const dupes = opts.booksByTheme?.[themeId] ?? [];
+          return dupes as unknown as Array<{ id: string; title: string; status: string; publish_status: string; theme: { genre: string } | null }>;
+        }
+        return [
+          { id: 'b1', title: '実用書A', status: 'done', publish_status: 'published', theme: { genre: 'practical' } },
+        ];
+      }),
       findUnique: vi.fn(async () => ({
         id: 'b1',
         title: '実用書A',
@@ -294,6 +305,27 @@ describe('runOrgExecute — production/publishing', () => {
 
     expect(res.done).toBe(1);
     expect(enqueueJob).toHaveBeenCalledWith('pipeline.book.kickoff', expect.objectContaining({ theme_id: 'theme-ok' }));
+  });
+
+  it('write は既に同一テーマの Book が存在する場合 kickoff を enqueue せず skip する（重複制作ガード）', async () => {
+    const { prisma, updated } = makeHarness({
+      candidates: [task({ id: 't4b', division: 'production', kind: 'write', theme_id: 'theme-ok' })],
+      booksByTheme: {
+        'theme-ok': [
+          { id: 'b-dup', title: '既存の本', status: 'done', publish_status: 'submitted', theme: { genre: 'practical' } },
+        ],
+      },
+    });
+    const enqueueJob = vi.fn(async () => 'gj');
+    const res = await runOrgExecute({}, { ...baseDeps({ enqueueJob }), prisma });
+
+    expect(res.done).toBe(1);
+    expect(enqueueJob).not.toHaveBeenCalled();
+    const done = updated.find((u) => u.id === 't4b')!;
+    const result = done.data.result_json as { action: string; reason?: string; existing_book_id?: string };
+    expect(result.action).toBe('book_kickoff_skipped');
+    expect(result.reason).toBe('duplicate_theme');
+    expect(result.existing_book_id).toBe('b-dup');
   });
 
   it('prepare_metadata は book_id 必須で草案を result に格納', async () => {

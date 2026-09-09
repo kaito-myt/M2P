@@ -40,7 +40,10 @@ export function SettingsPageShell({ data }: SettingsPageShellProps) {
         }}
       />
 
-      <AutoApprovalToggle />
+      <AutoApprovalToggle
+        initialEnabled={data.prompt_auto_approval_enabled}
+        initialRollbackHours={data.prompt_auto_approval_rollback_h}
+      />
 
       <SalesAutoFetchSettings
         initialEnabled={data.sales_auto_fetch_enabled}
@@ -62,8 +65,11 @@ export function SettingsPageShell({ data }: SettingsPageShellProps) {
 
       <KdpSubmissionSettingsForm
         initialData={{
+          kdp_auto_submit_enabled: data.kdp_auto_submit_enabled,
+          kdp_submit_dry_run: data.kdp_submit_dry_run,
           kdp_submit_timeout_minutes: data.kdp_submit_timeout_minutes,
           kdp_submit_retry_count: data.kdp_submit_retry_count,
+          kdp_creation_paused_until: data.kdp_creation_paused_until,
         }}
       />
 

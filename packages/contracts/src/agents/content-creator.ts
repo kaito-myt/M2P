@@ -31,6 +31,11 @@ export const ContentCreatorInputSchema = z.object({
   sample_titles: z.array(z.string().max(200)).max(15).default([]),
   /** 生成する投稿数。 */
   count: z.number().int().min(1).max(30).default(8),
+  /**
+   * F-064: web検索リサーチに基づく販促プレイブック要約(今伸びている型/フック/
+   * ハッシュタグ/避けるべきこと)。生成時にこれを踏まえて投稿を書く。空なら従来どおり。
+   */
+  playbook_guidance: z.string().max(4000).default(''),
 });
 export type ContentCreatorInput = z.infer<typeof ContentCreatorInputSchema>;
 

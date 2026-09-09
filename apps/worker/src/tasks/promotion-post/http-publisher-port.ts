@@ -42,6 +42,31 @@ export interface HttpPublisherDeps {
 }
 
 const X_API_TWEETS_URL = 'https://api.twitter.com/2/tweets';
+const X_MEDIA_UPLOAD_URL = 'https://upload.twitter.com/1.1/media/upload.json';
+
+/**
+ * X の v1.1 media/upload に画像(署名付きURL)を上げて media_id を返す。
+ * OAuth1 で multipart/form-data 送信(body params は署名対象外なので oauth のみで署名)。
+ * 画像取得と upload は実ネットワークが要るため global fetch を使う(narrow FetchLike は string body 前提)。
+ * 画像添付でインプレッションを伸ばす狙い。失敗は呼出側で握りテキストのみ投稿にフォールバックする。
+ */
+async function uploadXMedia(creds: ReturnType<typeof parseXCredentials>, imageUrl: string): Promise<string> {
+  if (!creds || creds.kind !== 'oauth1') throw new Error('media upload requires OAuth1 creds');
+  const gfetch = globalThis.fetch;
+  const imgRes = await gfetch(imageUrl);
+  if (!imgRes.ok) throw new Error(`fetch media ${imgRes.status}`);
+  const bytes = new Uint8Array(await imgRes.arrayBuffer());
+  const authHeader = buildXAuthHeader('POST', X_MEDIA_UPLOAD_URL, creds);
+  const form = new FormData();
+  form.append('media', new Blob([bytes]), 'image.jpg');
+  const res = await gfetch(X_MEDIA_UPLOAD_URL, { method: 'POST', headers: { authorization: authHeader }, body: form });
+  const raw = await res.text();
+  if (!res.ok) throw new Error(`media/upload ${res.status}: ${raw.slice(0, 200)}`);
+  const j = JSON.parse(raw) as { media_id_string?: string; media_id?: number };
+  const id = j.media_id_string || (j.media_id != null ? String(j.media_id) : null);
+  if (!id) throw new Error('no media_id in upload response');
+  return id;
+}
 
 export function createHttpPublisherPort(deps: HttpPublisherDeps = {}): PublisherPort {
   const doFetch: FetchLike = deps.fetchImpl ?? (globalThis.fetch as unknown as FetchLike);
@@ -103,7 +128,14 @@ async function publishViaWebhook(
         message: `webhook responded ${res.status}: ${text.slice(0, 300)}`,
       };
     }
-    return { ok: true, externalUrl: extractUrl(text) };
+    // 中継(Make等)の応答を解釈する。Make 既定は 2xx+"Accepted" で「受理しただけ」を返し、実投稿の
+    // 成否は分からない。シナリオ末尾に Webhook Response を足して JSON({url}/{ok:false,error}) を返す
+    // 運用にすれば、ここで **本当に投稿できた時だけ url 付き posted / 明示エラーは failed** に判定できる。
+    const verdict = interpretWebhookBody(text);
+    if (verdict.failed) {
+      return { ok: false, reason: 'unknown', message: `webhook reported failure: ${verdict.message}`.slice(0, 300) };
+    }
+    return { ok: true, externalUrl: verdict.url };
   } catch (err) {
     log.warn({ err, channel: input.channel }, 'webhook publish failed');
     return { ok: false, reason: 'unknown', message: errMessage(err) };
@@ -124,6 +156,16 @@ async function publishViaXApi(doFetch: FetchLike, input: PublishInput): Promise<
   if (!creds) {
     return { ok: false, reason: 'not_connected', message: 'X credentials not configured' };
   }
+  // 画像があれば media/upload して tweet に添付(インプレ向上)。失敗時はテキストのみ投稿。
+  let mediaIds: string[] = [];
+  const imageUrl = (input.mediaUrls ?? []).find((u) => typeof u === 'string' && u.length > 0);
+  if (imageUrl) {
+    try {
+      mediaIds = [await uploadXMedia(creds, imageUrl)];
+    } catch (err) {
+      log.warn({ err }, 'X media upload failed — posting text only');
+    }
+  }
   // POST /2/tweets は JSON ボディ。OAuth1 では JSON ボディを署名に含めない。
   const authHeader = buildXAuthHeader('POST', X_API_TWEETS_URL, creds);
   try {
@@ -133,7 +175,7 @@ async function publishViaXApi(doFetch: FetchLike, input: PublishInput): Promise<
         'content-type': 'application/json',
         authorization: authHeader,
       },
-      body: JSON.stringify({ text }),
+      body: JSON.stringify(mediaIds.length ? { text, media: { media_ids: mediaIds } } : { text }),
     });
     const raw = await res.text();
     if (!res.ok) {
@@ -164,6 +206,29 @@ function extractUrl(text: string): string | null {
   } catch {
     return null;
   }
+}
+
+/**
+ * 中継の 2xx 応答 body を解釈する。
+ *  - JSON で `ok:false` / `error` / `status:'error'|'failed'` があれば **明示失敗**。
+ *  - `url`/`external_url`/`postUrl` があれば公開 URL として採用。
+ *  - それ以外(例: "Accepted"、URL 無しの成功)は従来どおり成功扱い(URL 不明)。
+ */
+function interpretWebhookBody(text: string): { failed: boolean; message: string; url: string | null } {
+  let j: { ok?: unknown; error?: unknown; status?: unknown; url?: unknown; external_url?: unknown; postUrl?: unknown };
+  try {
+    j = JSON.parse(text) as typeof j;
+  } catch {
+    return { failed: false, message: '', url: null }; // JSON でない(例 "Accepted") → 成功扱い
+  }
+  const statusStr = typeof j.status === 'string' ? j.status.toLowerCase() : '';
+  const explicitFail =
+    j.ok === false || (j.error != null && j.error !== '' && j.error !== false) || statusStr === 'error' || statusStr === 'failed';
+  if (explicitFail) {
+    const msg = readString(j.error) ?? (statusStr || 'webhook reported failure');
+    return { failed: true, message: msg, url: null };
+  }
+  return { failed: false, message: '', url: readString(j.url) ?? readString(j.external_url) ?? readString(j.postUrl) };
 }
 
 function extractTweetId(text: string): string | null {

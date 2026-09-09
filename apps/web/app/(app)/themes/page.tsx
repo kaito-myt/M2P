@@ -92,7 +92,35 @@ export default async function ThemesPage() {
     };
   });
 
-  const hasContent = rows.length > 0 || generatingSessions.length > 0;
+  // 3b. 直近(30分)で失敗したテーマ生成 — 「生成中」が黙って消えるのを防ぎ、失敗を可視化する。
+  const failedJobs = await prisma.job.findMany({
+    where: {
+      kind: 'pipeline.theme.generate',
+      status: 'failed',
+      created_at: { gte: new Date(Date.now() - 30 * 60 * 1000) },
+    },
+    orderBy: { created_at: 'desc' },
+    take: 5,
+    select: { id: true, status: true, payload_json: true, created_at: true, error: true },
+  });
+  const failedGenerations: GeneratingSession[] = failedJobs.map((job) => {
+    const p = (job.payload_json ?? {}) as Record<string, unknown>;
+    const genreSlug = typeof p.genre === 'string' ? p.genre : null;
+    const accountId = typeof p.account_id === 'string' ? p.account_id : null;
+    return {
+      jobId: job.id,
+      sessionId: typeof p.theme_session_id === 'string' ? p.theme_session_id : null,
+      genreLabel: genreSlug ? genreLabel(genreSlug) : null,
+      keywordOrBrief: typeof p.keyword_or_brief === 'string' ? p.keyword_or_brief : null,
+      count: typeof p.count === 'number' ? p.count : null,
+      accountLabel: accountId ? (penNameById.get(accountId) ?? null) : null,
+      status: job.status,
+      createdAt: job.created_at.toISOString(),
+      error: job.error ?? null,
+    };
+  });
+
+  const hasContent = rows.length > 0 || generatingSessions.length > 0 || failedGenerations.length > 0;
 
   return (
     <div className="flex flex-col gap-space-loose">
@@ -131,7 +159,7 @@ export default async function ThemesPage() {
       </header>
 
       {hasContent ? (
-        <ThemesPageShell rows={rows} generatingSessions={generatingSessions} />
+        <ThemesPageShell rows={rows} generatingSessions={generatingSessions} failedGenerations={failedGenerations} />
       ) : (
         <div
           data-testid="themes-empty-state"

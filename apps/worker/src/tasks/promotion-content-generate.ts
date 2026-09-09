@@ -6,6 +6,7 @@ import {
   PromotionChannelSchema,
   appendHashtags,
   resolveHashtags,
+  pickTopicHashtags,
   type PromotionChannel,
 } from '@a2p/contracts/promotion/channels';
 import {
@@ -13,6 +14,7 @@ import {
   type ContentCreatorInput,
   type AccountContentOutput,
 } from '@a2p/contracts/agents';
+import { PromoPlaybookSchema, playbookToGuidance } from '@a2p/contracts/agents/promo-strategist';
 import { ValidationError } from '@a2p/contracts/errors';
 import { createLogger, type Logger } from '@a2p/contracts/logger';
 import { prisma as defaultPrisma } from '@a2p/db';
@@ -41,8 +43,8 @@ interface ContentGeneratePrisma {
   promotionChannelSetting: {
     findUnique: (args: {
       where: { channel: string };
-      select: { strategy_json: true };
-    }) => Promise<{ strategy_json: unknown } | null>;
+      select: { strategy_json: true; playbook_json: true };
+    }) => Promise<{ strategy_json: unknown; playbook_json: unknown } | null>;
   };
   book: {
     findMany: (args: {
@@ -80,8 +82,10 @@ export interface PromotionContentGenerateResult {
   removed: number;
 }
 
-// 育成投稿の投稿枠 (JST): 09:00 / 13:00 / 20:00。promo(07:30/12:15/18:00/21:00)と別時間で自然に混ざる。
-const VALUE_SLOTS_JST_MIN = [540, 780, 1200];
+// 育成投稿の投稿枠 (JST): 09:00 / 20:00。
+// 2026-09-02 SNS成長診断: 7投稿/日の過剰頻度がスパム判定(X平均表示3.5・IG時間上限)を招いたため
+// value は最大2/日に削減 (promo と合わせても ~2-3/日)。量より同型反復で伸ばす方針へ。
+const VALUE_SLOTS_JST_MIN = [540, 1200];
 const H = 3600_000;
 
 export async function runPromotionContentGenerate(
@@ -106,11 +110,14 @@ export async function runPromotionContentGenerate(
   // 1. 戦略(発信の柱)を取得。無ければ生成できない。
   const setting = await prisma.promotionChannelSetting.findUnique({
     where: { channel },
-    select: { strategy_json: true },
+    select: { strategy_json: true, playbook_json: true },
   });
   const profile = setting?.strategy_json
     ? AccountStrategyProfileSchema.safeParse(setting.strategy_json)
     : null;
+  // F-064: web検索リサーチのプレイブックを生成材料として畳み込む(壊れていれば空)。
+  const pbParsed = setting?.playbook_json ? PromoPlaybookSchema.safeParse(setting.playbook_json) : null;
+  const playbookGuidance = pbParsed?.success ? playbookToGuidance(pbParsed.data) : '';
   if (!profile || !profile.success || profile.data.content_pillars.length === 0) {
     log.info({ task: PROMOTION_CONTENT_GENERATE_TASK_NAME, channel }, 'no account strategy — generate strategy first');
     return { created: 0, removed: 0 };
@@ -137,6 +144,7 @@ export async function runPromotionContentGenerate(
     target_readers: [...readerSet],
     sample_titles: titles,
     count,
+    playbook_guidance: playbookGuidance,
   });
 
   // 4. 既存の未投稿 value を作り直す (promo は温存)。
@@ -149,9 +157,11 @@ export async function runPromotionContentGenerate(
     return { created: 0, removed: removed.count };
   }
 
-  // 5. 日程付与 (明日から VALUE_SLOTS を days 日に分散) + 定番ハッシュタグ付与。
-  // 戦略にタグが無くてもデフォルトの本紹介タグにフォールバックして必ず付与する。
+  // 5. 日程付与 (明日から VALUE_SLOTS を days 日に分散) + ハッシュタグ付与。
+  // [F-078] core は常時、rotating は各投稿の話題に合致するものだけ足して発見性を上げる
+  // (競馬投稿に #競馬、貯金投稿に #貯金 等)。戦略にタグが無くてもデフォルト本紹介タグにフォールバック。
   const coreTags = resolveHashtags(p.hashtag_strategy?.core);
+  const rotatingTags = p.hashtag_strategy?.rotating ?? [];
   const slots = VALUE_SLOTS_JST_MIN;
   // JST の暦日(明日)を基準にスロット時刻を割り当てる。
   const jst = new Date(now().getTime() + 9 * H);
@@ -164,7 +174,8 @@ export async function runPromotionContentGenerate(
     const slotMin = slots[i % slots.length]!;
     // JST 壁時計 (jy/jm/(jd+dayOffset) 00:00 + slotMin 分) → UTC = それ - 9h
     const scheduledFor = new Date(Date.UTC(jy, jm, jd + dayOffset, 0, slotMin) - 9 * H);
-    const body = channel === 'blog' ? post.body.trim() : appendHashtags(channel, post.body.trim(), coreTags);
+    const topicTags = pickTopicHashtags(post.body, coreTags, rotatingTags);
+    const body = channel === 'blog' ? post.body.trim() : appendHashtags(channel, post.body.trim(), topicTags);
     return {
       book_id: null,
       channel,

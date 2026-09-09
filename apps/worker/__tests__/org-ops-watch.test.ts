@@ -23,8 +23,16 @@ interface JobRow {
   created_at: Date;
 }
 
-function makeHarness(jobs: JobRow[], openOpsBooks: Array<string | null> = []) {
+interface AssignRow { id: string; role: string; genre: string | null; provider: string; model: string }
+
+function makeHarness(
+  jobs: JobRow[],
+  openOpsBooks: Array<string | null> = [],
+  assignments: AssignRow[] = [],
+) {
   const created: Array<Record<string, unknown>> = [];
+  const assignUpdates: Array<{ id: string; data: { provider: string; model: string } }> = [];
+  const audits: Array<Record<string, unknown>> = [];
   const prisma = {
     job: {
       findMany: vi.fn(async () => jobs),
@@ -37,8 +45,23 @@ function makeHarness(jobs: JobRow[], openOpsBooks: Array<string | null> = []) {
         return { id: `t-${created.length}` };
       }),
     },
+    modelAssignment: {
+      findMany: vi.fn(async (args: { where: { role: { in: string[] } } }) =>
+        assignments.filter((a) => args.where.role.in.includes(a.role)),
+      ),
+      update: vi.fn(async (args: { where: { id: string }; data: { provider: string; model: string } }) => {
+        assignUpdates.push({ id: args.where.id, data: args.data });
+        return {};
+      }),
+    },
+    auditLog: {
+      create: vi.fn(async (args: { data: Record<string, unknown> }) => {
+        audits.push(args.data);
+        return {};
+      }),
+    },
   } as unknown as OrgOpsWatchPrisma;
-  return { prisma, created };
+  return { prisma, created, assignUpdates, audits };
 }
 
 function failedJob(over: Partial<JobRow>): JobRow {
@@ -113,5 +136,47 @@ describe('runOrgOpsWatch', () => {
     const { prisma, created } = makeHarness(jobs);
     await runOrgOpsWatch({ limit: 2 }, deps(prisma));
     expect(created).toHaveLength(2);
+  });
+});
+
+describe('runOrgOpsWatch — モデル障害の自己修復', () => {
+  const OUTAGE = 'ProviderError: google request failed: This model models/gemini-2.5-flash is no longer available to new users.';
+
+  it('提供終了エラーで失敗した editor → 割当を anthropic/claude-sonnet-4-6 へ自動切替し監査記録', async () => {
+    const { prisma, assignUpdates, audits, created } = makeHarness(
+      [failedJob({ kind: 'pipeline.book.editor', error: OUTAGE, retries: 3 })],
+      [],
+      [{ id: 'ma-editor', role: 'editor', genre: null, provider: 'google', model: 'gemini-2.5-flash' }],
+    );
+    const res = await runOrgOpsWatch({}, deps(prisma));
+    expect(res.model_heals).toBe(1);
+    expect(assignUpdates).toEqual([
+      { id: 'ma-editor', data: { provider: 'anthropic', model: 'claude-sonnet-4-6' } },
+    ]);
+    expect(audits[0]!.action).toBe('model_assignment.auto_heal');
+    // 可視化の sysops 記録(done)も残す
+    expect(created.some((t) => (t.result_json as { action?: string } | undefined)?.action === 'model_auto_heal')).toBe(true);
+  });
+
+  it('active が既に anthropic なら自己修復しない（同プロバイダ障害は人手 triage）', async () => {
+    const { prisma, assignUpdates } = makeHarness(
+      [failedJob({ kind: 'pipeline.book.editor', error: OUTAGE, retries: 3 })],
+      [],
+      [{ id: 'ma-editor', role: 'editor', genre: null, provider: 'anthropic', model: 'claude-sonnet-4-6' }],
+    );
+    const res = await runOrgOpsWatch({}, deps(prisma));
+    expect(res.model_heals).toBe(0);
+    expect(assignUpdates).toHaveLength(0);
+  });
+
+  it('通常のエラー(提供障害でない)ではモデル切替しない', async () => {
+    const { prisma, assignUpdates } = makeHarness(
+      [failedJob({ kind: 'pipeline.book.editor', error: 'AgentError: editor.invalid_output', retries: 3 })],
+      [],
+      [{ id: 'ma-editor', role: 'editor', genre: null, provider: 'google', model: 'gemini-2.5-flash' }],
+    );
+    const res = await runOrgOpsWatch({}, deps(prisma));
+    expect(res.model_heals).toBe(0);
+    expect(assignUpdates).toHaveLength(0);
   });
 });

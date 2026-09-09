@@ -260,7 +260,7 @@ export function CsvImportPanel() {
 
       {/* Success */}
       {state.successMessage && (
-        <div role="status" aria-live="polite" className="rounded-card border border-green-300 bg-green-50 px-3 py-2 text-body-sm text-green-800">
+        <div role="status" aria-live="polite" className="rounded-card border border-green-300 bg-green-100 px-3 py-2 text-body-sm text-green-700">
           {state.successMessage}
         </div>
       )}

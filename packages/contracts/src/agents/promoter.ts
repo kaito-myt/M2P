@@ -30,6 +30,11 @@ export const PromotionInputSchema = z.object({
       avg_stars: z.number().optional(),
     })
     .optional(),
+  /**
+   * F-064: web検索リサーチに基づく販促プレイブック要約(今伸びている型/フック/
+   * ハッシュタグ/避けるべきこと)。SNS投稿文を書く際にこれを反映する。空なら従来どおり。
+   */
+  playbook_guidance: z.string().max(6000).default(''),
 });
 export type PromotionInput = z.infer<typeof PromotionInputSchema>;
 
@@ -47,34 +52,64 @@ export const OngoingActionSchema = z.object({
 });
 export type OngoingAction = z.infer<typeof OngoingActionSchema>;
 
+/**
+ * 一部の LLM(特に大きなネスト構造)は、配列/オブジェクトのフィールドを
+ * **JSON 文字列化して**返すことがある(例: promo_copy を "{\"x_posts\":[...]}" として返す)。
+ * その場合 zod 検証が落ち、プラン生成が失敗する/空になる。ここでは検証前に
+ * 「JSON 配列/オブジェクトらしき文字列」を parse して本来の型へ戻す(頑健化)。
+ */
+function jsonish<T extends z.ZodTypeAny>(schema: T): z.ZodEffects<z.ZodTypeAny, z.output<T>, unknown> {
+  return z.preprocess((v) => {
+    if (typeof v === 'string') {
+      const t = v.trim();
+      if ((t.startsWith('[') && t.endsWith(']')) || (t.startsWith('{') && t.endsWith('}'))) {
+        try {
+          return JSON.parse(t);
+        } catch {
+          return v;
+        }
+      }
+    }
+    return v;
+  }, schema) as z.ZodEffects<z.ZodTypeAny, z.output<T>, unknown>;
+}
+
 export const PromotionPlanOutputSchema = z.object({
   /** 全体の販促方針 (日本語)。 */
   summary: z.string().min(1).max(1200),
   /** 価格戦略。 */
-  pricing: z.object({
-    launch_price_jpy: z.number().int().min(0),
-    regular_price_jpy: z.number().int().min(0),
-    /** KDP セレクト (独占) 登録を推奨するか。 */
-    kdp_select_recommended: z.boolean(),
-    /** 無料キャンペーン / Kindle カウントダウンなどの使い方 (日本語)。 */
-    tactics: z.array(z.string().min(1).max(300)).max(8).default([]),
-  }),
+  pricing: jsonish(
+    z.object({
+      launch_price_jpy: z.number().int().min(0),
+      regular_price_jpy: z.number().int().min(0),
+      /** KDP セレクト (独占) 登録を推奨するか。 */
+      kdp_select_recommended: z.boolean(),
+      /** 無料キャンペーン / Kindle カウントダウンなどの使い方 (日本語)。 */
+      tactics: jsonish(z.array(z.string().min(1).max(300)).max(8).default([])),
+    }),
+  ),
   /** カテゴリ / キーワードの再最適化アクション。 */
-  category_keyword_actions: z.array(z.string().min(1).max(300)).max(10).default([]),
+  category_keyword_actions: jsonish(z.array(z.string().min(1).max(300)).max(10).default([])),
   /** レビュー獲得アクション。 */
-  review_actions: z.array(z.string().min(1).max(300)).max(10).default([]),
+  review_actions: jsonish(z.array(z.string().min(1).max(300)).max(10).default([])),
   /** ローンチ直後チェックリスト。 */
-  launch_checklist: z.array(LaunchTaskSchema).max(15).default([]),
+  launch_checklist: jsonish(z.array(LaunchTaskSchema).max(15).default([])),
   /** そのままコピペできる告知文。 */
-  promo_copy: z.object({
-    /** X (Twitter) 投稿案 (複数、各 140 字目安)。 */
-    x_posts: z.array(z.string().min(1).max(300)).max(6).default([]),
-    /** note 記事の下書き (見出し + 本文)。 */
-    note_article: z.string().max(4000).default(''),
-    /** ブログ告知の骨子。 */
-    blog_outline: z.string().max(2000).default(''),
-  }),
+  promo_copy: jsonish(
+    z.object({
+      /** X (Twitter) 投稿案 (複数、各 140 字目安)。 */
+      x_posts: jsonish(z.array(z.string().min(1).max(300)).max(6).default([])),
+      /** note 記事の下書き (見出し + 本文)。 */
+      note_article: z.string().max(4000).default(''),
+      /**
+       * そのまま公開できる完成した良書紹介/告知ブログ記事 (見出し + 本文, 1200字以上)。
+       * 骨子・構成案・箇条書きの「案」ではなく、公開可能な本文を入れる
+       * (フィールド名は互換のため blog_outline のまま。中身は完成記事)。
+       */
+      blog_outline: z.string().max(6000).default(''),
+    }),
+  ),
   /** 継続施策カレンダー。 */
-  ongoing_calendar: z.array(OngoingActionSchema).max(12).default([]),
+  ongoing_calendar: jsonish(z.array(OngoingActionSchema).max(12).default([])),
 });
 export type PromotionPlanOutput = z.infer<typeof PromotionPlanOutputSchema>;

@@ -97,7 +97,9 @@ export function CullReviewClient({ candidates }: { candidates: CullCandidateView
                   <span className="line-clamp-2 text-foreground">{c.title}</span>
                 </td>
                 <td className="whitespace-nowrap px-space-relaxed py-space-snug font-mono text-caption text-muted">{c.asin ?? '—'}</td>
-                <td className="px-space-relaxed py-space-snug text-caption text-charcoal-82">{c.reason ?? '—'}</td>
+                <td className="max-w-md px-space-relaxed py-space-snug text-caption text-charcoal-82">
+                  <span className="line-clamp-2 block break-words" title={c.reason ?? undefined}>{c.reason ?? '—'}</span>
+                </td>
               </tr>
             ))}
           </tbody>

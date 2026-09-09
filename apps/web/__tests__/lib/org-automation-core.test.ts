@@ -42,6 +42,7 @@ describe('serializeOrgAutomation', () => {
       org_finance_tick_cron: '0 * * * *',
       org_kdp_auto_publish_enabled: true,
       org_kdp_screen_cron: '30 * * * *',
+      org_auto_approve_tasks: true,
     });
     expect(v.org_auto_plan_enabled).toBe(true);
     expect(v.org_plan_cron).toBe('0 20 * * *');
@@ -62,6 +63,7 @@ describe('serializeOrgAutomation', () => {
       org_finance_tick_cron: undefined as unknown as string,
       org_kdp_auto_publish_enabled: false,
       org_kdp_screen_cron: undefined as unknown as string,
+      org_auto_approve_tasks: undefined as unknown as boolean,
     });
     expect(v).toEqual(ORG_AUTOMATION_DEFAULTS);
   });

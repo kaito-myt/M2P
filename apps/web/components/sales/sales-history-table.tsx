@@ -71,12 +71,12 @@ export function SalesHistoryTable({ history, bookTitle, isLoading }: SalesHistor
                       key={row.year_month}
                       className="border-b border-border-warm/50 last:border-0"
                     >
-                      <td className="py-1.5 pr-4 text-charcoal">{row.year_month}</td>
-                      <td className="py-1.5 pr-4 text-right text-charcoal">
+                      <td className="whitespace-nowrap py-1.5 pr-4 text-charcoal">{row.year_month}</td>
+                      <td className="whitespace-nowrap py-1.5 pr-4 text-right tabular-nums text-charcoal">
                         ¥{row.royalty_jpy.toLocaleString('ja-JP')}
                       </td>
-                      <td className="py-1.5 pr-4 text-right text-charcoal">{row.review_count}</td>
-                      <td className="py-1.5 text-right text-charcoal">
+                      <td className="py-1.5 pr-4 text-right tabular-nums text-charcoal">{row.review_count}</td>
+                      <td className="py-1.5 text-right tabular-nums text-charcoal">
                         {row.avg_stars != null ? row.avg_stars.toFixed(1) : m.noStars}
                       </td>
                     </tr>

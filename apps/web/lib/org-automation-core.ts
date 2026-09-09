@@ -41,6 +41,7 @@ export const UpdateOrgAutomationInputSchema = z.object({
   org_finance_tick_cron: cronField.optional(),
   org_kdp_auto_publish_enabled: z.boolean().optional(),
   org_kdp_screen_cron: cronField.optional(),
+  org_auto_approve_tasks: z.boolean().optional(),
 });
 
 export type UpdateOrgAutomationInput = z.infer<typeof UpdateOrgAutomationInputSchema>;
@@ -60,6 +61,7 @@ export interface OrgAutomationView {
   org_finance_tick_cron: string;
   org_kdp_auto_publish_enabled: boolean;
   org_kdp_screen_cron: string;
+  org_auto_approve_tasks: boolean;
 }
 
 interface RawOrgAutomation {
@@ -73,6 +75,7 @@ interface RawOrgAutomation {
   org_finance_tick_cron: string;
   org_kdp_auto_publish_enabled: boolean;
   org_kdp_screen_cron: string;
+  org_auto_approve_tasks: boolean;
 }
 
 /** AppSettings 行未存在時のデフォルト（packages/db/schema.prisma の @default と一致）。 */
@@ -87,6 +90,7 @@ export const ORG_AUTOMATION_DEFAULTS: OrgAutomationView = {
   org_finance_tick_cron: '0 * * * *',
   org_kdp_auto_publish_enabled: false,
   org_kdp_screen_cron: '30 * * * *',
+  org_auto_approve_tasks: true,
 };
 
 export function serializeOrgAutomation(raw: RawOrgAutomation): OrgAutomationView {
@@ -101,6 +105,7 @@ export function serializeOrgAutomation(raw: RawOrgAutomation): OrgAutomationView
     org_finance_tick_cron: raw.org_finance_tick_cron ?? ORG_AUTOMATION_DEFAULTS.org_finance_tick_cron,
     org_kdp_auto_publish_enabled: Boolean(raw.org_kdp_auto_publish_enabled),
     org_kdp_screen_cron: raw.org_kdp_screen_cron ?? ORG_AUTOMATION_DEFAULTS.org_kdp_screen_cron,
+    org_auto_approve_tasks: raw.org_auto_approve_tasks ?? ORG_AUTOMATION_DEFAULTS.org_auto_approve_tasks,
   };
 }
 
@@ -147,6 +152,7 @@ export async function updateOrgAutomationCore(
   if (data.org_finance_tick_cron !== undefined) updateData.org_finance_tick_cron = data.org_finance_tick_cron;
   if (data.org_kdp_auto_publish_enabled !== undefined) updateData.org_kdp_auto_publish_enabled = data.org_kdp_auto_publish_enabled;
   if (data.org_kdp_screen_cron !== undefined) updateData.org_kdp_screen_cron = data.org_kdp_screen_cron;
+  if (data.org_auto_approve_tasks !== undefined) updateData.org_auto_approve_tasks = data.org_auto_approve_tasks;
 
   if (Object.keys(updateData).length === 0) {
     return ok(undefined as void);

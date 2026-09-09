@@ -164,7 +164,7 @@ export function ActionBar({ proposal }: ActionBarProps) {
           disabled={!isPending || pending}
           onClick={handleApprove}
           data-testid="action-approve"
-          className="rounded-default bg-foreground px-4 py-2 text-button-sm text-cream transition-opacity hover:opacity-80 disabled:cursor-not-allowed disabled:opacity-40"
+          className="rounded-default bg-foreground px-4 py-2 text-button-sm text-white transition-opacity hover:opacity-80 disabled:cursor-not-allowed disabled:opacity-40"
         >
           {pending ? m.approving : m.approve}
         </button>
@@ -214,7 +214,7 @@ export function ActionBar({ proposal }: ActionBarProps) {
       {showRejectDialog && (
         <div
           data-testid="reject-dialog"
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40"
+          className="fixed inset-0 z-50 flex items-center justify-center bg-charcoal/50"
           onClick={() => setShowRejectDialog(false)}
           onKeyDown={(e) => {
             if (e.key === 'Escape') setShowRejectDialog(false);
@@ -241,7 +241,7 @@ export function ActionBar({ proposal }: ActionBarProps) {
               placeholder={m.rejectDialogNotePlaceholder}
               rows={4}
               data-testid="rejection-note-input"
-              className="w-full resize-none rounded-default border border-border-warm bg-white p-2 text-button-sm text-charcoal focus:outline-none focus:ring-2 focus:ring-accent"
+              className="w-full resize-none rounded-default border border-border-warm bg-cream-light p-2 text-button-sm text-charcoal focus:outline-none focus:ring-2 focus:ring-accent"
             />
             {rejectNoteError && (
               <p
@@ -266,7 +266,7 @@ export function ActionBar({ proposal }: ActionBarProps) {
                 disabled={pending}
                 onClick={handleReject}
                 data-testid="reject-dialog-submit"
-                className="rounded-default bg-destructive px-4 py-2 text-button-sm text-cream disabled:opacity-60"
+                className="rounded-default bg-destructive px-4 py-2 text-button-sm text-white disabled:opacity-60"
               >
                 {pending ? m.rejecting : m.rejectDialogSubmit}
               </button>
@@ -279,7 +279,7 @@ export function ActionBar({ proposal }: ActionBarProps) {
       {showEditDialog && (
         <div
           data-testid="edit-approve-dialog"
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40"
+          className="fixed inset-0 z-50 flex items-center justify-center bg-charcoal/50"
           onClick={() => setShowEditDialog(false)}
           onKeyDown={(e) => {
             if (e.key === 'Escape') setShowEditDialog(false);
@@ -305,7 +305,7 @@ export function ActionBar({ proposal }: ActionBarProps) {
               onChange={(e) => setEditedBody(e.target.value)}
               rows={12}
               data-testid="edited-body-input"
-              className="w-full resize-y rounded-default border border-border-warm bg-white p-2 font-mono text-caption text-charcoal focus:outline-none focus:ring-2 focus:ring-accent"
+              className="w-full resize-y rounded-default border border-border-warm bg-cream-light p-2 font-mono text-caption text-charcoal focus:outline-none focus:ring-2 focus:ring-accent"
             />
             <div className="mt-4 flex justify-end gap-2">
               <button
@@ -322,7 +322,7 @@ export function ActionBar({ proposal }: ActionBarProps) {
                 disabled={pending}
                 onClick={handleEditAndApprove}
                 data-testid="edit-approve-dialog-submit"
-                className="rounded-default bg-foreground px-4 py-2 text-button-sm text-cream disabled:opacity-60"
+                className="rounded-default bg-foreground px-4 py-2 text-button-sm text-white disabled:opacity-60"
               >
                 {pending ? m.approving : m.editDialogSubmit}
               </button>

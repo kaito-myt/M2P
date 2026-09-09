@@ -2,7 +2,7 @@ import type { JobHelpers, Task } from 'graphile-worker';
 import { z } from 'zod';
 
 import { decryptApiKey } from '@a2p/crypto';
-import type { PromotionChannel } from '@a2p/contracts/promotion/channels';
+import { amazonUrlForAsin, appendPurchaseLink, type PromotionChannel } from '@a2p/contracts/promotion/channels';
 import { ValidationError } from '@a2p/contracts/errors';
 import { createLogger, type Logger } from '@a2p/contracts/logger';
 import { prisma as defaultPrisma } from '@a2p/db';
@@ -16,10 +16,13 @@ import {
   type PublishChannelConfig,
   type PublisherPort,
 } from './promotion-post/publisher-port.js';
+import { pushLine } from './lib/line-auth-relay.js';
 import { createBlogPublisherPort } from './promotion-post/blog-publisher-port.js';
 import { createAyrsharePublisherPort } from './promotion-post/ayrshare-publisher-port.js';
 import { createTikTokPublisherPort } from './promotion-post/tiktok-publisher-port.js';
-import { ensureBookPromoImage, generateValuePostImage } from './promotion-post/promo-image.js';
+import { createZernioPublisherPort } from './promotion-post/zernio-publisher-port.js';
+import { createNotePublisherPort } from './promotion-post/note-publisher-port.js';
+import { ensureBookPromoImage, generateValuePostImage, generateBookEyecatchImage2 } from './promotion-post/promo-image.js';
 
 /**
  * `promotion.post.publish` タスク (F-052)
@@ -90,6 +93,13 @@ export interface PromotionPostPublishPrisma {
       config_json: unknown;
     } | null>;
   };
+  // promo 投稿の購入 URL を投稿時に現在の ASIN で確実に付与するための参照。
+  book?: {
+    findUnique: (args: {
+      where: { id: string };
+      select: { asin: true };
+    }) => Promise<{ asin: string | null } | null>;
+  };
   // P4 増分2: 投稿が特定の台帳アカウントに紐づく場合、その資格情報で投稿する。
   promotionAccount?: {
     findUnique: (args: {
@@ -130,6 +140,12 @@ function defaultResolvePort(channel: string): PublisherPort {
   if (channel === 'blog') {
     return createBlogPublisherPort();
   }
+  // Zernio(getlate) 経由: IG(画像) / TikTok(動画) を審査済みパートナーで公開投稿。
+  //   TikTok は自前API審査が恒久却下のため、また IG は Make(webhook) から移行するため、
+  //   ZERNIO_API_KEY があれば最優先でこの経路を使う(Make/Ayrshare/自前TikTokより先)。
+  if ((channel === 'instagram' || channel === 'tiktok') && process.env.ZERNIO_API_KEY) {
+    return createZernioPublisherPort();
+  }
   // F-063: TikTok は Content Posting API を直接叩く（動画を下書き投稿）。creds が無ければ
   //   publish 側で not_connected を返す。
   if (channel === 'tiktok') {
@@ -138,6 +154,10 @@ function defaultResolvePort(channel: string): PublisherPort {
   // F-058: IG は Ayrshare 経由 (API キーがある場合)。無ければ http(webhook)にフォールバック。
   if (channel === 'instagram' && process.env.AYRSHARE_API_KEY) {
     return createAyrsharePublisherPort();
+  }
+  // F-058 (note): note は公式 API が無いため、認証情報があればブラウザ自動化で投稿。無ければ webhook。
+  if (channel === 'note' && process.env.NOTE_EMAIL && process.env.NOTE_PASSWORD) {
+    return createNotePublisherPort();
   }
   const httpDeps: HttpPublisherDeps = {};
   return createHttpPublisherPort(httpDeps);
@@ -149,6 +169,13 @@ function defaultResolvePort(channel: string): PublisherPort {
  *  - 宣伝(本あり): その本の販促画像を生成し署名 URL を返す。
  *  - 育成(book_id=null): 投稿ごとにユニークな画像を生成する(同一画像の連投を避ける)。
  */
+/**
+ * 販促メディア署名 URL の有効期限(秒)。中継(Make等)がシナリオ停止/リトライでキュー滞留し、
+ * 数時間〜数日後に画像を取得しにくることがある。1h では期限切れで R2 が XML/HTML エラーを返し、
+ * 中継側の JSON パースが「Unexpected token '<'」で落ちる(→シナリオ自動停止)ため、7 日に延長する。
+ */
+const MEDIA_URL_TTL_SEC = 7 * 24 * 3600;
+
 async function defaultBuildMediaUrls(
   channel: string,
   bookId: string | null,
@@ -156,11 +183,13 @@ async function defaultBuildMediaUrls(
   body: string,
   mediaKey: string | null,
 ): Promise<string[]> {
-  if (channel !== 'instagram' && channel !== 'tiktok') return [];
+  // IG/TikTok は画像/動画必須。note はアイキャッチ。X は画像添付でインプレを伸ばす(任意だが標準化)。
+  // book=表紙入り販促画像 / value(良書紹介)=バリューカード。blog は本文内で完結するので画像は付けない。
+  if (channel !== 'instagram' && channel !== 'tiktok' && channel !== 'note' && channel !== 'x') return [];
   const storage = await import('@a2p/storage');
   // 事前生成メディア(動画等)を優先。
   if (mediaKey) {
-    return [await storage.getSignedDownloadUrl(mediaKey, 3600)];
+    return [await storage.getSignedDownloadUrl(mediaKey, MEDIA_URL_TTL_SEC)];
   }
   // TikTok は動画が本命。未レンダリングなら投稿時にオンデマンドで動画を1本作る
   // (重い処理・失敗時は下の画像フォールバックへ)。
@@ -168,16 +197,27 @@ async function defaultBuildMediaUrls(
     try {
       const { ensureTikTokVideoForPost } = await import('./promotion-post/tiktok-video.js');
       const videoKey = await ensureTikTokVideoForPost(postId, bookId);
-      if (videoKey) return [await storage.getSignedDownloadUrl(videoKey, 3600)];
+      if (videoKey) return [await storage.getSignedDownloadUrl(videoKey, MEDIA_URL_TTL_SEC)];
     } catch {
-      // フォールバックへ
+      // 動画生成失敗
     }
+    // TikTok は動画のみ。動画が用意できなければメディア無しで返し、投稿側でスキップさせる。
+    // 画像を渡すと Zernio が「写真投稿(スライドショー)」として扱い、本文がタイトル長制限に当たって
+    // spam/長さエラーで失敗するため、画像フォールバックはしない。
+    return [];
   }
-  const key = bookId
-    ? await ensureBookPromoImage(bookId)
-    : await generateValuePostImage(postId, body);
+  // note のアイキャッチは gpt-image-2 で「画像＋文字」を一発生成する(合成しない)。
+  // IG/TikTok の book 投稿は従来どおり実表紙を主役にした合成クリエイティブ。
+  let key: string | null;
+  if (bookId && channel === 'note') {
+    key = await generateBookEyecatchImage2(postId, bookId);
+  } else if (bookId) {
+    key = await ensureBookPromoImage(bookId);
+  } else {
+    key = await generateValuePostImage(postId, body);
+  }
   if (!key) return [];
-  return [await storage.getSignedDownloadUrl(key, 3600)];
+  return [await storage.getSignedDownloadUrl(key, MEDIA_URL_TTL_SEC)];
 }
 
 export async function runPromotionPostPublish(
@@ -291,11 +331,37 @@ export async function runPromotionPostPublish(
       log.warn({ task: PROMOTION_POST_PUBLISH_TASK_NAME, postId, err }, 'media build failed — publishing without media');
     }
 
+    // TikTok は動画必須。動画が用意できなかった投稿は写真フォールバックせず canceled でスキップする
+    // (失敗として溜めない。動画が生成できるようになれば再スケジュールで拾える)。
+    if (post.channel === 'tiktok' && mediaUrls.length === 0) {
+      await prisma.promotionPost.update({
+        where: { id: postId },
+        data: { status: 'canceled', error: 'tiktok: no video — skipped (photo fallback disabled)'.slice(0, 500) },
+      });
+      log.info({ task: PROMOTION_POST_PUBLISH_TASK_NAME, postId }, 'tiktok skipped — no video available');
+      return { status: 'skipped', reason: 'tiktok_no_video' };
+    }
+
+    // promo 投稿(本あり)は、投稿直前に **現在の book.asin から正規 Amazon URL** を本文へ付与する。
+    // (生成時に ASIN 未確定だと URL が入らないため。既に正しい URL を含む場合は二重付与しない。)
+    let bodyToPost = post.body;
+    if (post.book_id && prisma.book) {
+      try {
+        const bk = await prisma.book.findUnique({ where: { id: post.book_id }, select: { asin: true } });
+        const url = amazonUrlForAsin(bk?.asin);
+        if (url && !bodyToPost.includes(url)) {
+          bodyToPost = appendPurchaseLink(post.channel, bodyToPost, bk?.asin);
+        }
+      } catch (err) {
+        log.warn({ task: PROMOTION_POST_PUBLISH_TASK_NAME, postId, err }, 'purchase link injection skipped');
+      }
+    }
+
     const port = resolvePort(post.channel);
     const result = await port.publish({
       channel: post.channel as PromotionChannel,
       title: post.title,
-      body: post.body,
+      body: bodyToPost,
       config,
       ...(mediaUrls.length > 0 ? { mediaUrls } : {}),
     });
@@ -317,6 +383,10 @@ export async function runPromotionPostPublish(
       { task: PROMOTION_POST_PUBLISH_TASK_NAME, postId, channel: post.channel, reason: result.reason },
       'post publish failed',
     );
+    // 黙って止まらないよう、実投稿の失敗は LINE に通知する(中継/接続の失効を早期検知)。
+    await pushLine(
+      `⚠️ A2P: ${post.channel} の自動投稿に失敗 (${result.reason}). ${result.message.slice(0, 120)}`,
+    ).catch(() => {});
     return { status: 'failed', reason: result.reason, message: result.message };
   } catch (err) {
     const message = err instanceof Error ? `${err.name}: ${err.message}` : String(err);

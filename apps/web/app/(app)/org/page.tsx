@@ -18,9 +18,11 @@ import {
 } from '@a2p/contracts/org';
 
 import { messages } from '@/lib/messages';
+import { PageHeading } from '@/components/common/page-heading';
 import { RunPlanButton } from '@/components/org/run-plan-button';
 import { ModelBakeoffControl } from '@/components/org/model-bakeoff-control';
 import { OrgAutomationSettings } from '@/components/org/org-automation-settings';
+import { CeoChat } from '@/components/org/ceo-chat';
 import {
   computeSpentByDivision,
   divisionTaskCounts,
@@ -76,6 +78,8 @@ export default async function OrgDashboardPage() {
           priority: true,
           cost_jpy: true,
           created_at: true,
+          result_json: true,
+          error: true,
           book: { select: { title: true } },
         },
       })
@@ -114,6 +118,7 @@ export default async function OrgDashboardPage() {
       org_finance_tick_cron: true,
       org_kdp_auto_publish_enabled: true,
       org_kdp_screen_cron: true,
+      org_auto_approve_tasks: true,
     },
   });
   const automationInitial: OrgAutomationView = automationRow
@@ -122,20 +127,12 @@ export default async function OrgDashboardPage() {
 
   return (
     <div className="flex flex-col gap-space-loose" data-testid="org-dashboard">
-      <header className="flex flex-col gap-space-snug">
-        <nav aria-label="breadcrumb" className="text-button-sm text-muted">
-          <Link href="/dashboard" className="no-underline hover:underline">{messages.org.breadcrumbHome}</Link>
-          <span aria-hidden="true"> &gt; </span>
-          <span>{m.pageTitle}</span>
-        </nav>
-        <div className="flex flex-wrap items-end justify-between gap-space-snug">
-          <div className="flex flex-col">
-            <h1 className="text-sub-heading text-foreground">{m.pageTitle}</h1>
-            <p className="text-body text-muted">{m.pageSubtitle}</p>
-          </div>
-          <RunPlanButton />
-        </div>
-      </header>
+      <PageHeading
+        eyebrow={messages.nav.sectionOrg}
+        title={m.pageTitle}
+        description={m.pageSubtitle}
+        actions={<RunPlanButton />}
+      />
 
       {patterns && ((patterns.insights?.length ?? 0) > 0 || (patterns.top_genres?.length ?? 0) > 0) && (
         <section
@@ -145,10 +142,12 @@ export default async function OrgDashboardPage() {
           <h2 className="text-card-title font-medium text-charcoal">{m.winningPatternsTitle}</h2>
           <p className="text-caption text-muted">{m.winningPatternsHint}</p>
           {patterns.top_genres && patterns.top_genres.length > 0 && (
-            <div className="flex flex-wrap gap-2">
+            <div className="flex flex-wrap gap-x-5 gap-y-1.5">
               {patterns.top_genres.slice(0, 6).map((g) => (
-                <span key={g.genre} className="rounded-full bg-charcoal px-2 py-0.5 text-caption text-cream-light">
-                  {genreLabel(g.genre) ?? g.genre} {yen(g.royalty_jpy)}（{g.book_count}冊）
+                <span key={g.genre} className="text-caption text-charcoal-82">
+                  <span className="text-foreground">{genreLabel(g.genre) ?? g.genre}</span>{' '}
+                  <span className="tabular-nums">{yen(g.royalty_jpy)}</span>
+                  <span className="text-charcoal-40">（{g.book_count}冊）</span>
                 </span>
               ))}
             </div>
@@ -160,6 +159,8 @@ export default async function OrgDashboardPage() {
           )}
         </section>
       )}
+
+      <CeoChat />
 
       <OrgAutomationSettings initial={automationInitial} />
 
@@ -214,15 +215,15 @@ export default async function OrgDashboardPage() {
             <h3 className="text-button-sm font-medium text-charcoal">{m.budgetTitle}</h3>
             <div className="flex flex-col gap-2">
               {budgetLines.map((line) => (
-                <div key={line.division} className="flex items-center gap-space-snug">
+                <div key={line.division} className="flex flex-wrap items-center gap-space-snug">
                   <span className="w-16 shrink-0 text-caption text-charcoal-82">{line.label}</span>
-                  <div className="h-2 flex-1 overflow-hidden rounded-full bg-cream">
+                  <div className="h-2 min-w-24 flex-1 overflow-hidden rounded-full bg-cream">
                     <div
                       className="h-full rounded-full bg-charcoal"
                       style={{ width: `${line.ratio != null ? Math.min(100, Math.round(line.ratio * 100)) : 0}%` }}
                     />
                   </div>
-                  <span className="w-40 shrink-0 text-right text-caption text-muted">
+                  <span className="w-40 shrink-0 whitespace-nowrap text-right text-caption tabular-nums text-muted">
                     {line.allocated != null
                       ? `${yen(line.spent)} / ${yen(line.allocated)}`
                       : `${yen(line.spent)}（${m.budgetNone}）`}
@@ -262,7 +263,7 @@ function DivisionCard({
   return (
     <Link
       href="/org/tasks"
-      className="flex flex-col gap-1.5 rounded-card border border-border-warm bg-cream-light p-space-snug no-underline shadow-l1 hover:bg-cream"
+      className="flex flex-col gap-1.5 rounded-card border border-border-warm bg-cream-light p-space-snug no-underline hover:bg-cream"
     >
       <div className="flex items-center justify-between">
         <span className="text-button-sm font-medium text-charcoal">{DIVISION_LABELS[division]}本部</span>
@@ -270,7 +271,7 @@ function DivisionCard({
       </div>
       <div className="flex gap-space-snug text-caption text-charcoal-82">
         <span>{messages.org.dashboard.tasksOpen}: {counts.open}</span>
-        <span className={counts.human > 0 ? 'font-medium text-amber-700' : ''}>
+        <span className={counts.human > 0 ? 'font-medium text-accent' : ''}>
           {messages.org.dashboard.tasksHuman}: {counts.human}
         </span>
         <span>{messages.org.dashboard.tasksDone}: {counts.done}</span>

@@ -8,13 +8,13 @@
  * 仕様根拠: docs/04 S-025 / docs/05 §4.3.14 / SP-09 T-09-01
  */
 import type { Metadata } from 'next';
-import Link from 'next/link';
 
 import { prisma } from '@a2p/db';
 
 import { messages } from '@/lib/messages';
 import { serializeJobRow, computeJobStats, type JobRawRow } from '@/lib/jobs-view';
 import { JobsPageShell } from '@/components/jobs/jobs-page-shell';
+import { PageHeading } from '@/components/common/page-heading';
 
 export const metadata: Metadata = {
   title: `${messages.jobs.pageTitle} | ${messages.brand.appName}`,
@@ -118,22 +118,7 @@ export default async function JobsListPage({ searchParams }: PageProps) {
 
   return (
     <div className="flex flex-col gap-space-loose" data-testid="jobs-page">
-      {/* Page header */}
-      <header className="flex flex-col gap-space-snug">
-        <nav aria-label="breadcrumb" className="text-button-sm text-muted">
-          <Link href="/dashboard" className="no-underline hover:underline">
-            {m.breadcrumbHome}
-          </Link>
-          <span aria-hidden="true"> &gt; </span>
-          <span>{m.breadcrumbOps}</span>
-          <span aria-hidden="true"> &gt; </span>
-          <span>{m.breadcrumbJobs}</span>
-        </nav>
-        <div className="flex flex-col">
-          <h1 className="text-sub-heading text-foreground">{m.pageTitle}</h1>
-          <p className="text-body text-muted">{m.pageSubtitle}</p>
-        </div>
-      </header>
+      <PageHeading eyebrow={m.breadcrumbOps} title={m.pageTitle} description={m.pageSubtitle} />
 
       <JobsPageShell
         rows={rows}

@@ -56,8 +56,9 @@ export interface OrgKdpScreenPrisma {
   book: {
     findUnique: (args: {
       where: { id: string };
-      select: { status: true; publish_status: true; has_blocking_comments: true };
-    }) => Promise<{ status: string; publish_status: string; has_blocking_comments: boolean } | null>;
+      select: { status: true; publish_status: true; has_blocking_comments: true; kdp_publish_queued: true };
+    }) => Promise<{ status: string; publish_status: string; has_blocking_comments: boolean; kdp_publish_queued: boolean } | null>;
+    update: (args: { where: { id: string }; data: Record<string, unknown> }) => Promise<unknown>;
   };
   evalResult: {
     findFirst: (args: {
@@ -88,6 +89,7 @@ export interface OrgKdpScreenResult {
   screened: number;
   eligible: number;
   cleared: number;
+  queued: number;
 }
 
 function serializeError(err: unknown): string {
@@ -108,7 +110,7 @@ export async function runOrgKdpScreen(payload: unknown, deps: OrgKdpScreenDeps =
   const prisma = deps.prisma ?? (defaultPrisma as unknown as OrgKdpScreenPrisma);
   const now = deps.now ?? (() => new Date());
 
-  const result: OrgKdpScreenResult = { gate_enabled: false, screened: 0, eligible: 0, cleared: 0 };
+  const result: OrgKdpScreenResult = { gate_enabled: false, screened: 0, eligible: 0, cleared: 0, queued: 0 };
 
   try {
     const settings = await prisma.appSettings.findUnique({
@@ -145,7 +147,7 @@ export async function runOrgKdpScreen(payload: unknown, deps: OrgKdpScreenDeps =
       }
       const book = await prisma.book.findUnique({
         where: { id: task.book_id },
-        select: { status: true, publish_status: true, has_blocking_comments: true },
+        select: { status: true, publish_status: true, has_blocking_comments: true, kdp_publish_queued: true },
       });
       if (!book) {
         await prisma.orgTask.update({
@@ -184,7 +186,7 @@ export async function runOrgKdpScreen(payload: unknown, deps: OrgKdpScreenDeps =
       result.screened += 1;
       if (readiness.eligible) result.eligible += 1;
 
-      // ゲート ON かつ eligible なら needs_human → approved（＝公開クリア）へ前進。実際の入稿はしない。
+      // ゲート ON かつ eligible なら needs_human → approved（＝公開クリア）へ前進。
       const data: Record<string, unknown> = { result_json: { kdp_readiness: readiness } };
       if (gateEnabled && readiness.eligible && task.status === 'needs_human') {
         data.status = 'approved';
@@ -192,6 +194,22 @@ export async function runOrgKdpScreen(payload: unknown, deps: OrgKdpScreenDeps =
         result.cleared += 1;
       }
       await prisma.orgTask.update({ where: { id: task.id }, data });
+
+      // [F-041 修正] 公開クリアした本を **実際の入稿キュー**(kdp_publish_queued)へ載せる。
+      // 従来はここが欠落しており、screen が承認しても dispatcher が拾えず入稿が永久に止まっていた。
+      // 二重出版防止のため未入稿(unlisted)の本のみ。既にキュー済みなら再設定しない(冪等)。
+      if (
+        gateEnabled &&
+        readiness.eligible &&
+        book.publish_status === 'unlisted' &&
+        !book.kdp_publish_queued
+      ) {
+        await prisma.book.update({
+          where: { id: task.book_id },
+          data: { kdp_publish_queued: true, kdp_publish_queued_at: now() },
+        });
+        result.queued += 1;
+      }
     }
 
     if (jobId && prisma.job) {

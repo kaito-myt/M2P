@@ -102,15 +102,22 @@ export default async function PromotionChannelPage({ params }: PageProps) {
     }
   }
 
+  const noteEmail =
+    ((settingRow?.config_json as Record<string, unknown> | null)?.note_email as string | undefined) ?? null;
   const setting: ChannelSettingView = {
     channel: ch,
     autoEnabled: settingRow?.auto_enabled ?? false,
     handle: settingRow?.handle ?? null,
     webhookUrl,
     tokenMask: settingRow?.token_mask ?? null,
-    // TikTok は OAuth 認可完了で接続済み。IG/note は webhook。X 等は token_enc。
+    noteEmail,
+    // TikTok は OAuth 認可完了で接続済み。note はメール+パスワード(token_enc)。IG は webhook。X 等は token_enc。
     connected:
-      ch === 'tiktok' ? tiktokAuthorized : Boolean(settingRow?.token_enc) || Boolean(webhookUrl),
+      ch === 'tiktok'
+        ? tiktokAuthorized
+        : ch === 'note'
+          ? Boolean(settingRow?.token_enc) && Boolean(noteEmail)
+          : Boolean(settingRow?.token_enc) || Boolean(webhookUrl),
     ...(ch === 'tiktok'
       ? {
           tiktokAppCredsSaved,

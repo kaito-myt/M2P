@@ -25,7 +25,7 @@ const MODE_OPTIONS: Array<{ value: Schedule['mode']; label: string }> = [
 ];
 
 const inputCls =
-  'rounded-button border border-border-warm bg-cream-light px-3 py-1.5 text-button-sm text-charcoal focus:outline-none focus-visible:ring-2 focus-visible:ring-foreground disabled:cursor-not-allowed disabled:bg-gray-100 disabled:opacity-60';
+  'rounded-default border border-border-warm bg-cream-light px-3 py-1.5 text-button-sm text-charcoal focus:outline-none focus-visible:ring-2 focus-visible:ring-foreground disabled:cursor-not-allowed disabled:bg-charcoal-04 disabled:opacity-60';
 
 export function ScheduleField({
   cron,

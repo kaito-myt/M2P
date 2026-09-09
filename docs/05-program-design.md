@@ -1977,12 +1977,55 @@ export const KdpSubmitPayload = z.object({
   epubcheck FATAL(RSC-016)。全 void 要素(area|base|br|col|embed|hr|img|input|link|meta|param|source|track|wbr)を
   自己終了して解決。診断ツール: `scripts/bookwalker/bw-epub-check.mjs`(check 400 本文取得)。
   正常フロー: upload epub/image 200 → epub/check status:OK → register-book 活性化 → 確認 はい → POST /api/books/register 200。
+- **却下理由と恒久対策 (2026-09-07)** — 初回申請の大半が2点で却下:
+  ①**AI作品は「AI生成」サブカテゴリのチェックが必須**(BWヘルプ faq/9999)。フォーム要素 =
+  `input.book_sub_category[value="7497"]`(ラベル「AI生成」, **全メインカテゴリ共通の同一 value**, 常時 DOM 内)。
+  全書籍が AI 生成のため submit 時に**常時チェック**する(`playwright-submit-port.ts` / `bw-submit.mjs`、ラベルclick+直接check の二段)。
+  ※これは入稿フォームのメタデータであり、[[feedback_no_ai_disclosure]]の「本文にAI開示文を入れない」とは別レイヤ。本文の開示文は
+  `scripts/bookwalker/remove-ai-disclosure.mjs`(文単位除去・実コンテンツ保護のKEEPガード付, 2026-09-07 に 55冊/117文除去)で恒久除去済。
+  ②**内容紹介が文の途中で切れていると却下**。旧実装は `descText.slice(0,800)` で中途切断 → `fitToSentence(text, maxlength)`
+  (フィールドの maxlength を実行時取得し、その範囲内の**最後の文末文字(。！？」』】)で必ず切る**)に置換。unit test = `playwright-submit-port.test.ts`。
+- **運用上の制約 (BWヘルプ faq/9999)**: AI作品は**審査1ヶ月以上**、**著者1名あたり月3作品まで**(申請日基準)。よって全書籍の一括入稿は不可、
+  少数トリクル運用が前提。**複数アカウント禁止**、R18実写風・写真集カテゴリ不可。
+- **本棚/編集導線**: 本棚 = `/library/bookshelf`(`/books` は404, ページャ `?page=1..N`)、既存書籍の編集 = `/books/<bwId>/edit`(=`/books/new`と同型フォーム)。
+  却下/取り下げ書籍の再申請はこの編集導線で AI生成 追加＋内容紹介修正＋クリーンEPUB再アップ＋再申請、が BW 指定手順。ツール=`scripts/bookwalker/bw-retag.mjs`。
+  **注意: 我々のDBは BW 側 book-id を保持していない**(books に外部ID列なし) ため、本棚スクレイプ(`bw-shelf-enum.mjs`→`shelf-enum.json`)でタイトル突合。
+  申請中カードは編集不可(詳細画面ボタン無し)→ **取り下げ先行が必須**(`a.js-bookdrop[data-id=<bwId>]` を click; これがBW指定の「一度取り下げ」)。却下カードは取り下げ不要で即編集可。
+- **編集画面での AI生成 チェックの罠 (2026-09-07 実証)**: value=7497 のチェックボックスは**メインカテゴリ毎に計5個 DOM に存在**し、保存に効くのは
+  **選択中メインカテゴリ配下の可視1個のみ**。かつ編集画面はロード時サブカテゴリ枠が畳まれており、**メインカテゴリのラベルを再クリックして展開してから**
+  可視チェックボックスを実クリックしないと `#save-book` 保存後に消える(JS で全5個 force-check しても永続しない)。`#save-book` 保存でも AI生成 は永続する(可視クリックが条件)。
+- **本棚実状 (2026-09-07)**: 総数120 = 申請中113 / 却下6 / 販売中1(「今日のわたしをいたわる100の言葉」発売日9/8=不可侵)。
+- **申請の日次上限 ~3件/日 (2026-09-07 実測・最重要)**: `POST /api/books/register` は同一アカウントで**1日約3件成功すると以降 403**。本セッションで却下6冊を再申請→
+  25966/25962/25963 が 200(→申請中)、25964/25965/25967 が 403(→却下のまま)。原113冊が 9/4〜9/7 に~3件/日ずつ積み上がっていた事実とも整合。
+  取り下げ(`POST /api/books/drop` book_id=<id>, CSRF不要)には上限は見られない。**⇒ 全書籍の一括再申請は不可能で、~3件/日のトリクル運用が唯一の道**(113冊 ≒ 38日)。
+  再申請は 403 で失敗しても編集内容(AI生成タグ/内容紹介/EPUB)は `#save-book` 相当で保存済のため、翌日は register クリックのみで復帰可。実装は日次 cron で N=3 まで再申請し 403 で停止する方式が適切。
 
-**F-095/F-096 楽天Kobo・BOOTH 入稿タブ（2026-09-04 UI 先行）** — `/kobo`・`/booth`。
+**F-095/F-096 楽天Kobo・BOOTH 入稿タブ（UI=2026-09-04先行 / エンジン=2026-09-07実装）** — `/kobo`・`/booth`。
 `books.{kobo,booth}_publish_status/_publish_queued(_at)/_submitted_at` + `app_settings.{kobo,booth}_{auto_submit_enabled,submit_dry_run,session_state_enc}`。
-SA = `app/actions/channel-submit.ts`(チャネル汎用 queue/unqueue)。**入稿エンジンは未実装** — 初回手動ログインのセッション保存後に
-BW と同パターンで worker タスク化する。Kobo (KWL) は `rakutenkwl.kobo.com` が Kobo OAuth (authorize.kobo.com) 経由・未ログイン403、
-BOOTH は pixiv ログイン。どちらも reCAPTCHA 前提でセッション再利用方式。
+SA = `app/actions/channel-submit.ts`(チャネル汎用 queue/unqueue)。
+booth_publish_status の状態: `unlisted`(未対象) → `draft_ready`(方針B下書き完成=作品ファイルUP+公開待ち) → (公開後 `submitted`)。
+
+**初回ログイン (両チャネル共通・重要)** = `scripts/channels/channel-login.mjs`。Playwright 起動の Chrome は hCaptcha/reCAPTCHA に
+検知されログイン不可(「キャプチャコードを正しくご入力ください」)。**回避策 = CDP アタッチ方式**: 本物の `chrome.exe` を
+`--remote-debugging-port`(kobo 9333 / booth 9334) + `--user-data-dir` で起動 → 運営者が手動ログイン(hCaptcha 通過) →
+`chromium.connectOverCDP` で `storageState` を読み AES-256-GCM 暗号化して `app_settings.{kobo,booth}_session_state_enc` に保存。
+
+**Kobo (KWL, `rakutenkwl.kobo.com`) = 完全自動出版が可能**。エンジン `scripts/kobo/kwl-submit.mjs`(バッチ `kobo-batch.sh`)。
+実発見(記録): ①言語は `selectOption` 不可 → 「言語をご選択ください」ボタンclick→「日本語」option click。②紹介文は Quill `.ql-editor` を
+click→keyboard.type。③**ジャンルが真の必須ブロッカー**(「ジャンルを1つ以上ご選択ください」) → 上位カテゴリを click して展開し
+「一般」チェックボックスを check。④価格は `[name="prices[0]"]` を click→Ctrl+A→keyboard.type。⑤出版は 保存→hard reload→「出版する」を
+boundingBox で mouse.click。⑥**UI の「必須項目です」は false-negative** — 実際の可否は API `GET /product/<id>?productType=BOOK` の
+status(PUBLISH_REQUESTED|ANALYZE|PUBLISHED)で判定する。⑦**作成中ドラフトは UI/API から削除不可**(DELETE 405/401) → 別作品で上書き
+(`KWL_TARGET_ID` 上書きモード)。2026-09-07 時点で 89 冊出版済み。
+
+**BOOTH (`manage.booth.pm`, pixiv ログイン) = 半自動(方針B)**。完全自動(方針A)は**作品ファイルアップロードで不可能**と確認:
+「ファイルの追加・管理」モーダルが headful でも空・file input なし・開閉時ネットワークなし・reCAPTCHA enterprise 常駐。
+→ **方針B** = エンジン `scripts/booth/booth-submit.mjs`(主力バッチ `booth-batch-flagship.sh`)が作品ファイル以外の**7項目を全自動入力**して
+「下書きで保存」まで実施: 商品名 `getByLabel('商品名')` / 紹介文 `textarea.charcoal-text-area-textarea` / 価格 `[name="price"]` /
+タグ `getByPlaceholder('タグの追加')`+Enter / 年齢制限=全年齢 `input[name="adult"]` / 代理購入=accepted `select` /
+**カテゴリ(必須)** = `getByText('カテゴリを選択してください').click()`→`getByText('小説・その他書籍').first().click({force:true})`→
+確定(evaluate ベースの合成 click は登録されず、ネイティブ locator click が必須)。運営者作業は**作品ファイル(EPUB/PDF)UP + 公開で保存**の2操作。
+商品画像(サムネ)の DataTransfer ドロップは登録されない(publish 非必須なので任意=運営者が cover を手動ドラッグ)。既存下書きの補完は `BOOTH_ITEM_URL` 再利用モード。
 
 #### 5.3.16 `kdp.asin.fetch` [F-042] (Phase 3)
 

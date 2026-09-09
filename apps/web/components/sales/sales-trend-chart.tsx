@@ -1,17 +1,16 @@
 'use client';
 
 /**
- * S-017 SalesTrendChart (T-08-07, F-039).
+ * S-017 SalesTrendChart (F-039).
  *
- * 月次積み上げ棒グラフ — HTML/SVG ベース (recharts なし, Phase 1 決定)。
- * ジャンルはパターン + 色で区別 (色のみに依存しないアクセシビリティ対応)。
- *
- * 仕様根拠: docs/04 S-017 / SP-08 T-08-07 / wireframe 注記 "グラフは枠 + 簡易折線/棒の輪郭で表現"
+ * 月次積み上げ棒グラフ (HTML/SVG ベース, recharts なし)。
+ * **全ジャンル**を売上合計の多い順に積み上げる (旧: practical/business/self_help の 3 種固定=誤集計)。
+ * ジャンルは色 + 凡例ラベルで区別 (色のみに依存しない)。
  */
 
 import type { ReactElement } from 'react';
 import { messages } from '@/lib/messages';
-import type { TrendChartMonth } from '@/lib/sales-kpi-view';
+import { salesGenreLabel, genreColorMap, type TrendChartMonth } from '@/lib/sales-kpi-view';
 
 interface SalesTrendChartProps {
   data: TrendChartMonth[];
@@ -19,30 +18,24 @@ interface SalesTrendChartProps {
 
 const m = messages.salesKpi.trendChart;
 
-const GENRES = [
-  { key: 'practical', color: '#6B7280', pattern: 'url(#diag-practical)' },
-  { key: 'business', color: '#374151', pattern: 'url(#diag-business)' },
-  { key: 'self_help', color: '#9CA3AF', pattern: 'url(#diag-selfhelp)' },
-] as const;
-
-type GenreKey = 'practical' | 'business' | 'self_help';
-
-// viewBox 基準の座標系。svg は width=100% + preserveAspectRatio=meet で描画するため、
-// レンダリング高さは「コンテナ幅 × VB_H/VB_W」に一定化される (巨大な空白ボックスを防ぐ)。
+// viewBox 基準の座標系 (幅一定 + preserveAspectRatio でレンダリング高さを安定化)。
 const VB_W = 1000;
-const PLOT_H = 230;
-const AXIS_H = 46;
+const PLOT_H = 240;
+const AXIS_H = 48;
 const VB_H = PLOT_H + AXIS_H;
 
 function formatYen(v: number): string {
   if (v >= 100_000) return `¥${Math.round(v / 10_000)}万`;
-  if (v >= 1_000) return `¥${(v / 1_000).toFixed(0)}k`;
+  if (v >= 1_000) return `¥${(v / 1_000).toFixed(1)}k`;
   return `¥${v}`;
 }
 
 export function SalesTrendChart({ data }: SalesTrendChartProps) {
   const isEmpty = data.every((d) => d.total === 0);
   const maxValue = Math.max(...data.map((d) => d.total), 1);
+  // ジャンル順は全月共通 (segments が同順)。先頭月から取得。
+  const genres = data[0]?.segments.map((s) => s.genre) ?? [];
+  const colors = genreColorMap(genres);
 
   return (
     <section
@@ -54,21 +47,21 @@ export function SalesTrendChart({ data }: SalesTrendChartProps) {
         {m.sectionTitle}
       </h2>
 
-      {/* Legend — genre by color + pattern */}
-      <div className="flex flex-wrap gap-space-snug">
-        {GENRES.map((g) => (
-          <div key={g.key} className="flex items-center gap-1.5">
-            <span
-              className="inline-block h-3 w-4 shrink-0 border border-charcoal-20"
-              style={{ backgroundColor: g.color }}
-              aria-hidden="true"
-            />
-            <span className="text-button-sm text-muted">
-              {m.genreLabels[g.key as keyof typeof m.genreLabels]}
-            </span>
-          </div>
-        ))}
-      </div>
+      {/* 凡例 — ジャンル(色 + 日本語ラベル) */}
+      {!isEmpty && genres.length > 0 && (
+        <div className="flex flex-wrap gap-x-space-snug gap-y-1">
+          {genres.map((g) => (
+            <div key={g} className="flex items-center gap-1.5">
+              <span
+                className="inline-block h-3 w-4 shrink-0 rounded-sm border border-border-warm"
+                style={{ backgroundColor: colors[g] }}
+                aria-hidden="true"
+              />
+              <span className="text-button-sm text-muted">{salesGenreLabel(g)}</span>
+            </div>
+          ))}
+        </div>
+      )}
 
       {isEmpty ? (
         <div className="flex h-64 items-center justify-center rounded-card border border-border-warm bg-cream-light">
@@ -76,10 +69,7 @@ export function SalesTrendChart({ data }: SalesTrendChartProps) {
         </div>
       ) : (
         <div className="rounded-card border border-border-warm bg-cream-light p-space-snug">
-          {/* Screen-reader summary */}
-          <p className="sr-only">
-            {m.ariaDescription(data.length, formatYen(maxValue))}
-          </p>
+          <p className="sr-only">{m.ariaDescription(data.length, formatYen(maxValue))}</p>
           <svg
             width="100%"
             viewBox={`0 0 ${VB_W} ${VB_H}`}
@@ -87,55 +77,81 @@ export function SalesTrendChart({ data }: SalesTrendChartProps) {
             role="img"
             aria-labelledby="trend-chart-heading"
             className="block h-auto w-full"
-            style={{ maxHeight: 320 }}
+            style={{ maxHeight: 340 }}
           >
-            <defs>
-              <pattern id="diag-practical" patternUnits="userSpaceOnUse" width="8" height="8" patternTransform="rotate(45)">
-                <line x1="0" y1="0" x2="0" y2="8" stroke="#fff" strokeWidth="2.5" />
-              </pattern>
-              <pattern id="diag-business" patternUnits="userSpaceOnUse" width="8" height="8">
-                <line x1="0" y1="4" x2="8" y2="4" stroke="#fff" strokeWidth="1.5" />
-                <line x1="4" y1="0" x2="4" y2="8" stroke="#fff" strokeWidth="1.5" />
-              </pattern>
-              <pattern id="diag-selfhelp" patternUnits="userSpaceOnUse" width="8" height="8">
-                <line x1="0" y1="4" x2="8" y2="4" stroke="#fff" strokeWidth="1.5" />
-              </pattern>
-            </defs>
-
-            {/* baseline + max gridline */}
-            <line x1={0} y1={PLOT_H} x2={VB_W} y2={PLOT_H} stroke="#D8D2C4" strokeWidth="1" />
-            <line x1={0} y1={PLOT_H * 0.15 + 6} x2={VB_W} y2={PLOT_H * 0.15 + 6} stroke="#ECE7DA" strokeWidth="1" strokeDasharray="4 4" />
-            <text x={4} y={PLOT_H * 0.15} fontSize="16" fill="#9CA3AF">
-              {formatYen(maxValue)}
-            </text>
+            {/* グリッド: 0 / 50% / 100% */}
+            {[0, 0.5, 1].map((f) => {
+              const y = PLOT_H - f * (PLOT_H - 28);
+              return (
+                <g key={f}>
+                  <line
+                    x1={64}
+                    y1={y}
+                    x2={VB_W}
+                    y2={y}
+                    stroke={f === 0 ? '#D8D2C4' : '#ECE7DA'}
+                    strokeWidth="1"
+                    strokeDasharray={f === 0 ? undefined : '4 4'}
+                  />
+                  <text x={58} y={y + 5} fontSize="16" fill="#9CA3AF" textAnchor="end">
+                    {formatYen(Math.round(f * maxValue))}
+                  </text>
+                </g>
+              );
+            })}
 
             {data.map((month, i) => {
-              const slotW = VB_W / data.length;
-              const barWidth = Math.min(slotW * 0.5, 110);
-              const x = i * slotW + (slotW - barWidth) / 2;
+              const plotW = VB_W - 64;
+              const slotW = plotW / data.length;
+              const barWidth = Math.min(slotW * 0.56, 120);
+              const x = 64 + i * slotW + (slotW - barWidth) / 2;
               let yOffset = PLOT_H;
               const bars: ReactElement[] = [];
 
-              for (const genre of [...GENRES].reverse()) {
-                const val = month[genre.key as GenreKey];
-                if (val <= 0) continue;
-                const barH = (val / maxValue) * (PLOT_H - 24);
+              for (const seg of month.segments) {
+                if (seg.value <= 0) continue;
+                const barH = (seg.value / maxValue) * (PLOT_H - 28);
                 yOffset -= barH;
-                const label = `${month.ym} ${m.genreLabels[genre.key as keyof typeof m.genreLabels]}: ${formatYen(val)}`;
+                const label = `${month.ym} ${salesGenreLabel(seg.genre)}: ${formatYen(seg.value)}`;
                 bars.push(
-                  <g key={genre.key}>
-                    <rect x={x} y={yOffset} width={barWidth} height={barH} fill={genre.color} stroke="white" strokeWidth="1" rx="2">
-                      <title>{label}</title>
-                    </rect>
-                    <rect x={x} y={yOffset} width={barWidth} height={barH} fill={genre.pattern} stroke="none" rx="2" aria-label={label} />
-                  </g>,
+                  <rect
+                    key={seg.genre}
+                    x={x}
+                    y={yOffset}
+                    width={barWidth}
+                    height={barH}
+                    fill={colors[seg.genre]}
+                    stroke="white"
+                    strokeWidth="1"
+                    rx="2"
+                  >
+                    <title>{label}</title>
+                  </rect>,
                 );
               }
 
               return (
                 <g key={month.ym}>
                   {bars}
-                  <text x={i * slotW + slotW / 2} y={PLOT_H + 30} textAnchor="middle" fontSize="18" fill="#6B7280">
+                  {/* 合計値ラベル (棒の上) */}
+                  {month.total > 0 && (
+                    <text
+                      x={x + barWidth / 2}
+                      y={yOffset - 8}
+                      textAnchor="middle"
+                      fontSize="16"
+                      fill="#6B7280"
+                    >
+                      {formatYen(month.total)}
+                    </text>
+                  )}
+                  <text
+                    x={x + barWidth / 2}
+                    y={PLOT_H + 32}
+                    textAnchor="middle"
+                    fontSize="18"
+                    fill="#6B7280"
+                  >
                     {month.ym.slice(5)}
                   </text>
                 </g>

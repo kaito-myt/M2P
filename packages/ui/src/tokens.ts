@@ -41,11 +41,14 @@ export const colors = {
   'warning-bg': '#fffaeb', // amber-50
   success: '#067647', // emerald-700
   'success-bg': '#ecfdf3', // emerald-50
-  accent: '#4f46e5', // indigo-600 — the one vibrant accent
-  'accent-bg': '#eef2ff', // indigo-50
+  // The single editorial accent — a warm vermilion (朱). Used sparingly for the
+  // one thing that matters on a view (active state, a link, an attention signal).
+  // Replaces the former indigo so the UI reads as monotone-ink + one accent.
+  accent: '#b23a1e', // vermilion
+  'accent-bg': '#f8efeb', // faint warm tint
 
-  // Focus ring (indigo tint)
-  'ring-blue': 'rgba(79, 70, 229, 0.35)',
+  // Focus ring (vermilion tint)
+  'ring-blue': 'rgba(178, 58, 30, 0.30)',
 } as const;
 
 export const spacing = {
@@ -78,9 +81,11 @@ export const boxShadow = {
   ring: '0 0 0 3px rgba(79,70,229,0.28)',
 } as const;
 
-export const fontFamily: Record<'sans' | 'jp', string[]> = {
+export const fontFamily: Record<'sans' | 'jp' | 'display', string[]> = {
   sans: ['var(--font-inter)', 'var(--font-noto-jp)', 'ui-sans-serif', 'system-ui', 'sans-serif'],
   jp: ['var(--font-noto-jp)', 'var(--font-inter)', 'ui-sans-serif', 'system-ui', 'sans-serif'],
+  // Editorial display serif for figures / large headings (latin & numerals only).
+  display: ['var(--font-display)', 'ui-serif', 'Georgia', 'Times New Roman', 'serif'],
 };
 
 /**
@@ -96,7 +101,11 @@ export const fontSize: Record<string, FontSizeTuple> = {
   'display-hero': ['3.75rem', { lineHeight: '1.05', letterSpacing: '-1.5px', fontWeight: '600' }],
   'display-alt': ['3.75rem', { lineHeight: '1.00', letterSpacing: '0', fontWeight: '480' }],
   'section-heading': ['3rem', { lineHeight: '1.00', letterSpacing: '-1.2px', fontWeight: '600' }],
-  'sub-heading': ['2.25rem', { lineHeight: '1.10', letterSpacing: '-0.9px', fontWeight: '600' }],
+  // page-title — 密度の高い業務ツール向けに 36px→28px へ縮小（全画面の H1 に波及）。
+  'sub-heading': ['1.75rem', { lineHeight: '1.15', letterSpacing: '-0.5px', fontWeight: '600' }],
+  // section-title — ページ内セクション見出し。card-title(20px) と sub-heading(28px) の間を埋め、
+  // 「囲まずに」節を分けるための役割（設定・経営などの節見出しに使う）。
+  'section-title': ['1.125rem', { lineHeight: '1.30', letterSpacing: '-0.2px', fontWeight: '600' }],
   'card-title': ['1.25rem', { lineHeight: '1.25', letterSpacing: '0', fontWeight: '400' }],
   'body-large': ['1.125rem', { lineHeight: '1.38', letterSpacing: '0', fontWeight: '400' }],
   body: ['1rem', { lineHeight: '1.50', letterSpacing: '0', fontWeight: '400' }],

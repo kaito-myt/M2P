@@ -1,0 +1,22 @@
+import { createRequire } from 'module';
+import path from 'path'; import crypto from 'crypto';
+const SP=new URL(import.meta.url).pathname.replace(/^\/([A-Za-z]:)/,'$1');
+const REPO=path.resolve(path.dirname(SP),'../..');
+const req=createRequire(path.join(REPO,'apps/worker/package.json'));
+const reqRoot=createRequire(path.join(REPO,'package.json'));
+const {chromium}=req('playwright');
+const {Client}=reqRoot(path.join(REPO,'node_modules/.pnpm/pg@8.21.0/node_modules/pg'));
+function dec(b64){const raw=Buffer.from(b64,'base64');const d=crypto.createDecipheriv('aes-256-gcm',Buffer.from(process.env.KDP_CRED_KEY,'hex'),raw.subarray(0,12));d.setAuthTag(raw.subarray(12,28));return Buffer.concat([d.update(raw.subarray(28)),d.final()]).toString('utf8');}
+const c=new Client({connectionString:process.env.DBURL,ssl:{rejectUnauthorized:false}});await c.connect();
+const r=await c.query("SELECT kobo_session_state_enc FROM app_settings WHERE id='singleton'");await c.end();
+const state=JSON.parse(dec(r.rows[0].kobo_session_state_enc));
+const browser=await chromium.launch({headless:true,args:['--no-sandbox','--disable-dev-shm-usage','--disable-blink-features=AutomationControlled']});
+const ctx=await browser.newContext({storageState:state,locale:'ja-JP'});
+const page=await ctx.newPage();
+const reqs=[];
+page.on('request',rq=>{const u=rq.url();if(/product|ebook|book/i.test(u)&&!/\.(js|css|png|jpg|woff|svg)/.test(u))reqs.push(rq.method()+' '+u.replace(/https?:\/\/[^/]+/,'@'));});
+await page.goto('https://rakutenkwl.kobo.com/v2/ebooks/ebook/a8c1390a-6971-4fca-9807-63d41feba540',{waitUntil:'domcontentloaded'});
+await page.waitForTimeout(10000);
+console.log('商品ページのAPI呼び出し:');
+[...new Set(reqs)].slice(0,25).forEach(x=>console.log('  '+x.slice(0,110)));
+await browser.close();process.exit(0);

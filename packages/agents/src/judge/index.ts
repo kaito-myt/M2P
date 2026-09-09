@@ -6,7 +6,8 @@
  *  2. プレースホルダ ({theme_title}/{theme_subtitle}/{theme_hook}/{target_reader}/
  *     {genre}/{chapter_count}/{draft_chapters}/{outline_summary}) を差込
  *  3. `createAgentClient('judge', genre, ctx)` で LLMClient (withTokenLogging ラップ済) 取得
- *  4. `client.complete({ messages, maxOutputTokens: 4096 })` を 1 回呼ぶ
+ *  4. `client.complete({ messages, maxOutputTokens: 12288 })` を 1 回呼ぶ
+ *     (4096 では長編で JSON が途中で切れ parse 失敗するため引き上げ)
  *  5. JSON 抽出 → zod parse (editor と同実装の extractJson + predicate 方式)
  *  6. score_total = 6 軸合計 / 6 (均等重み、小数切り捨て) をサーバ側で再計算
  *     LLM 出力の score_total は検証のみに使い、最終値は計算値で上書きする
@@ -29,6 +30,7 @@ import {
 } from '@a2p/contracts/agents/judge';
 
 import { createAgentClient as defaultCreateAgentClient } from '../lib/llm-client-factory.js';
+import { sanitizeLlmJson } from '../lib/sanitize-llm-json.js';
 import {
   fillPlaceholders,
   loadActivePrompt as defaultLoadActivePrompt,
@@ -40,7 +42,9 @@ import type {
 } from '../lib/with-token-logging.js';
 import type { LoadModelAssignmentDeps } from '../lib/load-model-assignment.js';
 
-const DEFAULT_MAX_OUTPUT_TOKENS = 4096;
+// 12288: long books (14+ chapters, ~250k input tokens) produced judge JSON that was
+// truncated at 4096 → `judge.invalid_output: failed to parse JSON` (deterministic, 2/2 attempts).
+const DEFAULT_MAX_OUTPUT_TOKENS = 12288;
 
 export interface JudgeBookDeps {
   loadActivePrompt?: typeof defaultLoadActivePrompt;
@@ -329,42 +333,10 @@ function tryParse(s: string): unknown {
   }
 }
 
+/**
+ * 生改行/タブ + **文字列値内の未エスケープ二重引用符** を復旧する。実体は共有ヘルパへ委譲。
+ * LLM が本文引用に生の `"` を使い JSON を途中終端させる破綻(editor/judge 共通)を吸収する。
+ */
 function sanitizeJsonStringNewlines(text: string): string {
-  let result = '';
-  let inString = false;
-  let escapeNext = false;
-  for (let i = 0; i < text.length; i++) {
-    const ch = text[i]!;
-    if (escapeNext) {
-      result += ch;
-      escapeNext = false;
-      continue;
-    }
-    if (ch === '\\') {
-      result += ch;
-      escapeNext = true;
-      continue;
-    }
-    if (ch === '"') {
-      result += ch;
-      inString = !inString;
-      continue;
-    }
-    if (inString) {
-      if (ch === '\n') {
-        result += '\\n';
-        continue;
-      }
-      if (ch === '\r') {
-        result += '\\r';
-        continue;
-      }
-      if (ch === '\t') {
-        result += '\\t';
-        continue;
-      }
-    }
-    result += ch;
-  }
-  return result;
+  return sanitizeLlmJson(text);
 }

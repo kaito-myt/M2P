@@ -52,10 +52,10 @@ export function CostRecordTable({ costRows, totalJpy }: CostRecordTableProps) {
               <td className="px-3 py-2">{formatProvider(row.provider)}</td>
               <td className="px-3 py-2">{row.model}</td>
               <td className="px-3 py-2">{formatRole(row.role)}</td>
-              <td className="px-3 py-2 text-right">{formatTokenCount(row.input_tokens)}</td>
-              <td className="px-3 py-2 text-right">{formatTokenCount(row.output_tokens)}</td>
-              <td className="px-3 py-2 text-right">{formatCostJpy(row.cost_jpy)}</td>
-              <td className="px-3 py-2 text-right">{row.call_count}</td>
+              <td className="px-3 py-2 text-right tabular-nums">{formatTokenCount(row.input_tokens)}</td>
+              <td className="px-3 py-2 text-right tabular-nums">{formatTokenCount(row.output_tokens)}</td>
+              <td className="px-3 py-2 text-right tabular-nums">{formatCostJpy(row.cost_jpy)}</td>
+              <td className="px-3 py-2 text-right tabular-nums">{row.call_count}</td>
             </tr>
           ))}
         </tbody>
@@ -64,7 +64,7 @@ export function CostRecordTable({ costRows, totalJpy }: CostRecordTableProps) {
             <td colSpan={5} className="px-3 py-2 text-right">
               {m.totalLabel}
             </td>
-            <td className="px-3 py-2 text-right">{formatCostJpy(totalJpy)}</td>
+            <td className="px-3 py-2 text-right tabular-nums">{formatCostJpy(totalJpy)}</td>
             <td />
           </tr>
         </tfoot>

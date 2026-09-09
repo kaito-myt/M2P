@@ -80,8 +80,8 @@ export function AssignmentHistoryTable({ rows }: Props) {
                     <Td>
                       {providerLabel} / {r.model}
                     </Td>
-                    <Td>{formatDateTime(r.activated_at)}</Td>
-                    <Td>{formatDateTime(r.archived_at)}</Td>
+                    <Td nowrap>{formatDateTime(r.activated_at)}</Td>
+                    <Td nowrap>{formatDateTime(r.archived_at)}</Td>
                     <Td>{r.created_by}</Td>
                     <Td>{statusLabel}</Td>
                     <Td align="right">
@@ -106,7 +106,7 @@ function Th({ children, align = 'left' }: { children: React.ReactNode; align?: '
   return (
     <th
       scope="col"
-      className={`px-space-relaxed py-2 text-button-sm font-normal text-charcoal-82 ${
+      className={`whitespace-nowrap px-space-relaxed py-2 text-button-sm font-normal text-charcoal-82 ${
         align === 'right' ? 'text-right' : 'text-left'
       }`}
     >
@@ -115,12 +115,20 @@ function Th({ children, align = 'left' }: { children: React.ReactNode; align?: '
   );
 }
 
-function Td({ children, align = 'left' }: { children: React.ReactNode; align?: 'left' | 'right' }) {
+function Td({
+  children,
+  align = 'left',
+  nowrap = false,
+}: {
+  children: React.ReactNode;
+  align?: 'left' | 'right';
+  nowrap?: boolean;
+}) {
   return (
     <td
       className={`px-space-relaxed py-3 text-body align-middle ${
-        align === 'right' ? 'text-right' : 'text-left'
-      }`}
+        align === 'right' ? 'text-right tabular-nums' : 'text-left'
+      }${nowrap ? ' whitespace-nowrap' : ''}`}
     >
       {children}
     </td>

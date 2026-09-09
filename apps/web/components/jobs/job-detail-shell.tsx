@@ -24,7 +24,7 @@ interface JobDetailShellProps {
 
 export function JobDetailShell({ job }: JobDetailShellProps) {
   return (
-    <div className="flex flex-col gap-space-normal">
+    <div className="flex flex-col gap-space-relaxed">
       {/* Job header — full width */}
       <JobHeader
         id={job.id}
@@ -39,9 +39,9 @@ export function JobDetailShell({ job }: JobDetailShellProps) {
       />
 
       {/* 2-column grid: left 70% / right 30% — stacks on mobile */}
-      <div className="flex flex-col gap-space-normal lg:flex-row">
+      <div className="flex flex-col gap-space-relaxed lg:flex-row">
         {/* Left column: logs + payload + error */}
-        <div className="flex flex-col gap-space-normal lg:w-[70%]">
+        <div className="flex flex-col gap-space-relaxed lg:w-[70%]">
           <PayloadJsonViewer payload={job.payload_json} />
           <LogStreamViewer
             jobId={job.id}
@@ -58,7 +58,7 @@ export function JobDetailShell({ job }: JobDetailShellProps) {
         </div>
 
         {/* Right column: tokens + meta + actions */}
-        <div className="flex flex-col gap-space-normal lg:w-[30%]">
+        <div className="flex flex-col gap-space-relaxed lg:w-[30%]">
           <TokenUsageInline
             tokenUsages={job.token_usages}
             totalInputTokens={job.total_input_tokens}

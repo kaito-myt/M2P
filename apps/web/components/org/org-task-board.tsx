@@ -22,17 +22,12 @@ import {
 import { approveOrgTask, cancelOrgTask, completeOrgTask, retryOrgTask } from '@/app/actions/org';
 import { messages } from '@/lib/messages';
 import type { OrgTaskRow } from '@/lib/org-view';
+import { GrowthManualChecklist } from './growth-manual-checklist';
 
 const m = messages.org.board;
 
-const DIVISION_ACCENT: Record<Division, string> = {
-  production: 'bg-blue-100 text-blue-800',
-  publishing: 'bg-emerald-100 text-emerald-800',
-  analytics: 'bg-violet-100 text-violet-800',
-  promotion: 'bg-amber-100 text-amber-800',
-  sysops: 'bg-slate-200 text-slate-700',
-  finance: 'bg-rose-100 text-rose-800',
-};
+// 本部ラベルは色分けせず、細い罫の中立チップに統一（モノトーン基調・§6.5）。
+const DIVISION_CHIP = 'border border-border-warm text-charcoal-82';
 
 export function OrgTaskBoard({ tasks }: { tasks: OrgTaskRow[] }) {
   const router = useRouter();
@@ -136,16 +131,25 @@ function TaskCard({
   const isHuman = task.status === 'needs_human';
   const isDone = task.status === 'done' || task.status === 'canceled';
   return (
-    <article className="flex flex-col gap-1.5 rounded-card border border-border-warm bg-cream-light p-space-snug shadow-l1">
+    <article className="flex flex-col gap-1.5 rounded-card border border-border-warm bg-cream-light p-space-snug">
       <div className="flex items-center justify-between gap-2">
-        <span className={`rounded px-1.5 py-0.5 text-caption ${DIVISION_ACCENT[task.division as Division] ?? 'bg-slate-100 text-slate-700'}`}>
+        <span className={`rounded-default px-1.5 py-0.5 text-caption ${DIVISION_CHIP}`}>
           {divisionLabel(task.division)}
         </span>
         <span className="text-caption text-muted">{kindLabel(task.kind)}・{priorityLabel(task.priority)}</span>
       </div>
 
       <h3 className="text-button-sm font-medium text-charcoal">{task.title}</h3>
-      <p className="line-clamp-3 text-caption text-charcoal-82">{task.instruction}</p>
+      {/* 手動グロースToDo: ワンタップUI（開く→フォロー→✓）。それ以外は指示全文を折りたたみ表示。 */}
+      {task.kind === 'growth_manual' && task.growthTargets && task.growthTargets.length > 0 ? (
+        <GrowthManualChecklist taskId={task.id} targets={task.growthTargets} completed={task.growthCompleted ?? []} />
+      ) : (
+        <details className="group text-caption text-charcoal-82">
+          <summary className="cursor-pointer whitespace-pre-wrap line-clamp-3 group-open:line-clamp-none">
+            {task.instruction}
+          </summary>
+        </details>
+      )}
 
       <dl className="flex flex-col gap-0.5 text-caption text-muted">
         {task.bookTitle && (
@@ -164,18 +168,18 @@ function TaskCard({
       </dl>
 
       {task.resultSummary && (
-        <p className="w-fit rounded bg-emerald-100 px-1.5 py-0.5 text-caption text-emerald-900">
+        <p className="w-fit rounded-default bg-success-bg px-1.5 py-0.5 text-caption text-success">
           {m.result}: {task.resultSummary}
         </p>
       )}
       {task.status === 'blocked' && task.error && (
-        <p className="line-clamp-2 rounded bg-red-100 px-1.5 py-0.5 text-caption text-red-900">
+        <p className="line-clamp-2 rounded-default bg-destructive-bg px-1.5 py-0.5 text-caption text-destructive">
           {m.blockedReason}: {task.error}
         </p>
       )}
 
       {isHuman && (
-        <span className="w-fit rounded bg-amber-200 px-1.5 py-0.5 text-caption font-medium text-amber-900">{m.humanBadge}</span>
+        <span className="w-fit rounded-default bg-warning-bg px-1.5 py-0.5 text-caption font-medium text-warning">{m.humanBadge}</span>
       )}
 
       {!isDone && (

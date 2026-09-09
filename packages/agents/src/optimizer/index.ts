@@ -31,6 +31,7 @@ import {
 } from '@a2p/contracts/agents/optimizer';
 
 import { createAgentClient as defaultCreateAgentClient } from '../lib/llm-client-factory.js';
+import { sanitizeLlmJson } from '../lib/sanitize-llm-json.js';
 import {
   fillPlaceholders,
   loadActivePrompt as defaultLoadActivePrompt,
@@ -324,42 +325,7 @@ function tryParse(s: string): unknown {
   }
 }
 
+/** 生改行/タブ + 文字列値内の未エスケープ二重引用符を復旧(共有ヘルパへ委譲)。 */
 function sanitizeJsonStringNewlines(text: string): string {
-  let result = '';
-  let inString = false;
-  let escapeNext = false;
-  for (let i = 0; i < text.length; i++) {
-    const ch = text[i]!;
-    if (escapeNext) {
-      result += ch;
-      escapeNext = false;
-      continue;
-    }
-    if (ch === '\\') {
-      result += ch;
-      escapeNext = true;
-      continue;
-    }
-    if (ch === '"') {
-      result += ch;
-      inString = !inString;
-      continue;
-    }
-    if (inString) {
-      if (ch === '\n') {
-        result += '\\n';
-        continue;
-      }
-      if (ch === '\r') {
-        result += '\\r';
-        continue;
-      }
-      if (ch === '\t') {
-        result += '\\t';
-        continue;
-      }
-    }
-    result += ch;
-  }
-  return result;
+  return sanitizeLlmJson(text);
 }

@@ -267,6 +267,42 @@ export async function ensureBookPromoImage(
   return key;
 }
 
+/**
+ * 育成投稿本文から「バリューカード」用の見出し/補足を抽出する。
+ * IG は画像が主役なので、気づき(=最初の刺さる一文)を大きく載せて保存されやすくする。
+ */
+export function valueCardTextFromBody(body: string): { headline: string; support?: string } {
+  const clean = (body || '')
+    .replace(/#\S+/g, '')
+    .replace(/https?:\/\/\S+/g, '')
+    .replace(/[ \t]+/g, ' ')
+    .trim();
+  const sentences = clean
+    .split(/(?<=[。！？!?\n])/)
+    .map((s) => s.replace(/[『』「」（）()]/g, '').trim())
+    .filter((s) => s.length > 0);
+  const headline = (sentences[0] ?? clean).slice(0, 52) || '今日の学び';
+  const support = sentences[1] && sentences[1].length <= 60 ? sentences[1] : undefined;
+  return support ? { headline, support } : { headline };
+}
+
+/**
+ * 育成(value)投稿用「バリューカード」を gpt-image-2 で一発生成するプロンプト。
+ * gpt-image-2 は日本語タイポグラフィを正確に描けるため、合成せず**文字入りの保存されるカード**を
+ * 直接生成する(見出し=気づき/フォロー導線フッター)。IG は画像が主役＝保存・フォローの起点。
+ */
+export function buildValueCardImage2Prompt(headline: string, support?: string): string {
+  const sub = support ? `その下に補足として小さめに正確に描く: 「${support}」。` : '';
+  return (
+    `Instagram で「保存したくなる」正方形(1:1)の高品質なバリューカード画像。読書・学びのアカウント用の洗練された編集(エディトリアル)デザイン。` +
+    `中央に主役の見出しとして日本語のテキストを大きく・非常に読みやすく・正確に描く: 「${headline}」。${sub}` +
+    `下部に小さく控えめなフッターとして正確に描く: 「フォローで毎日ひとつ、本の要点」。` +
+    `デザイン指針: ミニマルで上質、暖色系のアクセント(ゴールド/生成り)、余白を活かした配色、高コントラストで可読性を最優先、モダンで美しい日本語サンセリフ。` +
+    `背景は写真ではなくクリーンな単色または繊細なグラデーション。装飾は最小限に品よく。` +
+    `厳守: 日本語の漢字・かなを崩さず誤字なく描く。指定した文言だけを描き、それ以外の文字・英語のダミーテキスト・ロゴ・透かし・URL は一切描かない。`
+  );
+}
+
 /** 育成(value)投稿の本文から、文字なしのライフスタイル画像プロンプトを組み立てる。 */
 export function buildValueImagePrompt(bodyHint: string): string {
   const hint = bodyHint
@@ -303,11 +339,13 @@ export async function generateValuePostImage(
   const baseFn: GenerateImageFn = deps.generateImage ?? defaultGenerateImage;
   const genFn = withImageLogging(baseFn, { role: 'promo_image', themeSessionId: `value:${postId}` }, deps.withImageLoggingDeps);
 
+  // gpt-image-2 で「文字入りバリューカード」を一発生成(合成しない)。本文から気づき見出しを抽出。
+  const { headline, support } = valueCardTextFromBody(body);
   const result = await genFn({
-    prompt: buildValueImagePrompt(body),
+    prompt: buildValueCardImage2Prompt(headline, support),
     width: 1024,
     height: 1024,
-    quality: 'medium',
+    quality: 'high',
     outputFormat: 'jpeg',
     outputCompression: 90,
   });
@@ -319,5 +357,93 @@ export async function generateValuePostImage(
   const key = promotionPostImage(postId);
   await uploadBuffer(key, image, 'image/jpeg');
   log.info({ postId, key }, 'value post image generated');
+  return key;
+}
+
+/**
+ * note のアイキャッチを gpt-image-2 で **一発生成**するプロンプト（合成しない）。
+ * gpt-image-2 は日本語タイポグラフィを正確に描けるため、書名＋刺さる見出しを
+ * 文字入りで直接描く。横長(note 推奨 1280×670 に近い 3:2)・書評/実用書メモの世界観。
+ */
+export function buildBookEyecatchImage2Prompt(
+  title: string,
+  headline: string,
+  genre: string | null,
+): string {
+  const mood = (genre && GENRE_MOOD[genre]) || '知的で落ち着いた、暖色系の上質な';
+  return (
+    `note 記事のアイキャッチに使う横長(3:2)の高品質な画像。書評/実用書キュレーション・アカウント` +
+    `「良い本を読む習慣」のエディトリアルなデザイン。中央に主役の見出しとして日本語テキストを` +
+    `大きく・非常に読みやすく・正確に描く: 「${headline.slice(0, 40)}」。` +
+    `その下に少し小さめに書名を正確に描く: 「${title.slice(0, 48)}」。` +
+    `雰囲気: ${mood}世界観。木のデスク・本・コーヒー等の落ち着いた読書モチーフを繊細に添えてよいが、` +
+    `文字の可読性を最優先し、余白と高コントラストを確保する。上品な暖色アクセント(ゴールド/生成り/ブラウン)。` +
+    `厳守: 日本語の漢字・かなを崩さず誤字なく描く。指定した文言だけを描き、それ以外の文字・` +
+    `英語のダミーテキスト・ロゴ・透かし・URL・価格・数字は一切描かない。`
+  );
+}
+
+export interface GenerateBookEyecatchImage2Deps {
+  prisma?: PromoImagePrisma;
+  logger?: Logger;
+  generateImage?: GenerateImageFn;
+  withImageLoggingDeps?: WithImageLoggingDeps;
+  uploadBuffer?: UploadBufferFn;
+}
+
+/**
+ * note の book 投稿用アイキャッチを gpt-image-2 で一発生成し R2 に保存してキーを返す。
+ * ensureBookPromoImage（実表紙＋合成）と違い、**文字入りのカードを直接生成**する。
+ * 生成不可なら null。post 単位のキーに保存する（value 画像と同じ扱い）。
+ */
+export async function generateBookEyecatchImage2(
+  postId: string,
+  bookId: string,
+  deps: GenerateBookEyecatchImage2Deps = {},
+): Promise<string | null> {
+  const log = deps.logger ?? createLogger('worker.promotion.promo-image');
+  const prisma = deps.prisma ?? (await defaultPrisma());
+  const uploadBuffer = deps.uploadBuffer ?? defaultUploadBuffer;
+
+  const book = await prisma.book.findUnique({
+    where: { id: bookId },
+    select: {
+      promo_image_key: true,
+      title: true,
+      theme: { select: { genre: true, hook: true, target_reader: true } },
+    },
+  });
+  if (!book) return null;
+
+  const ctp = await prisma.coverTextProposal.findFirst({
+    where: { book_id: bookId },
+    select: { band_copy: true },
+    orderBy: { created_at: 'desc' },
+  });
+  const headline = toHeadline(
+    ctp?.band_copy ?? null,
+    book.theme?.hook ?? null,
+    book.theme?.target_reader ?? null,
+    book.title,
+  );
+
+  const baseFn: GenerateImageFn = deps.generateImage ?? defaultGenerateImage;
+  const genFn = withImageLogging(baseFn, { bookId, role: 'promo_image', themeSessionId: `note-eyecatch:${postId}` }, deps.withImageLoggingDeps);
+  const result = await genFn({
+    prompt: buildBookEyecatchImage2Prompt(book.title, headline, book.theme?.genre ?? null),
+    width: 1536,
+    height: 1024,
+    quality: 'high',
+    outputFormat: 'jpeg',
+    outputCompression: 90,
+  });
+  const image = result.images[0];
+  if (!image) {
+    log.warn({ postId, bookId }, 'note eyecatch generation returned no image');
+    return null;
+  }
+  const key = promotionPostImage(postId);
+  await uploadBuffer(key, image, 'image/jpeg');
+  log.info({ postId, bookId, key }, 'note eyecatch (image-2 one-shot) generated');
   return key;
 }

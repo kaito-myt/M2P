@@ -5,7 +5,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import type { VideoScript } from '@a2p/contracts/agents/tiktok-video';
 
-import { runPromotionVideoGenerate } from '../src/tasks/promotion-video-generate.js';
+import { runPromotionVideoGenerate, buildVeoHookPrompt } from '../src/tasks/promotion-video-generate.js';
 
 const script: VideoScript = {
   title: '仕事術',
@@ -76,6 +76,19 @@ describe('runPromotionVideoGenerate', () => {
     expect(uploads).toEqual(['promotion/videos/post_1.mp4']);
     expect(updated[0]!.media_key).toBe('promotion/videos/post_1.mp4');
     expect(updated[0]!.status).toBe('scheduled');
+    // [F-084] 同じ動画で IG リール投稿も作成（同一 media_key・instagram）
+    const reel = created.find((c) => c.channel === 'instagram');
+    expect(reel).toBeDefined();
+    expect(reel!.media_key).toBe('promotion/videos/post_1.mp4');
+    expect(reel!.status).toBe('scheduled');
+    expect(res.reel_post_id).toBe('post_1');
+  });
+
+  it('also_reels=false なら IG リールを作らない', async () => {
+    const { deps, created } = makeDeps();
+    const res = await runPromotionVideoGenerate({ also_reels: false }, deps as never);
+    expect(created.some((c) => c.channel === 'instagram')).toBe(false);
+    expect(res.reel_post_id).toBeUndefined();
   });
 
   it('createScript にコンセプト/柱/ハッシュタグを渡す', async () => {
@@ -87,6 +100,30 @@ describe('runPromotionVideoGenerate', () => {
     expect(arg.core_hashtags).toContain('#ゆるり文庫');
     expect(arg.topic).toBe('いい人をやめる'); // 柱から自動選定
     expect(arg.target_seconds).toBe(20);
+  });
+
+  it('use_veo=true で Veo フッククリップ生成を呼ぶ（プロンプトは縦型・文字なし）', async () => {
+    const { deps } = makeDeps();
+    const generateHookClip = vi.fn(async (_p: string) => Buffer.from('VEO'));
+    await runPromotionVideoGenerate({ use_veo: true }, { ...deps, generateHookClip } as never);
+    expect(generateHookClip).toHaveBeenCalledOnce();
+    const p = String(generateHookClip.mock.calls[0]![0]);
+    expect(p).toContain('9:16');
+    expect(p).toMatch(/no text/i);
+  });
+
+  it('use_veo 未指定なら Veo を呼ばない（フラグ無しの既定）', async () => {
+    const { deps } = makeDeps();
+    const generateHookClip = vi.fn(async (_p: string) => Buffer.from('VEO'));
+    await runPromotionVideoGenerate({}, { ...deps, generateHookClip } as never);
+    expect(generateHookClip).not.toHaveBeenCalled();
+  });
+
+  it('buildVeoHookPrompt は動き/縦型/文字なしを含む', () => {
+    const p = buildVeoHookPrompt('a cozy reading nook');
+    expect(p).toContain('a cozy reading nook');
+    expect(p).toContain('9:16');
+    expect(p).toMatch(/no text/i);
   });
 
   it('レンダリング失敗時は draft を削除して再throw', async () => {

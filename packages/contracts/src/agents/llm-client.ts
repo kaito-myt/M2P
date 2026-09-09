@@ -18,6 +18,15 @@ export type AgentRole =
   | 'writer'
   | 'editor'
   | 'judge'
+  // F-0xx — judge PASS 後、export 直前に KDP メタデータ (description/keywords/categories)
+  // を完成原稿に基づき Amazon SEO (A9/A10) 観点で再最適化する担当。
+  | 'seo_optimizer'
+  // 所有ブログ記事 (blog_posts / promotion_posts channel='blog') を公開前に
+  // 検索エンジン (Google 等) 向けに SEO 最適化する担当 (seo_optimizer のブログ版)。
+  | 'blog_seo'
+  // 栞ブログの良書紹介記事から「紹介対象の実在書籍」を同定し、その表紙画像を
+  // 引き当てる担当（書名/著者/ISBN を抽出 → openBD で検証 → Amazon 書影を採用）。
+  | 'book_cover'
   | 'thumbnail_text'
   | 'thumbnail_image'
   | 'cover_text_check'
@@ -29,6 +38,10 @@ export type AgentRole =
   | 'revision'
   // docs/06 — 組織エージェント（CEO ＋ 6 本部長）。
   | 'ceo'
+  // 運営者 ⇔ CEO の対話（チャット）用ロール。
+  | 'ceo_chat'
+  // F-089 — CEO 起点のプロンプト改訂担当（対象 role の現行プロンプトを最小改訂）。
+  | 'prompt_editor'
   | 'editorial_mgr'
   | 'publish_mgr'
   | 'analytics_mgr'
@@ -54,6 +67,8 @@ export type AgentRole =
   | 'cost_optimizer'
   // F-064 — 研究駆動の販促プレイブック担当（web_search でバズ投稿を分析→投稿戦略を生成）。
   | 'promo_strategist'
+  // F-075 — 手動グロース偵察（web_search で IG/TikTok/note のフォロー/いいね対象を具体特定）。
+  | 'growth_scout'
   // F-060 — TikTok 動画の多エージェント台本パイプライン。
   | 'tiktok_scenario'
   | 'tiktok_creator'

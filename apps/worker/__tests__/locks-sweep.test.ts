@@ -5,6 +5,7 @@ import type { Logger } from '@a2p/contracts/logger';
 import {
   LOCKS_SWEEP_TASK_NAME,
   runLocksSweep,
+  sweepStaleJobs,
 } from '../src/tasks/locks-sweep.js';
 
 function makeLogger() {
@@ -104,5 +105,33 @@ describe('locks.sweep task', () => {
         now: () => new Date('2026-05-22T10:00:00Z'),
       }),
     ).rejects.toBe(boom);
+  });
+});
+
+describe('sweepStaleJobs', () => {
+  it('running/queued かつ 120分より前の created_at を failed に更新する', async () => {
+    const { logger } = makeLogger();
+    const now = new Date('2026-05-22T10:00:00Z');
+    const captured: Array<{ where: Record<string, unknown>; data: Record<string, unknown> }> = [];
+    const res = await sweepStaleJobs({
+      logger,
+      now: () => now,
+      prisma: {
+        job: {
+          updateMany: async (args) => {
+            captured.push(args);
+            return { count: 2 };
+          },
+        },
+      },
+    });
+    expect(res.sweptCount).toBe(2);
+    expect(captured).toHaveLength(1);
+    const w = captured[0]!.where as { status: { in: string[] }; created_at: { lt: Date } };
+    expect(w.status.in).toEqual(['running', 'queued']);
+    // cutoff = now - 120分
+    expect(w.created_at.lt).toEqual(new Date(now.getTime() - 120 * 60_000));
+    const d = captured[0]!.data as { status: string };
+    expect(d.status).toBe('failed');
   });
 });

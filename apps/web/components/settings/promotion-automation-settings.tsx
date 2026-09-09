@@ -82,7 +82,7 @@ export function PromotionAutomationSettings({ initialOnPublish, initialAutoPost 
       data-testid="promotion-automation-settings"
     >
       <div className="mb-space-snug">
-        <h2 id="promo-automation-heading" className="text-sub-heading text-foreground">
+        <h2 id="promo-automation-heading" className="text-section-title text-foreground">
           {ms.title}
         </h2>
         <p className="text-body text-muted">{ms.subtitle}</p>
@@ -99,7 +99,7 @@ export function PromotionAutomationSettings({ initialOnPublish, initialAutoPost 
           <p className="pl-14 text-button-sm text-muted">{ms.autoPostHint}</p>
         </div>
 
-        <div className="flex items-start gap-2 rounded-button border border-border-warm bg-white px-3 py-2">
+        <div className="flex items-start gap-2 rounded-default border border-border-warm bg-cream-light px-3 py-2">
           <Info aria-hidden="true" className="mt-0.5 h-4 w-4 shrink-0 text-muted" />
           <p className="text-button-sm text-muted">{ms.workerRestartNote}</p>
         </div>
@@ -108,7 +108,7 @@ export function PromotionAutomationSettings({ initialOnPublish, initialAutoPost 
           <button
             type="submit"
             disabled={isPending}
-            className="rounded-button bg-foreground px-4 py-2 text-button-sm font-medium text-white disabled:opacity-50"
+            className="rounded-default bg-foreground px-4 py-2 text-button-sm font-medium text-white disabled:opacity-50"
           >
             {isPending ? m.saving : m.saveButton}
           </button>

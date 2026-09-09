@@ -22,16 +22,18 @@ import { messages } from '@/lib/messages';
 
 export interface ChannelProbeInput {
   channel: string;
-  /** 復号済みアクセストークン (未設定なら null)。 */
+  /** 復号済みアクセストークン (未設定なら null)。note ではパスワード。 */
   token: string | null;
   /** チャンネル設定の webhook_url (未設定なら null)。 */
   webhookUrl: string | null;
+  /** note (ブラウザ自動化) のログインメール (config_json.note_email, 未設定なら null)。 */
+  noteEmail?: string | null;
 }
 
 export type ChannelProbeResult = {
   ok: boolean;
-  /** 認証手段の識別: x_api | tiktok | webhook | owned | none */
-  method: 'x_api' | 'tiktok' | 'webhook' | 'owned' | 'none';
+  /** 認証手段の識別: x_api | tiktok | webhook | browser | owned | none */
+  method: 'x_api' | 'tiktok' | 'webhook' | 'browser' | 'owned' | 'none';
   message: string;
   http_status?: number;
   latency_ms?: number;
@@ -72,7 +74,18 @@ export async function probeChannelAuth(
     return probeTikTokCreds(input.token);
   }
 
-  // webhook 経由を確認 (Instagram=Make / note の現実的な接続手段)。
+  // note はブラウザ自動化 (メール＋パスワード)。web からは実ログインできないため、
+  // 資格情報が揃っているかを確認する (実ログイン確認は投稿時 worker 側で行う)。
+  if (input.channel === 'note') {
+    const hasEmail = !!(input.noteEmail && input.noteEmail.trim().length > 0);
+    const hasPassword = !!(input.token && input.token.trim().length > 0);
+    if (hasEmail && hasPassword) {
+      return { ok: true, method: 'browser', message: 'note: メールとパスワードが設定済みです（投稿時に自動ログインします）' };
+    }
+    return { ok: false, method: 'none', message: 'note: メールアドレスとパスワードを設定してください' };
+  }
+
+  // webhook 経由を確認 (Instagram=Make / 汎用の現実的な接続手段)。
   if (input.webhookUrl && input.webhookUrl.trim().length > 0) {
     return probeWebhook(doFetch, now, input);
   }

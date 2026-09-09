@@ -15,8 +15,6 @@ export const BAKEOFF_ROLES = [
 ] as const;
 export type BakeoffRole = (typeof BAKEOFF_ROLES)[number];
 
-export const BAKEOFF_GENRES = ['practical', 'business', 'self_help'] as const;
-
 export interface CandidateModel {
   provider: string;
   model: string;

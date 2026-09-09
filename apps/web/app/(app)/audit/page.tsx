@@ -8,13 +8,13 @@
  * 仕様根拠: docs/04 S-029 / docs/05 §3 AuditLog / SP-09 T-09-03
  */
 import type { Metadata } from 'next';
-import Link from 'next/link';
 
 import { prisma } from '@a2p/db';
 
 import { messages } from '@/lib/messages';
 import { serializeAuditLog, type AuditLogRawRow } from '@/lib/audit-view';
 import { AuditPageShell } from '@/components/audit/audit-page-shell';
+import { PageHeading } from '@/components/common/page-heading';
 
 export const metadata: Metadata = {
   title: `${messages.audit.pageTitle} | ${messages.brand.appName}`,
@@ -116,34 +116,21 @@ export default async function AuditLogPage({ searchParams }: PageProps) {
 
   return (
     <div className="flex flex-col gap-space-loose" data-testid="audit-page">
-      {/* Page header */}
-      <header className="flex items-start justify-between gap-space-snug">
-        <div className="flex flex-col gap-space-snug">
-          <nav aria-label="breadcrumb" className="text-button-sm text-muted">
-            <Link href="/dashboard" className="no-underline hover:underline">
-              {m.breadcrumbHome}
-            </Link>
-            <span aria-hidden="true"> &gt; </span>
-            <span>{m.breadcrumbOps}</span>
-            <span aria-hidden="true"> &gt; </span>
-            <span>{m.breadcrumbAudit}</span>
-          </nav>
-          <div>
-            <h1 className="text-sub-heading text-foreground">{m.pageTitle}</h1>
-            <p className="text-body text-muted">{m.pageSubtitle}</p>
-          </div>
-        </div>
-
-        {/* CSV export button */}
-        <a
-          href="/api/audit/export.csv"
-          className="inline-flex items-center gap-1.5 rounded-card border border-border-warm bg-white px-space-normal py-space-snug text-button-sm text-foreground hover:bg-cream-light focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
-          data-testid="audit-csv-export"
-          download
-        >
-          {m.csvExport}
-        </a>
-      </header>
+      <PageHeading
+        eyebrow={m.breadcrumbOps}
+        title={m.pageTitle}
+        description={m.pageSubtitle}
+        actions={
+          <a
+            href="/api/audit/export.csv"
+            className="inline-flex items-center gap-1.5 rounded-default border border-border-warm bg-cream-light px-space-relaxed py-space-snug text-button-sm text-foreground hover:bg-charcoal-04 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
+            data-testid="audit-csv-export"
+            download
+          >
+            {m.csvExport}
+          </a>
+        }
+      />
 
       <AuditPageShell
         rows={rows}

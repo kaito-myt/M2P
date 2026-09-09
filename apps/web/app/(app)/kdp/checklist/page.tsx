@@ -13,6 +13,7 @@ import { prisma } from '@a2p/db';
 
 import { messages } from '@/lib/messages';
 import { serializeChecklistPage } from '@/lib/kdp-checklist-view';
+import { loadSubmitSchedule } from '@/lib/kdp-submit-schedule-loader';
 import { EmptyState } from '@/components/common/empty-state';
 import { ChecklistList } from '@/components/kdp-checklist/checklist-list';
 import { BulkQueueButton } from '@/components/kdp-checklist/bulk-queue-button';
@@ -101,6 +102,8 @@ export default async function KdpChecklistPage() {
   });
 
   const data = serializeChecklistPage(booksRaw);
+  // 入稿キュー登録済みの各本の「入稿予定」を算出（自動入稿ON時は cron+順番+クールダウンから）。
+  const submitSchedule = await loadSubmitSchedule();
 
   // 一括自動入稿キュー登録の対象 = ブロックなし・メタデータあり・未キューの本
   // (publish_status は取得クエリで既に「出版済み」を除外済み)。
@@ -171,7 +174,7 @@ export default async function KdpChecklistPage() {
 
       <BulkQueueButton readyBookIds={readyBookIds} />
 
-      <ChecklistList books={data.books} />
+      <ChecklistList books={data.books} submitSchedule={submitSchedule} />
     </div>
   );
 }
