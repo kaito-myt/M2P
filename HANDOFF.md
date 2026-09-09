@@ -4,7 +4,7 @@
 起動後はまず本書＋`CLAUDE.md`＋`.claude-handoff/memory/*.md` を読むこと。
 
 ## 別端末でのセットアップ手順
-1. `git clone https://github.com/kaito-myt/A2P.git`（本コミットに最新が入っている）
+1. `git clone https://github.com/kaito-myt/M2P.git`（本コミットに最新が入っている。旧A2Pから改名済み）
 2. `pnpm install`
 3. **`.env.local` は gitignore で push されていない**（RAILWAY_TOKEN＋各種認証情報）。→ **旧端末から手動でコピー**するか再作成が必須。これが無いと railway 経由の DB/秘密取得が全て失敗する。
 4. `railway login` 済み or `.env.local` の `RAILWAY_TOKEN` があれば `scripts/paperback/pb-env.sh` が通る。
