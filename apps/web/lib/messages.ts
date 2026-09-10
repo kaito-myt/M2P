@@ -585,6 +585,8 @@ export const messages = {
       bannerAlt: 'カバー画像',
       avatarAlt: 'アイコン画像',
       noImage: '画像未生成',
+      downloadAvatar: 'アイコンをダウンロード',
+      downloadBanner: 'カバーをダウンロード',
       instructionLabel: '追加指示（任意）',
       instructionPlaceholder: '例: もっと親しみやすく／20代女性向けに／ビジネス寄りに 等',
       generate: '戦略を生成',

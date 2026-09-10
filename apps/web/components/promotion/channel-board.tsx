@@ -211,6 +211,31 @@ function StrategyCard({
             )}
           </div>
 
+          {/* 画像の保存導線。実 SNS アカウントへ設定するにはファイル自体が要るため、
+              `?download=1` (Content-Disposition: attachment) を叩く。 */}
+          {(strategy.hasAvatar || strategy.hasBanner) && (
+            <div className="mt-6 flex flex-wrap gap-space-snug">
+              {strategy.hasAvatar && (
+                <a
+                  href={`/api/promotion/${channel}/avatar?download=1`}
+                  className="rounded-card border border-border-warm px-3 py-1 text-button-sm text-charcoal-82 hover:bg-charcoal-04"
+                  data-testid={`download-avatar-${channel}`}
+                >
+                  {s.downloadAvatar}
+                </a>
+              )}
+              {strategy.hasBanner && (
+                <a
+                  href={`/api/promotion/${channel}/banner?download=1`}
+                  className="rounded-card border border-border-warm px-3 py-1 text-button-sm text-charcoal-82 hover:bg-charcoal-04"
+                  data-testid={`download-banner-${channel}`}
+                >
+                  {s.downloadBanner}
+                </a>
+              )}
+            </div>
+          )}
+
           <div className="mt-3 flex flex-col gap-1">
             <div className="text-card-title font-medium text-charcoal">{p.display_name}</div>
             <div className="text-caption text-muted">@{p.handle_suggestion}</div>

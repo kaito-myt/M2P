@@ -38,6 +38,9 @@ describe('serializePipelineSettings', () => {
       autopass_content_enabled: true,
       autopass_cover_enabled: false,
       autopass_kdp_enabled: true,
+      bw_auto_submit_enabled: false,
+      kobo_auto_submit_enabled: false,
+      booth_auto_submit_enabled: false,
     });
     expect(v.autopass_theme_enabled).toBe(true);
     expect(v.pipeline_themes_per_day).toBe(5);

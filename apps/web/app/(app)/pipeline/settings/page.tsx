@@ -26,6 +26,9 @@ const DEFAULTS: PipelineSettingsView = {
   autopass_content_enabled: false,
   autopass_cover_enabled: false,
   autopass_kdp_enabled: false,
+  bw_auto_submit_enabled: false,
+  kobo_auto_submit_enabled: false,
+  booth_auto_submit_enabled: false,
 };
 
 export default async function PipelineSettingsPage() {
@@ -39,6 +42,9 @@ export default async function PipelineSettingsPage() {
       autopass_content_enabled: true,
       autopass_cover_enabled: true,
       autopass_kdp_enabled: true,
+      bw_auto_submit_enabled: true,
+      kobo_auto_submit_enabled: true,
+      booth_auto_submit_enabled: true,
     },
   });
   const initial = row ? serializePipelineSettings(row) : DEFAULTS;

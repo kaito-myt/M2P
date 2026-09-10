@@ -6,6 +6,7 @@
 import { createRequire } from 'module';
 import path from 'path';
 import fs from 'fs';
+import { paperbackPrice, priceSummary } from './pb-price.mjs';
 const SCRIPT_PATH = new URL(import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, '$1');
 const REPO = path.resolve(path.dirname(SCRIPT_PATH), '../..');
 const req = createRequire(path.join(REPO, 'apps/worker/package.json'));
@@ -20,8 +21,8 @@ const GO = process.argv.includes('--go');
 if (!bookId || !titleId) { console.log('usage: pb-complete.mjs <bookId> <titleId> [--go]'); process.exit(1); }
 const plan = JSON.parse(fs.readFileSync(path.join(REPO, 'scripts/paperback/plan.json'), 'utf8'));
 const pages = plan.find((x) => x.book_id === bookId)?.pages || 200;
-const price = Math.max(1480, Math.ceil(((206 + pages * 2.06) / 0.6 + 60) / 10) * 10);
-console.log(`pages=${pages} price=¥${price}`);
+const price = paperbackPrice(pages);
+console.log(priceSummary(pages));
 
 const AMZ_PW = process.env.AMAZON_PASSWORD, TOTP = (process.env.AMAZON_TOTP_SECRET || '').replace(/[\s-]/g, '');
 const ctx = await chromium.launchPersistentContext(USERDATA, { headless: false, channel: 'chrome', locale: 'ja-JP', viewport: { width: 1760, height: 1200 }, args: ['--disable-blink-features=AutomationControlled'] });

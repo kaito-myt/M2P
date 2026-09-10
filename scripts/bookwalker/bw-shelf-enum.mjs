@@ -25,7 +25,11 @@ for(let p=1;p<=12;p++){
       let box=el; for(let i=0;i<7&&box.parentElement;i++){ box=box.parentElement; if(/円（税別）/.test(box.textContent||'')) break; }
       const t=(box.textContent||'').replace(/\s+/g,' ').trim();
       const drop=box.querySelector('a.js-bookdrop');
-      const title=drop?.getAttribute('data-title')||(t.match(/^(.*?)\s*宮田海斗/)||[])[1]||t.slice(0,40);
+      // 却下書籍には a.js-bookdrop が無く data-title を取れないためテキストから切り出すが、
+      // 行頭にサブカテゴリのバッジ(例「AI生成」)が入り書名に混ざる。バッジを除去する
+      // (2026-09-11: 書名が「AI生成 ○○」に見える表示バグの原因だった。実際の書名は正常)。
+      const rawTitle=drop?.getAttribute('data-title')||(t.match(/^(.*?)\s*宮田海斗/)||[])[1]||t.slice(0,40);
+      const title=rawTitle.replace(/^(?:AI生成|成人向け|R18)[\s　]+/,'');
       let status='取り下げ/未販売';
       if(drop) status='申請中';
       else if(/申請が却下されました/.test(t)) status='却下';

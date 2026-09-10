@@ -7,6 +7,7 @@
 import { createRequire } from 'module';
 import path from 'path';
 import fs from 'fs';
+import { paperbackPrice, priceSummary } from './pb-price.mjs';
 const SCRIPT_PATH = new URL(import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, '$1');
 const REPO = path.resolve(path.dirname(SCRIPT_PATH), '../..');
 const req = createRequire(path.join(REPO, 'apps/worker/package.json'));
@@ -22,10 +23,8 @@ if (!bookId || !titleId) { console.log('usage: pb-publish.mjs <bookId> <titleId>
 const plan = JSON.parse(fs.readFileSync(path.join(REPO, 'scripts/paperback/plan.json'), 'utf8'));
 const p = plan.find((x) => x.book_id === bookId);
 const pages = p?.pages || 200;
-const printCost = 206 + pages * 2.06;
-const minPrice = printCost / 0.6;
-const price = Math.max(1480, Math.ceil((minPrice + 60) / 10) * 10);
-console.log(`頁数=${pages} 印刷費概算=¥${Math.round(printCost)} 最低価格概算=¥${Math.round(minPrice)} → 設定価格=¥${price}`);
+const price = paperbackPrice(pages);
+console.log(priceSummary(pages));
 
 const AMZ_PW = process.env.AMAZON_PASSWORD, TOTP = (process.env.AMAZON_TOTP_SECRET || '').replace(/[\s-]/g, '');
 const ctx = await chromium.launchPersistentContext(USERDATA, { headless: false, channel: 'chrome', locale: 'ja-JP', viewport: { width: 1500, height: 1200 }, args: ['--disable-blink-features=AutomationControlled'] });

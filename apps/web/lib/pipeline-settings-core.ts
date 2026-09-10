@@ -29,6 +29,11 @@ export const UpdatePipelineSettingsInputSchema = z.object({
   autopass_content_enabled: z.boolean().optional(),
   autopass_cover_enabled: z.boolean().optional(),
   autopass_kdp_enabled: z.boolean().optional(),
+  // 配信チャネルのサーバー自動入稿 (F-094 BOOK☆WALKER / F-095 楽天Kobo / F-096 BOOTH)。
+  // true にすると各 dispatcher cron が `<channel>_publish_queued=true` の本を 1 冊ずつ入稿する。
+  bw_auto_submit_enabled: z.boolean().optional(),
+  kobo_auto_submit_enabled: z.boolean().optional(),
+  booth_auto_submit_enabled: z.boolean().optional(),
 });
 
 export type UpdatePipelineSettingsInput = z.infer<typeof UpdatePipelineSettingsInputSchema>;
@@ -45,6 +50,9 @@ export interface PipelineSettingsView {
   autopass_content_enabled: boolean;
   autopass_cover_enabled: boolean;
   autopass_kdp_enabled: boolean;
+  bw_auto_submit_enabled: boolean;
+  kobo_auto_submit_enabled: boolean;
+  booth_auto_submit_enabled: boolean;
 }
 
 interface RawPipelineSettings {
@@ -55,6 +63,9 @@ interface RawPipelineSettings {
   autopass_content_enabled: boolean;
   autopass_cover_enabled: boolean;
   autopass_kdp_enabled: boolean;
+  bw_auto_submit_enabled: boolean;
+  kobo_auto_submit_enabled: boolean;
+  booth_auto_submit_enabled: boolean;
 }
 
 export function serializePipelineSettings(raw: RawPipelineSettings): PipelineSettingsView {
@@ -66,6 +77,9 @@ export function serializePipelineSettings(raw: RawPipelineSettings): PipelineSet
     autopass_content_enabled: Boolean(raw.autopass_content_enabled),
     autopass_cover_enabled: Boolean(raw.autopass_cover_enabled),
     autopass_kdp_enabled: Boolean(raw.autopass_kdp_enabled),
+    bw_auto_submit_enabled: Boolean(raw.bw_auto_submit_enabled),
+    kobo_auto_submit_enabled: Boolean(raw.kobo_auto_submit_enabled),
+    booth_auto_submit_enabled: Boolean(raw.booth_auto_submit_enabled),
   };
 }
 
@@ -109,6 +123,9 @@ export async function updatePipelineSettingsCore(
   if (data.autopass_content_enabled !== undefined) updateData.autopass_content_enabled = data.autopass_content_enabled;
   if (data.autopass_cover_enabled !== undefined) updateData.autopass_cover_enabled = data.autopass_cover_enabled;
   if (data.autopass_kdp_enabled !== undefined) updateData.autopass_kdp_enabled = data.autopass_kdp_enabled;
+  if (data.bw_auto_submit_enabled !== undefined) updateData.bw_auto_submit_enabled = data.bw_auto_submit_enabled;
+  if (data.kobo_auto_submit_enabled !== undefined) updateData.kobo_auto_submit_enabled = data.kobo_auto_submit_enabled;
+  if (data.booth_auto_submit_enabled !== undefined) updateData.booth_auto_submit_enabled = data.booth_auto_submit_enabled;
 
   if (Object.keys(updateData).length === 0) {
     return ok(undefined as void);

@@ -45,5 +45,29 @@ export async function GET(
   }
 
   const signedUrl = await getSignedDownloadUrl(key, 900);
+
+  // `?download=1` のときは 302 ではなく実体を返す。
+  // R2 の署名付き URL は別オリジンなので、`<a download>` を付けてもブラウザは
+  // ダウンロード属性を無視して開くだけになり、運営者が実 SNS アカウントに設定する
+  // アイコン/カバーのファイルを保存できなかった (2026-09-11 運営者指摘)。
+  // ここで取得して Content-Disposition: attachment を付けて返すことで確実に保存できる。
+  const url = new URL(_request.url);
+  if (url.searchParams.get('download') === '1') {
+    const upstream = await fetch(signedUrl);
+    if (!upstream.ok || !upstream.body) {
+      return new NextResponse('Not Found', { status: 404 });
+    }
+    const ext = (key.split('.').pop() || 'png').toLowerCase();
+    const filename = `${channel}-${kind}.${ext}`;
+    return new NextResponse(upstream.body, {
+      status: 200,
+      headers: {
+        'Content-Type': upstream.headers.get('content-type') ?? 'application/octet-stream',
+        'Content-Disposition': `attachment; filename="${filename}"`,
+        'Cache-Control': 'no-store',
+      },
+    });
+  }
+
   return NextResponse.redirect(signedUrl, 302);
 }
