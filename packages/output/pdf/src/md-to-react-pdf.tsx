@@ -6,6 +6,63 @@ import { FONT_FAMILY } from './register-fonts.js';
 const BODY_SIZE = 10;
 const LINE_HEIGHT = 1.8;
 
+/**
+ * 日本語の行分割のため、CJK 文字の境界にゼロ幅スペース (U+200B) を挿入する。
+ *
+ * react-pdf(textkit) の行分割は空白を改行機会として使うため、空白の無い日本語では
+ * 適切な折り返し位置を見つけられず、行がテキストフレームの右端をはみ出す。
+ * その結果 KDP 印刷プレビューアーが `GUTTER_ISSUE`(内側マージン不足) を **エラー** として
+ * 報告し、「承認」ボタンが無効化されてペーパーバックを出版できない (2026-09-10 特定)。
+ * U+200B は UAX#14 で改行機会 (class ZW) として扱われ、ハイフンを伴わずに改行できる。
+ *
+ * 行頭に来てはいけない約物 (閉じ括弧・句読点・長音符など) の直前には挿入しない = 簡易禁則。
+ */
+const CJK = /[぀-ヿ㐀-䶿一-鿿＀-｠￠-￦]/;
+const NO_BREAK_BEFORE = /[、。，．・：；！？」』）］｝〉》”’ー〜…‥ヽヾゝゞ々ぁぃぅぇぉっゃゅょゎァィゥェォッャュョヮヵヶ%％]/;
+const NO_BREAK_AFTER = /[「『（［｛〈《“‘]/;
+
+const ZWSP = '​';
+/** URL 等で改行して良い区切り文字 */
+const URL_BREAK_AFTER = /[/\-_.?&=:;,+~%#@]/;
+/** 区切りの無い長大トークンを強制分割する間隔 */
+const HARD_WRAP_EVERY = 16;
+
+export function cjkSoftBreak(s: string): string {
+  if (!s) return s;
+  let out = '';
+  let asciiRun = 0; // 直近の連続 ASCII(非空白) 長。URL/長大トークン検出用
+  for (let i = 0; i < s.length; i++) {
+    const ch = s[i]!;
+    out += ch;
+    const next = s[i + 1];
+    if (!next) break;
+
+    const chCjk = CJK.test(ch);
+    const nextCjk = CJK.test(next);
+    asciiRun = chCjk || /\s/.test(ch) ? 0 : asciiRun + 1;
+
+    if (chCjk || nextCjk) {
+      // CJK 境界: 簡易禁則を守って改行機会を入れる
+      if (NO_BREAK_BEFORE.test(next)) continue;
+      if (NO_BREAK_AFTER.test(ch)) continue;
+      out += ZWSP;
+      continue;
+    }
+
+    // ASCII 同士: 通常の英単語は割らない。ただし URL のような長い連続は
+    // 折り返せずに版面をはみ出し KDP の `GUTTER_ISSUE` を招くため、
+    // 一定長を超えたら区切り文字の直後 / それも無ければ一定間隔で改行機会を入れる。
+    if (asciiRun >= 12 && !/\s/.test(next)) {
+      if (URL_BREAK_AFTER.test(ch)) {
+        out += ZWSP;
+      } else if (asciiRun % HARD_WRAP_EVERY === 0) {
+        out += ZWSP;
+      }
+    }
+  }
+  return out;
+}
+
 interface InlineStyle {
   bold?: boolean;
   italic?: boolean;
@@ -42,7 +99,7 @@ function inlineToElements(
                 fontStyle: inherited?.italic ? 'italic' : 'normal',
               }}
             >
-              {t.text}
+              {cjkSoftBreak(t.text)}
             </Text>,
           );
         }
@@ -77,7 +134,7 @@ function inlineToElements(
               backgroundColor: '#f0f0f0',
             }}
           >
-            {t.text}
+            {cjkSoftBreak(t.text)}
           </Text>,
         );
         break;
@@ -93,7 +150,7 @@ function inlineToElements(
                 textDecoration: 'underline',
               }}
             >
-              {t.text}
+              {cjkSoftBreak(t.text)}
             </Text>
           </Link>,
         );
@@ -157,7 +214,7 @@ function tokensToElements(tokens: Token[]): React.ReactElement[] {
                 lineHeight: LINE_HEIGHT,
               }}
             >
-              {t.text}
+              {cjkSoftBreak(t.text)}
             </Text>
           </View>,
         );

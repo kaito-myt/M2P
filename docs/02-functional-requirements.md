@@ -789,6 +789,10 @@
   - **作成上限の回避**: KDP の「1 日 5 冊」制限は**新規作成フロー**のみ消費する。既存の残置下書きを
     **resume して上書き**する方式（`scripts/kdp-publish.mjs --auto` と同じ）を用い、上限を消費せず入稿する。
     残置下書きが無く新規作成が必要で上限到達時は `blocked: creation_limit` として当該ジョブを保留し翌日再試行。
+    **ペーパーバックはこの枠を共有しない（2026-09-09 実測）**: 同一 JST 日に Kindle 新規 CREATE 5 冊を出版した直後に
+    ペーパーバック下書きを 10 冊作成しても `creation_limit` は一度も発生しなかった（計 15 件）。したがって
+    **Kindle の新作出版とペーパーバック展開は同日に並行して実施してよい**（従来の「1 日 5 冊枠を共有」という
+    運用前提は誤り）。上限のリセットは JST 深夜 0 時。詳細と証跡は `docs/05` §5.3.15b。
   - **ファイル**: 原稿 docx（`artifacts.kind='docx'`）・表紙（`covers` adopted）を R2 から取得してアップロード。
   - **自動運用**: `AppSettings.kdp_auto_submit_enabled=true` のとき dispatcher が `kdp_publish_queued=true`
     の本を `kdp.submit` へ enqueue（`org.kdp.screen` 合格→queue と連携）。監査用スクショは R2 に保存。

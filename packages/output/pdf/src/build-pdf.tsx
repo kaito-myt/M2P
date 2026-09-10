@@ -9,6 +9,7 @@ import {
 } from '@react-pdf/renderer';
 import { markdownToReactPdfElements } from './md-to-react-pdf.js';
 import { registerFonts, FONT_FAMILY } from './register-fonts.js';
+import { cjkSoftBreak } from './md-to-react-pdf.js';
 
 const A5_WIDTH_PT = 419.53; // 148mm
 const A5_HEIGHT_PT = 595.28; // 210mm
@@ -40,6 +41,10 @@ const styles = StyleSheet.create({
     fontSize: 24,
     fontWeight: 700,
     textAlign: 'center',
+    // 幅を明示しないと親の alignItems:'center' により内容幅で組まれ、長い章題が
+    // 版面からはみ出して KDP が `OBJECT_LOCATION`(テキストがマージン外) エラーを出す
+    // → 承認ボタンが無効化されて出版できない (2026-09-10 実測)。
+    width: '100%',
   },
   bookTitleText: {
     fontFamily: FONT_FAMILY,
@@ -47,12 +52,14 @@ const styles = StyleSheet.create({
     fontWeight: 700,
     textAlign: 'center',
     marginBottom: 16,
+    width: '100%',
   },
   bookSubtitleText: {
     fontFamily: FONT_FAMILY,
     fontSize: 13,
     textAlign: 'center',
     color: '#444',
+    width: '100%',
   },
   tocTitle: {
     fontFamily: FONT_FAMILY,
@@ -111,8 +118,8 @@ function TitlePage({
 }): React.ReactElement {
   return (
     <Page size={[A5_WIDTH_PT, A5_HEIGHT_PT]} style={[styles.chapterTitlePage, sidePad ?? {}]}>
-      <Text style={styles.bookTitleText}>{title}</Text>
-      {subtitle ? <Text style={styles.bookSubtitleText}>{subtitle}</Text> : null}
+      <Text style={styles.bookTitleText}>{cjkSoftBreak(title)}</Text>
+      {subtitle ? <Text style={styles.bookSubtitleText}>{cjkSoftBreak(subtitle)}</Text> : null}
     </Page>
   );
 }
@@ -129,7 +136,7 @@ function TocPage({
       <Text style={styles.tocTitle}>目次</Text>
       {chapters.map((ch) => (
         <View key={`toc-${ch.index}`} style={styles.tocRow}>
-          <Text style={styles.tocHeading}>{ch.heading}</Text>
+          <Text style={styles.tocHeading}>{cjkSoftBreak(ch.heading)}</Text>
         </View>
       ))}
       <Text style={styles.pageNumber} render={({ pageNumber }) => `${pageNumber}`} />
@@ -146,7 +153,7 @@ function ChapterTitlePage({
 }): React.ReactElement {
   return (
     <Page size={[A5_WIDTH_PT, A5_HEIGHT_PT]} style={[styles.chapterTitlePage, sidePad ?? {}]}>
-      <Text style={styles.chapterTitleText}>{heading}</Text>
+      <Text style={styles.chapterTitleText}>{cjkSoftBreak(heading)}</Text>
       <Text
         style={styles.pageNumber}
         render={({ pageNumber }) => `${pageNumber}`}

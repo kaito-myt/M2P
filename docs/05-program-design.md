@@ -1925,13 +1925,98 @@ export const KdpSubmitPayload = z.object({
   無料 ISBN 取得（ボタン→ダイアログ内同名ボタン）、印刷オプションは既定値が正解（白黒/白紙 `#ink-paper-BW_WHITE`、
   裁ち落としなし、光沢なし、左→右）、アップロードは filechooser イベント方式、AI 質問 `has-ai-content`=いいえ。
   STEP3(pricing): `#price-input-jpy` 実タイプ+Tab で他 13 市場自動換算、出版ボタン=「ペーパーバック本を出版」。
-- **未解決＝プレビュー承認ゲート**: content の「本をプレビューして承認してください」が残る限り保存が
+- **【重要・2026-09-10 特定】日本語の行分割不良で本文が右マージンをはみ出し、ペーパーバックが出版できなかった**:
+  KDP 印刷プレビューアーは本文の版面外はみ出しを `GUTTER_ISSUE`(内側マージン不足) として
+  **警告ではなくエラー**で報告し、エラーがある本は**「承認」ボタンが無効化される**
+  (`#printpreview_approve_button_enabled` が非表示・`_disabled` が表示)。承認できなければ content の
+  保存がブロックされ、pricing で `blocked_prior_page` になる = **出版不能**。
+  **根因**: `packages/output/pdf` は `@react-pdf/renderer`(textkit) で組版しているが、textkit の行分割は
+  **空白を改行機会として使う**ため、空白の無い日本語では折り返し位置を見つけられず行がテキストフレームを
+  数文字ぶん突き抜ける。加えて既定の英語ハイフネーション辞書が働き、日本語の行末に不正な `-` が入っていた。
+  **対策(2つ)**: ①`register-fonts.ts` で `Font.registerHyphenationCallback((word) => [word])` を登録し
+  ハイフン挿入を止める。②`md-to-react-pdf.tsx` に `cjkSoftBreak()` を追加し、CJK 文字の境界へ
+  **ゼロ幅スペース U+200B** を挿入して正当な改行機会を与える(U+200B は UAX#14 の class ZW なので
+  ハイフンを伴わない)。閉じ括弧・句読点・長音符の直前と開き括弧の直後には入れない簡易禁則つき。
+  **実証**: 「自分探しをやめろ」= 137 頁 → **131 頁**に再組版され、`GUTTER_ISSUE` が消滅、
+  `approveState.enabledVisible: true` に変わり、承認 → 保存 → pricing → `PB SUBMITTED`。
+  **影響範囲**: 本パッケージは電子書籍 PDF も生成するため、**既刊の PDF は行末ハイフンとはみ出しを含んだまま**。
+  以後に生成される本は自動的に修正される。既刊を直すには本文 PDF の再生成と再入稿が必要。
+  **見分け方**: 同じ症状でも、`plan.json` の `gutter_ok` は当てにならない(はみ出しは版面計算ではなく
+  実レンダリング結果に依存するため、10 冊すべて `gutter_ok:true` でも 5 冊が実際にはエラーだった)。
+  実判定はプレビューアーの `issues` JSON の `type` を見る(`pb-diag-preview.mjs`)。
+  | issue type | 扱い | 意味 |
+  |---|---|---|
+  | `EMBEDDED_FONT` | 非ブロッカー | フォント未埋め込み。Amazon が自動埋め込みで補正する |
+  | `REMOVE_MARKED_CONTENT` | 非ブロッカー | 実測でエラー表示されず承認可能だった |
+  | `GUTTER_ISSUE` | **ブロッカー** | 本文が内側マージンを超えている |
+  | `OBJECT_LOCATION` | **ブロッカー** | テキストがマージン外にある(章扉・扉ページで多発) |
+  内側マージン要件は頁数で変わる: 〜150頁 = 9.525mm / 151頁〜 = 12.700mm。上下は一律 6.35mm 以上。
+- **はみ出しの原因は 3 系統あり、すべて `cjkSoftBreak`/幅指定で潰した (2026-09-10)**:
+  1. **本文の日本語行** — 空白が無く改行機会が無い → ZWSP 挿入で解決。
+  2. **章扉・扉ページの見出し** — `chapterTitlePage` は `alignItems:'center'` なので、幅を指定しないと
+     Text が内容幅で組まれ、長い章題・書名がページ外へ流れる。`chapterTitleText`/`bookTitleText`/
+     `bookSubtitleText` に **`width:'100%'`** を付け、`cjkSoftBreak` も適用して解決。
+  3. **巻末リンク集の長い URL** — ASCII 連続は英単語を割らない方針のため対象外だった。
+     `cjkSoftBreak` を拡張し、12 文字を超える ASCII 連続では区切り文字(`/ - _ . ? & = : ; , + ~ % # @`)
+     の直後、区切りが無ければ 16 文字ごとに ZWSP を入れるようにして解決。
+  **実績**: 昨夜作成した 10 冊すべてを `PB SUBMITTED` まで到達させた(2026-09-10)。
+- **既存下書きのファイル差し替え** = `scripts/paperback/pb-reupload.mjs`(本件のために追加)。
+  content ページで原稿/表紙を上げ直す。再アップロード時は「新しい原稿または表紙画像をアップロード
+  されたようです…」の確認チェックが出るので自動で ON にする。本文を作り直すと**頁数が変わり背幅も変わる**ため、
+  `plan.json` の `pages`/`spine_mm` を更新 → `build-wrap-cover.mjs` で表紙を再生成 → 両方を差し替えること。
+- **【解決 2026-09-10】プレビュー承認ゲート — KDP のコンテンツページ刷新でセレクタが陳腐化していた**:
+  content ページに「**コンテンツ ページのデザインが新しくなりました**」バナーが出るようになり、
+  下記「未解決」節の前提 2 つが**どちらも現行 UI では成立しなくなっていた**。実DOM採取
+  (`scripts/paperback/pb-diag-preview.mjs` — 本件のために追加した非破壊の診断ツール) で確定:
+  | 項目 | 旧実装の前提 (2026-09-03 実測) | 現行 UI の実際 |
+  |---|---|---|
+  | 総頁数の表示 | `#cur_page_range` の親要素テキストの `/ NNN` | **`<label id="max_page_label">/ 126</label>`** |
+  | 「承認」ボタン | **存在しない**（終了クリックで代替する想定） | **存在する**（黄色の `a-button`。押さないと承認が記録されない） |
+  症状 = `変換待ち …s total=?` が 15 分ループし続け（総頁数を永久に取得できない）、未承認のまま
+  「印刷プレビューアーを終了」→ 保存が `PB RESULT: blocked_prior_page` で弾かれる。**変換失効ではなく
+  セレクタ不整合が主因**だった（アップロード直後の下書きでも数日前の下書きでも同一症状が出るのが見分け方）。
+  **修正**: `pb-complete.mjs` の待機判定を `#max_page_label` 優先（旧セレクタはフォールバックとして保持）にし、
+  終了の前に「承認」を**実クリック**する。承認ボタンは Amazon の a-button 構造
+  (`<span class="a-button"><input type=submit><span class="a-button-text">承認</span></span>`) で、
+  `input` 側は `textContent`/`value` とも空のため、**テキストを持つ `.a-button-text` を掴んでクリック**する
+  （synthetic click では React の承認記録ハンドラが発火しない = BW と同じ isTrusted 罠）。
+  → 実証: `total=126` を **0 秒で検出** → 承認 → 保存 → pricing → 「ペーパーバックが提出されました」→ `PB SUBMITTED`。
+  なお同時に確認した点として、**表紙セーフゾーン(9.5mm)違反は再発していない**（commit `42cc4ce` の
+  `build-wrap-cover.mjs` 修正は有効）。プレビューアーが返す `issues` は `EMBEDDED_FONT` のみで、
+  これは Amazon 側が自動埋め込みして補正する非ブロッカー。運営者に届く「表紙のテキストが端に近すぎる」
+  警告メールは修正前に提出したタイトルに対するもの。
+- **（履歴）未解決だった問題＝プレビュー承認ゲート**: content の「本をプレビューして承認してください」が残る限り保存が
   クライアント側で無言ブロック（ネットワーク POST すら発生しない）され pricing の出版が「以前のページに問題」で
   止まる。プレビューアーに承認ボタンは無く、自動化 Chrome では previewer が `client-side-error` を連続 POST し
   「プレビュー済み」が記録されない（trusted クリック・長時間滞在・ページ送りでも不可を実測）。
   **暫定運用 = プレビューアー起動→終了の 1 操作のみ運営者が実施**し、以降（価格→出版）は自動（`pb-complete.mjs` / `pb-publish.mjs`）。
 - 判明済み: ペーパーバックの下書き作成は Kindle の creation_limit 発動中でも通る日があった（枠関係は引き続き観察）。
   原稿 PDF のフォント未埋め込みは Amazon が自動埋め込みで補正（警告のみ・非ブロッカー）。
+- **枠は別勘定とみてよい（2026-09-09 実測で裏付け）**: 同一 JST 日に **Kindle 新規 CREATE 5 冊**（`kdp-assist.sh create --all --limit=5`
+  で 5 冊とも `published`）に続けて **ペーパーバック下書き 10 冊**を作成し、**`CREATION_LIMIT` が一度も発生しなかった**
+  （計 15 件 / `pb-batch.sh draft` は `下書き作成=10 fail=1` で完走、`rc=4` 検出ゼロ）。「eBook と 1 日 5 冊枠を共有する」
+  という運用前提は**誤り**で、ペーパーバックの下書き作成は Kindle の作成枠を消費しない（少なくとも上限が大きく異なる）と扱う。
+  → **同日中に Kindle 出版とペーパーバック展開を並行して回してよい**。
+- **下書きの変換は失効する（2026-09-09 実測）**: アップロード済みでも数日放置した下書きは、`pb-complete.mjs` が
+  プレビューアーを `trusted` 起動できても **`変換待ち` が `total=?` のまま 870 秒超えても完了しない**（=変換結果が失効）。
+  該当下書きは publish 不可で、**原稿の再アップロード（下書き作り直し）が必要**。`timeout 1500` に当たるまで 1 冊 25 分を
+  空費するため、失効が疑われる下書きは `pb-drafts-pending.txt` から分離してから publish フェーズを回すこと
+  （分離先の慣例 = `pb-drafts-expired.txt`）。なお `pb-batch.sh draft` は `pb-drafted.txt` に載っている book を
+  スキップするため、**失効分を作り直すには先に `pb-drafted.txt` から当該行を削除する**必要がある。
+- **`pb-pilot.mjs` の `rc=3`（`作成クリック: false`）= 既にペーパーバック下書きが存在する（2026-09-09 実測）**:
+  本棚を ASIN で検索した行に `zme-indie-bookshelf-dual-print-actions-draft-book-actions-<rowId>-...` が既に出ている
+  場合、「ペーパーバックの作成」ボタン自体が描画されないため `no-button` ダンプを出して rc=3 で終わる。
+  **KDP 側の障害ではなく、ローカル状態ファイル（`pb-drafted.txt` / `pb-drafts-pending.txt`）が実態を
+  取りこぼしている**サイン。対処 = 本棚から当該ペーパーバックの titleId を採取して `pb-drafts-pending.txt` に
+  追記し、publish フェーズへ回す（作り直しは不要）。将来の改善余地として、`pb-pilot.mjs` が既存 print draft を
+  検出したら titleId を返して `pending` に自動追記する経路が考えられる。
+- **端末移行時に再生成が要る成果物（すべて gitignore 対象）**: ①`scripts/paperback/out/`（ディレクトリ自体が無いと
+  `pb-batch.sh` の `> out/<id>-pub.log` リダイレクトが失敗し、**node が起動しないまま全冊 `出版NG` になる**＝KDP 側の
+  失敗と紛らわしい。最初に `mkdir -p` すること）。②`out/<bookId>-pb-cover.pdf`（`pb-pilot.mjs` が必須とし、無ければ
+  `SKIP(no cover)`。`regen-covers.sh` は**既存 PDF を舐める実装なのでゼロからの生成には使えない** — 対象 book ごとに
+  `node scripts/paperback/build-wrap-cover.mjs <bookId>` を直接回す）。③`scripts/.kdp-userdata`（KDP ログイン済み
+  Chrome プロファイル。初回はフルログイン＋OTP が発生する）。本文 PDF は R2 の `books/<id>/manuscript/final.pdf` に
+  フォールバックするため再生成不要。
 
 #### 5.3.15c BookWalker 自動出版（2026-09-02 着手・偵察/素材フェーズ）
 
@@ -3278,6 +3363,15 @@ export const logger = pino({
   (`x-line-signature`, HMAC-SHA256 timing-safe 比較) であり NextAuth セッションを使わない
   (`middleware.ts` の matcher で `/api/line` を除外)。env: `LINE_CHANNEL_SECRET` /
   `LINE_CHANNEL_ACCESS_TOKEN` / `LINE_ALLOWED_USER_ID` (全て任意、未設定なら webhook は 503)。
+  **待機ループは DB 経由でしか抜けない (2026-09-09 実測)**: `scripts/kdp-publish.mjs` の `awaitOtpOnce` は
+  `kdp_auth_requests` の `status='fulfilled'` 行だけを 2 秒間隔でポーリングしており、**ブラウザ側で運営者が
+  手動サインインを完了しても検知しない**。headful Chrome に直接 6 桁を入力して先へ進んだ場合でも、
+  スクリプトは 5 分 × 3 ラウンド空振りしてから諦める。**回避策** = 該当 pending 行を手動で
+  `status='fulfilled'` + 任意の `code` に UPDATE する。ページが既にサインイン済みなら OTP 入力欄
+  (`OTP_SEL`) が存在しないため `fill`/`click` は no-op で落ち、直後の「OTP 欄がまだ見えるか」判定が
+  false になって `認証成功` と扱われ、そのまま後続へ進む。ローカル版は TOTP 非対応
+  (`AMAZON_TOTP_SECRET` を使うのはサーバー版 `kdp-submit/totp.ts` のみ) なので、初回ログイン時は
+  この経路が必ず要る点に注意。
   **同テーブルは `sales.fetch` の自動再ログイン (5.3.14 実装メモ参照) からも共用消費される**:
   `apps/worker/src/tasks/lib/line-auth-relay.ts` の `requestOtpViaLine` が worker 側から pending 行を
   作成・LINE push・ポーリング/消費までを行う (`purpose='kdp_sales_relogin'`)。ローカルツールと worker は
