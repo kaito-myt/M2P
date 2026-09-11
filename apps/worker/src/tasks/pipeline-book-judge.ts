@@ -63,6 +63,9 @@ import { readPipelineAutopass } from './lib/pipeline-autopass.js';
  *   - notifyJobChange 失敗 → warn のみで継続
  */
 
+/** judge 不合格時に editor/writer へ差し戻す最大回数(コスト是正で 2→1)。 */
+const RETRY_LIMIT = 1;
+
 export const PIPELINE_BOOK_JUDGE_TASK_NAME = 'pipeline.book.judge';
 
 /** docs/05 §5.3.8 + SP-10 §7.2 の拡張型定義 */
@@ -593,7 +596,12 @@ export async function runPipelineBookJudge(
       }
 
       notifyPhase = 'judge_done';
-    } else if (retryCount < 2) {
+      // 2026-09-11 コスト是正: 再キック上限を 2 → 1 に引き下げ(=最大2周)。
+      // 実測(9/1-9/11)で editor が全AIコストの65%(¥53,441/850回)を占め、1冊あたり28回・¥1,781。
+      // judge が不合格を出すたび editor が**全章**を再実行するため、20章の本で40回に達していた。
+      // 同期間の売上は0冊(KENP 2,542頁のみ)で、品質再研磨の費用が回収できていない。
+      // 収益が立つまでは1回の差し戻しに留める。RETRY_LIMIT を戻せば従来挙動に復帰できる。
+    } else if (retryCount < RETRY_LIMIT) {
       // B. 不合格 + retry 可能 → editor or writer.chapter 再キック
       const bd = judgeOutput.score_breakdown;
       const needsEditor =
