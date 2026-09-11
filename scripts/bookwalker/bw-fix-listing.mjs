@@ -42,6 +42,7 @@ const STRIP = process.argv.includes('--strip-ai-prefix');
 const SERIES = arg('series');
 const SERIES_KANA = arg('series-kana');
 const VOLUME = arg('volume');
+const WITHDRAW = process.argv.includes('--withdraw');
 const REGISTER = process.argv.includes('--register');
 const DRY = process.argv.includes('--dry');
 if (!bwId) { console.log('usage: bw-fix-listing.mjs <bwId> [--strip-ai-prefix] [--series=..] [--series-kana=..] [--volume=..] [--register] [--dry]'); process.exit(1); }
@@ -62,6 +63,21 @@ const shot = (n) => page.screenshot({ path: path.join(OUT, `fix-${bwId}-${n}.png
 await page.goto('https://author.bookwalker.jp/library/bookshelf', { waitUntil: 'domcontentloaded' });
 await page.waitForTimeout(3500);
 if (await page.$('input[type=password]')) { console.log('NOT_LOGGED_IN'); await browser.close(); process.exit(2); }
+
+// 「申請中」の書籍は編集画面に入れず本棚へリダイレクトされる(2026-09-11 実測)。
+// --withdraw 指定時は先に取り下げる。POST /api/books/drop は CSRF 不要・上限なし。
+if (WITHDRAW) {
+  const st = await page.evaluate(async (id) => {
+    const r = await fetch('/api/books/drop', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'X-Requested-With': 'XMLHttpRequest' },
+      body: 'book_id=' + id, credentials: 'include',
+    }).catch(() => null);
+    return r ? r.status : 0;
+  }, bwId).catch(() => 0);
+  console.log('取り下げ POST:', st, st >= 200 && st < 400 ? 'OK' : '失敗');
+  await page.waitForTimeout(4000);
+}
 await page.goto(`https://author.bookwalker.jp/books/${bwId}/edit`, { waitUntil: 'domcontentloaded' });
 await page.waitForTimeout(7000);
 if (!(await page.$('#book_main_title'))) {
@@ -105,12 +121,26 @@ const applied = await page.evaluate((p) => {
     el.dispatchEvent(new Event('change', { bubbles: true }));
     return true;
   };
-  return {
-    title: p.title != null ? set('#book_main_title', p.title) : null,
-    series: p.series != null ? set('#book_series', p.series) : null,
-    kana: p.kana != null ? set('#book_series_kana', p.kana) : null,
-    volume: p.volume != null ? set('#book_series_volume', p.volume) : null,
-  };
+  const out = {};
+  // シリーズは `#sereis_selector`(BW側のtypo) が主導。既存シリーズがある場合、
+  // 先に selector を選ぶと #book_series / #book_series_kana が自動補完される。
+  // 直接 #book_series に入れると selector の change ハンドラで消される
+  // (2026-09-11 実測: volume だけ入れたら series/kana が空になった)。
+  if (p.kana != null) {
+    const sel = document.querySelector('#sereis_selector');
+    const opt = sel && [...sel.options].find((o) => o.value === p.kana);
+    if (opt) {
+      sel.value = opt.value;
+      sel.dispatchEvent(new Event('change', { bubbles: true }));
+      out.selector = opt.value;
+    }
+  }
+  if (p.title != null) out.title = set('#book_main_title', p.title);
+  // selector で埋まらなかった場合のみ直接入力する
+  if (p.series != null && !document.querySelector('#book_series')?.value) out.series = set('#book_series', p.series);
+  if (p.kana != null && !document.querySelector('#book_series_kana')?.value) out.kana = set('#book_series_kana', p.kana);
+  if (p.volume != null) out.volume = set('#book_series_volume', p.volume);
+  return out;
 }, plan);
 console.log('入力結果:', JSON.stringify(applied));
 
@@ -139,19 +169,53 @@ if (saved) {
 await shot('after-save');
 
 if (REGISTER) {
+  // 申請手順は apps/worker/src/tasks/bw-submit/playwright-submit-port.ts の実績実装に合わせる。
+  // POST /api/books/register の HTTP status を拾って成否と 403(当日枠超過) を判定する。
+  let createResp = null;
+  page.on('response', (res) => {
+    if (/\/api\/books\/register/.test(res.url())) createResp = res.status();
+  });
+  await page.$('#register-book').then((b) => b?.scrollIntoViewIfNeeded()).catch(() => {});
+  await page.waitForTimeout(1200);
   let clicked = false;
   for (let a = 0; a < 3 && !clicked; a++) {
     try { await page.click('#register-book', { noWaitAfter: true, force: true, timeout: 8000 }); clicked = true; }
     catch { await page.waitForTimeout(1500); }
   }
   console.log('申請クリック:', clicked);
-  await page.waitForTimeout(3000);
-  await page.evaluate(() => {
-    const y = [...document.querySelectorAll('button,a,.pure-button')]
-      .find((b) => (b.offsetWidth || b.offsetHeight) && (b.textContent || '').replace(/\s+/g, '') === 'はい');
-    if (y) y.click();
-  });
+
+  // 確認モーダルの2段目も信頼済みクリックでなければ発火しない (BW共通の isTrusted 罠)
+  const modalBtn = page
+    .locator('[role=dialog] button, .modal button, [class*=modal] button, [class*=Modal] button, .pure-button')
+    .filter({ hasText: /^(申請する|はい|OK|同意して|確定|申請)/ });
+  let modalClicked = false;
+  for (let m = 0; m < 9 && !modalClicked; m++) {
+    await page.waitForTimeout(2000);
+    if (createResp) break;
+    if (await modalBtn.count().catch(() => 0)) {
+      await modalBtn.first().click({ noWaitAfter: true, force: true, timeout: 8000 }).catch(() => {});
+      modalClicked = true;
+      await page.waitForTimeout(3000);
+    }
+  }
+  // モーダル未検知 & POST 無し = EPUB のサーバ検証が未完了のことが多い → 待って再クリック
+  for (let r = 0; r < 2 && !createResp && !modalClicked; r++) {
+    console.log('  モーダル未検知 — EPUB検証待ちとみて20秒後に再クリック');
+    await page.waitForTimeout(20_000);
+    await page.click('#register-book', { noWaitAfter: true, force: true, timeout: 8000 }).catch(() => {});
+    for (let m = 0; m < 6 && !modalClicked; m++) {
+      await page.waitForTimeout(2000);
+      if (createResp) break;
+      if (await modalBtn.count().catch(() => 0)) {
+        await modalBtn.first().click({ noWaitAfter: true, force: true, timeout: 8000 }).catch(() => {});
+        modalClicked = true;
+        await page.waitForTimeout(3000);
+      }
+    }
+  }
   await page.waitForTimeout(6000);
+  console.log('確認モーダルクリック:', modalClicked, '/ register POST status:', createResp ?? '無し');
+  if (createResp === 403) console.log('★ 当日の申請枠(~3件)超過。編集内容は保存済みなので翌日 --register のみで復帰可。');
   await shot('after-register');
   console.log('※ 申請は ~3件/日 で 403。403 でも上記の編集内容は保存済み。');
 }

@@ -32,7 +32,13 @@ const bq = await c.query(
      (SELECT description FROM kdp_metadata WHERE book_id=b.id ORDER BY created_at DESC LIMIT 1) description
    FROM books b LEFT JOIN theme_candidates tc ON tc.id=b.theme_id
    WHERE b.title = $1 OR b.title LIKE $2 ORDER BY length(b.title) LIMIT 1`,
-  [shelf.title, shelf.title.slice(0, 40) + '%'],
+  // 却下書籍は data-title を取れず行テキストから切り出すため、先頭にサブカテゴリの
+  // バッジ(「AI生成」等)が混ざる。DB のタイトルには無いので除去してから照合する
+  // (2026-09-11: これで全件「DBに該当書籍なし」になっていた)。
+  [
+    shelf.title.replace(/^(?:AI生成|成人向け|R18)[\s　]+/, ''),
+    shelf.title.replace(/^(?:AI生成|成人向け|R18)[\s　]+/, '').slice(0, 40) + '%',
+  ],
 );
 const sess = await c.query("SELECT bw_session_state_enc FROM app_settings WHERE id='singleton'");
 await c.end();
