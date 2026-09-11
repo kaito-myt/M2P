@@ -178,6 +178,8 @@ export async function generateChapter(
         { role: 'user', content: userContent },
       ],
       maxOutputTokens: DEFAULT_MAX_OUTPUT_TOKENS,
+      // 章ごとに呼ばれ systemPrompt は不変 — prefix キャッシュで2回目以降の入力コストを下げる
+      enablePromptCaching: true,
     });
 
     const rawText = completion.text;

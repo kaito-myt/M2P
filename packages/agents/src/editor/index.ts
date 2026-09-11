@@ -172,6 +172,12 @@ export async function editBook(
             { role: 'user', content: buildUserMessage(chunkInput) },
           ],
           maxOutputTokens: DEFAULT_MAX_OUTPUT_TOKENS,
+          // editor は 1 冊で章数ぶん(20章なら20回以上)呼ばれ、その間 systemPrompt は不変。
+          // Anthropic のプロンプトキャッシュは prefix 一致なので、system をキャッシュすれば
+          // 2 回目以降の入力コストが大きく下がる(キャッシュ読取は通常の約1/10)。
+          // 2026-09-11 実測: 9月のキャッシュ率は 0.7%(入力509万トークン中3.5万)で、
+          // 機構はあるのに `enablePromptCaching` を渡す呼び出し元が 1 つも無かった。
+          enablePromptCaching: true,
         });
 
         const rawText = completion.text;
@@ -328,6 +334,8 @@ async function runConsistencyPass(
           { role: 'user', content: userMessage },
         ],
         maxOutputTokens: DEFAULT_MAX_OUTPUT_TOKENS,
+        // 章ごとのループで systemPrompt は不変 — prefix をキャッシュして入力コストを下げる
+        enablePromptCaching: true,
       });
       const rawText = completion.text;
       const parsedJson = extractJson(rawText ?? '', hasEditorShape);
