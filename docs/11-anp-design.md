@@ -44,6 +44,24 @@ A2P と同一で流用できる箇所は「A2P 準拠」と明記し、重複記
 - **記事形態**: Markdown 相当のリッチテキスト＋見出し画像（アイキャッチ）＋本文中画像＋埋め込み。文字数は数千字が主。KDP 書籍（数万字）より短く高頻度。
 - **規約順守**: note の利用規約・AI 生成物の扱い・過度な自動化/スパム的投稿の禁止に配慮（A2P の「本文にAI開示文を入れない／プラットフォーム開示欄で対応」方針を踏襲。投稿頻度は自然な範囲に制御）。
 
+### 2.1 エディタの実DOM（2026-09-15 偵察 `scripts/anp/note-editor-recon.mjs`）
+
+- **新規記事**: `https://note.com/notes/new` へ遷移すると **`https://editor.note.com/notes/<noteId>/edit/`** へリダイレクトされ、
+  その時点で下書き ID が採番される（URL の `n…` が note の記事 ID）。エディタは別オリジン `editor.note.com`。
+- **タイトル**: `textarea[placeholder="記事タイトル"]`（クラス名は styled-components のハッシュで不安定・使わない）。
+- **本文**: `div.ProseMirror[contenteditable="true"]`（ProseMirror）。Markdown は貼り付けでは解釈されないため、
+  見出し/箇条書き等はツールバー（aria-label: 大見出し・小見出し・箇条書きリスト・番号付きリスト・引用・コード・区切り線）
+  で組むか、`page.keyboard.type` と Enter で段落を作る。**画像は「画像」ボタン（aria-label）経由**で、
+  `input[type=file]` は初期 DOM に存在しない（クリック後に filechooser イベントで受ける = BW/KDP と同型）。
+- **フッター操作**: 「下書き保存」「公開に進む」はボタンの**テキスト**で特定する。
+  **タイトル・本文が空だと「公開に進む」は無効**（ツールチップ「タイトル、本文を入力してください」）。
+- **セッション**: `promotion_channel_settings.config_json.note_session_enc`（`API_CRED_KEY` で AES-256-GCM）に
+  保存済みの storageState で `note.com` / `editor.note.com` 双方にログイン状態で入れることを確認。
+  ANP マルチアカウントでは **`note_accounts.session_state_enc` にアカウント別に保存**し、この共通セッションは
+  Phase 2 の初期アカウント（1 件目）へ移行する。
+- **未採取（実装時に dry-run で採取し追記）**: 「公開に進む」後の公開設定画面（ハッシュタグ・見出し画像・
+  有料設定/価格/ライン位置・予約公開・公開ボタン）。
+
 ---
 
 ## 3. 機能要件（A2P の F-xxx 体系に対応づけ）
