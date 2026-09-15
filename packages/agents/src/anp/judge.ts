@@ -82,7 +82,7 @@ export async function judgeNoteArticle(
     '- search_inflow: タイトル/見出しが検索されやすいか',
     '出力形式: JSON で以下を返してください。',
     '{',
-    '  "score_total": integer,',
+    '  "score_total": integer (4軸の平均・0〜100。合計ではない),',
     '  "score_breakdown": {',
     '    "hook_strength": integer,',
     '    "readability": integer,',

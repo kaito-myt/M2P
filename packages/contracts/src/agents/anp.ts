@@ -103,6 +103,14 @@ export const NoteWriterInputSchema = z.object({
   /** 有料記事のみ参照: 無料公開する分量の目安比率 (アカウントの monetization_policy 由来)。 */
   free_ratio: z.number().min(0.05).max(0.95).default(0.3),
   feedback: z.array(z.string().max(2000)).max(20).optional(),
+  /**
+   * F-ANP-31 相互流入 (最小): 同ジャンルで publish_status='published' の A2P 書籍 (最大2件)。
+   * 本文末尾で「自然に触れてよい (必須ではない)」参考情報として writer に渡す。
+   */
+  related_books: z
+    .array(z.object({ title: z.string().min(1).max(200), asin: z.string().min(1).max(20).optional() }))
+    .max(2)
+    .optional(),
 });
 export type NoteWriterInput = z.infer<typeof NoteWriterInputSchema>;
 
@@ -158,8 +166,12 @@ export const NoteJudgeInputSchema = z.object({
 export type NoteJudgeInput = z.infer<typeof NoteJudgeInputSchema>;
 
 export const NoteJudgeOutputSchema = z.object({
-  /** 4 軸均等重み平均 (0-100、切り捨て整数)。呼出側で再計算し上書きする契約。 */
-  score_total: z.number().int().min(0).max(100),
+  /**
+   * 4 軸均等重み平均 (0-100、切り捨て整数)。**呼出側 (judge.ts) が breakdown から再計算して上書きする**契約。
+   * LLM は各軸 0-100 を単純合計して 400 点を返すことがあり (2026-09-15 本番初回実走で 3/3 失敗)、
+   * ここで max(100) に縛ると再計算前に弾かれてしまう。LLM の値は参考値として緩く受け、上限は付けない。
+   */
+  score_total: z.number().min(0).catch(0),
   score_breakdown: z.object({
     /** フック強度 (冒頭で読者を掴めているか) */
     hook_strength: z.number().int().min(0).max(100),
@@ -176,3 +188,38 @@ export type NoteJudgeOutput = z.infer<typeof NoteJudgeOutputSchema>;
 
 /** judge 合格ライン (docs/11 §7)。A2P Judge の 80 点基準を踏襲。 */
 export const NOTE_JUDGE_PASS_THRESHOLD = 80;
+
+// ---------------------------------------------------------------------------
+// F-ANP-30 — note 記事の SNS 告知投稿 (role='anp.promo')
+// ---------------------------------------------------------------------------
+
+/**
+ * 5 チャンネル共通の販促ペルソナ (`promotion_channel_settings.strategy_json` の
+ * `AccountStrategyProfile` から抽出、A2P の content_creator と同型)。
+ */
+export const AnpPromoPersonaSchema = z.object({
+  concept: z.string().max(2000).optional(),
+  tone_of_voice: z.string().max(1000).optional(),
+});
+export type AnpPromoPersona = z.infer<typeof AnpPromoPersonaSchema>;
+
+export const AnpPromoContentInputSchema = z.object({
+  channel: z.enum(['x', 'instagram', 'tiktok']),
+  persona: AnpPromoPersonaSchema,
+  playbook_guidance: z.string().max(4000).optional(),
+  article: z.object({
+    title: z.string().min(1).max(200),
+    hook: z.string().max(600).optional(),
+    lead: z.string().max(1000).optional(),
+    note_url: z.string().min(1).max(500),
+    account_handle: z.string().max(100).optional(),
+    niche: z.string().max(200),
+  }),
+});
+export type AnpPromoContentInput = z.infer<typeof AnpPromoContentInputSchema>;
+
+export const AnpPromoContentOutputSchema = z.object({
+  /** note_url を含まない完成文 (呼出側で URL/ハッシュタグを付与する)。 */
+  body: z.string().min(1).max(2000),
+});
+export type AnpPromoContentOutput = z.infer<typeof AnpPromoContentOutputSchema>;
