@@ -63,10 +63,34 @@ export const messages = {
     recommendPaid: '有料推奨',
     recommendFree: '無料推奨',
     suggestedPrice: (price: number) => `想定価格 ¥${price.toLocaleString('ja-JP')}`,
+    publishDryRun: '公開(下書き保存まで)',
+    publish: '公開する',
+    publishStatus: {
+      draft: '下書き',
+      published: '公開済み',
+      unlisted: '非公開/取り下げ',
+    },
     errors: {
       generateFailed: 'テーマ生成の起動に失敗しました',
       approveFailed: 'テーマの承認に失敗しました',
       rejectFailed: 'テーマの却下に失敗しました',
+      publishFailed: 'note への公開起動に失敗しました',
+      dryRunEnforced:
+        'ドライラン設定が有効なため実公開はできません(/settings でドライランをOFFにしてください)',
+    },
+    publishDryRunModeNotice: 'ドライラン設定が有効なため「公開する」は無効化されています(/settings で変更できます)',
+  },
+  settings: {
+    pageTitle: 'パイプライン設定',
+    pageDescription: 'note 公開の自動運用を設定します。',
+    autoPublishEnabled: 'note 自動公開を有効化する',
+    autoPublishEnabledDescription:
+      'ONにすると、公開準備完了(ready)の記事をアカウントごとに1件ずつ30分毎に自動で note へ送信します。',
+    dryRun: 'ドライラン(下書き保存のみ)',
+    dryRunDescription: 'ONの間は「公開に進む」以降を実行せず、下書き保存までで止めます(検証用・既定ON)。',
+    saved: '保存しました',
+    errors: {
+      saveFailed: '設定の保存に失敗しました',
     },
   },
 } as const;

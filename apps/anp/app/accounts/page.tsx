@@ -17,9 +17,14 @@ export default async function AccountsPage() {
 
   return (
     <div className="mx-auto flex min-h-screen max-w-4xl flex-col px-space-relaxed py-space-loose">
-      <header>
-        <h1 className="text-sub-heading font-medium text-charcoal">{messages.accounts.pageTitle}</h1>
-        <p className="mt-1 text-body text-muted">{messages.accounts.pageDescription}</p>
+      <header className="flex items-start justify-between gap-2">
+        <div>
+          <h1 className="text-sub-heading font-medium text-charcoal">{messages.accounts.pageTitle}</h1>
+          <p className="mt-1 text-body text-muted">{messages.accounts.pageDescription}</p>
+        </div>
+        <Link href="/settings" className="text-caption text-muted no-underline hover:underline">
+          {messages.settings.pageTitle}
+        </Link>
       </header>
 
       <section className="mt-space-relaxed">

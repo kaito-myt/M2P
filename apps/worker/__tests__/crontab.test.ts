@@ -11,6 +11,7 @@ import {
   CRON_ITEMS,
   FX_FETCH_CRON,
   KDP_PUBLISH_STATUS_SYNC_CRON,
+  NOTE_PUBLISH_STATUS_SYNC_CRON,
   PROMOTION_PLAYBOOK_REFRESH_CRON,
   LOCKS_SWEEP_CRON,
   resolveCatalogFetchCron,
@@ -35,6 +36,7 @@ import { PROMOTION_SNS_ENGAGE_TASK_NAME } from '../src/tasks/promotion-sns-engag
 import { NOTE_ENGAGE_TASK_NAME } from '../src/tasks/note-engage.js';
 import { PROMOTION_GROWTH_LOOP_TASK_NAME } from '../src/tasks/promotion-growth-loop.js';
 import { RECURRING_COST_REFRESH_TASK_NAME } from '../src/tasks/recurring-cost-refresh.js';
+import { NOTE_PUBLISH_STATUS_SYNC_TASK_NAME } from '../src/tasks/note-publish-status-sync.js';
 import { LOCKS_SWEEP_TASK_NAME } from '../src/tasks/locks-sweep.js';
 import { SALES_FETCH_DISPATCHER_TASK_NAME } from '../src/tasks/sales-fetch-dispatcher.js';
 import { PROMOTION_DISPATCH_TASK_NAME } from '../src/tasks/promotion-dispatch.js';
@@ -88,8 +90,8 @@ describe('crontab.ts', () => {
     expect(KDP_PUBLISH_STATUS_SYNC_CRON).toBe('0 */6 * * *');
   });
 
-  it('CRON_ITEMS は archive.db.backup / fx.fetch / ads.spend.fetch / bw.retag.tick / catalog.fetch / batch_plan.dispatcher / alert.cost.check / archive.jobs / kdp.publish.status.sync / promotion.playbook.refresh / promotion.metrics.fetch / org.promo.tick / kdp.publish.digest / promotion.growth.todo / promotion.x.engage / promotion.sns.engage / note.engage / promotion.growth.loop / recurring.cost.refresh / model.health.probe の 20 件', () => {
-    expect(CRON_ITEMS).toHaveLength(20);
+  it('CRON_ITEMS は archive.db.backup / fx.fetch / ads.spend.fetch / bw.retag.tick / catalog.fetch / batch_plan.dispatcher / alert.cost.check / archive.jobs / kdp.publish.status.sync / promotion.playbook.refresh / promotion.metrics.fetch / org.promo.tick / kdp.publish.digest / promotion.growth.todo / promotion.x.engage / promotion.sns.engage / note.engage / promotion.growth.loop / recurring.cost.refresh / model.health.probe / note.publish.status.sync の 21 件', () => {
+    expect(CRON_ITEMS).toHaveLength(21);
 
     // locks-sweep-hourly は存在しない — sweep は alert.cost.check monthly に相乗り (T-07-11)
     const sweep = CRON_ITEMS.find((c) => c.task === LOCKS_SWEEP_TASK_NAME);
@@ -136,6 +138,11 @@ describe('crontab.ts', () => {
     expect(kdpPublishStatusSync).toBeDefined();
     expect(kdpPublishStatusSync!.match).toBe(KDP_PUBLISH_STATUS_SYNC_CRON);
     expect(kdpPublishStatusSync!.identifier).toBe('kdp-publish-status-sync-6h');
+
+    const notePublishStatusSync = CRON_ITEMS.find((c) => c.task === NOTE_PUBLISH_STATUS_SYNC_TASK_NAME);
+    expect(notePublishStatusSync).toBeDefined();
+    expect(notePublishStatusSync!.match).toBe(NOTE_PUBLISH_STATUS_SYNC_CRON);
+    expect(notePublishStatusSync!.identifier).toBe('note-publish-status-sync-6h');
 
     const playbookRefresh = CRON_ITEMS.find((c) => c.task === PROMOTION_PLAYBOOK_REFRESH_TASK_NAME);
     expect(playbookRefresh).toBeDefined();
@@ -185,7 +192,7 @@ describe('crontab.ts', () => {
 
   it('buildParsedCronItems は graphile-worker の parseCronItems に通る', () => {
     const parsed = buildParsedCronItems();
-    expect(parsed).toHaveLength(20);
+    expect(parsed).toHaveLength(21);
     const tasks = parsed.map((p) => p.task).sort();
     expect(tasks).toEqual(
       [
@@ -207,6 +214,7 @@ describe('crontab.ts', () => {
         NOTE_ENGAGE_TASK_NAME,
         PROMOTION_GROWTH_LOOP_TASK_NAME,
         RECURRING_COST_REFRESH_TASK_NAME,
+        NOTE_PUBLISH_STATUS_SYNC_TASK_NAME,
         'model.health.probe',
         'bw.retag.tick',
       ].sort(),
@@ -240,14 +248,14 @@ describe('crontab.ts', () => {
 
   it('buildCronItemsWithSettings({ sales_auto_fetch_enabled: false }) は sales.fetch.dispatch を含まない', () => {
     const items = buildCronItemsWithSettings({ sales_auto_fetch_enabled: false });
-    expect(items).toHaveLength(20); // 静的 CRON_ITEMS と同数
+    expect(items).toHaveLength(21); // 静的 CRON_ITEMS と同数
     const dispatch = items.find((c) => c.task === SALES_FETCH_DISPATCHER_TASK_NAME);
     expect(dispatch).toBeUndefined();
   });
 
   it('buildCronItemsWithSettings({ sales_auto_fetch_enabled: true }) は sales.fetch.dispatch を含む', () => {
     const items = buildCronItemsWithSettings({ sales_auto_fetch_enabled: true });
-    expect(items).toHaveLength(21); // 静的 20 件 + dispatch 1 件
+    expect(items).toHaveLength(22); // 静的 21 件 + dispatch 1 件
     const dispatch = items.find((c) => c.task === SALES_FETCH_DISPATCHER_TASK_NAME);
     expect(dispatch).toBeDefined();
     expect(dispatch!.identifier).toBe('sales-fetch-dispatch-daily');
@@ -279,10 +287,10 @@ describe('crontab.ts', () => {
     expect(CRON_ITEMS).toHaveLength(beforeLength);
   });
 
-  it('buildParsedCronItems(buildCronItemsWithSettings(enabled=true)) は 20 件の ParsedCronItem を返す', () => {
+  it('buildParsedCronItems(buildCronItemsWithSettings(enabled=true)) は 22 件の ParsedCronItem を返す', () => {
     const items = buildCronItemsWithSettings({ sales_auto_fetch_enabled: true });
     const parsed = buildParsedCronItems(items);
-    expect(parsed).toHaveLength(21);
+    expect(parsed).toHaveLength(22);
     const tasks = parsed.map((p) => p.task).sort();
     expect(tasks).toContain(SALES_FETCH_DISPATCHER_TASK_NAME);
   });
@@ -324,12 +332,12 @@ describe('crontab.ts', () => {
     expect(promo!.match).toBe('0 */2 * * *');
   });
 
-  it('sales と promo の両方 ON なら静的 19 + 2 件', () => {
+  it('sales と promo の両方 ON なら静的 21 + 2 件', () => {
     const items = buildCronItemsWithSettings({
       sales_auto_fetch_enabled: true,
       promo_auto_post_enabled: true,
     });
-    expect(items).toHaveLength(22);
+    expect(items).toHaveLength(23);
     expect(items.find((c) => c.task === SALES_FETCH_DISPATCHER_TASK_NAME)).toBeDefined();
     expect(items.find((c) => c.task === PROMOTION_DISPATCH_TASK_NAME)).toBeDefined();
   });

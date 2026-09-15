@@ -48,19 +48,63 @@ A2P と同一で流用できる箇所は「A2P 準拠」と明記し、重複記
 
 - **新規記事**: `https://note.com/notes/new` へ遷移すると **`https://editor.note.com/notes/<noteId>/edit/`** へリダイレクトされ、
   その時点で下書き ID が採番される（URL の `n…` が note の記事 ID）。エディタは別オリジン `editor.note.com`。
+  **⚠️ 既存下書きを開き直す resume は行わない**（2026-09-16 code review #4 で実機検証し、本文が
+  末尾ではなく既存ブロックの途中に重複挿入される事故を確認、詳細は §7 参照）— `pipeline.note.publish`
+  は毎回この URL から新規下書きを作る。
 - **タイトル**: `textarea[placeholder="記事タイトル"]`（クラス名は styled-components のハッシュで不安定・使わない）。
 - **本文**: `div.ProseMirror[contenteditable="true"]`（ProseMirror）。Markdown は貼り付けでは解釈されないため、
-  見出し/箇条書き等はツールバー（aria-label: 大見出し・小見出し・箇条書きリスト・番号付きリスト・引用・コード・区切り線）
-  で組むか、`page.keyboard.type` と Enter で段落を作る。**画像は「画像」ボタン（aria-label）経由**で、
-  `input[type=file]` は初期 DOM に存在しない（クリック後に filechooser イベントで受ける = BW/KDP と同型）。
+  見出し/箇条書き/画像/有料エリア指定はツールバー左の「+」ボタン(`button[aria-label="メニューを開く"]`)を
+  開いてから配下の項目（textContent で特定: 大見出し・小見出し・箇条書きリスト・画像・有料エリア指定など、
+  aria-label は無い）をクリックする、または `page.keyboard.type` と Enter で段落を作る（詳細は下記および
+  §7）。`input[type=file]` は初期 DOM に存在せず、「画像」クリック後の filechooser イベントで受ける
+  （= BW/KDP と同型）。
 - **フッター操作**: 「下書き保存」「公開に進む」はボタンの**テキスト**で特定する。
   **タイトル・本文が空だと「公開に進む」は無効**（ツールチップ「タイトル、本文を入力してください」）。
 - **セッション**: `promotion_channel_settings.config_json.note_session_enc`（`API_CRED_KEY` で AES-256-GCM）に
   保存済みの storageState で `note.com` / `editor.note.com` 双方にログイン状態で入れることを確認。
   ANP マルチアカウントでは **`note_accounts.session_state_enc` にアカウント別に保存**し、この共通セッションは
   Phase 2 の初期アカウント（1 件目）へ移行する。
-- **未採取（実装時に dry-run で採取し追記）**: 「公開に進む」後の公開設定画面（ハッシュタグ・見出し画像・
-  有料設定/価格/ライン位置・予約公開・公開ボタン）。
+- **公開設定画面（2026-09-15 Phase2 実装時に `scripts/anp/note-editor-recon2〜5.mjs` で採取）**:
+  タイトル/本文を入力してから「公開に進む」を押すと `https://editor.note.com/notes/<noteId>/publish/`
+  へ遷移する。ヘッダーのボタンは **「キャンセル」/「投稿する」**（下書き編集画面の「下書き保存」/
+  「公開に進む」とは文言が異なるので注意）。左サイドバーは「ハッシュタグ／記事タイプ／記事の追加／
+  クーポン／詳細設定」のタブ構成。
+  - ハッシュタグ: `input[placeholder="ハッシュタグを追加する"]`（`role=combobox`）。本文中の単語から
+    自動サジェストが並ぶ（クリックで追加）。
+  - 記事タイプ（有料/無料）: `input#free[name=is_paid]` / `input#paid[name=is_paid]` の radio。
+    ラジオ自体は視覚的に隠されており、祖先の `<label>`（`cursor:pointer`）をクリックする必要がある
+    （BW の非表示チェックボックスと同型の罠）。**⚠️ さらに evaluate 内の synthetic `el.click()`
+    では note の React ハンドラが発火せず切り替わらない(2026-09-16 code review #5 で判明) —
+    `<label>` の `getBoundingClientRect()` を取得し `page.mouse.click(x, y)` する trusted click
+    が必要（`scripts/anp/note-editor-recon5.mjs` で実証）。**
+  - **⚠️ 重大な発見: 有料記事を初めて選択すると note が「本人情報の登録」モーダル（個人/法人・氏名・
+    住所等の KYC）を要求する。** このモーダルは同一 UI 内で完結せず追加情報の入力が必要で、
+    運営者が note 管理画面で一度手動登録するまで有料記事の公開設定（価格/ライン）画面へ進めない。
+    そのため **価格入力欄・有料ライン位置指定 UI のセレクタは Phase 2 時点で未採取**
+    （KYC 完了後に追加の dry-run 偵察で採取し本節を更新すること）。**2026-09-16 code review #2 の
+    結論として、価格 UI 実装までは有料記事の実公開自体を `pipeline.note.publish` 側で禁止した
+    （§7 `shouldBlockPaidPublish`）。上記の KYC モーダル検知ロジック(`selectPaidAndCheckKyc`)は
+    現状のフローには到達しないが、価格 UI 実装時に備えてコードは残置している。**
+  - 有料ラインは公開設定画面側の機能ではなく、**本文ツールバー(「+」挿入メニュー)の
+    「有料エリア指定」ボタン**（textContent、aria-label 無し）でカーソル位置に区切りを挿入する方式
+    と判明（`packages/agents/src/anp/writer.ts` が生成する `<<<PAYWALL>>>` マーカー位置と対応させ、
+    本文流し込み時にこのボタンをクリックする実装にした — `apps/worker/src/tasks/note-publish/`）。
+  - 本文ツールバー左の**「+」挿入メニューを開くボタン**: `button[aria-label="メニューを開く"]`
+    （2026-09-16 `scripts/anp/note-editor-recon6.mjs` で採取。カーソルが置かれた行の左に表示される）。
+    見出し/箇条書き/画像/有料エリア指定ボタンはこのメニュー配下にあり、**確実にクリックさせるため
+    実装では必ず先にこのボタンを押してからメニュー項目をクリックする**(未展開でも textContent
+    クリックが効くケースを確認したが、タイミング依存の疑いがあり再現性が不確実なため)。
+  - 本文ツールバーの「+」挿入メニュー項目（すべて `textContent` で特定、aria-label 無し）:
+    `AIアシスタント, 画像, 音声, 埋め込み, ファイル, コミック, 目次, 大見出し, 小見出し,
+    箇条書きリスト, 番号付きリスト, 引用, コード, 区切り線, 有料エリア指定`。
+  - テキスト選択時のバブルツールバー（aria-label あり）: `見出し, 太字, 取り消し線, リスト,
+    文章の配置, リンク, 引用, コード`。
+  - 「詳細設定」に `クリエイターページに表示 / 記事の自動翻訳 / AI学習対価還元プログラムに参加する /
+    コメントの受けつけ(プレミアム) / 予約投稿(プレミアム)` のトグルがあるが Phase 2 では未使用
+    （既定値のまま投稿する）。
+  - 投稿後の公開 URL パターンは `https://note.com/<handle>/n/<noteId>` と想定しているが、
+    KYC 未完了のため実際の投稿到達は Phase 2 時点で未検証（無料記事のみ検証可能。運営者の
+    本アカウントで無料記事を 1 本テスト公開して確定させることを推奨）。
 
 ---
 
@@ -144,9 +188,13 @@ graphile-worker を流用。ANP のタスクは `pipeline.note.*`（marketer/out
 
 A2P の `books` 系を note 記事系に写像。**マルチアカウントを主キー動線に組み込む**。
 
-- **`note_accounts`**: `id, niche, display_name, handle, target_reader, tone, monetization_policy_json({free_ratio, price_band, membership:bool}), genre_policy_json, session_state_enc, status, created_at`
+- **`note_accounts`**: `id, niche, display_name, handle, target_reader, tone, monetization_policy_json({free_ratio, price_band, membership:bool}), genre_policy_json, session_state_enc, status(active|paused|archived), created_at`。
+  **`session_state_enc` は `KDP_CRED_KEY` で暗号化**（`bw_session_state_enc`/`kdp_session_state_enc` と同じ鍵。
+  `API_CRED_KEY` ではない — Phase 1 の暫定共有セッション `promotion_channel_settings.config_json.note_session_enc`
+  は `API_CRED_KEY` だったため、`scripts/anp/note-session-migrate.mjs` で再暗号化して移行する）。
 - **`note_themes`**（= theme_candidates 相当）: `id, note_account_id, title, hook, target_reader, recommend_paid:bool, suggested_price, competitors_json, genre, status(pending|accepted|rejected), rejected_reason, created_at`
-- **`note_articles`**（= books 相当）: `id, note_account_id, theme_id?, title, lead, body_md, paid:bool, price_jpy?, paywall_line_pos?, membership_magazine?, eyecatch_r2_key?, status(queued|writing|editing|eyecatch|judging|ready|published|failed|cancelled|needs_human_review), publish_status(draft|published), note_url?, cost_jpy_total, has_pending_comments, quality_score?, published_at, created_at, updated_at`
+- **`note_articles`**（= books 相当）: `id, note_account_id, theme_id?, title, lead, body_md, paid:bool, price_jpy?, paywall_line_pos?, membership_magazine?, eyecatch_r2_key?, status(queued|writing|editing|eyecatch|judging|ready|published|failed|cancelled|needs_human_review), publish_status(draft|published|unlisted), note_url?, cost_jpy_total, has_pending_comments, quality_score?, published_at, created_at, updated_at`。
+  `publish_status='unlisted'` は Phase 2 `note.publish.status.sync` が追加した状態（公開後に非公開化/404 を検知）。
 - **`note_jobs`** / **`note_locks`**: A2P の jobs/book_locks 相当（or 既存 `jobs` を `tool` 列で共用）
 - **`note_sales`**（= sales_records 相当）: `id, note_article_id, year_month, revenue_jpy, views, likes, buyers, source, fetched_at`
 - **`note_membership_stats`**: `id, note_account_id, year_month, subscribers, mrr_jpy, fetched_at`
@@ -164,11 +212,11 @@ A2P の `books` 系を note 記事系に写像。**マルチアカウントを�
 note.theme.generate (アカウント別・手動起動。UI の「テーマ生成」ボタン)
   → [運営者がテーマ承認 (UI) — NoteArticle 作成]
   → pipeline.note.writer.outline → writer.body → editor → eyecatch → judge (自動連結)
-  → judge 合格 (score_total >= 80) → NoteArticle.status='ready' (公開ゲート待ち。Phase 1 はここで停止)
-  → [Phase 2] 価格/公開ゲート: 人間承認 or AI自動
-  → [Phase 2] pipeline.note.publish (Playwright アシスト) → note.publish.status.sync
+  → judge 合格 (score_total >= 80) → NoteArticle.status='ready' (公開ゲート待ち)
+  → [Phase 2 未実装] 価格/公開ゲート: 人間承認 or AI自動 (現状は UI の「公開(dry-run)/公開」ボタン手動起動、または dispatcher 自動)
+  → [Phase 2 実装済み] pipeline.note.publish (Playwright アシスト。UI ボタン or note.publish.dispatch) → note.publish.status.sync (6h毎)
   → [Phase 3] 販促: promotion.note.* (SNS 告知・アカウント別導線)
-  → [Phase 2] note.sales.fetch (定期)
+  → [Phase 3] note.sales.fetch (定期)
 ```
 
 ### Phase 1 実装済みタスク (`apps/worker/src/tasks/`)
@@ -190,9 +238,35 @@ note.theme.generate (アカウント別・手動起動。UI の「テーマ生�
 - `note.theme.generate` は Phase 1 では **cron 化せず** UI の手動起動のみ（`/accounts/[id]` の「テーマ生成」ボタン → `note.theme.generate` を enqueue）。
 - ⚠️ **`pipeline.note.*` は `org.ops.watch`（孤児ジョブ検知・自己修復, docs/06）の対象外** — `ops.watch` は `Job.book_id` を起点に停止書籍を検知するが、ANP の `Job.book_id` は常に `null`（`Book` FK 制約のため）。孤児化した note パイプラインは `locks.sweep`（`NoteLock` の TTL 掃除、§7 実装表参照）と `sweepStaleJobs`（`running/queued` かつ 120 分超過の内部 `Job` を `failed` に降格、`apps/worker/src/tasks/locks-sweep.ts`）のみが救済する。Phase 2 で `note_account_id`/`note_article_id` を軸にした専用の自己修復ジョブが必要になった場合はここに追記する。
 
-### Phase 2+ (未実装)
+### Phase 2 実装済みタスク — note 公開オートメーション (`apps/worker/src/tasks/`)
 
-`pipeline.note.publish`（Playwright アシスト）/ `note.publish.status.sync` / `promotion.note.*` / `note.sales.fetch` は §8 ロードマップの Phase 2/3 で実装する。
+| タスク名 | ペイロード | 処理概要 | 完了後の遷移/状態 |
+|---|---|---|---|
+| `pipeline.note.publish` | `{ note_article_id, job_id, dry_run? }` | `NoteArticle(status='ready')` を Playwright ヘッドレスで note へ送信（`apps/worker/src/tasks/note-publish/playwright-note-publish-port.ts`）。①**毎回 `note.com/notes/new` で新規下書きを作成**して noteId を採番(resume はしない。理由は下記「本文重複バグ」参照)、失敗しても即 `NoteArticle.note_url` に保存。②タイトル/本文(`buildNoteBlocks` で見出し/箇条書き/段落+有料ラインに分解)/見出し画像を流し込み(見出し/箇条書き/画像/有料エリア指定は必ず「+」挿入メニューを開いてから項目クリック — 下記参照)。③「下書き保存」必須(dry_run はここで終了、`publish_status='draft'`)。④`dry_run=false`: **有料記事(`paid=true`)はこの時点で必ず `blocked` にして中断**(価格/有料ライン設定 UI 未実装、`shouldBlockPaidPublish`。有料エリア指定マーカーの挿入自体に失敗した場合も同様に中断し有料本文の誤・無料公開を防ぐ)。無料記事のみ「公開に進む」→ 公開設定画面 →「投稿する」→ 完了確認は `note.com/<handle>/n/<noteId>` への遷移。各段で R2 `debug/note-publish/<article>-<step>-<ts>.png` にスクショ保存 | 成功(公開): `status='published'`, `publish_status='published'`, `published_at`, `note_url`確定 + LINE通知(アカウント`display_name`込み)。成功(dry-run): `publish_status='draft'`のみ。`not_logged_in`: `NoteAccount.status='paused'`+LINE通知、記事は`ready`のまま保持。`blocked`/`error`: 記事は`ready`のまま、`note_url`は保持し次回再試行可能(ただし次回も新規下書きになるため note 上に下書きが積み残る — 運営者が適宜整理) |
+| `note.publish.dispatch` | (cron, payload無し) | `AppSettings.anp_auto_publish_enabled=true` のとき、`note_articles.status='ready' AND publish_status='draft' AND paid=false` をアカウントごとに1件(`note_accounts.status='active'`のみ)選び `pipeline.note.publish` を enqueue(`dry_run=AppSettings.anp_publish_dry_run`)。1 tick 最大3件。`job_key='note-publish-<article_id>'`で重複防止。**`paid=false` に限定**(有料記事は価格 UI 未実装のため自動運用対象外 — 手動 dry-run のみ) | 対象記事があるアカウント分だけ enqueue。次回tickまで待機 |
+| `note.publish.status.sync` | (cron, payload無し) | READ-ONLY。`publish_status='published'`の記事の`note_url`を開き、404/非公開文言を検知したら`unlisted`に降格。セッション失効検知時はそのアカウントを`paused`+LINE通知して走査打ち切り(dispatcher と同じ扱い) | `publish_status='unlisted'`への降格 or 変更なし |
+
+**排他/冪等性**: `pipeline.note.publish` は Phase 1 の `pipeline.note.*` と同じ内部 `Job` CAS + `NoteLock`(`pipeline:<job_id>`, TTL 30分) パターン。`maxAttempts=2`(dispatcher/UI 双方の enqueue で指定)。
+
+**dry-run の二重強制 (2026-09-16 code review #1)**: 実公開事故を防ぐため、dry-run 判定は worker/UI の両方で安全側に倒す。
+- `pipeline.note.publish`: payload の `dry_run` 省略時は `true` 扱い。かつ `effectiveDryRun = (dry_run ?? true) || AppSettings.anp_publish_dry_run` — グローバル設定が ON の間は呼出側が `dry_run:false` を渡しても強制的にドライランにする。
+- `apps/anp` の `publishArticle` Server Action: `dry_run:false` 要求は `AppSettings.anp_publish_dry_run=true` の間サーバー側で拒否する。UI の `PublishArticleButton` も同設定を見て「公開する」ボタン自体を無効化する。
+
+**「+」挿入メニュー (2026-09-16 code review #3, `scripts/anp/note-editor-recon6〜9.mjs` で追加採取)**: 見出し/箇条書き/画像/有料エリア指定ボタンは本文ツールバー左の「+」ボタン(`button[aria-label="メニューを開く"]`)配下にある。実機では「+」を開かずに直接 textContent クリックしても動作するケースを確認したが(タイミング依存の可能性があり再現性が不確実)、確実性のため実装では必ず先に `openPlusMenu()` で開いてから項目をクリックする。項目が見つからない場合は `log.warn` し、見出し/箇条書きはプレーンテキストとして続行、有料エリア指定は失敗時に処理を中断する(上記参照)。実際に dry-run で見出し(H2/H3相当)・箇条書き(UL)が正しく反映されることをスクリーンショットで確認済み。
+
+**本文重複バグと resume 廃止 (2026-09-16 code review #4)**: 当初は `NoteArticle.note_url` (前回試行の下書き URL) があれば `editor.note.com/.../edit/` を再度開いて resume する設計だったが、実機検証で `Control+A`→`Delete` による全消去が確実に効かず(カーソル位置がドキュメント全体でなく特定のブロック内に留まり、新規本文が既存リストの途中に挿入される事故を確認)、**resume を廃止し毎回新規下書きを作成する方式に変更**した。note には KDP のような日次作成数上限が無いため、失敗時に下書きが積み残る方を安全側として選んでいる。`NoteArticleInput.existingNoteUrl` は公開処理では使わずログ用にのみ保持する。
+
+**`#paid` ラジオの trusted click (2026-09-16 code review #5)**: 記事タイプの `#free`/`#paid` (name=`is_paid`) は視覚的に隠された `<input>` で、`el.click()` による synthetic click では note の React ハンドラが切り替わらない(BW の非表示チェックボックスと同型の罠)。祖先 `<label>` の `getBoundingClientRect()` を evaluate で取得し、Node 側から `page.mouse.click(x, y)` する trusted click で切り替える(`selectPaidAndCheckKyc`、`scripts/anp/note-editor-recon5.mjs` で実証 — 実際に切り替わると note が「本人情報の登録」KYC モーダルを要求することを確認済み)。**上記の有料記事ブロックにより現状の実公開フローはこの関数に到達しない**(価格 UI 実装時に有効化する下準備として実装のみ残置)。
+
+**セッション運用 (§6 の移行方針の実装)**:
+- 移行: `scripts/anp/note-session-migrate.sh <note_account_id>`（`config_json.note_session_enc`(`API_CRED_KEY`)→復号→`KDP_CRED_KEY`で再暗号化→`note_accounts.session_state_enc`）。2026-09-15 に初回アカウント(`note-acc-1`)へ実施し疎通確認済み。
+- 新規取り込み: `scripts/anp/note-session-capture.sh <note_account_id>`（ローカル専用・headful Chrome で手動ログイン→`note_accounts.session_state_enc`へ暗号化保存）。note のログインは reCAPTCHA によりデータセンターIP(Railway worker)からは不可だが、**保存済みセッションの再利用(Playwright storageState)は通る**（note-engage で実証済み、Phase 2 でも `pipeline.note.publish`/`note.publish.status.sync` の dry-run 下書き保存で再確認済み）。
+
+**設定 (`AppSettings`, migration `20260915000000_anp_publish_dispatch`)**: `anp_auto_publish_enabled`(既定false) / `anp_publish_dry_run`(既定true)。`apps/anp` の `/settings` 画面(`app/actions/settings.ts`)から切替可能。
+
+### Phase 3+ (未実装)
+
+`promotion.note.*`（SNS 告知・アカウント別導線）/ `note.sales.fetch`（売上スクレイプ）は §8 ロードマップの Phase 3 で実装する。
 
 ---
 
@@ -200,7 +274,7 @@ note.theme.generate (アカウント別・手動起動。UI の「テーマ生�
 
 - **Phase 0（設計・雛形）**: 本ドキュメント／`apps/anp` スキャフォールド（SSO で起動する骨格＋ホーム骨格）／portal タイル（済）。
 - **Phase 1（MVP・実装済み）**: 単一〜複数アカウントで theme→outline→writer.body→editor→eyecatch→judge→**status='ready' (下書き相当)** まで自動連結。`apps/anp` に `/accounts`・`/accounts/[id]` UI（アカウント作成・テーマ生成/承認/却下・記事一覧）を実装。note 公開はアシスト手動（Phase 2）。売上手入力。
-- **Phase 2**: マルチアカウント台帳／価格自動決定／note 公開オートメーション（Playwright アシスト）＋認証リレー／売上スクレイプ。
+- **Phase 2（一部実装済み・2026-09-15）**: note 公開オートメーション（`pipeline.note.publish`/`note.publish.dispatch`/`note.publish.status.sync`、§7）＋マルチアカウント別セッション（`note_accounts.session_state_enc`、移行/取込スクリプト）を実装。**未実装・要フォロー**: 有料記事の価格/有料ライン設定 UI 自動化（note の KYC 要件により本人確認完了後に追加実装が必要、§2.1 参照）、認証リレー(`note_auth_requests`＋LINE)、売上スクレイプ(`note.sales.fetch`)、価格自動決定(F-ANP-16)。
 - **Phase 3**: SNS 自動販促（A2P promotion 流用・アカウント別導線）／メンバーシップ運用／org 自律連携。
 - **Phase 4**: A2P⇄note 相互送客、note→書籍化などクロスツール収益最適化。
 
@@ -225,8 +299,11 @@ Vercel AI SDK + Anthropic SDK / gpt-image / Cloudflare R2 / NextAuth(共有) / T
 
 1. `apps/anp` スキャフォールド（portal と同じ SSO 配線・`buildAuthConfig`・Edge 用 `@a2p/auth/config`）。— **完了**
 2. Prisma に §6 モデル追加＋マイグレーション＋seed（prompts の `anp.*` role）。— **完了**（モデルは本番 DB にテーブル済み。seed は `packages/db/seed-anp.ts`＝`pnpm --filter @a2p/db run seed:anp` で `prompts`/`model_assignments` の `anp.*` 5 role を投入。Phase 1 パイプライン本体（§7 記載の 6 タスク）も実装済み）。
-3. note の実挙動（ログイン/エディタ/価格設定/公開のセレクタ・再認証ルール）を実装時に本ドキュメント §2/§7 へ追記（CLAUDE.md ルール #8）。— Phase 1 は note 公開自体を実装しないため未着手（Phase 2 の申し送りとして継続）。
-4. 本番: Railway に ANP サービス追加＋`anp.m2p.tools`＋`NEXT_PUBLIC_TOOL_ANP_URL` を portal に設定（`docs/10` の SSO 手順を流用）。
+3. note の実挙動（ログイン/エディタ/価格設定/公開のセレクタ・再認証ルール）を実装時に本ドキュメント §2/§7 へ追記（CLAUDE.md ルール #8）。— **Phase 2 で公開エディタ/公開設定画面/ハッシュタグ/有料選択のセレクタまで採取・実装済み**（§2.1）。価格入力欄/有料ラインの具体的な UI（KYC 完了後にのみ到達可能）は次項で継続。
+4. 本番: Railway に ANP サービス追加＋`anp.m2p.tools`＋`NEXT_PUBLIC_TOOL_ANP_URL` を portal に設定（`docs/10` の SSO 手順を流用）。— **完了**（`anp.m2p.tools` 稼働中、Railway サービス名 `ANP`）。
 5. **[Phase 1 実装で新規発見]** `eval_results` は `book_id` NOT NULL FK のため ANP では使えない（§6 参照）。Phase 2 で判定内訳の永続化が要件化する場合、専用 `note_eval_results` テーブルの新設を検討すること。
-6. **[Phase 1 未実装・要フォロー]** `pipeline.note.judge` の再試行後 (`retry_count>=1` で不合格) の `status='needs_human_review'` は UI 側での「要確認」一覧・再実行導線が未実装（`/accounts/[id]` の記事一覧にステータス表示のみ）。Phase 2 で対応。
+6. **[Phase 1 未実装・要フォロー]** `pipeline.note.judge` の再試行後 (`retry_count>=1` で不合格) の `status='needs_human_review'` は UI 側での「要確認」一覧・再実行導線が未実装（`/accounts/[id]` の記事一覧にステータス表示のみ）。Phase 2 でも未対応のまま継続（`publishArticle` は `needs_human_review` からも起動可にしたので手動公開は可能）。
 7. **[Phase 1 実装メモ・解消済]** `apps/anp/package.json` に `@a2p/contracts`・`graphile-worker` を追加。ワークスペースリンクは `pnpm exec` 実行時に自動反映され、`pnpm --filter @anp/web exec tsc --noEmit` で clean を確認済み（`pnpm-lock.yaml` にも反映済み）。
+8. **[Phase 2 新規発見・最重要]** note は**有料記事を初めて設定する際に「本人情報の登録」(KYC: 個人/法人・氏名・住所等)モーダルを要求**する。未登録アカウントでは `pipeline.note.publish` が `blocked: kyc_required` を返し、有料記事は公開設定画面から先に進めない（§2.1）。**運営中の各 note アカウントで一度は運営者が手動で本人情報登録を完了させる必要がある**（自動化不可・法令/決済上の要件のため意図的に人手を挟む設計が妥当）。完了後、価格/有料ライン入力欄のセレクタを追加の dry-run 偵察で採取し、`apps/worker/src/tasks/note-publish/playwright-note-publish-port.ts` の `selectPaidAndCheckKyc` 以降(価格設定 TODO コメント箇所)を実装すること。
+9. **[Phase 2 実装メモ]** 初回アカウント `note-acc-1`(display_name「AI副業ラボ」)を本番 DB に作成し、Phase 1 の暫定共有セッションを `note-session-migrate.sh` で移行済み。実装検証のため dry-run(下書き保存)を計4回実行し(code review 対応での再検証含む)、note 上に検証用下書き記事(`n6845533ebcf7`, `n9c510facf4dc`, `n1d09eea651e3`, `ne071421d3e1d`)が残っている — **運営者が note 管理画面から手動削除すること**（実際の公開は一度も行っていない）。resume 廃止(§7 #4)により今後の再試行でも下書きが積み残るため、定期的な整理を検討すること。
+10. **[Phase 2 未確定・要検証]** `resolvePublicUrl` の公開後 URL パターン `note.com/<handle>/n/<noteId>` は §2.1 の想定に基づく実装であり、KYC 未完了のため実際の「投稿する」クリックによる遷移は未検証。運営者が無料記事を 1 本実際に公開して URL パターンと `checkPublished` の 404/非公開判定を確認し、齟齬があれば本節と実装を更新すること。

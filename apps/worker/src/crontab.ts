@@ -33,6 +33,8 @@ import { PROMOTION_SNS_ENGAGE_TASK_NAME } from './tasks/promotion-sns-engage.js'
 import { NOTE_ENGAGE_TASK_NAME } from './tasks/note-engage.js';
 import { PROMOTION_GROWTH_LOOP_TASK_NAME } from './tasks/promotion-growth-loop.js';
 import { RECURRING_COST_REFRESH_TASK_NAME } from './tasks/recurring-cost-refresh.js';
+import { NOTE_PUBLISH_DISPATCHER_TASK_NAME } from './tasks/note-publish-dispatcher.js';
+import { NOTE_PUBLISH_STATUS_SYNC_TASK_NAME } from './tasks/note-publish-status-sync.js';
 
 /**
  * graphile-worker cron 定義 (docs/05 §5.4 / SP-01 仕様: `apps/worker/src/crontab.ts`)
@@ -270,6 +272,25 @@ export const BW_SUBMIT_DISPATCHER_CRON_ITEM: CronItem = {
 export const BW_RETAG_CRON = '0 20 * * *';
 
 /**
+ * docs/11-anp-design.md §7 Phase2: note サーバー自動公開ディスパッチャの既定 cron (30分毎)。
+ * AppSettings.anp_auto_publish_enabled=true のときだけ条件付き追加する(既定OFF)。
+ */
+export const NOTE_PUBLISH_DISPATCHER_CRON_DEFAULT = '*/30 * * * *';
+
+/** `note.publish.dispatch` の CronItem 定義。 */
+export const NOTE_PUBLISH_DISPATCHER_CRON_ITEM: CronItem = {
+  task: NOTE_PUBLISH_DISPATCHER_TASK_NAME,
+  match: NOTE_PUBLISH_DISPATCHER_CRON_DEFAULT,
+  identifier: 'note-publish-dispatch',
+};
+
+/**
+ * docs/11-anp-design.md §7 Phase2 F-ANP-22: note 公開ステータス同期。READ-ONLY で常時ON
+ * (kdp.publish.status.sync と同型)。6 時間毎。
+ */
+export const NOTE_PUBLISH_STATUS_SYNC_CRON = '30 */6 * * *';
+
+/**
  * F-052: 販促投稿の自動ディスパッチ cron (既定 30分毎)。
  * AppSettings.promo_auto_post_enabled=true のときだけ条件付き追加する。
  */
@@ -431,6 +452,8 @@ export interface CronRuntimeSettings {
   bw_auto_submit_enabled?: boolean;
   /** F-094: bw.submit.dispatch cron (省略時は既定 30分毎)。 */
   bw_auto_submit_cron?: string | null;
+  /** docs/11 §7 Phase2: note サーバー自動公開ディスパッチャ (note.publish.dispatch) を cron 有効化するか（既定OFF）。 */
+  anp_auto_publish_enabled?: boolean;
 }
 
 /** 後方互換エイリアス (旧名)。 */
@@ -552,6 +575,10 @@ export function buildCronItemsWithSettings(settings: CronRuntimeSettings): CronI
     items.push({ ...BW_SUBMIT_DISPATCHER_CRON_ITEM, match: cronMatch });
   }
 
+  if (settings.anp_auto_publish_enabled) {
+    items.push({ ...NOTE_PUBLISH_DISPATCHER_CRON_ITEM });
+  }
+
   return items;
 }
 
@@ -617,6 +644,12 @@ export const CRON_ITEMS: CronItem[] = [
     task: KDP_PUBLISH_STATUS_SYNC_TASK_NAME,
     match: KDP_PUBLISH_STATUS_SYNC_CRON,
     identifier: 'kdp-publish-status-sync-6h',
+  },
+  // docs/11 §7 Phase2 F-ANP-22: note 公開ステータス同期(published→unlisted 検知)。6 時間毎・常時ON。
+  {
+    task: NOTE_PUBLISH_STATUS_SYNC_TASK_NAME,
+    match: NOTE_PUBLISH_STATUS_SYNC_CRON,
+    identifier: 'note-publish-status-sync-6h',
   },
   // F-064: 販促プレイブック(web検索リサーチ)の週次更新 — 生成器が参照する研究を鮮度維持
   {

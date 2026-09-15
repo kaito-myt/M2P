@@ -1269,6 +1269,11 @@ model AppSettings {
   kdp_proxy_enabled               Boolean   @default(false) // 自宅プロキシ経由を有効化(マスタスイッチ)
   kdp_proxy_url                   String? // 例: "1.tcp.ngrok.io:12345" (host:port、スキーム/認証は含めない)
   kdp_proxy_updated_at            DateTime? // 自宅オーケストレータの最終 heartbeat 時刻(鮮度判定用)
+  // docs/11-anp-design.md §7 Phase2: note サーバー自動公開(pipeline.note.publish)を
+  // note.publish.dispatch cron が回すか(既定OFF=誤公開防止)。
+  anp_auto_publish_enabled        Boolean   @default(false)
+  // true の間は「公開に進む」以降を押さず下書き保存で止める検証用ドライラン(既定ON=安全側)。
+  anp_publish_dry_run             Boolean   @default(true)
   updated_at                      DateTime @updatedAt
 
   @@map("app_settings")

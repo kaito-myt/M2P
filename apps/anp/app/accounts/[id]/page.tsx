@@ -9,6 +9,7 @@ import { prisma } from '@a2p/db';
 import { messages } from '@/lib/messages';
 
 import { GenerateThemesButton } from './generate-themes-button';
+import { PublishArticleButton } from './publish-article-button';
 import { ThemeCard } from './theme-card';
 
 export default async function AccountDetailPage({
@@ -24,7 +25,7 @@ export default async function AccountDetailPage({
   });
   if (!account) notFound();
 
-  const [themes, articles] = await Promise.all([
+  const [themes, articles, appSettings] = await Promise.all([
     prisma.noteTheme.findMany({
       where: { note_account_id: id },
       orderBy: { created_at: 'desc' },
@@ -48,10 +49,14 @@ export default async function AccountDetailPage({
         paid: true,
         price_jpy: true,
         quality_score: true,
+        publish_status: true,
+        note_url: true,
         created_at: true,
       },
     }),
+    prisma.appSettings.findUnique({ where: { id: 'singleton' }, select: { anp_publish_dry_run: true } }),
   ]);
+  const globalDryRunEnabled = appSettings?.anp_publish_dry_run ?? true;
 
   return (
     <div className="mx-auto flex min-h-screen max-w-4xl flex-col px-space-relaxed py-space-loose">
@@ -95,17 +100,35 @@ export default async function AccountDetailPage({
                 messages.accountDetail.articleStatus[
                   a.status as keyof typeof messages.accountDetail.articleStatus
                 ] ?? a.status;
+              const publishStatusLabel =
+                messages.accountDetail.publishStatus[
+                  a.publish_status as keyof typeof messages.accountDetail.publishStatus
+                ] ?? a.publish_status;
               return (
                 <li
                   key={a.id}
-                  className="flex items-center justify-between gap-2 rounded-container border border-border-warm bg-cream-light p-space-relaxed"
+                  className="flex items-start justify-between gap-2 rounded-container border border-border-warm bg-cream-light p-space-relaxed"
                 >
                   <div>
                     <p className="text-body font-medium text-charcoal">{a.title}</p>
                     <p className="text-caption text-muted">
                       {a.paid ? `有料 ${a.price_jpy ? `¥${a.price_jpy.toLocaleString('ja-JP')}` : ''}` : '無料'}
                       {a.quality_score != null ? ` ・ スコア ${a.quality_score}` : ''}
+                      {` ・ ${publishStatusLabel}`}
                     </p>
+                    {a.note_url && (
+                      <a
+                        href={a.note_url}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="text-caption text-charcoal underline"
+                      >
+                        {a.note_url}
+                      </a>
+                    )}
+                    {(a.status === 'ready' || a.status === 'needs_human_review') && (
+                      <PublishArticleButton articleId={a.id} globalDryRunEnabled={globalDryRunEnabled} />
+                    )}
                   </div>
                   <span className="shrink-0 rounded-pill border border-border-warm px-2 py-0.5 text-caption text-muted">
                     {statusLabel}

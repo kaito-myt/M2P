@@ -196,6 +196,15 @@ import {
 import { PIPELINE_NOTE_EDITOR_TASK_NAME, pipelineNoteEditorTask } from './tasks/pipeline-note-editor.js';
 import { PIPELINE_NOTE_EYECATCH_TASK_NAME, pipelineNoteEyecatchTask } from './tasks/pipeline-note-eyecatch.js';
 import { PIPELINE_NOTE_JUDGE_TASK_NAME, pipelineNoteJudgeTask } from './tasks/pipeline-note-judge.js';
+import { PIPELINE_NOTE_PUBLISH_TASK_NAME, pipelineNotePublishTask } from './tasks/pipeline-note-publish.js';
+import {
+  NOTE_PUBLISH_DISPATCHER_TASK_NAME,
+  notePublishDispatcherTask,
+} from './tasks/note-publish-dispatcher.js';
+import {
+  NOTE_PUBLISH_STATUS_SYNC_TASK_NAME,
+  notePublishStatusSyncTask,
+} from './tasks/note-publish-status-sync.js';
 
 /**
  * graphile-worker runner 起動 (docs/05 §5 共通ポリシー / SP-01 T-01-12)
@@ -314,6 +323,9 @@ export function buildTaskList(): TaskList {
     [PIPELINE_NOTE_EDITOR_TASK_NAME]: pipelineNoteEditorTask,
     [PIPELINE_NOTE_EYECATCH_TASK_NAME]: pipelineNoteEyecatchTask,
     [PIPELINE_NOTE_JUDGE_TASK_NAME]: pipelineNoteJudgeTask,
+    [PIPELINE_NOTE_PUBLISH_TASK_NAME]: pipelineNotePublishTask,
+    [NOTE_PUBLISH_DISPATCHER_TASK_NAME]: notePublishDispatcherTask,
+    [NOTE_PUBLISH_STATUS_SYNC_TASK_NAME]: notePublishStatusSyncTask,
   };
 }
 
@@ -419,6 +431,7 @@ async function fetchAppSettingsForCron(log: Logger): Promise<CronRuntimeSettings
     kdp_auto_submit_cron: null,
     bw_auto_submit_enabled: false,
     bw_auto_submit_cron: null,
+    anp_auto_publish_enabled: false,
   };
   try {
     const row = await prisma.appSettings.findUnique({
@@ -450,6 +463,7 @@ async function fetchAppSettingsForCron(log: Logger): Promise<CronRuntimeSettings
         kdp_auto_submit_cron: true,
         bw_auto_submit_enabled: true,
         bw_auto_submit_cron: true,
+        anp_auto_publish_enabled: true,
       },
     });
     if (!row) {
@@ -486,6 +500,7 @@ async function fetchAppSettingsForCron(log: Logger): Promise<CronRuntimeSettings
       kdp_auto_submit_cron: row.kdp_auto_submit_cron,
       bw_auto_submit_enabled: row.bw_auto_submit_enabled,
       bw_auto_submit_cron: row.bw_auto_submit_cron,
+      anp_auto_publish_enabled: row.anp_auto_publish_enabled,
     };
   } catch (err) {
     log.warn({ err }, 'failed to read AppSettings; auto-dispatch crons disabled (safe default)');
