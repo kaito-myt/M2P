@@ -184,6 +184,18 @@ import { PROMOTION_GROWTH_LOOP_TASK_NAME, promotionGrowthLoopTask } from './task
 import { RECURRING_COST_REFRESH_TASK_NAME, recurringCostRefreshTask } from './tasks/recurring-cost-refresh.js';
 import { ORG_KDP_SCREEN_TASK_NAME, orgKdpScreenTask } from './tasks/org-kdp-screen.js';
 import { ORG_BAKEOFF_RECOMMEND_TASK_NAME, orgBakeoffRecommendTask } from './tasks/org-bakeoff-recommend.js';
+import { NOTE_THEME_GENERATE_TASK_NAME, noteThemeGenerateTask } from './tasks/note-theme-generate.js';
+import {
+  PIPELINE_NOTE_WRITER_OUTLINE_TASK_NAME,
+  pipelineNoteWriterOutlineTask,
+} from './tasks/pipeline-note-writer-outline.js';
+import {
+  PIPELINE_NOTE_WRITER_BODY_TASK_NAME,
+  pipelineNoteWriterBodyTask,
+} from './tasks/pipeline-note-writer-body.js';
+import { PIPELINE_NOTE_EDITOR_TASK_NAME, pipelineNoteEditorTask } from './tasks/pipeline-note-editor.js';
+import { PIPELINE_NOTE_EYECATCH_TASK_NAME, pipelineNoteEyecatchTask } from './tasks/pipeline-note-eyecatch.js';
+import { PIPELINE_NOTE_JUDGE_TASK_NAME, pipelineNoteJudgeTask } from './tasks/pipeline-note-judge.js';
 
 /**
  * graphile-worker runner 起動 (docs/05 §5 共通ポリシー / SP-01 T-01-12)
@@ -295,6 +307,13 @@ export function buildTaskList(): TaskList {
     [RECURRING_COST_REFRESH_TASK_NAME]: recurringCostRefreshTask,
     [ORG_KDP_SCREEN_TASK_NAME]: orgKdpScreenTask,
     [ORG_BAKEOFF_RECOMMEND_TASK_NAME]: orgBakeoffRecommendTask,
+    // docs/11-anp-design.md §7 — ANP (note 記事) パイプライン。
+    [NOTE_THEME_GENERATE_TASK_NAME]: noteThemeGenerateTask,
+    [PIPELINE_NOTE_WRITER_OUTLINE_TASK_NAME]: pipelineNoteWriterOutlineTask,
+    [PIPELINE_NOTE_WRITER_BODY_TASK_NAME]: pipelineNoteWriterBodyTask,
+    [PIPELINE_NOTE_EDITOR_TASK_NAME]: pipelineNoteEditorTask,
+    [PIPELINE_NOTE_EYECATCH_TASK_NAME]: pipelineNoteEyecatchTask,
+    [PIPELINE_NOTE_JUDGE_TASK_NAME]: pipelineNoteJudgeTask,
   };
 }
 

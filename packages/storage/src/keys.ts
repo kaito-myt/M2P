@@ -217,6 +217,15 @@ export function promotionPostVideo(postId: string): string {
 }
 
 /**
+ * `note/{note_article_id}/eyecatch.jpg` — note 記事アイキャッチ画像 (docs/11 F-ANP-14)。
+ * note 推奨比率 1280x670 目安で `pipeline.note.eyecatch` が生成・アップロードする。
+ */
+export function noteArticleEyecatch(noteArticleId: string): string {
+  assertId('noteArticleId', noteArticleId);
+  return `note/${noteArticleId}/eyecatch.jpg`;
+}
+
+/**
  * 論理削除用のキー変換 (docs/05 §8.1: `r2_key` を `_deleted/...` にリネーム)。
  * 既に `_deleted/` 配下にある場合はそのまま返す。
  */

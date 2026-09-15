@@ -14,10 +14,12 @@
   },
   "dependencies": {
     "@a2p/auth": "workspace:*",
+    "@a2p/contracts": "workspace:*",
     "@a2p/db": "workspace:*",
     "@a2p/ui": "workspace:*",
     "bcryptjs": "^2.4.3",
     "clsx": "^2.1.1",
+    "graphile-worker": "^0.16.6",
     "lucide-react": "^0.454.0",
     "next": "^15.0.3",
     "next-auth": "5.0.0-beta.25",

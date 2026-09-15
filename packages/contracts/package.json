@@ -21,6 +21,7 @@
     "./agents/readings": "./src/agents/readings.ts",
     "./agents/promoter": "./src/agents/promoter.ts",
     "./agents/judge": "./src/agents/judge.ts",
+    "./agents/anp": "./src/agents/anp.ts",
     "./agents/optimizer": "./src/agents/optimizer.ts",
     "./agents/seo-optimizer": "./src/agents/seo-optimizer.ts",
     "./agents/blog-seo": "./src/agents/blog-seo.ts",

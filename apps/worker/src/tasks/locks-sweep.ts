@@ -2,8 +2,10 @@ import type { JobHelpers, Task } from 'graphile-worker';
 
 import {
   sweepExpiredLocks,
+  sweepExpiredNoteLocks,
   type BookLockDeps,
   type BookLockLogger,
+  type NoteLockDeps,
 } from '@a2p/agents';
 import { createLogger, type Logger } from '@a2p/contracts/logger';
 import { prisma as defaultJobPrisma } from '@a2p/db';
@@ -82,6 +84,8 @@ export interface LocksSweepDeps {
   now?: () => Date;
   /** 孤児ジョブ掃除の prisma 差し替え (テスト用)。未指定なら @a2p/db 既定。 */
   jobPrisma?: StaleJobPrisma;
+  /** NoteLock 掃除の prisma 差し替え (テスト用)。未指定なら @a2p/db 既定。 */
+  noteLockPrisma?: NoteLockDeps['prisma'];
 }
 
 /**
@@ -107,6 +111,18 @@ export async function runLocksSweep(
 
   log.info({ task: LOCKS_SWEEP_TASK_NAME }, 'locks sweep start');
   const result = await sweepExpiredLocks(sweepDeps);
+
+  // docs/11-anp-design.md §7 — NoteLock (ANP) も同じ毎時 tick で掃除する。
+  // BookLock と同型の TTL 期限切れ掃除のため、失敗してもタスク全体は継続 (warn のみ)。
+  try {
+    const noteLockDeps: NoteLockDeps = { logger: adaptLogger(log) };
+    if (deps.noteLockPrisma !== undefined) noteLockDeps.prisma = deps.noteLockPrisma;
+    if (deps.now !== undefined) noteLockDeps.now = deps.now;
+    await sweepExpiredNoteLocks(noteLockDeps);
+  } catch (err) {
+    log.warn({ task: LOCKS_SWEEP_TASK_NAME, err }, 'sweepExpiredNoteLocks failed — continuing');
+  }
+
   // ロック掃除と同じ毎時 tick で、孤児化した内部 Job も掃除する。
   // ジョブ掃除の失敗はロック掃除の成功を巻き戻さない(非致命・ログのみ)。
   try {

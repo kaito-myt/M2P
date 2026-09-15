@@ -19,6 +19,7 @@
     "./lib/prompt-loader": "./src/lib/prompt-loader.ts",
     "./lib/with-image-logging": "./src/lib/with-image-logging.ts",
     "./lib/book-lock": "./src/lib/book-lock.ts",
+    "./lib/note-lock": "./src/lib/note-lock.ts",
     "./tools/image-gen": "./src/tools/image-gen.ts",
     "./tools/web-search": "./src/tools/web-search.ts",
     "./marketer": "./src/marketer/index.ts",
@@ -37,7 +38,13 @@
     "./judge": "./src/judge/index.ts",
     "./promoter": "./src/promoter/index.ts",
     "./optimizer": "./src/optimizer/index.ts",
-    "./seo-optimizer": "./src/seo-optimizer/index.ts"
+    "./seo-optimizer": "./src/seo-optimizer/index.ts",
+    "./anp/theme": "./src/anp/theme.ts",
+    "./anp/outline": "./src/anp/outline.ts",
+    "./anp/writer": "./src/anp/writer.ts",
+    "./anp/editor": "./src/anp/editor.ts",
+    "./anp/judge": "./src/anp/judge.ts",
+    "./anp/eyecatch": "./src/anp/eyecatch.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",

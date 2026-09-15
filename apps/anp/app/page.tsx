@@ -4,6 +4,8 @@
  * Phase 0: SSO で起動する骨格。実データ接続（アカウント/記事/売上/販促）は
  * Prisma の note_* モデル追加後に段階実装する（docs/11-anp-design.md §8 ロードマップ）。
  */
+import Link from 'next/link';
+
 import { auth } from '@/auth';
 import { logout } from './actions';
 
@@ -71,6 +73,12 @@ export default async function AnpHomePage() {
           </div>
         </div>
         <div className="flex shrink-0 items-center gap-space-snug">
+          <Link
+            href="/accounts"
+            className="rounded-card border border-border-warm bg-charcoal px-3 py-1.5 text-button-sm text-white no-underline hover:opacity-90"
+          >
+            note アカウント管理
+          </Link>
           {PORTAL_URL && (
             <a
               href={PORTAL_URL}

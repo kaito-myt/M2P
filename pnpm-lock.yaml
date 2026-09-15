@@ -38,6 +38,9 @@ importers:
       '@a2p/auth':
         specifier: workspace:*
         version: link:../../packages/auth
+      '@a2p/contracts':
+        specifier: workspace:*
+        version: link:../../packages/contracts
       '@a2p/db':
         specifier: workspace:*
         version: link:../../packages/db
@@ -50,6 +53,9 @@ importers:
       clsx:
         specifier: ^2.1.1
         version: 2.1.1
+      graphile-worker:
+        specifier: ^0.16.6
+        version: 0.16.6(typescript@5.9.3)
       lucide-react:
         specifier: ^0.454.0
         version: 0.454.0(react@19.2.6)

@@ -25,7 +25,8 @@
     "migrate:deploy": "prisma migrate deploy --schema=./schema.prisma",
     "migrate:reset": "prisma migrate reset --schema=./schema.prisma --force",
     "studio": "prisma studio --schema=./schema.prisma",
-    "seed": "tsx seed.ts"
+    "seed": "tsx seed.ts",
+    "seed:anp": "tsx seed-anp.ts"
   },
   "prisma": {
     "seed": "tsx seed.ts"

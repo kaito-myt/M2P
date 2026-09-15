@@ -87,6 +87,68 @@ describe('locks.sweep task', () => {
     expect(result.deletedCount).toBe(0);
   });
 
+  it('runLocksSweep: NoteLock (ANP) の expires_at < now も同じ tick で掃除する', async () => {
+    const { logger } = makeLogger();
+    const noteLockCaptured: Array<{ where: unknown }> = [];
+    const now = new Date('2026-05-22T10:00:00Z');
+
+    const result = await runLocksSweep({
+      prisma: {
+        bookLock: {
+          deleteMany: async () => ({ count: 0 }),
+          create: vi.fn() as never,
+          findUnique: vi.fn() as never,
+        },
+      },
+      noteLockPrisma: {
+        noteLock: {
+          deleteMany: async (args: { where: unknown }) => {
+            noteLockCaptured.push(args);
+            return { count: 2 };
+          },
+          create: vi.fn() as never,
+          findUnique: vi.fn() as never,
+        },
+      },
+      logger,
+      now: () => now,
+    });
+
+    expect(result.deletedCount).toBe(0);
+    expect(noteLockCaptured).toHaveLength(1);
+    const arg = noteLockCaptured[0]!.where as { expires_at: { lt: Date } };
+    expect(arg.expires_at.lt).toEqual(now);
+  });
+
+  it('runLocksSweep: NoteLock 掃除が throw しても BookLock 掃除の結果は維持される (warn のみ)', async () => {
+    const { logger, calls } = makeLogger();
+    const result = await runLocksSweep({
+      prisma: {
+        bookLock: {
+          deleteMany: async () => ({ count: 5 }),
+          create: vi.fn() as never,
+          findUnique: vi.fn() as never,
+        },
+      },
+      noteLockPrisma: {
+        noteLock: {
+          deleteMany: async () => {
+            throw new Error('note_locks DB unavailable');
+          },
+          create: vi.fn() as never,
+          findUnique: vi.fn() as never,
+        },
+      },
+      logger,
+      now: () => new Date('2026-05-22T10:00:00Z'),
+    });
+
+    expect(result.deletedCount).toBe(5);
+    expect(calls.some((c) => c.level === 'warn' && c.msg.includes('sweepExpiredNoteLocks failed'))).toBe(
+      true,
+    );
+  });
+
   it('runLocksSweep: deleteMany が throw → 例外がそのまま伝播 (graphile-worker のリトライ機構に委譲)', async () => {
     const { logger } = makeLogger();
     const boom = new Error('DB unavailable');

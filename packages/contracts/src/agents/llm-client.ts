@@ -74,7 +74,13 @@ export type AgentRole =
   | 'tiktok_creator'
   | 'tiktok_editor'
   | 'tiktok_proofreader'
-  | 'tiktok_marketer';
+  | 'tiktok_marketer'
+  // docs/11 §4/§7 — ANP (note 記事) パイプライン。role 名前空間を `anp.*` で分離する。
+  | 'anp.theme'
+  | 'anp.outline'
+  | 'anp.writer'
+  | 'anp.editor'
+  | 'anp.judge';
 
 /**
  * マルチモーダル入力用の画像添付。`content` (テキスト) と併せてユーザーメッセージに付与する。

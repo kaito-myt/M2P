@@ -127,38 +127,61 @@ graphile-worker を流用。ANP のタスクは `pipeline.note.*`（marketer/out
 A2P の `books` 系を note 記事系に写像。**マルチアカウントを主キー動線に組み込む**。
 
 - **`note_accounts`**: `id, niche, display_name, handle, target_reader, tone, monetization_policy_json({free_ratio, price_band, membership:bool}), genre_policy_json, session_state_enc, status, created_at`
-- **`note_themes`**（= theme_candidates 相当）: `id, note_account_id, title, hook, target_reader, recommend_paid:bool, suggested_price, competitors_json, genre, status`
-- **`note_articles`**（= books 相当）: `id, note_account_id, theme_id?, title, lead, body_md, paid:bool, price_jpy?, paywall_line_pos?, membership_magazine?, eyecatch_r2_key?, status(queued|writing|editing|eyecatch|judging|ready|published|failed…), publish_status(draft|published), note_url?, cost_jpy_total, has_pending_comments, published_at, created_at, updated_at`
+- **`note_themes`**（= theme_candidates 相当）: `id, note_account_id, title, hook, target_reader, recommend_paid:bool, suggested_price, competitors_json, genre, status(pending|accepted|rejected), rejected_reason, created_at`
+- **`note_articles`**（= books 相当）: `id, note_account_id, theme_id?, title, lead, body_md, paid:bool, price_jpy?, paywall_line_pos?, membership_magazine?, eyecatch_r2_key?, status(queued|writing|editing|eyecatch|judging|ready|published|failed|cancelled|needs_human_review), publish_status(draft|published), note_url?, cost_jpy_total, has_pending_comments, quality_score?, published_at, created_at, updated_at`
 - **`note_jobs`** / **`note_locks`**: A2P の jobs/book_locks 相当（or 既存 `jobs` を `tool` 列で共用）
 - **`note_sales`**（= sales_records 相当）: `id, note_article_id, year_month, revenue_jpy, views, likes, buyers, source, fetched_at`
 - **`note_membership_stats`**: `id, note_account_id, year_month, subscribers, mrr_jpy, fetched_at`
 - **`note_auth_requests`**: KDP と同型（LINE 認証リレー）
-- **`eval_results` / `token_usage` / `prompts` / `alerts` / `revision_comments`**: 既存を `tool`/`role` 名前空間で共用
+- **`token_usage` / `prompts`**: 既存を `role` 名前空間 (`anp.*`) で共用
+- **`jobs` / `book_locks`**: Phase 1 実装で確定 — `book_locks` は流用せず専用 `note_locks`（`note_article_id` を主キー）を新設。`jobs` は共用し `book_id` は常に `null`（`Job.book_id` は `Book` への FK 制約があり NoteArticle を指せないため。記事 ID は `Job.payload_json` に格納する）。
 
-> 既存 `token_usage`/`prompts`/`eval_results` は共用（`role` を `anp.*` に）。売上・記事・アカウントは専用テーブル。
+> ⚠️ **実装時の発見・訂正 (2026-09-15)**: `eval_results` は `book_id` が **NOT NULL FK to `Book`** (`onDelete: Cascade`) のため ANP では使えない（当初想定の「共用」は誤り）。代わりに判定結果は `NoteArticle.quality_score`（最終スコアのみ）に保持し、軸別内訳・コメントは `Job.result_json` に残す（Phase 1 の簡略化）。`token_usage`/`prompts` は当初想定通り `role='anp.*'` で共用できる。
 
 ---
 
 ## 7. パイプライン & シーケンス（A2P `docs/05` 準拠）
 
 ```
-note.theme.generate (アカウント別・日次自動可)
-  → [運営者 or AI 承認]
-  → pipeline.note.writer.outline → writer.body → editor → eyecatch → judge
-  → [価格/公開ゲート: 人間承認 or AI自動]
-  → pipeline.note.publish (Playwright アシスト) → note.publish.status.sync
-  → 販促: promotion.note.* (SNS 告知・アカウント別導線)
-  → note.sales.fetch (定期)
+note.theme.generate (アカウント別・手動起動。UI の「テーマ生成」ボタン)
+  → [運営者がテーマ承認 (UI) — NoteArticle 作成]
+  → pipeline.note.writer.outline → writer.body → editor → eyecatch → judge (自動連結)
+  → judge 合格 (score_total >= 80) → NoteArticle.status='ready' (公開ゲート待ち。Phase 1 はここで停止)
+  → [Phase 2] 価格/公開ゲート: 人間承認 or AI自動
+  → [Phase 2] pipeline.note.publish (Playwright アシスト) → note.publish.status.sync
+  → [Phase 3] 販促: promotion.note.* (SNS 告知・アカウント別導線)
+  → [Phase 2] note.sales.fetch (定期)
 ```
-各タスクは `{note_article_id, job_id}` ペイロード。self-heal 再ログイン・孤児ロック掃除は A2P の知見
-（`reference-pipeline-stuck-books` / status.sync self-heal）をそのまま適用。
+
+### Phase 1 実装済みタスク (`apps/worker/src/tasks/`)
+
+| タスク名 | ペイロード | 処理概要 | 完了後の遷移 |
+|---|---|---|---|
+| `note.theme.generate` | `{ note_account_id, job_id, count? }` | note Marketer (`@a2p/agents/anp/theme`, role=`anp.theme`) がニッチ/トーン/直近採用済タイトル (90日除外) を入力にテーマ候補を生成し `NoteTheme(status='pending')` を `createMany` | 次タスクなし (UI 承認待ちで停止) |
+| `pipeline.note.writer.outline` | `{ note_article_id, job_id }` | note Writer/Outline (role=`anp.outline`) がリード文+見出し構成 (2〜12) を生成。`NoteArticle.lead` 確定、`status='writing'` | `pipeline.note.writer.body` を自動 enqueue（`lead`/`headings` は子 Job の `payload_json` で forward — `NoteArticle` に永続列を持たないため） |
+| `pipeline.note.writer.body` | `{ note_article_id, job_id, lead, headings, feedback? }` | note Writer/Body (role=`anp.writer`) が本文 (目標 4,000 字) を執筆。有料記事は本文中に `<<<PAYWALL>>>` マーカーを 1 回挿入させ、呼出側でマーカー位置を `paywall_line_pos` として抽出・除去。`NoteArticle.body_md`/`paywall_line_pos` 確定、`status='editing'` | `pipeline.note.editor` を自動 enqueue |
+| `pipeline.note.editor` | `{ note_article_id, job_id, feedback?, retry_count? }` | note Editor (role=`anp.editor`) が短段落・リード文中心に校閲。`paywall_line_pos` 指定時はマーカーを再挿入して LLM に渡し「保持したまま校閲」を指示、新しい位置を再抽出。`status='eyecatch'` | `pipeline.note.eyecatch` を自動 enqueue（`retry_count` を forward） |
+| `pipeline.note.eyecatch` | `{ note_article_id, job_id, retry_count? }` | note Eyecatch (`@a2p/agents/anp/eyecatch`, role=`anp.eyecatch`) が **文字を含まない**挿絵を gpt-image で生成（note 側 UI がタイトルを別途表示するため、A2P のような日本語タイポグラフィ合成レイヤーは Phase 1 では持たない）。R2 `note/{note_article_id}/eyecatch.jpg` に保存、`NoteArticle.eyecatch_r2_key` 確定、`status='judging'`。**`retry_count > 0` かつ既に `eyecatch_r2_key` が設定済みなら再生成をスキップ**（judge 差し戻しは本文のみ変わるため、画像コストの重複を避ける） | `pipeline.note.judge` を自動 enqueue（`retry_count` を forward） |
+| `pipeline.note.judge` | `{ note_article_id, job_id, retry_count }` | note Judge (role=`anp.judge`) が 4 軸 (フック強度/可読性/有料転換見込み/検索流入見込み) で採点。`NoteArticle.quality_score` に最終スコアを保持（内訳/コメントは `Job.result_json`） | 合格 (>=80): `status='ready'`。不合格 かつ `retry_count < 1`: `pipeline.note.editor` へ差し戻し (`retry_count+1` を payload に forward、`status='editing'`)。不合格 かつ `retry_count >= 1`: `status='needs_human_review'` |
+
+### 排他制御・冪等性・エラー方針
+
+- `NoteLock`（`@a2p/agents/lib/note-lock` の `acquireNoteLock`/`releaseNoteLock`/`sweepExpiredNoteLocks`）が `BookLock` と完全対称の実装で `pipeline.note.*` の排他を担う（holder 規約 `pipeline:<job_id>`、TTL 30 分）。
+- 各タスクは内部 `Job`（既存 `jobs` テーブル、`book_id=null`）を `queued/failed → running → done/failed` で CAS 遷移させる、A2P と同型の冪等性パターン（`Job.status==='done'` は skip）。
+- コスト計上: ANP のエージェント呼出は `withTokenLogging`/`withImageLogging` に `bookId` を渡さない（`NoteArticle` は `Book` と無関係の別テーブルのため FK 混線を避ける）。代わりに各タスクが呼出直後に `applyNoteArticleCostFromJob`（`apps/worker/src/tasks/lib/note-article-cost.ts`）で「自分の内部 `Job.id` に紐づく `token_usage.cost_jpy` 合計」を `NoteArticle.cost_jpy_total` に加算する（失敗時は warn のみでタスク自体は継続）。
+- `note.theme.generate` は Phase 1 では **cron 化せず** UI の手動起動のみ（`/accounts/[id]` の「テーマ生成」ボタン → `note.theme.generate` を enqueue）。
+- ⚠️ **`pipeline.note.*` は `org.ops.watch`（孤児ジョブ検知・自己修復, docs/06）の対象外** — `ops.watch` は `Job.book_id` を起点に停止書籍を検知するが、ANP の `Job.book_id` は常に `null`（`Book` FK 制約のため）。孤児化した note パイプラインは `locks.sweep`（`NoteLock` の TTL 掃除、§7 実装表参照）と `sweepStaleJobs`（`running/queued` かつ 120 分超過の内部 `Job` を `failed` に降格、`apps/worker/src/tasks/locks-sweep.ts`）のみが救済する。Phase 2 で `note_account_id`/`note_article_id` を軸にした専用の自己修復ジョブが必要になった場合はここに追記する。
+
+### Phase 2+ (未実装)
+
+`pipeline.note.publish`（Playwright アシスト）/ `note.publish.status.sync` / `promotion.note.*` / `note.sales.fetch` は §8 ロードマップの Phase 2/3 で実装する。
 
 ---
 
 ## 8. 段階的ロードマップ
 
 - **Phase 0（設計・雛形）**: 本ドキュメント／`apps/anp` スキャフォールド（SSO で起動する骨格＋ホーム骨格）／portal タイル（済）。
-- **Phase 1（MVP）**: 単一アカウントで theme→writer→editor→eyecatch→judge→**下書き生成**まで。note 公開はアシスト手動。売上手入力。
+- **Phase 1（MVP・実装済み）**: 単一〜複数アカウントで theme→outline→writer.body→editor→eyecatch→judge→**status='ready' (下書き相当)** まで自動連結。`apps/anp` に `/accounts`・`/accounts/[id]` UI（アカウント作成・テーマ生成/承認/却下・記事一覧）を実装。note 公開はアシスト手動（Phase 2）。売上手入力。
 - **Phase 2**: マルチアカウント台帳／価格自動決定／note 公開オートメーション（Playwright アシスト）＋認証リレー／売上スクレイプ。
 - **Phase 3**: SNS 自動販促（A2P promotion 流用・アカウント別導線）／メンバーシップ運用／org 自律連携。
 - **Phase 4**: A2P⇄note 相互送客、note→書籍化などクロスツール収益最適化。
@@ -182,7 +205,10 @@ Vercel AI SDK + Anthropic SDK / gpt-image / Cloudflare R2 / NextAuth(共有) / T
 
 ## 申し送り（後続作業）
 
-1. `apps/anp` スキャフォールド（portal と同じ SSO 配線・`buildAuthConfig`・Edge 用 `@a2p/auth/config`）。
-2. Prisma に §6 モデル追加＋マイグレーション＋seed（prompts の `anp.*` role）。
-3. note の実挙動（ログイン/エディタ/価格設定/公開のセレクタ・再認証ルール）を実装時に本ドキュメント §2/§7 へ追記（CLAUDE.md ルール #8）。
+1. `apps/anp` スキャフォールド（portal と同じ SSO 配線・`buildAuthConfig`・Edge 用 `@a2p/auth/config`）。— **完了**
+2. Prisma に §6 モデル追加＋マイグレーション＋seed（prompts の `anp.*` role）。— **完了**（モデルは本番 DB にテーブル済み。seed は `packages/db/seed-anp.ts`＝`pnpm --filter @a2p/db run seed:anp` で `prompts`/`model_assignments` の `anp.*` 5 role を投入。Phase 1 パイプライン本体（§7 記載の 6 タスク）も実装済み）。
+3. note の実挙動（ログイン/エディタ/価格設定/公開のセレクタ・再認証ルール）を実装時に本ドキュメント §2/§7 へ追記（CLAUDE.md ルール #8）。— Phase 1 は note 公開自体を実装しないため未着手（Phase 2 の申し送りとして継続）。
 4. 本番: Railway に ANP サービス追加＋`anp.m2p.tools`＋`NEXT_PUBLIC_TOOL_ANP_URL` を portal に設定（`docs/10` の SSO 手順を流用）。
+5. **[Phase 1 実装で新規発見]** `eval_results` は `book_id` NOT NULL FK のため ANP では使えない（§6 参照）。Phase 2 で判定内訳の永続化が要件化する場合、専用 `note_eval_results` テーブルの新設を検討すること。
+6. **[Phase 1 未実装・要フォロー]** `pipeline.note.judge` の再試行後 (`retry_count>=1` で不合格) の `status='needs_human_review'` は UI 側での「要確認」一覧・再実行導線が未実装（`/accounts/[id]` の記事一覧にステータス表示のみ）。Phase 2 で対応。
+7. **[Phase 1 実装メモ・解消済]** `apps/anp/package.json` に `@a2p/contracts`・`graphile-worker` を追加。ワークスペースリンクは `pnpm exec` 実行時に自動反映され、`pnpm --filter @anp/web exec tsc --noEmit` で clean を確認済み（`pnpm-lock.yaml` にも反映済み）。

@@ -84,6 +84,19 @@ export {
 } from './lib/book-lock.js';
 
 export {
+  acquireNoteLock,
+  releaseNoteLock,
+  sweepExpiredNoteLocks,
+  type AcquireNoteLockArgs,
+  type ReleaseNoteLockArgs,
+  type NoteLockDeps,
+  type NoteLockLogger,
+  type NoteLockRecord,
+  type NoteLockRepo,
+  type SweepNoteLocksResult,
+} from './lib/note-lock.js';
+
+export {
   generateMarketerThemes,
   type GenerateThemesDeps,
 } from './marketer/theme.js';
