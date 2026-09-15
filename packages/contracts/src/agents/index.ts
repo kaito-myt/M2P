@@ -116,6 +116,9 @@ export {
   NoteJudgeInputSchema,
   NoteJudgeOutputSchema,
   NOTE_JUDGE_PASS_THRESHOLD,
+  AnpPromoPersonaSchema,
+  AnpPromoContentInputSchema,
+  AnpPromoContentOutputSchema,
   type NoteAccountContext,
   type NoteMonetizationPolicy,
   type NoteThemeInput,
@@ -129,6 +132,9 @@ export {
   type NoteEditorOutput,
   type NoteJudgeInput,
   type NoteJudgeOutput,
+  type AnpPromoPersona,
+  type AnpPromoContentInput,
+  type AnpPromoContentOutput,
 } from './anp.js';
 
 export {

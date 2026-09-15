@@ -17,7 +17,7 @@ import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
-import type { Task } from 'graphile-worker';
+import type { JobHelpers, Task } from 'graphile-worker';
 import { z } from 'zod';
 
 import {
@@ -84,6 +84,10 @@ export interface PipelineNotePublishPrisma {
       where: { id: string };
       data: { status?: string; finished_at?: Date; error?: string | null; result_json?: unknown };
     }) => Promise<unknown>;
+    /** F-ANP-30: 公開成功時に `promotion.note.article` の内部 Job を作る (親子関係)。 */
+    create: (args: {
+      data: { kind: string; status: string; payload_json: unknown; parent_job_id?: string };
+    }) => Promise<{ id: string }>;
   };
   noteArticle: {
     findUnique: (args: { where: { id: string } }) => Promise<NoteArticleRow | null>;
@@ -97,6 +101,12 @@ export interface PipelineNotePublishPrisma {
 
 export type FetchAssetFn = (key: string) => Promise<Buffer | null>;
 
+export type AddJobLike = (
+  identifier: string,
+  payload: unknown,
+  spec?: Record<string, unknown>,
+) => Promise<unknown>;
+
 export interface PipelineNotePublishDeps {
   prisma?: PipelineNotePublishPrisma;
   logger?: Logger;
@@ -107,6 +117,8 @@ export interface PipelineNotePublishDeps {
   fetchAsset?: FetchAssetFn;
   decryptSession?: (enc: string) => string;
   notify?: (text: string) => Promise<boolean>;
+  /** F-ANP-30: 公開成功時に `promotion.note.article` を enqueue する (省略時は enqueue しない、テスト互換)。 */
+  addJob?: AddJobLike;
 }
 
 export interface PipelineNotePublishResult {
@@ -271,6 +283,7 @@ export async function runPipelineNotePublish(
       await finishJob(prisma, jobId, now(), { status: 'published', note_url: result.noteUrl });
       log.info({ articleId, noteUrl: result.noteUrl }, 'pipeline.note.publish 公開完了');
       await notify(`📝 ANP: 「${article.title}」を note に公開しました\n${result.noteUrl}`).catch(() => {});
+      await enqueueArticlePromo(prisma, deps.addJob, articleId, log);
       return { ok: true, status: 'published', noteUrl: result.noteUrl };
     }
 
@@ -342,11 +355,39 @@ function errMsg(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
+/**
+ * F-ANP-30: 公開成功後に `promotion.note.article` を 1 記事 1 回 enqueue する。
+ * `addJob` 未注入 (テスト等) の場合は no-op。失敗しても公開自体の成功結果には影響させない。
+ */
+async function enqueueArticlePromo(
+  prisma: { job: PipelineNotePublishPrisma['job'] },
+  addJob: AddJobLike | undefined,
+  articleId: string,
+  log: Logger,
+): Promise<void> {
+  if (!addJob) return;
+  try {
+    const childJob = await prisma.job.create({
+      data: { kind: 'promotion.note.article', status: 'queued', payload_json: { note_article_id: articleId } },
+    });
+    await addJob(
+      'promotion.note.article',
+      { note_article_id: articleId, job_id: childJob.id },
+      { jobKey: `anp-promo-${articleId}`, jobKeyMode: 'preserve_run_at', maxAttempts: 2 },
+    );
+  } catch (err) {
+    log.warn({ err: errMsg(err), articleId }, 'promotion.note.article の enqueue に失敗(無視・公開自体は成功扱い)');
+  }
+}
+
 // ---------------------------------------------------------------------------
 // graphile-worker Task 薄ラッパ
 // ---------------------------------------------------------------------------
 
-export const pipelineNotePublishTask: Task = async (payload: unknown) => {
+export const pipelineNotePublishTask: Task = async (payload: unknown, helpers: JobHelpers) => {
   const { createPlaywrightNotePublishPort } = await import('./note-publish/playwright-note-publish-port.js');
-  await runPipelineNotePublish(payload, { publishPort: createPlaywrightNotePublishPort() });
+  await runPipelineNotePublish(payload, {
+    publishPort: createPlaywrightNotePublishPort(),
+    addJob: helpers.addJob as unknown as AddJobLike,
+  });
 };

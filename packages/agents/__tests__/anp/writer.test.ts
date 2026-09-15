@@ -190,4 +190,23 @@ describe('generateNoteBody — paywall marker missing', () => {
     expect(result.paywall_line_pos).toBeUndefined();
     expect(fakeClient.complete).toHaveBeenCalledTimes(1);
   });
+
+  it('F-ANP-31: related_books が渡された場合、書名がユーザーメッセージに含まれる', async () => {
+    const body = '無料記事の本文です。'.padEnd(300, 'あ');
+    const text = JSON.stringify({ body_md: body, char_count: 300 });
+    const fakeClient = makeFakeClient(text);
+
+    await generateNoteBody(
+      baseInput({ paid: false, related_books: [{ title: '関連書籍タイトルA', asin: 'B012345678' }] }),
+      {
+        createAgentClient: vi.fn(async () => fakeClient),
+        promptLoaderDeps: { prisma: makePromptRepo() },
+      },
+    );
+
+    const call = (fakeClient.complete as ReturnType<typeof vi.fn>).mock.calls[0]![0] as LLMCompleteArgs;
+    const userMessage = call.messages.find((m) => m.role === 'user')?.content ?? '';
+    expect(userMessage).toContain('関連書籍タイトルA');
+    expect(userMessage).toContain('さりげなく触れてよい');
+  });
 });

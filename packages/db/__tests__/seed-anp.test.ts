@@ -52,9 +52,9 @@ function makePrismaMock() {
 const silentLogger = { info: () => undefined, warn: () => undefined };
 
 describe('buildAnpPromptSeeds', () => {
-  it('5 role すべてに genre=null v1 active 行を1本ずつ生成する', () => {
+  it('6 role すべてに genre=null v1 active 行を1本ずつ生成する', () => {
     const seeds = buildAnpPromptSeeds();
-    expect(seeds).toHaveLength(5);
+    expect(seeds).toHaveLength(6);
     expect(seeds.map((s) => s.role).sort()).toEqual([...ANP_PROMPT_ROLES].sort());
     for (const s of seeds) {
       expect(s.genre).toBeNull();
@@ -66,9 +66,9 @@ describe('buildAnpPromptSeeds', () => {
 });
 
 describe('buildAnpModelAssignmentSeeds', () => {
-  it('5 role すべてに anthropic モデルを割当てる', () => {
+  it('6 role すべてに anthropic モデルを割当てる', () => {
     const seeds = buildAnpModelAssignmentSeeds();
-    expect(seeds).toHaveLength(5);
+    expect(seeds).toHaveLength(6);
     for (const s of seeds) {
       expect(s.provider).toBe('anthropic');
       expect(s.status).toBe('active');
@@ -80,15 +80,15 @@ describe('runSeedAnp', () => {
   it('prompt / modelAssignment を upsert し、2 回実行しても追加 create が発生しない (idempotent)', async () => {
     const prisma = makePrismaMock();
     const first = await runSeedAnp(prisma as never, silentLogger);
-    expect(first.prompts).toBe(5);
-    expect(first.modelAssignments).toBe(5);
-    expect(prisma.prompt.create).toHaveBeenCalledTimes(5);
-    expect(prisma.modelAssignment.create).toHaveBeenCalledTimes(5);
+    expect(first.prompts).toBe(6);
+    expect(first.modelAssignments).toBe(6);
+    expect(prisma.prompt.create).toHaveBeenCalledTimes(6);
+    expect(prisma.modelAssignment.create).toHaveBeenCalledTimes(6);
 
     await runSeedAnp(prisma as never, silentLogger);
-    expect(prisma.prompt.create).toHaveBeenCalledTimes(5);
-    expect(prisma.modelAssignment.create).toHaveBeenCalledTimes(5);
-    expect(prisma.prompt.update).toHaveBeenCalledTimes(5);
-    expect(prisma.modelAssignment.update).toHaveBeenCalledTimes(5);
+    expect(prisma.prompt.create).toHaveBeenCalledTimes(6);
+    expect(prisma.modelAssignment.create).toHaveBeenCalledTimes(6);
+    expect(prisma.prompt.update).toHaveBeenCalledTimes(6);
+    expect(prisma.modelAssignment.update).toHaveBeenCalledTimes(6);
   });
 });

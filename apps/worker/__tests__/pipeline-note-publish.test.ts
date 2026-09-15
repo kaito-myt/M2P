@@ -58,6 +58,7 @@ function buildPrisma(args: {
   const accounts = [...args.accounts];
   const articleUpdates: Array<{ where: { id: string }; data: Record<string, unknown> }> = [];
   const accountUpdates: Array<{ where: { id: string }; data: Record<string, unknown> }> = [];
+  const jobCreates: Array<Record<string, unknown>> = [];
 
   const prisma: PipelineNotePublishPrisma = {
     appSettings: {
@@ -77,6 +78,12 @@ function buildPrisma(args: {
         const j = jobs.find((x) => x.id === where.id);
         if (j && data.status) j.status = data.status;
         return { id: where.id };
+      },
+      create: async ({ data }) => {
+        const id = `child-job-${jobs.length + 1}`;
+        jobs.push({ id, status: data.status });
+        jobCreates.push(data as Record<string, unknown>);
+        return { id };
       },
     },
     noteArticle: {
@@ -99,7 +106,7 @@ function buildPrisma(args: {
     },
   };
 
-  return { prisma, jobs, articles, accounts, articleUpdates, accountUpdates };
+  return { prisma, jobs, articles, accounts, articleUpdates, accountUpdates, jobCreates };
 }
 
 function makePort(result: NotePublishResult): NotePublishPort {
@@ -226,6 +233,83 @@ describe('pipeline.note.publish', () => {
     expect(articles[0]!.publish_status).toBe('published');
     expect(articles[0]!.published_at).toBeInstanceOf(Date);
     expect(notify).toHaveBeenCalledWith(expect.stringContaining('note に公開しました'));
+  });
+
+  it('公開成功時: addJob 注入済みなら promotion.note.article を job_key 付きで enqueue する (F-ANP-30)', async () => {
+    const { prisma, jobCreates } = buildPrisma({
+      jobs: [{ id: 'job1', status: 'queued' }],
+      articles: [{ ...BASE_ARTICLE }],
+      accounts: [{ ...BASE_ACCOUNT }],
+    });
+    const publishPort = makePort({ ok: true, status: 'published', noteUrl: 'https://note.com/handle/n/nabc' });
+    const addJob = vi.fn().mockResolvedValue(undefined);
+    const res = await runPipelineNotePublish(
+      { note_article_id: 'art1', job_id: 'job1', dry_run: false },
+      {
+        prisma,
+        logger: makeLogger(),
+        publishPort,
+        acquireLock: vi.fn().mockResolvedValue(undefined),
+        releaseLock: vi.fn().mockResolvedValue(undefined),
+        decryptSession: () => '{}',
+        notify: vi.fn().mockResolvedValue(true),
+        addJob,
+      },
+    );
+    expect(res).toMatchObject({ ok: true, status: 'published' });
+    expect(jobCreates).toEqual([{ kind: 'promotion.note.article', status: 'queued', payload_json: { note_article_id: 'art1' } }]);
+    expect(addJob).toHaveBeenCalledWith(
+      'promotion.note.article',
+      { note_article_id: 'art1', job_id: 'child-job-2' },
+      expect.objectContaining({ jobKey: 'anp-promo-art1' }),
+    );
+  });
+
+  it('公開成功時: addJob 未注入なら promotion.note.article の Job も作らない', async () => {
+    const { prisma, jobCreates } = buildPrisma({
+      jobs: [{ id: 'job1', status: 'queued' }],
+      articles: [{ ...BASE_ARTICLE }],
+      accounts: [{ ...BASE_ACCOUNT }],
+    });
+    const publishPort = makePort({ ok: true, status: 'published', noteUrl: 'https://note.com/handle/n/nabc' });
+    const res = await runPipelineNotePublish(
+      { note_article_id: 'art1', job_id: 'job1', dry_run: false },
+      {
+        prisma,
+        logger: makeLogger(),
+        publishPort,
+        acquireLock: vi.fn().mockResolvedValue(undefined),
+        releaseLock: vi.fn().mockResolvedValue(undefined),
+        decryptSession: () => '{}',
+        notify: vi.fn().mockResolvedValue(true),
+      },
+    );
+    expect(res).toMatchObject({ ok: true, status: 'published' });
+    expect(jobCreates).toEqual([]);
+  });
+
+  it('公開成功時: addJob が失敗しても公開結果は ok:true/published のまま (無視して継続)', async () => {
+    const { prisma } = buildPrisma({
+      jobs: [{ id: 'job1', status: 'queued' }],
+      articles: [{ ...BASE_ARTICLE }],
+      accounts: [{ ...BASE_ACCOUNT }],
+    });
+    const publishPort = makePort({ ok: true, status: 'published', noteUrl: 'https://note.com/handle/n/nabc' });
+    const addJob = vi.fn().mockRejectedValue(new Error('queue down'));
+    const res = await runPipelineNotePublish(
+      { note_article_id: 'art1', job_id: 'job1', dry_run: false },
+      {
+        prisma,
+        logger: makeLogger(),
+        publishPort,
+        acquireLock: vi.fn().mockResolvedValue(undefined),
+        releaseLock: vi.fn().mockResolvedValue(undefined),
+        decryptSession: () => '{}',
+        notify: vi.fn().mockResolvedValue(true),
+        addJob,
+      },
+    );
+    expect(res).toMatchObject({ ok: true, status: 'published' });
   });
 
   it('not_logged_in: アカウントを paused にし LINE 通知、記事は ready のまま', async () => {

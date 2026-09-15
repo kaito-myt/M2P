@@ -35,6 +35,7 @@ import { PROMOTION_GROWTH_LOOP_TASK_NAME } from './tasks/promotion-growth-loop.j
 import { RECURRING_COST_REFRESH_TASK_NAME } from './tasks/recurring-cost-refresh.js';
 import { NOTE_PUBLISH_DISPATCHER_TASK_NAME } from './tasks/note-publish-dispatcher.js';
 import { NOTE_PUBLISH_STATUS_SYNC_TASK_NAME } from './tasks/note-publish-status-sync.js';
+import { NOTE_SALES_FETCH_DISPATCHER_TASK_NAME } from './tasks/note-sales-fetch-dispatcher.js';
 
 /**
  * graphile-worker cron 定義 (docs/05 §5.4 / SP-01 仕様: `apps/worker/src/crontab.ts`)
@@ -289,6 +290,12 @@ export const NOTE_PUBLISH_DISPATCHER_CRON_ITEM: CronItem = {
  * (kdp.publish.status.sync と同型)。6 時間毎。
  */
 export const NOTE_PUBLISH_STATUS_SYNC_CRON = '30 */6 * * *';
+
+/**
+ * docs/11-anp-design.md §7 Phase3 F-ANP-40: note 売上/KPI 取得ディスパッチャ。READ-ONLY で
+ * 常時ON (kdp.publish.status.sync と同型)。日次 JST 06:00 = UTC 21:00 (前日)。
+ */
+export const NOTE_SALES_FETCH_DISPATCHER_CRON = '0 21 * * *';
 
 /**
  * F-052: 販促投稿の自動ディスパッチ cron (既定 30分毎)。
@@ -650,6 +657,12 @@ export const CRON_ITEMS: CronItem[] = [
     task: NOTE_PUBLISH_STATUS_SYNC_TASK_NAME,
     match: NOTE_PUBLISH_STATUS_SYNC_CRON,
     identifier: 'note-publish-status-sync-6h',
+  },
+  // docs/11 §7 Phase3 F-ANP-40: note 売上/KPI 取得ディスパッチャ。READ-ONLY・常時ON。日次。
+  {
+    task: NOTE_SALES_FETCH_DISPATCHER_TASK_NAME,
+    match: NOTE_SALES_FETCH_DISPATCHER_CRON,
+    identifier: 'note-sales-fetch-dispatch-daily',
   },
   // F-064: 販促プレイブック(web検索リサーチ)の週次更新 — 生成器が参照する研究を鮮度維持
   {

@@ -20,6 +20,7 @@ export const ANP_PROMPT_ROLES = [
   'anp.writer',
   'anp.editor',
   'anp.judge',
+  'anp.promo',
 ] as const;
 export type AnpPromptRole = (typeof ANP_PROMPT_ROLES)[number];
 
@@ -41,6 +42,7 @@ const ANP_ROLE_PLACEHOLDERS: Record<AnpPromptRole, string[]> = {
   ],
   'anp.editor': ['niche', 'tone', 'title', 'paid', 'feedback'],
   'anp.judge': ['niche', 'target_reader'],
+  'anp.promo': ['channel_label', 'length_guide'],
 };
 
 function buildAnpThemePrompt(): string {
@@ -182,12 +184,36 @@ function buildAnpJudgePrompt(): string {
   ].join('\n');
 }
 
+/**
+ * F-ANP-30: note 記事の SNS 告知投稿担当。A2P content_creator の「自社宣伝禁止」ルールとは
+ * 別役割として分離した理由は `packages/agents/src/anp/promo.ts` 冒頭コメント / docs/11 §7 参照。
+ */
+function buildAnpPromoPrompt(): string {
+  return [
+    '# あなたの役割：SNSグロース責任者 (note 記事の告知投稿担当)',
+    '',
+    'あなたは「{channel_label}」を運営する良書紹介アカウントのSNSグロース責任者です。',
+    '最近読んで良かった note 記事を1本、フォロワーに紹介する投稿を書きます。',
+    '',
+    '## 行動原則',
+    '- 記事の核心的な気づき・意外な要点を具体的に伝え、「読みたい」と思わせる。',
+    '- アカウントのコンセプト・トーンに沿う。テンプレっぽさ・誇張・煽りを避ける。',
+    '- URL・ハッシュタグは絶対に含めない (呼出側で note 記事URLと合わせて付与する)。',
+    `- 長さの目安: {length_guide}。`,
+    '',
+    '## 出力',
+    'ユーザーメッセージで与えられる記事情報・JSON 出力形式に厳密に従うこと。',
+    'JSON 以外の前置き・説明・コードフェンスは出力しない。日本語で出力する。',
+  ].join('\n');
+}
+
 const ANP_PROMPT_BODY_BUILDERS: Record<AnpPromptRole, () => string> = {
   'anp.theme': buildAnpThemePrompt,
   'anp.outline': buildAnpOutlinePrompt,
   'anp.writer': buildAnpWriterPrompt,
   'anp.editor': buildAnpEditorPrompt,
   'anp.judge': buildAnpJudgePrompt,
+  'anp.promo': buildAnpPromoPrompt,
 };
 
 export interface AnpPromptSeed {
@@ -229,6 +255,7 @@ export function buildAnpModelAssignmentSeeds(): AnpModelAssignmentSeed[] {
     { role: 'anp.writer', genre: null, provider: 'anthropic', model: 'claude-sonnet-4-6', status: 'active', created_by: 'system' },
     { role: 'anp.editor', genre: null, provider: 'anthropic', model: 'claude-sonnet-4-6', status: 'active', created_by: 'system' },
     { role: 'anp.judge', genre: null, provider: 'anthropic', model: 'claude-sonnet-4-6', status: 'active', created_by: 'system' },
+    { role: 'anp.promo', genre: null, provider: 'anthropic', model: 'claude-sonnet-4-6', status: 'active', created_by: 'system' },
   ];
 }
 

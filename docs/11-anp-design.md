@@ -106,6 +106,55 @@ A2P と同一で流用できる箇所は「A2P 準拠」と明記し、重複記
     KYC 未完了のため実際の投稿到達は Phase 2 時点で未検証（無料記事のみ検証可能。運営者の
     本アカウントで無料記事を 1 本テスト公開して確定させることを推奨）。
 
+### 2.2 ダッシュボード (2026-09-16 偵察 `scripts/anp/note-stats-recon.mjs`, F-ANP-40)
+
+- **記事別 統計テーブル**: `https://note.com/sitesettings/stats` へ遷移すると
+  **`https://note.com/dashboard`**（title「アクセス状況 | ダッシュボード | note」）へリダイレクトされる。
+  期間は `LAST_7_DAYS` / `LAST_28_DAYS` / `LAST_365_DAYS` / `ALL` / `THIS_MONTH` / `LAST_MONTH` /
+  `CUSTOM` の値を持つ 1 番目の `<select>` で切り替える。
+  **⚠️ 重大な発見 (2026-09-16 code review 対応の再偵察): `?period=THIS_MONTH` を URL クエリで
+  直接指定する方式は信頼できない**（実機確認: クエリ直指定だと集計期間が前月(8月)のまま表示され、
+  「今月」ラベルなのに範囲が「2026/8/1〜2026/8/31」になる非同期バグを確認。一方 `?period=ALL` は
+  URL 指定でも正しく反映される — note 側のクライアント初期化順序に起因する非対称な挙動と推測）。
+  そのため実装では **period 値によらず select 要素への実操作で切り替える方式に統一**する:
+  `sel.value='THIS_MONTH'; sel.dispatchEvent(new Event('change', {bubbles:true}))`。この方法で
+  `<select>` を明示的に操作した場合は正しく当月(9月)のデータに切り替わることを実機確認済み。
+  記事別テーブルは 2 番目の `<table>`（1 番目はインプレッションの日別グラフデータ、3 番目は流入元内訳）で、
+  ヘッダーは `タイトル / インプレッション / ページビュー / スキ / コメント / 売上`。各行の 1 セル目に
+  `<a href="https://note.com/<handle>/n/<noteId>">タイトル</a>` があり、この href が
+  `NoteArticle.note_url`（`pipeline.note.publish` の `resolvePublicUrl` が確定させる形式）と**完全一致**
+  することを実データで確認済み（相互突合の根拠）。数値セルは `"3,814"`（カンマ区切り）/ `"-"`（ゼロ）/
+  末尾に `円` が付く場合ありの3表記が混在する（`parseNoteStatNumber` で正規化）。
+  初期表示は 20 行で以降 **「もっとみる」ボタン**（`<button>`/`<a>` の textContent、aria-label 無し）を
+  クリックするたびに +20〜30 行ずつ展開される（1 アカウント 50 記事で 2 回クリックして全件確認済み）。
+- **フォロワー数**: `https://note.com/<handle>`（クリエイターページ）に
+  `<a href="/<handle>/followers">{N}フォロワー</a>` があり、ここから総フォロワー数（累計、期間の増分ではない）
+  を取得できる。ダッシュボードの「直近1ヶ月のまとめ」に出る「フォロワー増加 {N}人」は**増分**であり
+  総数ではないため使わない。`handle` が DB 未設定（null）だとこの経路は使えない
+  （`note_accounts.handle` は Phase 2 未入力のままのケースがあり、実際の note 上のハンドルは
+  ダッシュボードの記事リンク href から逆引きできる — 運営者が `note_accounts.handle` を埋めておくことを推奨）。
+- **メンバーシップ**: ダッシュボード内の `記事 / メンバーシップ / マガジン` タブのうち「メンバーシップ」を
+  クリックすると、マガジン別に `タイトル / 記事数 / 入会 / 退会 / 売上` のテーブルが表示される。
+  メンバーシップ未設定のアカウントでは「メンバーシップはありません」という空状態メッセージのみで
+  テーブル行が無い（この場合 `NoteMembershipStat` への書き込みはスキップする）。**⚠️ 実際にメンバーシップを
+  運用しているアカウントでの検証は未実施**（2026-09-16 時点で運用中のアカウントが無いため）。
+  現行実装は「入会 − 退会」の期間内純増をそのまま `subscribers` として保存する近似であり、真の累計
+  会員数ではない（運用開始後に実データで要検証・§8 申し送り参照）。
+- **⚠️ 重大な制約: 購入者数・詳細売上ページはステップアップ認証で取得不可**。ダッシュボード左メニューの
+  「売上管理」(`/dashboard/salesmanage`) と「販売履歴」(`/dashboard/sales`) は、有効なセッション
+  (storageState 再利用) でアクセスしても**必ずパスワード再確認画面**（「パスワードの確認」フォーム）に
+  遮られる。note のパスワードは `note_accounts` に保存していない（cookie セッションのみ保存する設計の
+  ため）ため、この経路は自動化できない（KDP の `max_auth_age=0` 再認証ウォールと同種の制約、
+  `[[reference_kdp_publish_authwall]]` 相当）。そのため **`note_sales.buyers`（購入者数）は常に `0`
+  で保存する（取得不可・best-effort）**。売上額 (`revenue_jpy`) はダッシュボードの記事別テーブルの
+  「売上」列（当月分。次項参照）を使う。
+- **year_month の扱い**: 上記の select 実操作で期間を **`THIS_MONTH`（今月）に固定**してから記事別
+  テーブル/メンバーシップタブを読むため、`note_sales`/`note_membership_stats` に保存する
+  `revenue_jpy`/`views`/`likes`/`subscribers`/`mrr_jpy` は**その月の実績値**であり、A2P S-002 の
+  「当月純利益 = 当月売上 − 当月コスト」定義と整合する（累計値ではない）。`year_month` は取得時点の
+  JST 年月をキーに upsert する（日次 cron のたびに当月分を最新値へ上書き。月初になれば自動的に
+  新しい `year_month` 行の作成に切り替わる）。
+
 ---
 
 ## 3. 機能要件（A2P の F-xxx 体系に対応づけ）
@@ -133,13 +182,17 @@ ANP の機能は A2P の対応機能を note 向けに写像したもの。**太
 - **F-ANP-22 公開ステータス同期**: 公開済み/下書き/売上を定期スクレイプで同期（KDP publish.status.sync と同型の self-heal 再ログイン付き）。
 
 ### 3.4 販促（A2P promotion を流用）
-- **F-ANP-30 SNS 自動販促**: 各 note アカウントに紐づく X/Instagram/TikTok へ、記事の告知投稿を自動生成・投稿（A2P の promotion チャンネル基盤・content_creator・動画パイプラインを流用）。**アカウント単位で導線（note記事URL）を差し込む**。
+- **F-ANP-30 SNS 自動販促**: 各 note アカウントに紐づく X/Instagram へ、記事の告知投稿を自動生成・投稿（A2P の promotion チャンネル基盤を流用、生成 role は `anp.promo` として独立 — 理由は §7 参照）。**アカウント単位で導線（note記事URL）を差し込む**。**TikTok は対象外**（記事内容と無関係な動画をオンデマンド生成する既存経路 `tiktok-video.ts`/`ensureTikTokVideoForPost` に乗ってしまうため。記事連動動画パイプラインは Phase 4）。**実装済み(2026-09-16)**: `promotion.note.article`（§7）。
 - **F-ANP-31 相互流入設計**: 同一運営者の A2P 書籍 ⇄ note 記事の相互送客（書籍LPに note、note に書籍リンク）。
+  **実装済み(最小・2026-09-16)**: `pipeline.note.writer.body` が同ジャンル(`NoteTheme.genre`)で
+  `publish_status='published'` の A2P 書籍を最大2件(`asin`必須)取得し、`NoteWriterInput.related_books`
+  として note Writer に渡す。プロンプトは「本文の趣旨に自然に合う場合に限りさりげなく触れてよい
+  (必須ではない)」と指示し、無理な宣伝挿入を避ける。書籍LP→note の逆方向導線は未実装（Phase 4）。
 
 ### 3.5 収益・コスト・運用
-- **F-ANP-40 売上/KPI 取得**: note ダッシュボードから 記事別売上・ビュー・スキ・フォロワー・メンバーシップ課金者数をスクレイプ取得（A2P の KDP 売上取得 `docs/09` と同型）。
+- **F-ANP-40 売上/KPI 取得**: note ダッシュボードから 記事別売上・ビュー・スキ・フォロワー・メンバーシップ課金者数をスクレイプ取得（A2P の KDP 売上取得 `docs/09` と同型）。**実装済み(2026-09-16)**: `note.sales.fetch`/`note.sales.fetch.dispatch`（§7）。購入者数(`buyers`)はステップアップ認証の壁により取得不可(常に0、§2.2)。
 - **F-ANP-41 コスト/トークン可観測性**: 全 LLM/画像生成呼び出しを `token_usage` に記録（A2P ルール #5 準拠。ANP 分は `tool='anp'` 等で識別）。
-- **F-ANP-42 ホーム（ミッションコントロール）**: A2P の S-002 再実装版を流用。当月純利益/売上/コスト/公開記事数/アカウント別成長を集約。
+- **F-ANP-42 ホーム（ミッションコントロール）**: A2P の S-002 再実装版を流用。当月純利益/売上/コスト/公開記事数/アカウント別成長を集約。**最小版実装済み(2026-09-16)**: `apps/anp/app/page.tsx` が RSC で当月の公開記事数/総ビュー/総売上/AIコスト(token_usage role LIKE 'anp.%')/純利益とアカウント別内訳(記事数/ビュー/売上/フォロワー)を表示。コストのアカウント別内訳は `token_usage` にアカウント紐付け列が無いため未対応(全体合計のみ)。
 - **F-ANP-43 org 自律運用連携**: A2P の org（CEO+本部長+担当者・自律ループ）に「note 出版本部」「note 販促本部」を追加、または ANP 独立の org を持つ（§5 で選択）。
 
 ---
@@ -204,6 +257,14 @@ A2P の `books` 系を note 記事系に写像。**マルチアカウントを�
 
 > ⚠️ **実装時の発見・訂正 (2026-09-15)**: `eval_results` は `book_id` が **NOT NULL FK to `Book`** (`onDelete: Cascade`) のため ANP では使えない（当初想定の「共用」は誤り）。代わりに判定結果は `NoteArticle.quality_score`（最終スコアのみ）に保持し、軸別内訳・コメントは `Job.result_json` に残す（Phase 1 の簡略化）。`token_usage`/`prompts` は当初想定通り `role='anp.*'` で共用できる。
 
+> ⚠️ **Phase 3 追加 (2026-09-16, F-ANP-30/40, migration `20260916000000_anp_promo_sales`)**:
+> - `promotion_posts` に `note_article_id String?`（FK 無し。理由は上記 `jobs.book_id` と同じ —
+>   `NoteArticle` は `Book` と無関係の別テーブルのため、A2P 側の `PromotionPost.book_id` FK 制約と
+>   混線させない）を追加。`kind='anp_article'` の投稿がどの `NoteArticle` の告知かを表し、
+>   1記事1回の冪等性チェック（`findFirst({note_article_id, kind})`）にも使う。
+> - `note_accounts` に `followers_total Int @default(0)` / `followers_fetched_at DateTime?` を追加
+>   （§2.2 のフォロワー数取得結果を保持。KDP 系アカウントには無い ANP 固有のフィールド）。
+
 ---
 
 ## 7. パイプライン & シーケンス（A2P `docs/05` 準拠）
@@ -215,8 +276,8 @@ note.theme.generate (アカウント別・手動起動。UI の「テーマ生�
   → judge 合格 (score_total >= 80) → NoteArticle.status='ready' (公開ゲート待ち)
   → [Phase 2 未実装] 価格/公開ゲート: 人間承認 or AI自動 (現状は UI の「公開(dry-run)/公開」ボタン手動起動、または dispatcher 自動)
   → [Phase 2 実装済み] pipeline.note.publish (Playwright アシスト。UI ボタン or note.publish.dispatch) → note.publish.status.sync (6h毎)
-  → [Phase 3] 販促: promotion.note.* (SNS 告知・アカウント別導線)
-  → [Phase 3] note.sales.fetch (定期)
+  → [Phase 3 実装済み] 公開成功時に promotion.note.article を自動 enqueue (SNS 告知・アカウント別導線)
+  → [Phase 3 実装済み] note.sales.fetch.dispatch (日次 JST 06:00) → note.sales.fetch (定期)
 ```
 
 ### Phase 1 実装済みタスク (`apps/worker/src/tasks/`)
@@ -264,9 +325,34 @@ note.theme.generate (アカウント別・手動起動。UI の「テーマ生�
 
 **設定 (`AppSettings`, migration `20260915000000_anp_publish_dispatch`)**: `anp_auto_publish_enabled`(既定false) / `anp_publish_dry_run`(既定true)。`apps/anp` の `/settings` 画面(`app/actions/settings.ts`)から切替可能。
 
-### Phase 3+ (未実装)
+### Phase 3 実装済みタスク — SNS 販促 (F-ANP-30) / 売上・KPI 取得 (F-ANP-40)
 
-`promotion.note.*`（SNS 告知・アカウント別導線）/ `note.sales.fetch`（売上スクレイプ）は §8 ロードマップの Phase 3 で実装する。
+| タスク名 | ペイロード | 処理概要 | 完了後の遷移/状態 |
+|---|---|---|---|
+| `promotion.note.article` | `{ note_article_id, job_id }` | `pipeline.note.publish` の公開成功時に **1記事1回** 自動 enqueue(`job_key='anp-promo-<article_id>'`)。X/Instagram の 2 チャンネルそれぞれについて `@a2p/agents/anp/promo`(role=`anp.promo`)を呼び、note 記事の告知本文を生成。`note_accounts.handle` があれば `@handle` を本文に**先に**含めてから `appendArticleLink` で `note_url` を付与し(X の重み付き280字切り詰めを handle 込みで正しく効かせるため、handle を後から足すと超過しうる — 2026-09-16 code review 対応)、`resolveHashtags`/`pickTopicHashtags`/`appendHashtags` でハッシュタグも付与。`scheduled_for` は `findScheduledFor` がチャンネル別に「既存2/日ルール(value/promo)+anp1=3件/日/チャンネル」の上限を JST 暦日で数え、空きのある最初の未来日の枠外時刻(X=12:00, Instagram=15:00 JST。既存 value の 09:00/20:00 と衝突しない)に配置する。`promotion_posts` に `kind='anp_article'`, `book_id=null`, `note_article_id=<article>`, `status='scheduled'` で `createMany`。冪等性: 同一記事の `kind='anp_article'` 投稿が既にあれば再生成しない | 生成成功: 2件 `created`(1チャンネル失敗時は残りだけ作成)。既生成/未公開: `skipped` |
+| `note.sales.fetch` | `{ note_account_id, job_id }` | `note_accounts.session_state_enc` を復号し `apps/worker/src/tasks/note-sales/playwright-note-sales-port.ts` で `note.com/dashboard` を開き、期間セレクタを select 実操作で「今月」(`THIS_MONTH`)に切り替えてから READ-ONLY 走査(§2.2 — `?period=` URL クエリ直指定は信頼できないため使わない)。記事別ビュー/スキ/売上を `note_url` で `NoteArticle` に突合し `note_sales`(year_month=当月実績)に upsert、フォロワー数を `note_accounts.followers_total` に反映、メンバーシップ行があれば `note_membership_stats`(同じく当月実績)に upsert | 成功: `articlesUpdated`件。`not_logged_in`: `NoteAccount.status='paused'`+LINE通知(publish 系と同型)。`no_session`/`error`: 記事状態は変更せず次回 dispatch 待ち |
+| `note.sales.fetch.dispatch` | (cron, payload無し) | 日次 JST 06:00・常時ON(READ-ONLY のため AppSettings トグル無し)。`note_accounts.status='active'` の全アカウントに内部 `Job` を作って `note.sales.fetch` を enqueue。`job_key='note-sales-fetch-<account_id>-<yyyymmdd>'` で同日の重複投入を防ぐ | 対象アカウント数だけ enqueue |
+
+**設計判断: `anp.promo` を `content_creator`(role=`content_creator`) から分離した理由** — A2P の
+`content_creator`(`packages/agents/src/content-creator/index.ts`, F-059) は「自社本や Amazon の宣伝・
+購入誘導・URL は入れない」ことをプロンプトで明示的に禁止している育成(価値提供)投稿担当である。
+F-ANP-30 は逆に「note 記事の URL を必ず本文に含める」ことが要件であり、この禁止事項と正面から矛盾する。
+`kind` を分けるだけで同一プロンプト/role を使い回すと、禁止事項を上書きするための条件分岐が
+プロンプト内に混在して可読性・保守性が落ち、かつ A2P 側の既存 value 投稿の品質保証（宣伝を混ぜない）
+を壊すリスクがある。そのため独立した role `anp.promo` とプロンプト(`packages/db/seed-anp.ts` に追加)を
+新設した。生成方式（persona 入力・content_creator 風のチャンネル別1投稿生成）自体は content_creator を
+参考に踏襲している。
+
+**排他/冪等性**: `promotion.note.article`/`note.sales.fetch` は Phase 1/2 と同じ内部 `Job` CAS
+(`queued/failed→running→done/failed`) パターンだが、**`NoteLock` は使わない**(記事本文/公開状態を
+変更しないため排他不要。`note.publish.status.sync` と同じ判断)。
+
+**note_url によるアカウント間の取り違え防止**: `note.sales.fetch` はダッシュボードで観測した全行を
+`NoteArticle.note_url` の完全一致でのみ突合する。共有セッション経由で他アカウント/他コンテンツの行が
+混ざっても(§2.2 実測で発生を確認済み)、一致しない行は無視されるため誤って別記事に売上を計上しない。
+
+**note_sales.buyers は常に 0 (best-effort)**: §2.2 の理由により購入者数は取得不可。将来 note が
+API を提供するか、運営者が手動でステップアップ認証を突破する運用を確立した場合に見直す。
 
 ---
 
@@ -275,8 +361,8 @@ note.theme.generate (アカウント別・手動起動。UI の「テーマ生�
 - **Phase 0（設計・雛形）**: 本ドキュメント／`apps/anp` スキャフォールド（SSO で起動する骨格＋ホーム骨格）／portal タイル（済）。
 - **Phase 1（MVP・実装済み）**: 単一〜複数アカウントで theme→outline→writer.body→editor→eyecatch→judge→**status='ready' (下書き相当)** まで自動連結。`apps/anp` に `/accounts`・`/accounts/[id]` UI（アカウント作成・テーマ生成/承認/却下・記事一覧）を実装。note 公開はアシスト手動（Phase 2）。売上手入力。
 - **Phase 2（一部実装済み・2026-09-15）**: note 公開オートメーション（`pipeline.note.publish`/`note.publish.dispatch`/`note.publish.status.sync`、§7）＋マルチアカウント別セッション（`note_accounts.session_state_enc`、移行/取込スクリプト）を実装。**未実装・要フォロー**: 有料記事の価格/有料ライン設定 UI 自動化（note の KYC 要件により本人確認完了後に追加実装が必要、§2.1 参照）、認証リレー(`note_auth_requests`＋LINE)、売上スクレイプ(`note.sales.fetch`)、価格自動決定(F-ANP-16)。
-- **Phase 3**: SNS 自動販促（A2P promotion 流用・アカウント別導線）／メンバーシップ運用／org 自律連携。
-- **Phase 4**: A2P⇄note 相互送客、note→書籍化などクロスツール収益最適化。
+- **Phase 3（一部実装済み・2026-09-16）**: SNS 自動販促（`promotion.note.article`、§7）／売上・KPI取得（`note.sales.fetch`/`note.sales.fetch.dispatch`、§7）／相互流入 F-ANP-31 最小版（note 本文への関連書籍紹介、§3.4）／ホーム集約 F-ANP-42 最小版（`apps/anp/app/page.tsx`）を実装。**未実装・要フォロー**: メンバーシップ運用そのもの（運用アカウント無しのため §2.2 のスクレイプ未検証）、org 自律連携（note 出版本部/note 販促本部）、有料記事の価格/有料ライン設定 UI（Phase 2 から継続）。
+- **Phase 4**: A2P⇄note 相互送客の拡充（書籍LP→note 導線）、note→書籍化などクロスツール収益最適化。
 
 ---
 
@@ -306,4 +392,9 @@ Vercel AI SDK + Anthropic SDK / gpt-image / Cloudflare R2 / NextAuth(共有) / T
 7. **[Phase 1 実装メモ・解消済]** `apps/anp/package.json` に `@a2p/contracts`・`graphile-worker` を追加。ワークスペースリンクは `pnpm exec` 実行時に自動反映され、`pnpm --filter @anp/web exec tsc --noEmit` で clean を確認済み（`pnpm-lock.yaml` にも反映済み）。
 8. **[Phase 2 新規発見・最重要]** note は**有料記事を初めて設定する際に「本人情報の登録」(KYC: 個人/法人・氏名・住所等)モーダルを要求**する。未登録アカウントでは `pipeline.note.publish` が `blocked: kyc_required` を返し、有料記事は公開設定画面から先に進めない（§2.1）。**運営中の各 note アカウントで一度は運営者が手動で本人情報登録を完了させる必要がある**（自動化不可・法令/決済上の要件のため意図的に人手を挟む設計が妥当）。完了後、価格/有料ライン入力欄のセレクタを追加の dry-run 偵察で採取し、`apps/worker/src/tasks/note-publish/playwright-note-publish-port.ts` の `selectPaidAndCheckKyc` 以降(価格設定 TODO コメント箇所)を実装すること。
 9. **[Phase 2 実装メモ]** 初回アカウント `note-acc-1`(display_name「AI副業ラボ」)を本番 DB に作成し、Phase 1 の暫定共有セッションを `note-session-migrate.sh` で移行済み。実装検証のため dry-run(下書き保存)を計4回実行し(code review 対応での再検証含む)、note 上に検証用下書き記事(`n6845533ebcf7`, `n9c510facf4dc`, `n1d09eea651e3`, `ne071421d3e1d`)が残っている — **運営者が note 管理画面から手動削除すること**（実際の公開は一度も行っていない）。resume 廃止(§7 #4)により今後の再試行でも下書きが積み残るため、定期的な整理を検討すること。
-10. **[Phase 2 未確定・要検証]** `resolvePublicUrl` の公開後 URL パターン `note.com/<handle>/n/<noteId>` は §2.1 の想定に基づく実装であり、KYC 未完了のため実際の「投稿する」クリックによる遷移は未検証。運営者が無料記事を 1 本実際に公開して URL パターンと `checkPublished` の 404/非公開判定を確認し、齟齬があれば本節と実装を更新すること。
+10. **[Phase 2 未確定→Phase 3 で部分検証]** `resolvePublicUrl` の公開後 URL パターン `note.com/<handle>/n/<noteId>` は、2026-09-16 の `note.sales.fetch` 実装時の偵察(`scripts/anp/note-stats-recon.mjs`)で **note ダッシュボード上の実際の公開済み記事(「公開中」ステータス)のリンクが厳密にこの形式であることを確認済み**（`note-acc-1` アカウントで運用中の note で実証）。ただし「投稿する」クリック直後の遷移確認（`pipeline.note.publish` 自身の実公開フロー）は依然未検証のまま（このアカウントの note 側では別経路で記事が公開されているため）。
+11. **[Phase 3 新規発見]** ダッシュボード左メニューの「売上管理」(`/dashboard/salesmanage`)・「販売履歴」(`/dashboard/sales`) はセッション再利用でもパスワード再確認(ステップアップ認証)を要求され自動化不可（§2.2）。そのため `note_sales.buyers`(購入者数)は常時 `0` で保存する既知の制約とした。note が将来 API を提供するか、運営者が定期手動確認する運用を検討する場合に見直すこと。
+12. **[Phase 3 未検証・要フォロー]** メンバーシップ(定期購読)のスクレイプ(`parseMembershipRow`/`aggregateMembership`)は、2026-09-16 時点で実際にメンバーシップを運用している note アカウントが無いため、DOM 構造（マガジン別テーブル）の実データでの検証ができていない。運営者が最初のメンバーシップを設定した際に、`note_membership_stats` へ妥当な値が入るか確認し、齟齬があれば §2.2/`playwright-note-sales-port.ts` を更新すること。
+13. **[Phase 3 実装メモ]** `note_accounts.handle` は台帳上 null のままでも記事別スクレイプ自体は動く（`note_url` の完全一致で突合するため）が、フォロワー数取得(`/<handle>/followers`)には `handle` が必須。運営者は各アカウントの実際の note ハンドルを `note_accounts.handle` に設定しておくこと（ダッシュボードの記事リンク href の `note.com/<handle>/n/...` から確認可能）。
+14. **[Phase 3 実装メモ・DB マイグレーション運用]** migration `20260916000000_anp_promo_sales`（`promotion_posts.note_article_id`/`note_accounts.followers_total`/`followers_fetched_at`）は、本番 DB (`_prisma_migrations` の履歴が後述の理由で `migrate deploy` を受け付けない状態のため) に対して **raw SQL (`ALTER TABLE ... ADD COLUMN IF NOT EXISTS`) を直接実行**して適用した後、`pnpm --filter @a2p/db exec prisma migrate resolve --applied 20260916000000_anp_promo_sales` を実行して `_prisma_migrations` の記録のみ整合させた（実 SQL は再実行していない・冪等な `IF NOT EXISTS` のため安全）。
+   **⚠️ 発見: 本番 `_prisma_migrations` は `20260625000000_add_book_publish_status` が P3009 (failed) のまま数ヶ月放置されており、それ以降に追加された 26 件のマイグレーション（`20260625100000_add_kdp_metadata_readings` 〜 `20260915000000_anp_publish_dispatch`）が軒並み「未適用」として記録されている**（`prisma migrate status` で確認、2026-09-16 時点）。実際のスキーマにはこれらの変更が反映済み（各機能が本番で稼働している）ため、過去の実装セッションでも同様に raw SQL 直接適用 + 個別 `migrate resolve` (または未実行のまま放置) で運用してきたと推測される。この根本的な履歴の不整合は本タスクのスコープ外のため修正していない。復旧手順は `docs/operations/runbook.md` §4.1（`P3009` 節）を参照し、対応する場合は 26 件を一括で `resolve --applied` するか、`migrate diff` でスキーマとの差分ゼロを確認してから履歴を作り直すこと（本番データ保護のため `migrate reset` は厳禁、runbook 記載の通り）。

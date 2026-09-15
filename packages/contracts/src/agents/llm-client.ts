@@ -80,7 +80,10 @@ export type AgentRole =
   | 'anp.outline'
   | 'anp.writer'
   | 'anp.editor'
-  | 'anp.judge';
+  | 'anp.judge'
+  // F-ANP-30 — note 記事の SNS 告知投稿担当 (販促ペルソナで書く。content_creator の
+  // 「自社宣伝禁止」ルールとは別の役割として分離する。docs/11 §7 参照)。
+  | 'anp.promo';
 
 /**
  * マルチモーダル入力用の画像添付。`content` (テキスト) と併せてユーザーメッセージに付与する。

@@ -205,6 +205,15 @@ import {
   NOTE_PUBLISH_STATUS_SYNC_TASK_NAME,
   notePublishStatusSyncTask,
 } from './tasks/note-publish-status-sync.js';
+import {
+  PROMOTION_NOTE_ARTICLE_TASK_NAME,
+  promotionNoteArticleTask,
+} from './tasks/promotion-note-article.js';
+import { NOTE_SALES_FETCH_TASK_NAME, noteSalesFetchTask } from './tasks/note-sales-fetch.js';
+import {
+  NOTE_SALES_FETCH_DISPATCHER_TASK_NAME,
+  noteSalesFetchDispatcherTask,
+} from './tasks/note-sales-fetch-dispatcher.js';
 
 /**
  * graphile-worker runner 起動 (docs/05 §5 共通ポリシー / SP-01 T-01-12)
@@ -326,6 +335,10 @@ export function buildTaskList(): TaskList {
     [PIPELINE_NOTE_PUBLISH_TASK_NAME]: pipelineNotePublishTask,
     [NOTE_PUBLISH_DISPATCHER_TASK_NAME]: notePublishDispatcherTask,
     [NOTE_PUBLISH_STATUS_SYNC_TASK_NAME]: notePublishStatusSyncTask,
+    // docs/11-anp-design.md §7 Phase3 — SNS 販促 (F-ANP-30) / 売上・KPI 取得 (F-ANP-40)。
+    [PROMOTION_NOTE_ARTICLE_TASK_NAME]: promotionNoteArticleTask,
+    [NOTE_SALES_FETCH_TASK_NAME]: noteSalesFetchTask,
+    [NOTE_SALES_FETCH_DISPATCHER_TASK_NAME]: noteSalesFetchDispatcherTask,
   };
 }
 

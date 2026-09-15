@@ -84,8 +84,17 @@ export interface PipelineNoteWriterBodyPrisma {
   noteTheme: {
     findUnique: (args: {
       where: { id: string };
-      select: { id: true; hook: true; target_reader: true };
-    }) => Promise<{ id: string; hook: string; target_reader: string | null } | null>;
+      select: { id: true; hook: true; target_reader: true; genre: true };
+    }) => Promise<{ id: string; hook: string; target_reader: string | null; genre: string } | null>;
+  };
+  /** F-ANP-31 相互流入 (最小): 同ジャンルの公開済み A2P 書籍を参考情報として渡す。 */
+  book: {
+    findMany: (args: {
+      where: { publish_status: string; asin: { not: null }; theme: { genre: string } };
+      select: { title: true; asin: true };
+      orderBy: { created_at: 'desc' };
+      take: number;
+    }) => Promise<Array<{ title: string; asin: string | null }>>;
   };
 }
 
@@ -198,9 +207,28 @@ export async function runPipelineNoteWriterBody(
     const theme = article.theme_id
       ? await prisma.noteTheme.findUnique({
           where: { id: article.theme_id },
-          select: { id: true, hook: true, target_reader: true },
+          select: { id: true, hook: true, target_reader: true, genre: true },
         })
       : null;
+
+    // F-ANP-31 相互流入 (最小): 同ジャンルで公開済みの A2P 書籍を最大2件、参考情報として渡す。
+    // ジャンル不明 (theme なし) の場合は取得しない。失敗時は無視して続行(相互流入は必須ではない)。
+    let relatedBooks: Array<{ title: string; asin?: string }> = [];
+    if (theme?.genre) {
+      try {
+        const books = await prisma.book.findMany({
+          where: { publish_status: 'published', asin: { not: null }, theme: { genre: theme.genre } },
+          select: { title: true, asin: true },
+          orderBy: { created_at: 'desc' },
+          take: 2,
+        });
+        relatedBooks = books
+          .filter((b): b is { title: string; asin: string } => typeof b.asin === 'string' && b.asin.length > 0)
+          .map((b) => ({ title: b.title, asin: b.asin }));
+      } catch (err) {
+        log.warn({ err, noteArticleId }, 'related_books の取得に失敗 — 相互流入なしで続行');
+      }
+    }
 
     const input: NoteWriterInput = {
       note_article_id: noteArticleId,
@@ -219,6 +247,7 @@ export async function runPipelineNoteWriterBody(
     };
     if (article.paid && article.price_jpy !== null) input.price_jpy = article.price_jpy;
     if (feedback && feedback.length > 0) input.feedback = feedback;
+    if (relatedBooks.length > 0) input.related_books = relatedBooks;
 
     const body = await generateBody(input);
 

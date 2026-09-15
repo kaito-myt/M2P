@@ -392,8 +392,11 @@ model PromotionPost {
   // [F-059] 育成(価値提供)投稿はどの本にも紐づかないため null 可。宣伝(promo)投稿は本に紐づく。
   book_id       String?
   channel       String // x | instagram | tiktok | note | blog
-  // [F-059] 投稿種別: promo=宣伝(本の告知) | value=育成(価値提供・フォロワー獲得)。
+  // [F-059] 投稿種別: promo=宣伝(本の告知) | value=育成(価値提供・フォロワー獲得) | anp_article=ANP note記事の告知。
   kind          String    @default("promo")
+  // [F-ANP-30] anp_article 投稿の紐付け先 (NoteArticle.id)。別モジュールのため FK は張らない
+  // (docs/11 §6 の Job.book_id と同じ判断 — NoteArticle は Book と無関係の別テーブル)。
+  note_article_id String?
   // [F-060] 事前レンダリング済みメディア(TikTok 動画 mp4 等)の R2 キー。publish 時に署名URL化して添付。
   media_key     String?
   // P4 増分2: 投稿先の台帳アカウント (多アカウント routing)。null なら channel 既定設定を使う。
@@ -424,6 +427,7 @@ model PromotionPost {
   @@index([status, scheduled_for])
   @@index([book_id])
   @@index([channel, status])
+  @@index([note_article_id])
   @@map("promotion_posts")
 }
 
@@ -1391,6 +1395,10 @@ model NoteAccount {
   genre_policy_json        Json
   session_state_enc        String?  @db.Text
   status                   String   @default("active") // active | paused | archived
+  // [F-ANP-40] note.sales.fetch が `/<handle>/followers` から取得した最新フォロワー総数(累計)。
+  // handle が null の間は取得できず既定 0 のまま。
+  followers_total          Int      @default(0)
+  followers_fetched_at     DateTime?
   created_at               DateTime @default(now())
   updated_at               DateTime @updatedAt
 

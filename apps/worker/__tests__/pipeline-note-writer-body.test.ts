@@ -90,6 +90,7 @@ function buildPrisma(args: {
       findUnique: async ({ where }) => args.accounts.find((a) => a.id === where.id) ?? null,
     },
     noteTheme: { findUnique: async () => null },
+    book: { findMany: async () => [] },
   };
 
   return { prisma, articleUpdates, jobCreates };

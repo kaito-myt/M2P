@@ -204,7 +204,9 @@ export const AnpPromoPersonaSchema = z.object({
 export type AnpPromoPersona = z.infer<typeof AnpPromoPersonaSchema>;
 
 export const AnpPromoContentInputSchema = z.object({
-  channel: z.enum(['x', 'instagram', 'tiktok']),
+  // TikTok は記事に無関係な動画をオンデマンド生成する経路(tiktok-video.ts)に乗ってしまうため
+  // Phase 4 まで対象外とする(docs/11 §3.4/§7)。
+  channel: z.enum(['x', 'instagram']),
   persona: AnpPromoPersonaSchema,
   playbook_guidance: z.string().max(4000).optional(),
   article: z.object({
@@ -212,7 +214,6 @@ export const AnpPromoContentInputSchema = z.object({
     hook: z.string().max(600).optional(),
     lead: z.string().max(1000).optional(),
     note_url: z.string().min(1).max(500),
-    account_handle: z.string().max(100).optional(),
     niche: z.string().max(200),
   }),
 });

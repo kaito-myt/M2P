@@ -261,6 +261,33 @@ export function appendPurchaseLink(
   return `${trimmedBody}${PURCHASE_LABEL}${url}`;
 }
 
+const ARTICLE_LABEL = '\n\n▼記事はこちら\n';
+const ARTICLE_LABEL_IG = '\n\n📖 記事はこちら（プロフィールのリンクからも）\n';
+
+/**
+ * [F-ANP-30] 投稿本文に外部記事 URL (note 記事等) を付与する。`appendPurchaseLink` の
+ * Amazon 専用ロジックを一般化したもの (ANP の note 記事告知で使用)。
+ *   - url が空なら本文そのまま。
+ *   - 既に同じ URL を含むなら二重付与しない。
+ *   - **X のみ** 重み(280, URL=23)に収まるよう本文を切り詰める。
+ */
+export function appendArticleLink(channel: string, body: string, url: string | null | undefined): string {
+  if (!url) return body;
+  const trimmedBody = body.trim();
+  if (trimmedBody.includes(url)) return trimmedBody;
+
+  if (channel === 'x') {
+    const labelWeight = weightedTweetLength(ARTICLE_LABEL);
+    const maxBody = X_MAX_WEIGHT - X_URL_WEIGHT - labelWeight;
+    const fitted = truncateToWeight(trimmedBody, maxBody);
+    return `${fitted}${ARTICLE_LABEL}${url}`;
+  }
+  if (channel === 'instagram') {
+    return `${trimmedBody}${ARTICLE_LABEL_IG}${url}`;
+  }
+  return `${trimmedBody}${ARTICLE_LABEL}${url}`;
+}
+
 const URL_RE = /https?:\/\/\S+/g;
 
 /** URL を t.co 相当(23)として数える重み付き文字数 (ハッシュタグ余白計算用)。 */

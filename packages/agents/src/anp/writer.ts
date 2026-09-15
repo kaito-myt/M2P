@@ -141,6 +141,15 @@ export async function generateNoteBody(
   if (parsedInput.feedback && parsedInput.feedback.length > 0) {
     lines.push('', '【修正コメント — 必ず反映】', parsedInput.feedback.map((f) => `- ${f}`).join('\n'));
   }
+  if (parsedInput.related_books && parsedInput.related_books.length > 0) {
+    lines.push(
+      '',
+      '【参考: 関連する自社刊行の書籍 (F-ANP-31 相互流入・任意)】',
+      parsedInput.related_books.map((b) => `- ${b.title}`).join('\n'),
+      '本文の趣旨に自然に合う場合に限り、上記のいずれかに文中や末尾でさりげなく触れてよい' +
+        '(必須ではない。取ってつけた宣伝にならないよう、話の流れに合わないなら触れなくてよい)。',
+    );
+  }
   lines.push(
     '',
     '上記の見出し構成に沿って note 記事の本文 (Markdown) を執筆してください。',
