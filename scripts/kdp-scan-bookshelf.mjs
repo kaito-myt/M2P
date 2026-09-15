@@ -37,6 +37,19 @@ async function main() {
     await ctx.close();
     return;
   }
+  // 本棚は既定 10 件/頁のページネーション。表示件数セレクトを最大値にして 1 頁で全件出す
+  // (2026-09-15: 既定のままだと 1 頁目の 10 件しか見えず、DB 同期が 48 冊分ずれていた)。
+  const perPage = await page.evaluate(() => {
+    const sel = document.querySelector('#podbookshelftable-records-per-page-dropdown-option, select[id*="records-per-page"]');
+    if (!sel) return null;
+    const max = [...sel.options].map((o) => Number(o.value)).filter(Number.isFinite).sort((a, b) => b - a)[0];
+    if (!max) return null;
+    sel.value = String(max);
+    sel.dispatchEvent(new Event('change', { bubbles: true }));
+    return max;
+  }).catch(() => null);
+  console.log('表示件数/頁:', perPage ?? '(セレクト無し・既定)');
+  await page.waitForTimeout(8000);
   // 遅延読み込み対策: 数回スクロールして全行を出す。
   for (let i = 0; i < 12; i++) {
     await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight)).catch(() => {});

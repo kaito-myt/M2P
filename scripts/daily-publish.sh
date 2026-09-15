@@ -16,6 +16,10 @@ say() { echo "[$(date '+%m/%d %H:%M')] $*" | tee -a "$LOG"; }
 
 say "===== 日次出版ルーティン開始 ====="
 
+# 0) 本棚と DB の同期(審査通過分を published に反映。表示上の「未出版」の水増しを防ぐ)
+say "--- KDP: 本棚同期 ---"
+bash scripts/kdp-sync-shelf.sh 2>&1 | tail -2 | tee -a "$LOG"
+
 # 1) KDP 電子書籍 — まず枠を消費しない下書きresume、次に新規作成
 say "--- KDP: 下書きresume(枠非消費) ---"
 bash scripts/kdp-assist.sh auto --all 2>&1 | grep -E "対象書籍|下書きスロット|submitted|published|RESULT|見つかりません" | tee -a "$LOG"
