@@ -99,7 +99,8 @@ if (SERIES) plan.series = SERIES;
 if (SERIES_KANA) plan.kana = SERIES_KANA;
 if (VOLUME) plan.volume = String(VOLUME);
 console.log('変更内容:', JSON.stringify(plan));
-if (!Object.keys(plan).length) { console.log('変更なし — 終了'); await browser.close(); process.exit(0); }
+// --register のみ(編集済みの申請やり直し)は変更ゼロでも続行する
+if (!Object.keys(plan).length && !REGISTER) { console.log('変更なし — 終了'); await browser.close(); process.exit(0); }
 if (DRY) { console.log('DRY — 保存しない'); await browser.close(); process.exit(0); }
 
 // シリーズ欄はアコーディオン内で非表示のことがあるので、見出しを開いてから入力する
