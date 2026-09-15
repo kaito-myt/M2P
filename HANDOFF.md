@@ -1,52 +1,78 @@
-# A2P/M2P 作業引き継ぎ（2026-09-09 時点）
+# A2P/M2P 作業引き継ぎ（2026-09-16 時点）
 
 別端末で続きを作業するための現況・残タスク・発見した制約のまとめ。
 起動後はまず本書＋`CLAUDE.md`＋`.claude-handoff/memory/*.md` を読むこと。
+（旧版 2026-09-09 の内容は本書に統合。Git 履歴 `git log --oneline` にコミット単位の作業履歴あり）
 
 ## 別端末でのセットアップ手順
-1. `git clone https://github.com/kaito-myt/M2P.git`（本コミットに最新が入っている。旧A2Pから改名済み）
-2. `pnpm install`
-3. **`.env.local` は gitignore で push されていない**（RAILWAY_TOKEN＋各種認証情報）。→ **旧端末から手動でコピー**するか再作成が必須。これが無いと railway 経由の DB/秘密取得が全て失敗する。
-4. `railway login` 済み or `.env.local` の `RAILWAY_TOKEN` があれば `scripts/paperback/pb-env.sh` が通る。
-5. 会話の記憶を引き継ぐなら `.claude-handoff/memory/*` を新端末の `~/.claude/projects/<プロジェクトハッシュ>/memory/` に配置（ハッシュは絶対パス由来。パスが違えば新規セッションで本書＋memoryを読ませればOK）。
+1. `git clone https://github.com/kaito-myt/M2P.git` → `pnpm install`
+2. **`.env.local` は gitignore で push されていない**。最低限 `RAILWAY_TOKEN=` だけ埋めれば
+   `scripts/paperback/pb-env.sh` が DB/R2/Amazon/KDP_CRED_KEY を Railway から取得する
+   （テンプレは `.env.example`。Railway ダッシュボード > Account Settings > Tokens で発行）。
+3. 会話の記憶は `.claude-handoff/memory/*` を新端末の `~/.claude/projects/<ハッシュ>/memory/` に配置
+   （ハッシュは絶対パス由来。`C:\DEV\M2P` に clone すれば `C--DEV-M2P`）。
+4. ブラウザ自動化のログイン状態（`scripts/.kdp-userdata`, `scripts/.note-userdata*`）は gitignore。
+   KDP は初回 OTP 再認証（LINE リレー or `kdp_auth_requests` 行を手動 fulfilled）。
+   BW/Kobo/note のセッションは DB（app_settings / promotion_channel_settings）に暗号化保存済みなので端末非依存。
+
+## ⚠️ 最重要の運用ルール（2026-09-15 に判明）
+- **Railway デプロイは必ず `railway up --service <A2P|A2P-Worker|ANP> --detach`**。
+  `railway redeploy --from-source` は**新コードを反映しない**（既存イメージ再起動のみ、exit 0 で成功に見える）。
+  9/4〜9/15 の「デプロイ済み」は全てこれで未反映だった → 9/15 08:35 に `railway up` で一括反映済み。
+- Windows Task Scheduler に `scripts/daily-publish-task.cmd`（日次出版ルーティン）は**未登録**。登録は任意。
+- KDP スクリプトは `scripts/paperback/out/` が無いと全滅（新 clone では mkdir が必要）。
 
 ## チャネル別 現況
 
-### KDP eBook（新作出版）
-- **本日4冊 出版**（`publish_status=submitted`／レビュー中）: 期待値で買う競馬(ASIN B0HJ7RY8XX)、夏競馬・穴馬回収率メソッド(B0HJ7MXHGJ)、人気急落馬の狙い方、穴馬はオッズが教えてくれる。
-- 「夏だけ勝てる馬」= 下書き作成済みだが処理中にメモリ逼迫で停止（未出版）。次回 `--assist`/`--auto` で仕上げ。
-- **KDPは1日約5冊の新規作成上限**（`本の作成数制限`）。本日分は消費済み。未出品残 ~26冊（`publish_status`: unlisted≈53 / submitted=40 / published=30 / retracted=21）。
-- **重要な修正済みバグ**: `scripts/kdp-publish.mjs` の DEFAULT作成経路で、出版クリック後のページ遷移により `fillStep3` が「Execution context destroyed」で例外→実際は出版成功でも `error` 扱いになっていた。→ 例外時＆完了時に `verifyPublished`（本棚のレビュー中/出版準備中/販売中/ライブ判定）で確定するよう修正済み。再実行すると本棚確認で `submitted` に自動整合する（重複作成ガード有り＝二重出版しない）。
-- 実行: `RAILWAY_TOKEN=... LINE_CHANNEL_ACCESS_TOKEN=... LINE_USER_ID=... bash scripts/paperback/pb-env.sh node scripts/kdp-publish.mjs --all --limit=8`（`--auto`=resume専用、無印=新規作成＋公開）。新規作成時は再認証(LINE OTPリレー)が入り得る。
-
-### KDP ペーパーバック
-- `scripts/paperback/plan.json` 再生成済み（96冊 / ready=93 / 余白NG=2）。
-- 保留7冊の下書きは **変換失効(変換未完了)** で出版不可 → 作り直し要（原稿再アップ→数時間の変換待ち→出版）。
-- **KDP eBookと同じ「1日5冊の作成枠」を共有**。本日は eBook で使い切ったため未着手。明日以降。
-- 実行: `bash scripts/paperback/pb-batch.sh draft`（下書き作成, 5/day, rc=4で制限検出し停止）→ 数時間後 `bash scripts/paperback/pb-batch.sh publish`。表紙は9.5mmセーフゾーン修正済み。
+### KDP eBook / ペーパーバック
+- `publish_status`: published=59 / submitted・unlisted 残あり。本棚同期 `bash scripts/kdp-sync-shelf.sh` で DB を実態に合わせる。
+- 日次ルーティン `bash scripts/daily-publish.sh` = 本棚同期→下書き resume（枠非消費）→新規作成5冊→BW 再申請→PB 出版。
+- **creation_limit** は「1日5冊」ではなく審査滞留に応じたアカウント制限。resume は非消費。PB 枠は別。
+- PB 価格 = `scripts/paperback/pb-price.mjs`：`max(¥980, ロイヤリティ¥150 確保価格)`（方針B）。
+- PB のプレビュー承認ゲート（GUTTER_ISSUE 等）は react-pdf の CJK 改行修正（`cjkSoftBreak`/ZWSP/kinsoku）で解決。
+  全 114 冊 PDF 再生成済み（R2 に `.bak-<ts>` バックアップあり）。
+- KDP 表紙は 9.5mm セーフゾーン対応済み。
 
 ### BOOK☆WALKER
-- **AI本OK**（Koboと逆）。ただし入稿フォームの「AI生成」サブカテゴリ（`input.book_sub_category[value="7497"]`）チェックが**必須**。
-- **申請は著者あたり月約3件のみ**（faq/9999）。9月分は消化済み（却下6冊中3冊=25966/25962/25963 を再申請成功、残3冊は403）。次は約1ヶ月後。
-- 本文のAI開示文は全書籍除去済み（`scripts/bookwalker/remove-ai-disclosure.mjs`, 55冊117文）。
-- **日次自動再タグcron `bw.retag.tick` 実装・テスト済**（`apps/worker/src/tasks/bw-retag.ts`, `bw_retag_enabled` フラグでゲート）。却下書籍を自動で AI生成付与＋内容紹介整形(`fitToSentence`)＋クリーンEPUB再アップ＋再申請、403で当tick停止。**要ワーカー再デプロイで有効化**（枠が閉じているので急ぎ不要）。マイグレーション `20260909000000_bw_retag`（`bw_retag_enabled`列）は本番DBに適用済み。
-- 本棚: 販売中1（「今日のわたしをいたわる100の言葉」発売日9/8＝**不可侵**）/ 申請中〜113 / 却下数冊。
+- 申請枠は**月約3件のローリング**（日次ではない）。`scripts/bookwalker/retry-queue.txt` の 5 冊は枠が開き次第 daily-publish が自動再申請。
+- 却下本の編集は取り下げ（`POST /api/books/drop`）後のみ。シリーズ情報は `#sereis_selector`（typo そのまま）。
+- 「AI生成」タイトル接頭辞は**存在しない**（bw-shelf-enum のバッジ抽出バグだった。修正済み）。
+- 本文の AI 開示文は全書籍から除去済み（`remove-ai-disclosure.mjs`）。
 
-### 楽天Kobo（KWL）— ❌ 撤退
-- **KWLはAI作成本を一切出版不可**（コンテンツポリシー faq 1144, 制作の一部AI利用も含む）。開示文を消しても不可。
-- 再出版バッチ(`scripts/kobo/kobo-republish.sh`)を試したが、**停止前に81/89冊が再送信済み**→全てKobo側で却下される。**今後Koboへ再送信しないこと**（アカウントリスク）。
+### 楽天Kobo
+- 88 冊却下 → 1 冊テスト再送信中（作成中）。結果を見てから残りを判断。作品一覧は `rakutenkwl.kobo.com/v2/ebooks`（SPA）。
 
 ### Booth
-- 主力12冊の下書きを7項目自動入力で作成済み（`scripts/booth/booth-drafts.md` にURL一覧）。**作品ファイルUP＋公開は手動**（方針B）。エンジン=`scripts/booth/booth-submit.mjs`、バッチ=`booth-batch-flagship.sh`。
+- 主力12冊の下書き作成済み（`scripts/booth/booth-drafts.md`）。ファイルUP＋公開は手動。
 
-## 実行環境の注意（メモリ）
-- 本機RAM 13.8GB。**Docker Desktop＋WSL VM(vmmemWSL)で~2.5GB食う**とブラウザ自動化Chromeがフリーズする（KDP book4/5が実際に停止）。自動化前に Docker を停止（`wsl --shutdown`）＋Chromeタブ整理で3GB以上空けること。
+### 販促（SNS）
+- ペルソナ「ことは」（20代読書女子）で x/instagram/tiktok/note/blog 統一、2 投稿/日/チャネル。content_creator v5（実在良書紹介のみ）。
+- 9/15 に停滞していた 71 投稿を再スケジュール済み。
+
+### 収益・コスト（9月）
+- 売上 ¥0（KENP 2,542）、AI コスト ¥81,974/11日 → 今月黒字は不可能、損益分岐が現実目標。
+- 対策済み: judge リトライ `RETRY_LIMIT=1`、prompt caching 有効化（editor/writer/chapter）、テーマ方向を
+  light_novel(古典翻案)/競馬/AI/健康 に寄せ self_help/novel/lifestyle から離脱、autopass 一時停止。
+
+## ANP（note 自動出版ツール）— Phase 1〜3 実装・デプロイ済み
+- 設計 = `docs/11-anp-design.md`（実 DOM・制約・移行記録は全てここ）。アプリ = `apps/anp`、Railway サービス `ANP`。
+- Phase 1: theme→outline→body→editor→eyecatch→judge（本番 E2E 検証済み、記事 4,242 字 ¥78.97、judge 74 点）。
+- Phase 2: note エディタへの下書き作成（`pipeline.note.publish`）。**現在 dry-run**（`app_settings.anp_publish_dry_run=true`, `anp_auto_publish_enabled=false`）。
+- Phase 3: X/Instagram 告知（3/日/チャネル上限, TikTok は Phase 4）、`note.sales.fetch`（ダッシュボード READ-ONLY・select 実操作で THIS_MONTH）、ホーム KPI。
+- **人手待ち**:
+  1. note 本人情報登録（KYC）→ 有料記事解放。完了後に価格/有料ライン UI を偵察して有料公開を実装。
+  2. dry-run 下書き `https://editor.note.com/notes/n800cf6101fa9/edit/` を手動で投稿 → 公開 URL パターン確認 → `anp_publish_dry_run=false`。
+  3. 検証用下書き削除: n6845533ebcf7 / n9c510facf4dc / n1d09eea651e3 / ne071421d3e1d。
+- 既知の罠: `note.theme.generate` は `job_id`（app jobs 行）必須。judge の `score_total` は LLM が合計 400 を返すため `.catch(0)` で緩め再計算。
+
+## 実行環境の注意
+- 本機 RAM 13.8GB。Docker Desktop＋WSL で ~2.5GB 消費するとブラウザ自動化がフリーズ → `wsl --shutdown` 推奨。
+- `TaskStop` で子 node/chrome が生き残る → 明示 taskkill。KDP Chrome プロファイルは同時実行不可（daily-publish と create を並走させない）。
+- graphile-worker の残骸掃除は `graphile_worker._private_jobs`（`jobs` はビュー）。
 
 ## 次にやること（優先順）
-1. KDP: 残り約26冊を修正済みフローで 5冊/日ずつ出版。「夏だけ勝てる馬」下書き仕上げ。
-2. ペーパーバック: 7冊作り直し＋新規、5冊/日、変換後に出版。
-3. BW: `bw.retag.tick` をワーカーへデプロイ→枠開放時に自動消化。
-4. Booth: 各下書きのファイルUP＋公開（手動）。
-
-## 設計ドキュメント
-`docs/02-functional-requirements.md`（F-094/095/096 更新済み）, `docs/05-program-design.md`（BW再申請/AI生成サブカテゴリ/月3制限/Kobo・Booth の実発見を記載済み）。
+1. ANP: 上記の人手待ち 1〜3 → 自動公開 ON → 有料記事対応（Phase 3.5）→ TikTok（Phase 4）。
+2. KDP: daily-publish を毎日回して残りを消化（Task Scheduler 登録で自動化可）。
+3. Kobo テスト 1 冊の結果確認 → 残 87 冊の再送信可否判断。
+4. Booth 12 冊の手動公開。
+5. 収益: 週次で `docs/05` の KPI を見てテーマ方向を調整。

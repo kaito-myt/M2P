@@ -38,3 +38,4 @@
 - [BookWalker publish](project_bookwalker.md) — 40冊申請済→F-094サーバー自動入稿デプロイ(2026-09-04); /bookwalkerタブ; フォームid一式・isTrusted罠・キーワード100字・セッションpush運用。
 - [Channel tabs](project_channel_tabs.md) — /bookwalker稼働・/kobo・/booth UI先行(2026-09-04); Kobo/Boothはユーザー手動ログイン→セッション保存待ち。
 - [Kobo publish](project_kobo.md) — 楽天Kobo自動出版エンジン完成(2026-09-04); ジャンル=トップ展開→一般チェックボックス, 出版可否はAPI status確認, 削除不可UUIDは別作品で上書き。
+- [Railway deploy](reference_railway_deploy.md) — redeploy --from-source は反映されない; railway up --service X --detach を使う
