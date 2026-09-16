@@ -56,7 +56,7 @@
   editor 3 冊（競馬）は実行中 → 完了後に judge 直行。needs_human_review 8 冊の通知メールは下記 4 の既存バグで失敗（本の状態は正しい）。
   4 の修正で 11:52 に worker を再デプロイした際、実行中だった editor 3 / seo 1 / blog 生成 1 が旧コンテナごと死亡（graphile 行は旧 worker のロック持ち、
   public.jobs は running のまま、book_locks 残留）→ 11:55 に手動で解放（graphile unlock＋jobs を queued に戻す＋book_locks 削除）し新 worker が再開。
-  **教訓: 長時間ジョブ実行中の  は避ける**（memory `reference_worker_db_outage` ⑥ と同じ罠。org.ops.watch の 6 時間毎自己修復でも直るが時間を失う）。
+  **教訓: 長時間ジョブ実行中の `railway up` は避ける**（memory `reference_worker_db_outage` ⑥ と同じ罠。org.ops.watch の 6 時間毎自己修復でも直るが時間を失う）。
 - judge は RETRY_LIMIT=1 のため、今回 80 点未満なら `needs_human_review` で止まる（再々キックはしない）。翌朝 `books.status` を確認。
 - blog 育成投稿の生成ジョブを 1 件だけ再投入（graphile job 150030）。成功すれば `promotion_posts(channel=blog, kind=value)` に 12 件入る。
 
