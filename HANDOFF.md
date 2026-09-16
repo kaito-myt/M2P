@@ -34,7 +34,7 @@
    `@a2p/notify` の React Email テンプレートが worker の tsx 実行で classic JSX になるのが原因。全テンプレートに React import を明示し、
    judge / alert-cost-check のメール組立を try 内へ（通知失敗は非致命）。worker を再デプロイ済み。
 5. **S-015「準備完了の本をまとめて入稿キューに登録」が入稿済み（submitted・KDP 審査中）の本まで再キューしていた**（運営者報告、夕方に修正・web デプロイ済み）。
-   `submitToKdpCore` に submitted の blocked 条件を追加し、一括ボタンの対象も `publishStatus===unlisted` に限定。既に誤ってキューに入っていた submitted の本は DB で `kdp_publish_queued=false` に戻した（下記件数）。docs/02 F-041・docs/05 §4.3.16 追記。
+   `submitToKdpCore` に submitted の blocked 条件を追加し、一括ボタンの対象も `publishStatus===unlisted` に限定。既に誤ってキューに入っていた本は DB で `kdp_publish_queued=false` に戻した（submitted 20 冊 + published 28 冊 = 48 冊。残キューは unlisted 36 冊のみ）。docs/02 F-041・docs/05 §4.3.16 追記。
 - ほか: graphile の exhausted 残骸（bw.submit / kdp.submit / optimizer.prompt.generate）削除、stale だった単体テスト
   （env keys 39 項目 / judge maxOutputTokens 12288）を実態に合わせて修正。**まだ落ちている無関係テスト 3 件**
   （worker: writer-outline notify payload・promotion-automation の日程 / web: promotion-channels-core の probe 引数）は
