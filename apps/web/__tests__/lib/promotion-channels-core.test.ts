@@ -127,6 +127,7 @@ describe('testChannelConnectionCore', () => {
       channel: 'x',
       token: 'plain(ENC-TOKEN)',
       webhookUrl: 'https://hook.test/relay',
+      noteEmail: null,
     });
     if (res.ok) expect(res.data.identity).toBe('@me');
     // audit は認証可否と手段のみ (token は残さない)。
@@ -144,7 +145,7 @@ describe('testChannelConnectionCore', () => {
     });
     const res = await testChannelConnectionCore({ channel: 'note' }, deps);
     expect(res.ok).toBe(true);
-    expect(probe).toHaveBeenCalledWith({ channel: 'note', token: null, webhookUrl: null });
+    expect(probe).toHaveBeenCalledWith({ channel: 'note', token: null, webhookUrl: null, noteEmail: null });
   });
 
   it('rejects invalid channel', async () => {

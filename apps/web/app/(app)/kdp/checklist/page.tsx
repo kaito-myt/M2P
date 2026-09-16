@@ -105,10 +105,17 @@ export default async function KdpChecklistPage() {
   // 入稿キュー登録済みの各本の「入稿予定」を算出（自動入稿ON時は cron+順番+クールダウンから）。
   const submitSchedule = await loadSubmitSchedule();
 
-  // 一括自動入稿キュー登録の対象 = ブロックなし・メタデータあり・未キューの本
-  // (publish_status は取得クエリで既に「出版済み」を除外済み)。
+  // 一括自動入稿キュー登録の対象 = ブロックなし・メタデータあり・未キュー・未入稿 (unlisted) の本。
+  // 取得クエリは「出版済み」しか除外しないため、入稿済み (submitted = KDP 審査中) はここで除外する
+  // (2026-09-16: 一括登録で審査中の本まで再キューされていた不具合の修正。submitToKdpCore 側でも blocked)。
   const readyBookIds = data.books
-    .filter((b) => !b.hasBlockingComments && !b.metadataMissing && !b.kdpPublishQueued)
+    .filter(
+      (b) =>
+        !b.hasBlockingComments &&
+        !b.metadataMissing &&
+        !b.kdpPublishQueued &&
+        b.publishStatus === 'unlisted',
+    )
     .map((b) => b.id);
 
   if (data.books.length === 0) {

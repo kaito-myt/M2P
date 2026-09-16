@@ -173,6 +173,15 @@ export async function submitToKdpCore(
         });
         continue;
       }
+      // 2026-09-16: 入稿済み (KDP 審査中 = submitted) も対象外。従来は published しか弾いておらず、
+      // S-015「準備完了の本をまとめて入稿キューに登録」で審査中の本まで再キューされ二重入稿の原因になっていた。
+      if (book.publish_status === 'submitted') {
+        blocked.push({
+          book_id: bookId,
+          reason: messages.kdpSubmit.blockedReasons.alreadySubmitted,
+        });
+        continue;
+      }
       if (!SUBMITTABLE_STATUSES.includes(book.status)) {
         blocked.push({
           book_id: bookId,

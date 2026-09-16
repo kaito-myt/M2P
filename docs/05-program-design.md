@@ -1471,6 +1471,10 @@ export async function updateChecklist(input): Promise<ActionResult<void>>
 // job/2FA ポーリング設計は不採用 (未実装のまま置き換え)。
 export const submitToKdpInput = z.object({ book_ids: z.array(z.string()).min(1).max(20) })
 export async function submitToKdp(input): Promise<ActionResult<{ queued: Array<{ book_id: string }>; blocked: Array<{ book_id: string; reason: string }> }>>
+// blocked 条件 (2026-09-16 追記): must コメント残 / publish_status='published' / publish_status='submitted'
+// (入稿済み・KDP 審査中) / status が done|needs_human_review 以外 / kdp_metadata 無し。
+// S-015「準備完了の本をまとめて入稿キューに登録」(BulkQueueButton) も同条件で対象を絞る
+// (従来 submitted を除外しておらず、一括登録で審査中の本まで再キューされ二重入稿の原因になっていた)。
 export async function unqueueFromKdp(input): Promise<ActionResult<{ unqueued: Array<{ book_id: string }> }>>
 ```
 

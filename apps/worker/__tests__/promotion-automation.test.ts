@@ -54,10 +54,10 @@ describe('runPromotionPostsGenerate', () => {
     expect(rows.filter((r) => r.channel === 'tiktok')).toHaveLength(2);
     expect(rows.filter((r) => r.channel === 'note')).toHaveLength(1);
     expect(rows.filter((r) => r.channel === 'blog')).toHaveLength(1);
-    // x#0 at base, x#1 at +1day
+    // x#0 at base, x#1 at +SNS_INTERVAL_DAYS(=2) days (2026-09 SNS リブートで 1 日→2 日間隔)
     const x = rows.filter((r) => r.channel === 'x').sort((a, b) => +a.scheduled_for - +b.scheduled_for);
     expect(x[0]!.scheduled_for.toISOString()).toBe('2026-07-08T00:00:00.000Z');
-    expect(x[1]!.scheduled_for.toISOString()).toBe('2026-07-09T00:00:00.000Z');
+    expect(x[1]!.scheduled_for.toISOString()).toBe('2026-07-10T00:00:00.000Z');
     const note = rows.find((r) => r.channel === 'note');
     expect(note!.title).toBe('note見出し');
   });

@@ -2681,7 +2681,7 @@ export const messages = {
       cancelButton: '取消',
       cancelling: '取消中…',
       disabledTooltip:
-        'must コメント未対応・メタデータ未生成・出版済みのいずれかのため入稿キューに登録できません',
+        'must コメント未対応・メタデータ未生成・入稿済み・出版済みのいずれかのため入稿キューに登録できません',
       queueSuccess: '入稿キューに登録しました',
       unqueueSuccess: '入稿キューを取り消しました',
     },
@@ -2756,6 +2756,7 @@ export const messages = {
       notFound: '書籍が見つかりません',
       hasBlockingComments: 'must 優先度のコメントが未対応のため入稿キューに登録できません',
       alreadyPublished: '既に出版済みのため入稿キューに登録できません',
+      alreadySubmitted: '既に入稿済み（KDP 審査中）のため入稿キューに登録できません',
       notSubmittableStatus: '生成が完了していないため入稿キューに登録できません',
       metadataMissing: 'メタデータが未生成のため入稿キューに登録できません',
     },

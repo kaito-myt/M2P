@@ -494,8 +494,8 @@ describe('runPipelineBookWriterOutline happy path', () => {
         description: 'テスト用書籍紹介文',
         keywords: ['副業', '起業', 'マーケティング'],
       },
-      targetChapterCount: 8,
-      targetTotalChars: 50_000,
+      targetChapterCount: 14, // 2026-09: 既定 8 章→14 章 (DEFAULT_TARGET_CHAPTER_COUNT)
+      targetTotalChars: 120_000, // 2026-09: 既定 5 万字→12 万字 (DEFAULT_TARGET_TOTAL_CHARS)
     });
     // rejectNote は payload に無いので forward されない
     expect((generateCalls[0] as { rejectNote?: string }).rejectNote).toBeUndefined();

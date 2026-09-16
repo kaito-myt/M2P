@@ -145,6 +145,17 @@ describe('submitToKdpCore — blocked', () => {
     if (isOk(result)) expect(result.data.blocked).toHaveLength(1);
   });
 
+  it('publish_status=submitted (入稿済み・審査中) の書籍は blocked で再キューしない (2026-09-16)', async () => {
+    const { deps, spies } = makeDeps({ books: [makeBook({ publish_status: 'submitted' })] });
+    const result = await submitToKdpCore({ book_ids: ['book_1'] }, deps);
+    expect(isOk(result)).toBe(true);
+    if (isOk(result)) {
+      expect(result.data.queued).toHaveLength(0);
+      expect(result.data.blocked).toEqual([{ book_id: 'book_1', reason: expect.stringContaining('入稿済み') }]);
+    }
+    expect(spies.updateMany).not.toHaveBeenCalled();
+  });
+
   it('status が done/needs_human_review 以外は blocked', async () => {
     const { deps } = makeDeps({ books: [makeBook({ status: 'running' })] });
     const result = await submitToKdpCore({ book_ids: ['book_1'] }, deps);
