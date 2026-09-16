@@ -41,8 +41,8 @@ const validEnv = (): NodeJS.ProcessEnv => ({
 });
 
 describe('ENV_KEYS', () => {
-  it('docs/03 §5 + T-02-13 + LINE 双方向認証リレー + Amazon 自動再ログインの正本である 34 項目を露出する', () => {
-    expect(ENV_KEYS).toHaveLength(34);
+  it('docs/03 §5 + T-02-13 + LINE 双方向認証リレー + Amazon 自動再ログイン + Amazon Ads(F-090) の正本である 39 項目を露出する', () => {
+    expect(ENV_KEYS).toHaveLength(39);
   });
 
   it('スキーマと export の集合が一致する', () => {
@@ -81,6 +81,12 @@ describe('ENV_KEYS', () => {
       'LINE_ALLOWED_USER_ID',
       'AMAZON_EMAIL',
       'AMAZON_PASSWORD',
+      // F-090 Amazon Ads 広告費の公式 API 自動計上 (2026-08-26)
+      'AMAZON_ADS_CLIENT_ID',
+      'AMAZON_ADS_CLIENT_SECRET',
+      'AMAZON_ADS_PROFILE_ID',
+      'AMAZON_ADS_REFRESH_TOKEN',
+      'AMAZON_ADS_REGION',
     ]);
     expect(new Set(ENV_KEYS)).toEqual(expected);
   });

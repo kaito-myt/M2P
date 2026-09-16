@@ -51,6 +51,8 @@ interface JobRecord {
   status: string;
   book_id: string | null;
   kind?: string;
+  /** judge 再キック時に payload_json.retry_count が載る (2026-09-16 凍結修正のテスト用)。 */
+  payload_json?: unknown;
 }
 
 interface BookRecord {
@@ -206,7 +208,7 @@ function buildPrisma(args: BuildPrismaArgs): {
     job: {
       findUnique: async ({ where }) => {
         const j = jobs.find((x) => x.id === where.id);
-        return j ? { status: j.status, book_id: j.book_id } : null;
+        return j ? { status: j.status, book_id: j.book_id, payload_json: j.payload_json } : null;
       },
       findFirst: async ({ where }) => {
         captures.jobFindFirstCalls.push({
@@ -1204,6 +1206,106 @@ describe('runPipelineBookEditor — autopass_content_enabled', () => {
     expect(captures.jobCreates).toHaveLength(0);
     expect(addJobCalls.some((c) => c.identifier === 'pipeline.book.thumbnail.text')).toBe(false);
     expect(captures.bookUpdates).toContainEqual({ id: 'book_1', status: 'running' });
+  });
+
+  it('ON かつ thumbnail.text が done 済 (judge 再キック後の再校閲) → thumbnail を飛ばして judge を直接 enqueue + Book.status=judging + retry_count 引継ぎ', async () => {
+    // 2026-09-16 凍結修正: 旧実装は「既存 thumbnail Job (done) あり」で何も enqueue せず
+    // Book.status='running' のまま無言凍結していた (本番 12 冊)。
+    const { job, book, theme, chapters } = makeJobBookThemeChapters({ chapterCount: 7 });
+    job.payload_json = { book_id: 'book_1', retry_count: 1, feedback: [] };
+    const thumbDone: JobRecord = {
+      id: 'thumb_done_1',
+      status: 'done',
+      book_id: 'book_1',
+      kind: 'pipeline.book.thumbnail.text',
+    };
+    const oldJudge: JobRecord = {
+      id: 'judge_old_1',
+      status: 'done',
+      book_id: 'book_1',
+      kind: 'pipeline.book.judge',
+    };
+    const { prisma, captures } = buildPrisma({
+      jobs: [job, thumbDone, oldJudge],
+      books: [book],
+      themes: [theme],
+      chapters,
+      appSettings: {
+        id: 'singleton',
+        ai_disclosure_text: '本書は生成 AI で作成されました。',
+        autopass_content_enabled: true,
+      },
+    });
+    const { deps, loggerCalls } = buildDeps(prisma);
+    const { addJob, calls: addJobCalls } = makeAddJob();
+
+    await runPipelineBookEditor({ book_id: 'book_1', job_id: 'job_editor_1' }, addJob, deps);
+
+    // thumbnail.text は再実行しない
+    expect(addJobCalls.some((c) => c.identifier === 'pipeline.book.thumbnail.text')).toBe(false);
+    // judge を新規 Job + addJob (retry_count=1 を引き継ぐ, maxAttempts=2)
+    expect(captures.jobCreates).toHaveLength(1);
+    expect(captures.jobCreates[0]?.data).toMatchObject({
+      kind: 'pipeline.book.judge',
+      book_id: 'book_1',
+      parent_job_id: 'job_editor_1',
+      status: 'queued',
+      payload_json: { book_id: 'book_1', retry_count: 1 },
+    });
+    const judgeCall = addJobCalls.find((c) => c.identifier === 'pipeline.book.judge');
+    expect(judgeCall).toBeDefined();
+    expect(judgeCall?.payload).toMatchObject({ book_id: 'book_1', retry_count: 1 });
+    expect(judgeCall?.spec).toEqual({ maxAttempts: 2 });
+    // Book.status は judging (running ではない)
+    expect(captures.bookUpdates).toContainEqual({ id: 'book_1', status: 'judging' });
+    expect(captures.bookUpdates.some((u) => u.status === 'running')).toBe(false);
+    // audit_log に judge_job_id が残る
+    expect(captures.auditLogCreates).toHaveLength(1);
+    expect(captures.auditLogCreates[0]?.data).toMatchObject({
+      action: 'book.content.approve',
+      after_json: { status: 'judging', thumbnail_text_job_id: 'thumb_done_1' },
+    });
+    const doneCall = captures.jobUpdates.find((c) => c.data.status === 'done');
+    expect(doneCall?.data).toMatchObject({
+      result_json: { thumbnail_text_job_id: 'thumb_done_1', judge_job_id: expect.any(String) },
+    });
+    const directLog = loggerCalls.find((c) => (c.msg as string).includes('judge enqueued directly'));
+    expect(directLog).toBeDefined();
+  });
+
+  it('ON かつ thumbnail.text が done 済だが judge が queued 中 → judge を重複 enqueue しない', async () => {
+    const { job, book, theme, chapters } = makeJobBookThemeChapters({ chapterCount: 7 });
+    const thumbDone: JobRecord = {
+      id: 'thumb_done_1',
+      status: 'done',
+      book_id: 'book_1',
+      kind: 'pipeline.book.thumbnail.text',
+    };
+    const judgeQueued: JobRecord = {
+      id: 'judge_queued_1',
+      status: 'queued',
+      book_id: 'book_1',
+      kind: 'pipeline.book.judge',
+    };
+    const { prisma, captures } = buildPrisma({
+      jobs: [job, thumbDone, judgeQueued],
+      books: [book],
+      themes: [theme],
+      chapters,
+      appSettings: {
+        id: 'singleton',
+        ai_disclosure_text: '',
+        autopass_content_enabled: true,
+      },
+    });
+    const { deps } = buildDeps(prisma);
+    const { addJob, calls: addJobCalls } = makeAddJob();
+
+    await runPipelineBookEditor({ book_id: 'book_1', job_id: 'job_editor_1' }, addJob, deps);
+
+    expect(captures.jobCreates).toHaveLength(0);
+    expect(addJobCalls.some((c) => c.identifier === 'pipeline.book.judge')).toBe(false);
+    expect(captures.bookUpdates).toContainEqual({ id: 'book_1', status: 'judging' });
   });
 
   it('ON だが DB 書込失敗 → warn のみ、content_review にフォールバック', async () => {

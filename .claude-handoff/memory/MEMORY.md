@@ -39,3 +39,4 @@
 - [Channel tabs](project_channel_tabs.md) — /bookwalker稼働・/kobo・/booth UI先行(2026-09-04); Kobo/Boothはユーザー手動ログイン→セッション保存待ち。
 - [Kobo publish](project_kobo.md) — 楽天Kobo自動出版エンジン完成(2026-09-04); ジャンル=トップ展開→一般チェックボックス, 出版可否はAPI status確認, 削除不可UUIDは別作品で上書き。
 - [Railway deploy](reference_railway_deploy.md) — redeploy --from-source は反映されない; railway up --service X --detach を使う
+- [Re-kick freeze](reference_rekick_freeze.md) — judge再キック後に本がrunning/judgingで無言凍結(doneジョブを見るdedupeガード); 2026-09-16修正＋復旧手順(unfreeze)。

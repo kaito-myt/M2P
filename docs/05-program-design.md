@@ -1639,7 +1639,7 @@ export const PipelineBookWriterChapterPayload = z.object({
 | timeout | 30 分 |
 | max_attempts | 3 |
 | priority | 10 |
-| 実行内容 | Writer (§6.3.2)。`Chapter` INSERT。最終章完了で `pipeline.book.editor` enqueue（章ジョブの完了は親 `Job.children` のステータスで検知）。 |
+| 実行内容 | Writer (§6.3.2)。`Chapter` INSERT。最終章完了で `pipeline.book.editor` enqueue（章ジョブの完了は親 `Job.children` のステータスで検知）。**judge 再キック (payload_json.retry_count>0、親=judge Job) では Chapter 行が初回執筆で既に全章分あるため件数判定を使わず、同じ judge Job を親に持つ兄弟 writer.chapter Job が自分以外すべて終わった章が editor を enqueue する**（同時完了で誰も enqueue しない事故を避けるため自分を先に done にしてから数える）。再キック時の editor には `retry_count` と judge の `feedback` を引き継ぎ、重複ガードは「再キック以降に作られた editor」のみを対象にする（初回の done editor は無視）。 |
 
 並列度：書籍ジョブ起動時に `p-limit(WORKER_CHAPTER_CONCURRENCY=4)` で章ジョブ enqueue をスロットリング。graphile-worker 全体としては `WORKER_BOOK_CONCURRENCY=5 × 4 = 20` 同時実行までを許容。
 
@@ -1655,7 +1655,7 @@ export const PipelineBookEditorPayload = z.object({ book_id: z.string(), job_id:
 | timeout | 20 分 |
 | max_attempts | 3 |
 | priority | 10 |
-| 実行内容 | Editor (§6.3.3) で全章統合・誤字校閲・AI 開示文挿入。`Chapter.body_md` を更新（version +1, 旧版を `ChapterRevision` 退避）。完了で `pipeline.book.thumbnail.text` enqueue。 |
+| 実行内容 | Editor (§6.3.3) で全章統合・誤字校閲・AI 開示文挿入。`Chapter.body_md` を更新（version +1, 旧版を `ChapterRevision` 退避）。完了で `pipeline.book.thumbnail.text` enqueue。**ただしサムネ生成済み（同書籍の thumbnail.text が done、= judge 再キック後の再校閲）なら thumbnail を飛ばして `pipeline.book.judge` を直接 enqueue（payload に自 Job の `retry_count` を引継ぎ、Book.status='judging'）**。thumbnail.text が queued/running なら相乗り。手動承認経路 `approveBookContent` SA も同じ遷移。 |
 
 #### 5.3.6 `pipeline.book.thumbnail.text` [F-006]
 
@@ -1710,6 +1710,15 @@ export const PipelineBookJudgePayload = z.object({ book_id: z.string(), job_id: 
 > つまり 80 点未満の本は一度も改稿されずに止まっていた。修正 = 所見を改行単位で **≤1900 字の複数 item に分割**
 > (`toFeedbackItems`、内容は欠落させない、上限 50 item) して両経路に渡す。§6.3.5 の出力上限引き上げで所見が
 > 長くなったため顕在化した。
+
+> **再キック後の無言凍結と修正 (2026-09-16)**: 上記修正で再キック自体は通るようになったが、その先で
+> 2 経路とも本が止まっていた（本番で running 12 冊 / judging 3 冊 / 2026-08-31〜09-04 から放置）。
+> ① editor 再キック → 再校閲完了時の autopass が「thumbnail.text の既存 Job (queued/running/**done**)」を
+> 見て何も enqueue せず Book.status='running' のまま停止。② writer.chapter 全章再キック → Chapter 行は
+> 初回で全章分あるため最初に終わった章が「最終章」と判定するが、「既存 editor Job (初回の done)」ガードで
+> editor が一度も enqueue されず Book.status='judging' のまま停止。修正 = ①は thumbnail done なら
+> judge 直行（§5.3.5）、②は兄弟 Job 完了で最終担当を決め retry_count/feedback を editor に引継ぎ（§5.3.4）。
+> 凍結していた 17 冊は 2026-09-16 に手動で次工程を再投入して復旧（judge 12 / editor 3 / export 1 / done 復元 1）。
 
 #### 5.3.8b `pipeline.book.seo`
 
@@ -3330,6 +3339,10 @@ export const logger = pino({
   dispatcher は `OR:[{book.publish_status='published'},{book_id=null}]` で value も対象化。publish の
   buildMediaUrls は book 無し IG/TikTok に**チャンネルの banner 画像**を流用。UI は戦略カードの
   「育成投稿を生成」ボタン＋投稿キューの kind バッジ(宣伝/育成)。運用は価値8:宣伝2 を想定。
+  **出力トークン上限 (2026-09-16)**: 既定 8,192 だが、blog / note は 1 本 1,500〜2,500 字の長文記事を
+  count 本まとめて JSON で返すため必ず途中切れし、JSON が壊れて `posts` 欠落 → `ZodError` になっていた
+  （2026-09-02〜16 の blog 育成投稿生成は 9 ジョブ × 最大 25 リトライが全滅、毎回 LLM 課金だけ発生）。
+  `LONGFORM_CHANNELS = {blog, note}` は `maxOutputTokens=32,768` を使う（`content-creator/index.ts`）。
 - **F-060 TikTok スライド動画(多エージェント)**: 「続きが気になる(射幸心を煽る)」9:16 縦動画を自動生成。
   台本は5エージェントの直列パイプライン(`packages/agents/src/tiktok-video/`): `tiktok_scenario`(構成台本・強フック→小出し→クリフハンガー)→`tiktok_creator`(絵コンテ・背景画像プロンプト+テロップ)→`tiktok_editor`(尺配分・VideoScript確定)→`tiktok_proofreader`(校閲)→`tiktok_marketer`(フック/CTA/ハッシュタグ強化)。全て generateText+extractLlmJson。prompt=`apply-tiktok-video.ts`(scenario/marketer=Opus, 他=Sonnet)。
   レンダリング(`apps/worker/src/tasks/promotion-post/video-render.ts`): シーン毎に gpt-image-1(1024x1536縦・文字なし)→`composeCoverTypography`でテロップ焼込(Noto Sans JP流用)→OpenAI TTS(`tools/tts.ts` `audio.speech`, gpt-4o-mini-tts, mp3, cost=token_usage role='tts_audio')→ffmpegで画像+音声を1080x1920クリップ化(-shortest=音声尺)→concat。**ffmpegはapps/worker/Dockerfileにapt-getで追加**。child_processはexecFile(archive-db-backup前例)。
@@ -3603,7 +3616,14 @@ ChatGPT ブラウザ版で高品質だった運営者の実証済みフォーマ
   を経て `pipeline.book.export` へ進む)、`audit_log(action='covers.bulk_adopt')`。**生成済カバーが 0 件なら
   自動採用せず従来通り `Book.status='thumbnail'` で停止**(フォールバック)。
 - **`autopass_theme_enabled` + `pipeline_themes_per_day` / `pipeline_theme_direction` / `pipeline_theme_cron`**:
-  新規タスク **`pipeline.theme.auto`** (`apps/worker/src/tasks/pipeline-theme-auto.ts`)。有効な `Account`
+  新規タスク **`pipeline.theme.auto`** (`apps/worker/src/tasks/pipeline-theme-auto.ts`)。
+  **`pipeline_theme_direction` は最大 4,000 字**（`pipeline-settings-core`）。この文言は Marketer 入力
+  `keywordOrBrief` にそのまま渡るため、`MarketerThemeInputSchema.keywordOrBrief` / worker
+  `pipeline.theme.generate` payload `keyword_or_brief` / web `GenerateThemesInputSchema.keywordOrBrief` の
+  上限も **4,000 字で統一**する（2026-09-16）。経緯: 2026-09-11 に 732 字の実績方針文を設定した際、当時の
+  上限 500 字に Zod で弾かれ、日次テーマ自動生成が 09/11〜09/15 の 5 日間すべて `ZodError too_big` で失敗
+  （新刊が 1 冊も企画されない静かな停止）。UI 側の上限だけ緩めても下流スキーマが弾く典型例なので、
+  文字数上限は入口〜Marketer まで同じ値にすること。有効な `Account`
   (`status='active'`, 作成日昇順の先頭) を解決し、`pipeline.theme.generate` と同じ Marketer 呼出経路
   (`generateMarketerThemes` → `ThemeCandidate.createMany`) を直接呼び出して観測用の内部 `Job` 行 (kind=
   `pipeline.theme.generate`) を 1 件残す (二重生成を避けるため graphile-worker キューには載せない)。生成後、

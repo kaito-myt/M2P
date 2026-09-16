@@ -27,6 +27,21 @@ import { readPipelineAutopass } from './lib/pipeline-autopass.js';
 import { PIPELINE_BOOK_THUMBNAIL_TEXT_TASK_NAME } from './pipeline-book-thumbnail-text.js';
 
 /**
+ * judge 直行用のタスク名。pipeline-book-judge.ts は本モジュールを import しているため
+ * (再キック)、循環 import を避けて文字列で保持する (値は docs/05 §5.3.8 と同一)。
+ */
+const PIPELINE_BOOK_JUDGE_TASK_NAME = 'pipeline.book.judge';
+
+/** Job.payload_json の retry_count (judge 再キック時に付与) を安全に読む。無ければ 0。 */
+function readRetryCount(payloadJson: unknown): number {
+  if (payloadJson && typeof payloadJson === 'object') {
+    const v = (payloadJson as { retry_count?: unknown }).retry_count;
+    if (typeof v === 'number' && Number.isInteger(v) && v >= 0) return v;
+  }
+  return 0;
+}
+
+/**
  * `pipeline.book.editor` タスク (docs/05 §5.3.5, F-005 / R-05)
  *
  * 全章執筆完了済の `Book` に対し、Editor エージェントで全章を統合校閲し、
@@ -52,6 +67,8 @@ import { PIPELINE_BOOK_THUMBNAIL_TEXT_TASK_NAME } from './pipeline-book-thumbnai
  *      - ChapterRevision: `version=旧version, body_md=旧body, reason='editor:<job_id>'`
  *      - Chapter: `body_md=校閲後, version=旧+1, char_count=新` (heading は変えない契約)
  *   7. **完了 enqueue**: `pipeline.book.thumbnail.text` 用の新規 `Job` INSERT + addJob
+ *      (judge 再キック後の再校閲でサムネが生成済み(thumbnail.text done)なら thumbnail を飛ばして
+ *      `pipeline.book.judge` を直接 enqueue — 2026-09-16 凍結修正、本文 §7 参照)
  *      (parent_job_id=本ジョブ)。docs/05 §5.3.5 に明記された次フェーズ chain。
  *      - 重複防止: 既存 thumbnail.text Job (queued/running/done) を findFirst で除外。
  *   8. 内部 `Job.status='done'` + `result_json={ revisions_count, ai_disclosure_appended,
@@ -115,8 +132,8 @@ export interface PipelineBookEditorPrisma {
   job: {
     findUnique: (args: {
       where: { id: string };
-      select: { status: true; book_id: true };
-    }) => Promise<{ status: string; book_id: string | null } | null>;
+      select: { status: true; book_id: true; payload_json: true };
+    }) => Promise<{ status: string; book_id: string | null; payload_json?: unknown } | null>;
     findFirst: (args: {
       where: {
         book_id: string;
@@ -275,7 +292,7 @@ export async function runPipelineBookEditor(
   // 1. 冪等性チェック: 既に done なら skip
   const existing = await prisma.job.findUnique({
     where: { id: jobId },
-    select: { status: true, book_id: true },
+    select: { status: true, book_id: true, payload_json: true },
   });
   if (!existing) {
     throw new NotFoundError(`Job not found: ${jobId}`, {
@@ -483,20 +500,70 @@ export async function runPipelineBookEditor(
     //    と同じ遷移 (thumbnail.text enqueue + Book.status='running') を自動で行う。
     //    失敗しても content_review にフォールバックし、運営者が手動承認できる。
     let thumbnailJobId: string | null = null;
-    let gateBookStatus: 'content_review' | 'running' = 'content_review';
+    let judgeJobId: string | null = null;
+    let gateBookStatus: 'content_review' | 'running' | 'judging' = 'content_review';
+    // judge 再キック (score<80) 由来の再校閲なら retry_count>0 が Job.payload_json に載っている。
+    // judge 直行時にそのまま引き継ぎ、再キック回数の上限 (RETRY_LIMIT) を judge 側で守らせる。
+    const retryCount = readRetryCount(existing.payload_json);
     const autopass = await readPipelineAutopass(prisma);
     if (autopass.autopass_content_enabled) {
       try {
-        const existingThumbnailJob = await prisma.job.findFirst({
+        // 2026-09-16 凍結修正: judge 不合格 → editor 再キック後の再校閲では thumbnail.text が既に
+        // done のため、従来は「既存 Job あり」として何も enqueue せず Book.status='running' のまま
+        // 無言凍結していた (本番で 12 冊)。サムネ生成済みなら thumbnail を飛ばして judge を直接
+        // enqueue する (サムネは再生成不要)。thumbnail が queued/running なら従来通り相乗り。
+        const thumbnailInFlight = await prisma.job.findFirst({
           where: {
             book_id: bookId,
             kind: PIPELINE_BOOK_THUMBNAIL_TEXT_TASK_NAME,
-            status: { in: ['queued', 'running', 'done'] },
+            status: { in: ['queued', 'running'] },
           },
           select: { id: true },
         });
-        thumbnailJobId = existingThumbnailJob?.id ?? null;
-        if (!thumbnailJobId) {
+        const thumbnailDone = thumbnailInFlight
+          ? null
+          : await prisma.job.findFirst({
+              where: {
+                book_id: bookId,
+                kind: PIPELINE_BOOK_THUMBNAIL_TEXT_TASK_NAME,
+                status: { in: ['done'] },
+              },
+              select: { id: true },
+            });
+        if (thumbnailInFlight) {
+          thumbnailJobId = thumbnailInFlight.id;
+          gateBookStatus = 'running';
+        } else if (thumbnailDone) {
+          thumbnailJobId = thumbnailDone.id;
+          const judgeInFlight = await prisma.job.findFirst({
+            where: {
+              book_id: bookId,
+              kind: PIPELINE_BOOK_JUDGE_TASK_NAME,
+              status: { in: ['queued', 'running'] },
+            },
+            select: { id: true },
+          });
+          if (judgeInFlight) {
+            judgeJobId = judgeInFlight.id;
+          } else {
+            const judgeJob = await prisma.job.create({
+              data: {
+                kind: PIPELINE_BOOK_JUDGE_TASK_NAME,
+                book_id: bookId,
+                parent_job_id: jobId,
+                status: 'queued',
+                payload_json: { book_id: bookId, retry_count: retryCount },
+              },
+            });
+            judgeJobId = judgeJob.id;
+            await addJob(
+              PIPELINE_BOOK_JUDGE_TASK_NAME,
+              { book_id: bookId, job_id: judgeJobId, retry_count: retryCount },
+              { maxAttempts: 2 },
+            );
+          }
+          gateBookStatus = 'judging';
+        } else {
           const thumbnailJob = await prisma.job.create({
             data: {
               kind: PIPELINE_BOOK_THUMBNAIL_TEXT_TASK_NAME,
@@ -510,6 +577,7 @@ export async function runPipelineBookEditor(
             book_id: bookId,
             job_id: thumbnailJobId,
           });
+          gateBookStatus = 'running';
         }
         await prisma.auditLog.create({
           data: {
@@ -518,16 +586,22 @@ export async function runPipelineBookEditor(
             target_kind: 'book',
             target_id: bookId,
             before_json: { status: 'content_review', trigger: 'autopass' },
-            after_json: { status: 'running', thumbnail_text_job_id: thumbnailJobId },
+            after_json: {
+              status: gateBookStatus,
+              thumbnail_text_job_id: thumbnailJobId,
+              judge_job_id: judgeJobId,
+            },
           },
         });
-        gateBookStatus = 'running';
         log.info(
-          { task: PIPELINE_BOOK_EDITOR_TASK_NAME, jobId, bookId, thumbnailJobId },
-          'autopass: content auto-approved — thumbnail.text enqueued',
+          { task: PIPELINE_BOOK_EDITOR_TASK_NAME, jobId, bookId, thumbnailJobId, judgeJobId, retryCount },
+          gateBookStatus === 'judging'
+            ? 'autopass: content auto-approved — thumbnails already exist, judge enqueued directly'
+            : 'autopass: content auto-approved — thumbnail.text enqueued',
         );
       } catch (autopassErr) {
         thumbnailJobId = null;
+        judgeJobId = null;
         gateBookStatus = 'content_review';
         log.warn(
           { task: PIPELINE_BOOK_EDITOR_TASK_NAME, jobId, bookId, err: autopassErr },
@@ -535,15 +609,15 @@ export async function runPipelineBookEditor(
         );
       }
     }
-    if (gateBookStatus === 'running') {
+    if (gateBookStatus === 'content_review') {
       await prisma.book.update({
         where: { id: bookId },
-        data: { status: 'running' },
+        data: { status: 'content_review', updated_at: now() },
       });
     } else {
       await prisma.book.update({
         where: { id: bookId },
-        data: { status: 'content_review', updated_at: now() },
+        data: { status: gateBookStatus },
       });
     }
 
@@ -558,6 +632,7 @@ export async function runPipelineBookEditor(
           revisions_count: revisionsCount,
           ai_disclosure_appended: result.ai_disclosure_appended,
           thumbnail_text_job_id: thumbnailJobId,
+          judge_job_id: judgeJobId,
         },
       },
     });

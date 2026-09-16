@@ -24,7 +24,7 @@ import { messages } from './messages';
 export const UpdatePipelineSettingsInputSchema = z.object({
   autopass_theme_enabled: z.boolean().optional(),
   pipeline_themes_per_day: z.number().int().min(1).max(30).optional(),
-  pipeline_theme_direction: z.string().max(2000).optional(),
+  pipeline_theme_direction: z.string().max(4000).optional(),
   autopass_outline_enabled: z.boolean().optional(),
   autopass_content_enabled: z.boolean().optional(),
   autopass_cover_enabled: z.boolean().optional(),

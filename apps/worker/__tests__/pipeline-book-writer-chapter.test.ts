@@ -44,6 +44,10 @@ interface JobRecord {
   status: string;
   book_id: string | null;
   kind?: string;
+  /** judge 再キック (2026-09-16 凍結修正) のテスト用: 親 judge Job / retry_count / 作成時刻。 */
+  parent_job_id?: string | null;
+  payload_json?: unknown;
+  created_at?: Date;
 }
 
 interface BookRecord {
@@ -142,7 +146,15 @@ function buildPrisma(args: BuildPrismaArgs): {
     job: {
       findUnique: async ({ where }) => {
         const j = jobs.find((x) => x.id === where.id);
-        return j ? { status: j.status, book_id: j.book_id } : null;
+        return j
+          ? {
+              status: j.status,
+              book_id: j.book_id,
+              payload_json: j.payload_json,
+              parent_job_id: j.parent_job_id ?? null,
+              created_at: j.created_at ?? new Date('2026-05-25T00:00:00Z'),
+            }
+          : null;
       },
       findFirst: async ({ where }) => {
         captures.jobFindFirstCalls.push({
@@ -155,14 +167,26 @@ function buildPrisma(args: BuildPrismaArgs): {
           book_id: string;
           kind: string;
           status: { in: string[] };
+          created_at?: { gt: Date };
         };
         const found = jobs.find(
           (j) =>
             j.book_id === w.book_id &&
             (j.kind ?? '') === w.kind &&
-            w.status.in.includes(j.status),
+            w.status.in.includes(j.status) &&
+            (!w.created_at || (j.created_at ?? new Date(0)) > w.created_at.gt),
         );
         return found ? { id: found.id } : null;
+      },
+      count: async ({ where }) => {
+        return jobs.filter(
+          (j) =>
+            j.book_id === where.book_id &&
+            (j.kind ?? '') === where.kind &&
+            (j.parent_job_id ?? null) === where.parent_job_id &&
+            where.status.in.includes(j.status) &&
+            j.id !== where.id.not,
+        ).length;
       },
       updateMany: async ({ where, data }) => {
         captures.jobUpdateMany.push({
@@ -733,6 +757,143 @@ describe('runPipelineBookWriterChapter happy path', () => {
       { body: '導入の数値を 2 件追加して', priority: 'must' },
       { body: '結論を 1 段強めて', priority: 'should' },
     ]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// judge 再キック (retry_count>0) — 2026-09-16 凍結修正
+// ---------------------------------------------------------------------------
+
+describe('runPipelineBookWriterChapter — judge 再キック (retry_count>0)', () => {
+  const REKICK_FEEDBACK = [
+    { body: '各章の冒頭に読者の悩みを 1 文で置く', priority: 'must' as const },
+  ];
+  function makeRekickFixture(opts: { siblingsPending: boolean }) {
+    const { job, book, theme, outline } = makeJobBookThemeOutline({ chapterCount: 8 });
+    // 初回執筆で Chapter 行は既に全 8 章分ある (件数判定では常に「最終章」に見える)
+    const allChapters: ChapterRecord[] = Array.from({ length: 8 }, (_, i) => ({
+      id: `chapter_book_1_${i + 1}`,
+      book_id: 'book_1',
+      index: i + 1,
+      heading: `第${i + 1}章: タイトル`,
+      body_md: '初回の本文'.repeat(500),
+      status: 'done',
+      char_count: 4500,
+      version: 1,
+    }));
+    const t0 = new Date('2026-09-01T00:00:00Z');
+    job.id = 'job_rk_3';
+    job.parent_job_id = 'job_judge_1';
+    job.payload_json = { book_id: 'book_1', outline_id: 'outline_1', chapter_index: 3, retry_count: 1, feedback: REKICK_FEEDBACK };
+    job.created_at = t0;
+    const siblings: JobRecord[] = [4, 5].map((i) => ({
+      id: `job_rk_${i}`,
+      status: opts.siblingsPending ? 'running' : 'done',
+      book_id: 'book_1',
+      kind: 'pipeline.book.writer.chapter',
+      parent_job_id: 'job_judge_1',
+      payload_json: { book_id: 'book_1', outline_id: 'outline_1', chapter_index: i, retry_count: 1, feedback: REKICK_FEEDBACK },
+      created_at: t0,
+    }));
+    // 初回パイプラインの editor (done) — 再キック前に作られたものは重複とみなさない
+    const oldEditor: JobRecord = {
+      id: 'editor_old_1',
+      status: 'done',
+      book_id: 'book_1',
+      kind: 'pipeline.book.editor',
+      created_at: new Date('2026-08-20T00:00:00Z'),
+    };
+    return { job, book, theme, outline, allChapters, siblings, oldEditor };
+  }
+
+  it('兄弟章が未完了 (running) なら editor を enqueue しない (自分は先に done にする)', async () => {
+    const f = makeRekickFixture({ siblingsPending: true });
+    const { prisma, captures } = buildPrisma({
+      jobs: [f.job, ...f.siblings, f.oldEditor],
+      books: [f.book],
+      themes: [f.theme],
+      outlines: [f.outline],
+      chapters: f.allChapters,
+    });
+    const { deps } = buildDeps(prisma);
+    const { addJob, calls: addJobCalls } = makeAddJob();
+
+    await runPipelineBookWriterChapter(
+      { book_id: 'book_1', job_id: 'job_rk_3', outline_id: 'outline_1', chapter_index: 3, feedback: REKICK_FEEDBACK },
+      addJob,
+      deps,
+    );
+
+    expect(captures.jobCreates).toHaveLength(0);
+    expect(addJobCalls.map((c) => c.identifier)).toEqual(['alert.cost.check']);
+    // 自分は done (兄弟完了判定のため先に done、その後 result_json 付きで再度 done)
+    const doneCalls = captures.jobUpdates.filter((c) => c.where.id === 'job_rk_3' && c.data.status === 'done');
+    expect(doneCalls.length).toBeGreaterThanOrEqual(1);
+    const last = doneCalls[doneCalls.length - 1];
+    expect(last?.data).toMatchObject({ result_json: { is_last: false, editor_job_id: null } });
+  });
+
+  it('兄弟章が全て done なら editor を enqueue (retry_count/feedback 引継ぎ、初回 done editor は無視)', async () => {
+    const f = makeRekickFixture({ siblingsPending: false });
+    const { prisma, captures } = buildPrisma({
+      jobs: [f.job, ...f.siblings, f.oldEditor],
+      books: [f.book],
+      themes: [f.theme],
+      outlines: [f.outline],
+      chapters: f.allChapters,
+    });
+    const { deps, notifyCalls } = buildDeps(prisma);
+    const { addJob, calls: addJobCalls } = makeAddJob();
+
+    await runPipelineBookWriterChapter(
+      { book_id: 'book_1', job_id: 'job_rk_3', outline_id: 'outline_1', chapter_index: 3, feedback: REKICK_FEEDBACK },
+      addJob,
+      deps,
+    );
+
+    expect(captures.jobCreates).toHaveLength(1);
+    expect(captures.jobCreates[0]?.data).toMatchObject({
+      kind: 'pipeline.book.editor',
+      book_id: 'book_1',
+      parent_job_id: 'job_rk_3',
+      status: 'queued',
+      payload_json: { book_id: 'book_1', retry_count: 1, feedback: REKICK_FEEDBACK },
+    });
+    const editorCall = addJobCalls.find((c) => c.identifier === 'pipeline.book.editor');
+    expect(editorCall?.payload).toMatchObject({ book_id: 'book_1', job_id: 'editor_job_1', feedback: REKICK_FEEDBACK });
+    expect(editorCall?.spec).toEqual({ maxAttempts: 3 });
+    const doneCall = [...captures.jobUpdates].reverse().find((c) => c.data.status === 'done');
+    expect(doneCall?.data).toMatchObject({ result_json: { is_last: true, editor_job_id: 'editor_job_1' } });
+    expect(notifyCalls[0]?.payload).toMatchObject({ phase: 'chapters_complete' });
+  });
+
+  it('再キック以降に作られた editor が既にあれば重複 enqueue しない', async () => {
+    const f = makeRekickFixture({ siblingsPending: false });
+    const newEditor: JobRecord = {
+      id: 'editor_rekick_1',
+      status: 'queued',
+      book_id: 'book_1',
+      kind: 'pipeline.book.editor',
+      created_at: new Date('2026-09-01T00:10:00Z'),
+    };
+    const { prisma, captures } = buildPrisma({
+      jobs: [f.job, ...f.siblings, f.oldEditor, newEditor],
+      books: [f.book],
+      themes: [f.theme],
+      outlines: [f.outline],
+      chapters: f.allChapters,
+    });
+    const { deps } = buildDeps(prisma);
+    const { addJob, calls: addJobCalls } = makeAddJob();
+
+    await runPipelineBookWriterChapter(
+      { book_id: 'book_1', job_id: 'job_rk_3', outline_id: 'outline_1', chapter_index: 3, feedback: REKICK_FEEDBACK },
+      addJob,
+      deps,
+    );
+
+    expect(captures.jobCreates).toHaveLength(0);
+    expect(addJobCalls.some((c) => c.identifier === 'pipeline.book.editor')).toBe(false);
   });
 });
 

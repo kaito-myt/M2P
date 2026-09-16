@@ -19,6 +19,17 @@ import { createComment } from '@/app/actions/comments';
 import { createRevisionRun } from '@/app/actions/revision-runs';
 
 const THUMBNAIL_TEXT_TASK = 'pipeline.book.thumbnail.text';
+const JUDGE_TASK = 'pipeline.book.judge';
+const EDITOR_TASK = 'pipeline.book.editor';
+
+/** Job.payload_json の retry_count (judge 再キック時に付与) を安全に読む。無ければ 0。 */
+function readRetryCount(payloadJson: unknown): number {
+  if (payloadJson && typeof payloadJson === 'object') {
+    const v = (payloadJson as { retry_count?: unknown }).retry_count;
+    if (typeof v === 'number' && Number.isInteger(v) && v >= 0) return v;
+  }
+  return 0;
+}
 const READINGS_GENERATE_TASK = 'pipeline.book.readings.generate';
 const PROMOTION_GENERATE_TASK = 'pipeline.book.promotion.generate';
 const PROMOTION_POSTS_GENERATE_TASK = 'promotion.posts.generate';
@@ -224,17 +235,49 @@ export async function approveBookContent(
     }
 
     // 既に thumbnail.text が走っていないか確認 (二重起動防止)
-    const existing = await prisma.job.findFirst({
-      where: {
-        book_id,
-        kind: THUMBNAIL_TEXT_TASK,
-        status: { in: ['queued', 'running', 'done'] },
-      },
+    const thumbnailInFlight = await prisma.job.findFirst({
+      where: { book_id, kind: THUMBNAIL_TEXT_TASK, status: { in: ['queued', 'running'] } },
       select: { id: true },
     });
+    const thumbnailDone = thumbnailInFlight
+      ? null
+      : await prisma.job.findFirst({
+          where: { book_id, kind: THUMBNAIL_TEXT_TASK, status: 'done' },
+          select: { id: true },
+        });
 
-    let jobId = existing?.id ?? null;
-    if (!jobId) {
+    let jobId = thumbnailInFlight?.id ?? thumbnailDone?.id ?? null;
+    let judgeJobId: string | null = null;
+    let nextStatus: 'running' | 'judging' = 'running';
+    if (thumbnailDone) {
+      // 2026-09-16: judge 不合格 → editor 再キック後の手動承認。サムネは生成済みなので
+      // thumbnail.text を再実行せず judge を直接 enqueue する (worker の autopass 経路と同じ遷移)。
+      const judgeInFlight = await prisma.job.findFirst({
+        where: { book_id, kind: JUDGE_TASK, status: { in: ['queued', 'running'] } },
+        select: { id: true },
+      });
+      if (judgeInFlight) {
+        judgeJobId = judgeInFlight.id;
+      } else {
+        const lastEditor = await prisma.job.findFirst({
+          where: { book_id, kind: EDITOR_TASK, status: 'done' },
+          orderBy: { created_at: 'desc' },
+          select: { payload_json: true },
+        });
+        const retryCount = readRetryCount(lastEditor?.payload_json);
+        const judgeJob = await prisma.job.create({
+          data: {
+            kind: JUDGE_TASK,
+            book_id,
+            status: 'queued',
+            payload_json: { book_id, retry_count: retryCount },
+          },
+        });
+        judgeJobId = judgeJob.id;
+        await enqueueJob(JUDGE_TASK, { book_id, job_id: judgeJobId, retry_count: retryCount }, { maxAttempts: 2 });
+      }
+      nextStatus = 'judging';
+    } else if (!jobId) {
       const job = await prisma.job.create({
         data: {
           kind: THUMBNAIL_TEXT_TASK,
@@ -247,10 +290,10 @@ export async function approveBookContent(
       await enqueueJob(THUMBNAIL_TEXT_TASK, { book_id, job_id: jobId });
     }
 
-    // 承認したら本文承認待ちを抜ける (サムネ生成中)。thumbnail.text/image が以降の status を管理。
+    // 承認したら本文承認待ちを抜ける (サムネ生成中 or 再審査中)。以降の status は後続タスクが管理。
     await prisma.book.update({
       where: { id: book_id },
-      data: { status: 'running' },
+      data: { status: nextStatus },
     });
 
     await prisma.auditLog.create({
@@ -260,7 +303,7 @@ export async function approveBookContent(
         target_kind: 'book',
         target_id: book_id,
         before_json: { status: 'content_review' },
-        after_json: { status: 'running', thumbnail_text_job_id: jobId },
+        after_json: { status: nextStatus, thumbnail_text_job_id: jobId, judge_job_id: judgeJobId },
       },
     });
 

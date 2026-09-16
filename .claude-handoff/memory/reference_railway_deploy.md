@@ -18,3 +18,8 @@ Indexing→Uploading→Build が走り、`deployment list` に新しい SUCCESS 
 `note.theme.generate` を投入しても attempts=0 のまま拾われず、ログの登録タスク一覧に無いことで発覚。
 
 **How to apply:** デプロイは必ず `railway up`。デプロイ後は `deployment list` で新規行を確認する。
+
+**追記 (2026-09-16, C:\DEV\M2P 本機)**: このフォルダは `railway link` されていないため、素の `railway up` /
+`railway deployment list` / `railway logs` は全て「No linked project found」で**何もせず exit 0** になる。
+必ず `export RAILWAY_TOKEN=$(grep '^RAILWAY_TOKEN=' .env.local | cut -d= -f2-)` を先に通す (pb-env.sh と同じ)。
+デプロイ後は `railway deployment list --service X` で新しい SUCCESS 行を確認する。

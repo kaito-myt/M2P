@@ -23,6 +23,13 @@ import type { LoadModelAssignmentDeps } from '../lib/load-model-assignment.js';
 
 // 複数の育成投稿(日本語)を JSON で返すため、途中切れしないよう十分に確保する。
 const DEFAULT_MAX_OUTPUT_TOKENS = 8192;
+/**
+ * blog は 1 本 1,500〜2,500 字の長文記事を count 本まとめて返すため 8k では必ず途中切れし、
+ * JSON が壊れて `posts` 欠落 (ZodError) になっていた (2026-09-02〜16 本番で blog の育成投稿生成が
+ * 25 回リトライ×9 ジョブ全滅)。長文チャンネルは上限を大きく取る。
+ */
+const LONGFORM_MAX_OUTPUT_TOKENS = 32768;
+const LONGFORM_CHANNELS = new Set<string>(['blog', 'note']);
 
 const CHANNEL_LABEL: Record<string, string> = {
   x: 'X (旧 Twitter)',
@@ -101,7 +108,7 @@ export async function createAccountContent(
       { role: 'system', content: systemPrompt },
       { role: 'user', content: buildContentCreatorUserMessage(input, channelLabel, lenGuide) },
     ],
-    maxOutputTokens: DEFAULT_MAX_OUTPUT_TOKENS,
+    maxOutputTokens: LONGFORM_CHANNELS.has(input.channel) ? LONGFORM_MAX_OUTPUT_TOKENS : DEFAULT_MAX_OUTPUT_TOKENS,
   });
 
   const parsed = extractLlmJson<unknown>(completion.text);

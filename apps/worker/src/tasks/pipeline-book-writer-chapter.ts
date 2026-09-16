@@ -19,6 +19,15 @@ import {
 } from '../lib/notify-job-change.js';
 import { ALERT_COST_CHECK_TASK_NAME } from './alert-cost-check.js';
 
+/** Job.payload_json の retry_count (judge 再キック時に付与) を安全に読む。無ければ 0。 */
+function readRetryCount(payloadJson: unknown): number {
+  if (payloadJson && typeof payloadJson === 'object') {
+    const v = (payloadJson as { retry_count?: unknown }).retry_count;
+    if (typeof v === 'number' && Number.isInteger(v) && v >= 0) return v;
+  }
+  return 0;
+}
+
 /**
  * `pipeline.book.writer.chapter` タスク (docs/05 §5.3.4, F-004 / F-011)
  *
@@ -38,6 +47,8 @@ import { ALERT_COST_CHECK_TASK_NAME } from './alert-cost-check.js';
  *      (再実行で同 chapter_index を上書き)。SP-04 §4 T-04-06 で Editor が version+1 を扱う。
  *   7. 内部 `Job.status='done'` + `result_json={ chapter_id, char_count, chapter_index, is_last? }`。
  *   8. **完了監視 → editor enqueue**: 同 book_id の `Chapter.count()` が
+ *      (judge 再キック(retry_count>0)では Chapter 行が既に全章分あるため件数では判定できず、
+ *      同じ judge Job を親に持つ兄弟 writer.chapter Job の完了で判定する — 2026-09-16 凍結修正)
  *      `outline.chapters_json.length` に達したら `pipeline.book.editor` 用の **新規 Job INSERT** +
  *      addJob (parent_job_id=<本章 jobId>)。SP-04 §4 注釈の「dispatch 後の完了監視は章 task
  *      自身が atomic に判定」方式を採用。
@@ -87,16 +98,33 @@ export interface PipelineBookWriterChapterPrisma {
   job: {
     findUnique: (args: {
       where: { id: string };
-      select: { status: true; book_id: true };
-    }) => Promise<{ status: string; book_id: string | null } | null>;
+      select: { status: true; book_id: true; payload_json: true; parent_job_id: true; created_at: true };
+    }) => Promise<{
+      status: string;
+      book_id: string | null;
+      payload_json?: unknown;
+      parent_job_id?: string | null;
+      created_at?: Date;
+    } | null>;
     findFirst: (args: {
       where: {
         book_id: string;
         kind: string;
         status: { in: string[] };
+        created_at?: { gt: Date };
       };
       select: { id: true };
     }) => Promise<{ id: string } | null>;
+    /** judge 再キック時の兄弟 writer.chapter 完了判定用。 */
+    count: (args: {
+      where: {
+        book_id: string;
+        kind: string;
+        parent_job_id: string;
+        status: { in: string[] };
+        id: { not: string };
+      };
+    }) => Promise<number>;
     updateMany: (args: {
       where: { id: string; status: { in: string[] } };
       data: { status: string; started_at?: Date };
@@ -260,7 +288,7 @@ export async function runPipelineBookWriterChapter(
   // 1. 冪等性チェック: 既に done なら skip
   const existing = await prisma.job.findUnique({
     where: { id: jobId },
-    select: { status: true, book_id: true },
+    select: { status: true, book_id: true, payload_json: true, parent_job_id: true, created_at: true },
   });
   if (!existing) {
     throw new NotFoundError(`Job not found: ${jobId}`, {
@@ -435,18 +463,58 @@ export async function runPipelineBookWriterChapter(
     //    同一 book の Chapter 行数が outline.chapters_json.length に達していれば、
     //    自分が最終章担当として `pipeline.book.editor` を enqueue する.
     //    二重 enqueue は editorEnqueueGuard で防ぐ.
+    //
+    //    2026-09-16 凍結修正: judge 不合格 → writer.chapter 全章再キック (retry_count>0) では
+    //    Chapter 行が初回執筆で既に全章分あるため、件数判定では最初に終わった章が即 editor を
+    //    起動し(他章は書き直し中)、かつ「既存 editor Job (初回の done)」ガードで再キック後の
+    //    editor が一度も enqueue されず本が 'judging' のまま無言凍結していた (本番で 3 冊)。
+    //    再キック時は同じ judge Job を親に持つ兄弟 Job の完了で最終担当を決め、editor には
+    //    retry_count と judge の feedback を引き継ぐ。
+    const retryCount = readRetryCount(existing.payload_json);
+    const rekickParentJobId =
+      retryCount > 0 && typeof existing.parent_job_id === 'string' && existing.parent_job_id.length > 0
+        ? existing.parent_job_id
+        : null;
     const completedCount = await prisma.chapter.count({
       where: { book_id: bookId },
     });
-    const isLast = completedCount >= totalChapters;
+    let isLast: boolean;
+    if (rekickParentJobId) {
+      // 同時完了で全員が「他が未完了」と見て誰も enqueue しない事故を避けるため、
+      // 先に自分を done にしてから兄弟の未完了数を数える (step 8 で result_json を上書き)。
+      await prisma.job.update({
+        where: { id: jobId },
+        data: { status: 'done', finished_at: now(), error: null },
+      });
+      const pendingSiblings = await prisma.job.count({
+        where: {
+          book_id: bookId,
+          kind: PIPELINE_BOOK_WRITER_CHAPTER_TASK_NAME,
+          parent_job_id: rekickParentJobId,
+          status: { in: ['queued', 'running'] },
+          id: { not: jobId },
+        },
+      });
+      isLast = pendingSiblings === 0;
+    } else {
+      isLast = completedCount >= totalChapters;
+    }
     let editorJobId: string | null = null;
     if (isLast) {
       const existingEditorJob = await prisma.job.findFirst({
-        where: {
-          book_id: bookId,
-          kind: 'pipeline.book.editor',
-          status: { in: ['queued', 'running', 'done'] },
-        },
+        where: rekickParentJobId
+          ? {
+              book_id: bookId,
+              kind: 'pipeline.book.editor',
+              status: { in: ['queued', 'running', 'done'] },
+              // 再キック以降に作られた editor のみを重複とみなす (初回の done editor は対象外)
+              created_at: { gt: existing.created_at ?? new Date(0) },
+            }
+          : {
+              book_id: bookId,
+              kind: 'pipeline.book.editor',
+              status: { in: ['queued', 'running', 'done'] },
+            },
         select: { id: true },
       });
       if (existingEditorJob) {
@@ -461,18 +529,23 @@ export async function runPipelineBookWriterChapter(
           'editor Job already enqueued for this book — skipping duplicate',
         );
       } else {
+        const editorPayloadJson = rekickParentJobId
+          ? { book_id: bookId, retry_count: retryCount, feedback: feedback ?? [] }
+          : { book_id: bookId };
         const editorJob = await prisma.job.create({
           data: {
             kind: 'pipeline.book.editor',
             book_id: bookId,
             parent_job_id: jobId,
             status: 'queued',
-            payload_json: { book_id: bookId },
+            payload_json: editorPayloadJson,
           },
         });
         await addJob(
           'pipeline.book.editor',
-          { book_id: bookId, job_id: editorJob.id },
+          rekickParentJobId
+            ? { book_id: bookId, job_id: editorJob.id, feedback: feedback ?? [] }
+            : { book_id: bookId, job_id: editorJob.id },
           { maxAttempts: 3 },
         );
         editorJobId = editorJob.id;
@@ -485,13 +558,16 @@ export async function runPipelineBookWriterChapter(
             editorJobId,
             completedCount,
             totalChapters,
+            retryCount,
           },
-          'all chapters complete — pipeline.book.editor enqueued',
+          rekickParentJobId
+            ? 'all re-kicked chapters complete — pipeline.book.editor enqueued (judge retry)'
+            : 'all chapters complete — pipeline.book.editor enqueued',
         );
       }
     }
 
-    // 8. Job を done に遷移
+
     await prisma.job.update({
       where: { id: jobId },
       data: {

@@ -33,7 +33,7 @@ export const MarketerThemeInputSchema = z.object({
   /** ジャンル (null = 全ジャンル既定プロンプト fallback)。 */
   genre: GenreValueSchema.nullable(),
   /** ユーザー入力 (自由テキスト)。空入力は UI 側で弾く前提。 */
-  keywordOrBrief: z.string().min(1).max(500),
+  keywordOrBrief: z.string().min(1).max(4000),
   /**
    * 直近 N 日の既出版/採用済タイトル — Marketer に「避けるリスト」として渡す。
    * 上限 500 件 — system prompt 肥大化防止 (呼出側でトリミング前提)。

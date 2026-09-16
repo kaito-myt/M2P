@@ -55,7 +55,7 @@ const JobPayloadSchema = z.object({
   account_id: z.string().min(1),
   // ジャンルは自由 String (カタログ slug)。null = おまかせ。
   genre: z.string().min(1).max(64).nullable(),
-  keyword_or_brief: z.string().min(1).max(500),
+  keyword_or_brief: z.string().min(1).max(4000),
   count: z.number().int().min(1).max(30),
   exclude_titles_recent: z.array(z.string()).max(500).optional(),
   // テーマ作成時に選択した著者名/レーベル名マスタ (任意)。生成候補全件に付与。

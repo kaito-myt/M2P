@@ -64,7 +64,7 @@ export const GenerateThemesInputSchema = z.object({
   accountId: z.string().min(1).max(64),
   // ジャンルはカタログ (GENRE_CATALOG) の slug のみ許可。null = おまかせ。
   genre: GenreSlugSchema.nullable(),
-  keywordOrBrief: z.string().min(1).max(500),
+  keywordOrBrief: z.string().min(1).max(4000),
   count: z.number().int().min(1).max(30).default(10),
   /**
    * 直近採用済タイトル明示指定 (任意)。

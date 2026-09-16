@@ -434,7 +434,7 @@ describe('judgeBook — createAgentClient 呼出引数', () => {
     expect(ctx.jobId).toBeUndefined();
   });
 
-  it('client.complete に role=judge + maxOutputTokens=4096 + system/user が渡る', async () => {
+  it('client.complete に role=judge + maxOutputTokens=12288 + system/user が渡る', async () => {
     const text = buildJudgeResponse();
     const fakeClient = makeFakeClient(text);
     const loadActivePrompt = makeLoadActivePromptStub();
@@ -449,7 +449,7 @@ describe('judgeBook — createAgentClient 呼出引数', () => {
     };
     const args = completeMock.mock.calls[0]![0];
     expect(args.role).toBe('judge');
-    expect(args.maxOutputTokens).toBe(4096);
+    expect(args.maxOutputTokens).toBe(12288);
     expect(args.messages).toHaveLength(2);
     expect(args.messages[0]!.role).toBe('system');
     expect(args.messages[1]!.role).toBe('user');
