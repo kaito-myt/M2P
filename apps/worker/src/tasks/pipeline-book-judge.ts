@@ -727,14 +727,16 @@ export async function runPipelineBookJudge(
       });
 
       const bookTitle = book.title || theme.title;
-      const emailParams = buildJudgeNeedsReviewEmail({
-        bookId,
-        bookTitle,
-        scoreTotal: judgeOutput.score_total,
-        retryCount,
-      });
-
+      // メール組立(JSX)も try 内で行う: 2026-09-16 に buildJudgeNeedsReviewEmail が
+      // "React is not defined" を投げて judge Job ごと failed になり、本は needs_human_review に
+      // 遷移済みなのに graphile が再試行して LLM 採点を無駄に再実行していた。通知失敗は非致命。
       try {
+        const emailParams = buildJudgeNeedsReviewEmail({
+          bookId,
+          bookTitle,
+          scoreTotal: judgeOutput.score_total,
+          retryCount,
+        });
         await sendEmailFn({
           subject: emailParams.subject,
           react: emailParams.react,

@@ -1718,7 +1718,14 @@ export const PipelineBookJudgePayload = z.object({ book_id: z.string(), job_id: 
 > 初回で全章分あるため最初に終わった章が「最終章」と判定するが、「既存 editor Job (初回の done)」ガードで
 > editor が一度も enqueue されず Book.status='judging' のまま停止。修正 = ①は thumbnail done なら
 > judge 直行（§5.3.5）、②は兄弟 Job 完了で最終担当を決め retry_count/feedback を editor に引継ぎ（§5.3.4）。
-> 凍結していた 17 冊は 2026-09-16 に手動で次工程を再投入して復旧（judge 12 / editor 3 / export 1 / done 復元 1）。
+> 凍結していた 20 冊は 2026-09-16 に手動で次工程を再投入して復旧（judge 14 / editor 3 / export 2 / done 復元 1）。
+>
+> **needs_human_review 通知メールの実行時エラー (2026-09-16)**: 復旧後の judge で C 経路 (retry 上限で不合格) に入った 5 冊が
+> `ReferenceError: React is not defined` で Job failed になった。原因 = `@a2p/notify` の React Email テンプレート (`.tsx`) が
+> worker の tsx(esbuild) 実行では classic JSX runtime に変換され `React` がスコープに無い (web の Next ビルドでは automatic
+> runtime なので顕在化しない)。本は既に needs_human_review へ遷移済みなのに graphile が再試行して LLM 採点を無駄に再実行する
+> 構造だった。修正 = 全テンプレートに `import * as React from 'react'` を明示 + judge / alert-cost-check ともメール組立を
+> try 内に移して通知失敗を非致命化。
 
 #### 5.3.8b `pipeline.book.seo`
 

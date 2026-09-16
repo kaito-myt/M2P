@@ -30,6 +30,9 @@
 3. **blog の育成投稿生成（`promotion.content.generate {channel:'blog'}`）が 9/2 から全滅**（9 ジョブ×最大 25 リトライ、
    毎回 LLM 課金だけ発生）。原因 = 長文記事 12 本が maxOutputTokens 8,192 で途中切れ→JSON 破損→`posts` 欠落。
    修正 = blog/note は 32,768 に引き上げ（`content-creator/index.ts`）。死んだ graphile 行は削除済み。
+4. **needs_human_review 通知メールが `React is not defined` で judge Job を落としていた**（復旧後の 5 冊で発覚、既存バグ）。
+   `@a2p/notify` の React Email テンプレートが worker の tsx 実行で classic JSX になるのが原因。全テンプレートに React import を明示し、
+   judge / alert-cost-check のメール組立を try 内へ（通知失敗は非致命）。worker を再デプロイ済み。
 - ほか: graphile の exhausted 残骸（bw.submit / kdp.submit / optimizer.prompt.generate）削除、stale だった単体テスト
   （env keys 39 項目 / judge maxOutputTokens 12288）を実態に合わせて修正。**まだ落ちている無関係テスト 3 件**
   （worker: writer-outline notify payload・promotion-automation の日程 / web: promotion-channels-core の probe 引数）は

@@ -536,21 +536,23 @@ async function safeSendEmail(
   sendMailFn: typeof sendEmail,
   buildFn: () => Pick<SendEmailParams, 'subject' | 'react'>,
 ): Promise<void> {
-  const built = buildFn();
+  // buildFn (JSX 組立) も try 内: テンプレート側の実行時エラーで cost check 自体を落とさない (2026-09-16)。
+  let built: Pick<SendEmailParams, 'subject' | 'react'> | null = null;
   try {
+    built = buildFn();
     await sendMailFn({ subject: built.subject, react: built.react });
   } catch (err: unknown) {
     const isConfigError =
       err instanceof Error && err.constructor.name === 'ConfigError';
     if (isConfigError) {
       log.warn(
-        { task: ALERT_COST_CHECK_TASK_NAME, subject: built.subject },
+        { task: ALERT_COST_CHECK_TASK_NAME, subject: built?.subject },
         'mail skipped — RESEND_API_KEY or MAIL_FROM/MAIL_TO not configured (graceful fallback)',
       );
       return;
     }
     log.warn(
-      { task: ALERT_COST_CHECK_TASK_NAME, err, subject: built.subject },
+      { task: ALERT_COST_CHECK_TASK_NAME, err, subject: built?.subject },
       'mail send failed — alert was still persisted to DB',
     );
   }

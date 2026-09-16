@@ -1,3 +1,5 @@
+// tsx(esbuild) が worker で classic JSX runtime に落ちて `React is not defined` になるのを防ぐ (2026-09-16)。
+import * as React from 'react';
 import type { ReactNode } from 'react';
 
 import {
