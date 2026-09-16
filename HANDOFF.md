@@ -51,7 +51,12 @@
 - 対象 20 冊（running 17 / judging 3）を修正版 worker デプロイ後 11:43 JST に再投入。内訳: **judge 直行 14**（editor 再キック後の凍結、retry_count=1 引継ぎ）/
   **editor 再投入 3**（writer.chapter 全章再キック後の凍結、競馬 3 冊、feedback 引継ぎ）/ **export 再投入 2**（旧 done 本を ops-watch 修復が再校閲して
   running に戻していた残骸、未出版なので出力ファイルを作り直し）/ **status=done 復元 1**（同残骸だが KDP 出版済み「今日のわたしをいたわる100の言葉」）。
-  再投入直後に worker が editor 3 / judge 2 を同時処理開始、エラー無し（11:45 JST 確認）。
+  **11:52 JST 時点の結果**: judge 14 冊中 **6 冊合格（80〜84 点）→ thumbnail 自動採用 → seo → export へ進行中**、**8 冊は不合格（retry 上限）→ needs_human_review**
+  （運営者の判断待ち: 乙女ゲー/宮廷薬師/極道の娘/転生皇帝/モテる男/透明な共犯者/最後のオーケストラ/ファンダムの神殿）。export 2 冊は done。
+  editor 3 冊（競馬）は実行中 → 完了後に judge 直行。needs_human_review 8 冊の通知メールは下記 4 の既存バグで失敗（本の状態は正しい）。
+  4 の修正で 11:52 に worker を再デプロイした際、実行中だった editor 3 / seo 1 / blog 生成 1 が旧コンテナごと死亡（graphile 行は旧 worker のロック持ち、
+  public.jobs は running のまま、book_locks 残留）→ 11:55 に手動で解放（graphile unlock＋jobs を queued に戻す＋book_locks 削除）し新 worker が再開。
+  **教訓: 長時間ジョブ実行中の  は避ける**（memory  ⑥ と同じ罠。org.ops.watch の 6 時間毎自己修復でも直るが時間を失う）。
 - judge は RETRY_LIMIT=1 のため、今回 80 点未満なら `needs_human_review` で止まる（再々キックはしない）。翌朝 `books.status` を確認。
 - blog 育成投稿の生成ジョブを 1 件だけ再投入（graphile job 150030）。成功すれば `promotion_posts(channel=blog, kind=value)` に 12 件入る。
 
