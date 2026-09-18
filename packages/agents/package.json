@@ -45,7 +45,8 @@
     "./anp/editor": "./src/anp/editor.ts",
     "./anp/judge": "./src/anp/judge.ts",
     "./anp/eyecatch": "./src/anp/eyecatch.ts",
-    "./anp/promo": "./src/anp/promo.ts"
+    "./anp/promo": "./src/anp/promo.ts",
+    "./anp/strategist": "./src/anp/strategist.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",

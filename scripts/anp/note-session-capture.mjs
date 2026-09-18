@@ -93,10 +93,13 @@ await ctx.close();
 const json = JSON.stringify(state);
 console.log(`storageState 取得: cookies=${state.cookies.length} origins=${state.origins.length} (${Math.round(json.length / 1024)}KB)`);
 
-await c.query('UPDATE note_accounts SET session_state_enc=$1, updated_at=NOW() WHERE id=$2', [
-  encrypt(json),
-  noteAccountId,
-]);
+// docs/11-anp-design.md §7 F-ANP-01/03: status='pending_session' (アカウント設計から作成した
+// note_accounts 行) の場合、セッション取込完了をもって稼働可能な 'active' に昇格させる。
+// 既に 'active'/'paused'/'archived' の場合はそのステータスを尊重し変更しない。
+await c.query(
+  "UPDATE note_accounts SET session_state_enc=$1, status=(CASE WHEN status='pending_session' THEN 'active' ELSE status END), updated_at=NOW() WHERE id=$2",
+  [encrypt(json), noteAccountId],
+);
 await c.end();
 console.log(`✔ note_accounts.session_state_enc 保存 (id=${noteAccountId})`);
 process.exit(0);

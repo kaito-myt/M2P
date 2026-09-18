@@ -1417,9 +1417,32 @@ model NoteAccount {
   themes           NoteTheme[]
   articles         NoteArticle[]
   membership_stats NoteMembershipStat[]
+  designs          NoteAccountDesign[]
 
   @@index([status, created_at(sort: Desc)], map: "note_accounts_status_time_idx")
   @@map("note_accounts")
+}
+
+// F-ANP-01/03 (docs/11-anp-design.md §3.1/§7) — note アカウント設計。
+// 運営者の brief (idea/goal/制約等) から AI (`anp.strategist`) が表示名/handle 候補・bio・
+// 発信の柱・収益方針・投稿頻度・初回テーマ・アイコン/ヘッダー画像プロンプトを一括設計する。
+// 採用 (adopted) 時に `note_accounts` を新規作成し `note_account_id` で紐付ける。
+model NoteAccountDesign {
+  id              String    @id @default(cuid())
+  brief_json      Json
+  design_json     Json?
+  status          String    @default("generating") // generating|proposed|adopted|rejected|failed
+  error           String?   @db.Text
+  note_account_id String?
+  avatar_r2_key   String?
+  header_r2_key   String?
+  created_at      DateTime  @default(now())
+  updated_at      DateTime  @updatedAt
+
+  account NoteAccount? @relation(fields: [note_account_id], references: [id], onDelete: SetNull)
+
+  @@index([status, created_at(sort: Desc)], map: "note_account_designs_status_time_idx")
+  @@map("note_account_designs")
 }
 
 model NoteTheme {

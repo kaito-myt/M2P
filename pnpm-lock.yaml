@@ -44,6 +44,9 @@ importers:
       '@a2p/db':
         specifier: workspace:*
         version: link:../../packages/db
+      '@a2p/storage':
+        specifier: workspace:*
+        version: link:../../packages/storage
       '@a2p/ui':
         specifier: workspace:*
         version: link:../../packages/ui

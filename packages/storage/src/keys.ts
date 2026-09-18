@@ -246,6 +246,21 @@ export function noteArticleEyecatch(noteArticleId: string): string {
 }
 
 /**
+ * `anp/designs/{design_id}/avatar.png` — note アカウント設計 (F-ANP-01/03) のアイコン案。
+ * `note.account.visuals` が生成・保存する。
+ */
+export function anpAccountDesignAvatar(designId: string): string {
+  assertId('designId', designId);
+  return `anp/designs/${designId}/avatar.png`;
+}
+
+/** `anp/designs/{design_id}/header.jpg` — note アカウント設計のヘッダー画像案 (F-ANP-01/03)。 */
+export function anpAccountDesignHeader(designId: string): string {
+  assertId('designId', designId);
+  return `anp/designs/${designId}/header.jpg`;
+}
+
+/**
  * 論理削除用のキー変換 (docs/05 §8.1: `r2_key` を `_deleted/...` にリネーム)。
  * 既に `_deleted/` 配下にある場合はそのまま返す。
  */

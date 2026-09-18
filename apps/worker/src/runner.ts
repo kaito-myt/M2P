@@ -186,6 +186,8 @@ import { ORG_KDP_SCREEN_TASK_NAME, orgKdpScreenTask } from './tasks/org-kdp-scre
 import { ORG_BAKEOFF_RECOMMEND_TASK_NAME, orgBakeoffRecommendTask } from './tasks/org-bakeoff-recommend.js';
 import { NOTE_THEME_GENERATE_TASK_NAME, noteThemeGenerateTask } from './tasks/note-theme-generate.js';
 import { NOTE_THEME_AUTO_TASK_NAME, noteThemeAutoTask } from './tasks/note-theme-auto.js';
+import { NOTE_ACCOUNT_DESIGN_TASK_NAME, noteAccountDesignTask } from './tasks/note-account-design.js';
+import { NOTE_ACCOUNT_VISUALS_TASK_NAME, noteAccountVisualsTask } from './tasks/note-account-visuals.js';
 import {
   PIPELINE_NOTE_WRITER_OUTLINE_TASK_NAME,
   pipelineNoteWriterOutlineTask,
@@ -329,6 +331,8 @@ export function buildTaskList(): TaskList {
     // docs/11-anp-design.md §7 — ANP (note 記事) パイプライン。
     [NOTE_THEME_GENERATE_TASK_NAME]: noteThemeGenerateTask,
     [NOTE_THEME_AUTO_TASK_NAME]: noteThemeAutoTask,
+    [NOTE_ACCOUNT_DESIGN_TASK_NAME]: noteAccountDesignTask,
+    [NOTE_ACCOUNT_VISUALS_TASK_NAME]: noteAccountVisualsTask,
     [PIPELINE_NOTE_WRITER_OUTLINE_TASK_NAME]: pipelineNoteWriterOutlineTask,
     [PIPELINE_NOTE_WRITER_BODY_TASK_NAME]: pipelineNoteWriterBodyTask,
     [PIPELINE_NOTE_EDITOR_TASK_NAME]: pipelineNoteEditorTask,

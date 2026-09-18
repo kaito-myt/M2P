@@ -185,6 +185,44 @@ ANP の機能は A2P の対応機能を note 向けに写像したもの。**太
 - **F-ANP-01 テーマ別マルチアカウント台帳**: `note_accounts`（複数）。各アカウントに niche/ターゲット/トーン/収益方針（無料比率・有料価格帯・メンバーシップ有無）/リンク SNS を保持。作成・接続（cookie 取り込み）は運営者が一度だけ。
 - **F-ANP-02 アカウント別ジャンル/テーマ方針**: A2P の `genre_policy` に相当。29+ジャンル体系（`@a2p/contracts` の genres を流用）＋note向けの追加ニッチ。
 - **F-ANP-03 マルチアカウント戦略立案（org連携・任意）**: どのニッチで何アカウント持つか、各アカウントの投稿頻度・価格戦略を org（CEO+本部長）が立案（A2P org の多アカウント販促戦略を流用）。
+  **アカウント設計 UI を実装済み(最小・2026-09-18)**: 運営者要望「note は別アカウントを作ります。
+  どのようなアカウントにするかの設計もツール上で行えるようにしといてくださいね」への対応として、
+  `apps/anp` に `/accounts/design`（ブリーフ入力→設計案一覧）／`/accounts/design/[id]`
+  （設計案の編集・画像生成・フィードバック再生成・採用/却下）を追加した。org 連携（CEO/本部長が
+  立案）とは別に、**運営者が単発で1アカウント分の設計を都度リクエストする**経路（F-ANP-01寄り）
+  として位置づける。org 自律ループとの統合は Phase 5 以降で検討。
+  - 契約: `packages/contracts/src/agents/anp.ts` の `NoteAccountDesignBriefSchema`
+    （運営者入力: idea 必須／goal・target_reader_hint・monetization_hint・constraints・
+    persona_type(person\|brand\|auto)・reference_accounts・feedback 任意）と
+    `NoteAccountDesignSchema`（AI 出力: 表示名/handle 候補3件・bio・concept・target_reader・tone・
+    persona_type・character_sheet・content_pillars・genre_policy・monetization_policy
+    （free_ratio/price_band/membership/paid_line_strategy）・posting_cadence・first_themes(5件)・
+    kpi_targets・avatar_prompt・header_prompt・rationale）。
+  - エージェント: `packages/agents/src/anp/strategist.ts`（role=`anp.strategist`、
+    `sns_strategist` の note 版。web 検索は使わず LLM のみ、`extractLlmJson` を judge/theme と同じ
+    最大2回の再試行ループで使う）。`persona_type==='person'` のときのみ
+    `withPersonaVisualRules`（実写・顔なし・首から下）を avatar/header 画像プロンプトに適用する
+    (`generateNoteAccountDesignImages`)。プロンプト/モデル割当は `packages/db/seed-anp.ts`
+    （provider=anthropic, model=claude-opus-4-7）に追加。
+  - DB: 新規モデル `NoteAccountDesign`（§6 参照）。
+  - worker タスク: `note.account.design`（brief→設計生成）／`note.account.visuals`
+    （アイコン/ヘッダー画像生成、§7 参照）。
+  - UI フロー: ブリーフ入力→`note.account.design` enqueue→(生成中はページ更新で確認)→
+    提案された設計案を**表示名/handleはラジオ選択、その他項目は編集可能**なフォームで確認・修正→
+    「画像を生成」(任意)→「この設計でアカウントを作成」で `note_accounts` を
+    `status='pending_session'` で新規作成し、note.com 側の手作業チェックリスト
+    （表示名/プロフィール文のコピー、アイコン/ヘッダー画像のダウンロード、
+    `scripts/anp/note-session-capture.sh <id>` の実行案内）を表示する。「フィードバックして
+    再生成」で追加指示を反映した新しい設計案（新規 `NoteAccountDesign` 行）を作れる。「却下」で
+    不採用にできる。
+  - `note_accounts.status` に **`pending_session`**（新設。セッション未取込＝まだ note.com 上の
+    実アカウントと紐付いていない状態）を追加。`note.theme.auto`/`note.publish.dispatch`/
+    `note.sales.fetch.dispatch`/`note.publish.status.sync`/`note-engage` は全て
+    `status:'active'` の厳密一致でアカウントを抽出しているため、`pending_session` のアカウントは
+    自動的に対象外になる（コード変更不要・確認済み）。`scripts/anp/note-session-capture.mjs` が
+    セッション取り込み成功時に `status='pending_session'` → `'active'` へ昇格させる
+    （既に active/paused/archived の場合は変更しない）。`/accounts` 一覧に
+    `pending_session` バッジと案内文を表示する。
 
 ### 3.2 記事生成パイプライン（A2P の書籍パイプラインを短尺・高頻度化）
 - **F-ANP-10 テーマ候補生成（Marketer）**: アカウントのニッチ＋トレンド（Web検索）から記事テーマ候補を生成。A2P Marketer 準拠、出力は「記事タイトル/フック/想定読者/有料無料の推奨/想定価格/競合note」。
@@ -281,10 +319,21 @@ graphile-worker を流用。ANP のタスクは `pipeline.note.*`（marketer/out
 
 A2P の `books` 系を note 記事系に写像。**マルチアカウントを主キー動線に組み込む**。
 
-- **`note_accounts`**: `id, niche, display_name, handle, target_reader, tone, monetization_policy_json({free_ratio, price_band, membership:bool}), genre_policy_json, session_state_enc, status(active|paused|archived), created_at`。
+- **`note_accounts`**: `id, niche, display_name, handle, target_reader, tone, monetization_policy_json({free_ratio, price_band, membership:bool}), genre_policy_json, session_state_enc, status(active|paused|archived|pending_session), created_at`。
   **`session_state_enc` は `KDP_CRED_KEY` で暗号化**（`bw_session_state_enc`/`kdp_session_state_enc` と同じ鍵。
   `API_CRED_KEY` ではない — Phase 1 の暫定共有セッション `promotion_channel_settings.config_json.note_session_enc`
   は `API_CRED_KEY` だったため、`scripts/anp/note-session-migrate.mjs` で再暗号化して移行する）。
+  **`pending_session`（Phase 5 追加, F-ANP-01/03）**: `/accounts/design` のアカウント設計を採用した
+  直後の初期状態。note.com 側にまだ実アカウントを作成・ログインしていないため、
+  `session_state_enc` は null のまま。`scripts/anp/note-session-capture.mjs` がセッション取込に
+  成功すると自動で `active` に昇格する。`status:'active'` を厳密一致で参照する既存の自動化
+  （`note.theme.auto`/`note.publish.dispatch`/`note.sales.fetch.dispatch`/`note.publish.status.sync`/
+  `note-engage`）はこの新状態を意識せずとも安全に除外できる（コード変更不要、実装時に確認済み）。
+- **`note_account_designs`（Phase 5 新規, F-ANP-01/03, migration `20260919000000_anp_account_design`）**:
+  `id, brief_json, design_json?, status(generating|proposed|adopted|rejected|failed), error?, note_account_id?(FK→note_accounts, onDelete:SetNull), avatar_r2_key?, header_r2_key?, created_at, updated_at`。
+  運営者のブリーフ (`NoteAccountDesignBriefSchema`) から `anp.strategist` が設計案
+  (`NoteAccountDesignSchema`) を生成し `design_json` に保持する。採用時に `note_accounts` を
+  新規作成し `note_account_id` で紐付ける（詳細は §3.1/§7）。
 - **`note_themes`**（= theme_candidates 相当）: `id, note_account_id, title, hook, target_reader, recommend_paid:bool, suggested_price, competitors_json, genre, status(pending|accepted|rejected), rejected_reason, created_at`
 - **`note_articles`**（= books 相当）: `id, note_account_id, theme_id?, title, lead, body_md, paid:bool, price_jpy?, paywall_line_pos?, membership_magazine?, eyecatch_r2_key?, status(queued|writing|editing|eyecatch|judging|ready|published|failed|cancelled|needs_human_review), publish_status(draft|published|unlisted), note_url?, cost_jpy_total, has_pending_comments, quality_score?, published_at, created_at, updated_at`。
   `publish_status='unlisted'` は Phase 2 `note.publish.status.sync` が追加した状態（公開後に非公開化/404 を検知）。
@@ -428,6 +477,39 @@ API を提供するか、運営者が手動でステップアップ認証を突�
   2026-09-18 改修後は note 公開 API 由来の `user.urlname` から組み立てた URL)から
   `extractNoteHandle` で自動抽出・保存する(既存手動設定は上書きしない)。
 
+### Phase 5 実装済みタスク — note アカウント設計 (F-ANP-01/03, 2026-09-18)
+
+運営者要望「note は別アカウントを作ります。どのようなアカウントにするかの設計もツール上で
+行えるようにしといてくださいね」への対応。
+
+| タスク名 | ペイロード | 処理概要 | 完了後の遷移/状態 |
+|---|---|---|---|
+| `note.account.design` | `{ design_id, job_id }` | `/accounts/design` の「設計を生成」/「フィードバックして再生成」から enqueue。`NoteAccountDesign.brief_json` を `anp.strategist`(`planNoteAccountDesign`, role=`anp.strategist`)に渡し設計案を生成。`NoteLock` は使わない(記事本文/公開状態を変更しないため排他不要、`note.sales.fetch` と同じ判断) | 成功: `design_json` 確定、`status='proposed'`。失敗: `status='failed'` + `error` 保存 |
+| `note.account.visuals` | `{ design_id, job_id }` | `NoteAccountDesign.design_json`(`status` が `proposed`/`adopted`)の `avatar_prompt`/`header_prompt` から `generateNoteAccountDesignImages`(gpt-image-1)でアイコン/ヘッダー画像を生成。`persona_type==='person'` のときのみ `withPersonaVisualRules`(実写・顔なし・首から下)を適用。R2 `anp/designs/<design_id>/avatar.png`・`header.jpg` に保存 | 成功: `avatar_r2_key`/`header_r2_key` 確定。失敗: 記事同様 `Job` を `failed` にするのみ(`NoteAccountDesign.status` は変更しない=再試行可能) |
+
+**UI (`apps/anp`)**: `/accounts/design`(ブリーフ入力フォーム＋設計案一覧、`brief-form.tsx`)、
+`/accounts/design/[id]`(`design-form.tsx`: 表示名/handle候補をラジオ選択、bio/concept/発信の柱/
+収益方針/投稿頻度/初回テーマ/画像プロンプト等を編集可能なフォームで表示。「画像を生成」
+「この設計でアカウントを作成」「却下」ボタン。`feedback-form.tsx`: 「フィードバックして再生成」
+で新しい `NoteAccountDesign` 行を作り遷移)。採用 (`adoptDesign`) は `$transaction` で
+`NoteAccountDesign.status='proposed'` の CAS ガード→`note_accounts`(`status='pending_session'`)
+新規作成→`note_account_id` 紐付けを行い、note.com 側の手作業チェックリスト
+(表示名/bioのコピー用表示、アイコン/ヘッダー画像のダウンロードリンク、
+`bash scripts/anp/note-session-capture.sh <id>` の実行案内)を表示する。
+
+**排他/冪等性/コスト**: 内部 `Job` の CAS (`queued/failed→running→done/failed`) パターンは
+Phase 1〜4 と同型。画像生成コストは `withImageLogging(role='anp.strategist')` で `token_usage` に
+記録する(`NoteAccountDesign` に `cost_jpy_total` 相当の集計列は持たない — 単発生成であり
+`NoteArticle` のような繰り返しコスト集計の必要性が薄いため、Phase 1 の
+`applyNoteArticleCostFromJob` のような専用集計は設けなかった。将来 KPI 化する場合は
+`Job.result_json`/`token_usage.job_id` から遡って集計できる)。
+
+**設計判断: `genre_policy_json` の保存形**: `note_accounts.genre_policy_json` は当初 `{}`(空)で
+作成されていたが(既存の手入力フォーム経由)、アカウント設計採用時は
+`{ slugs: string[] }`(`NoteAccountDesignSchema.genre_policy` をそのまま配列で保存)とした。
+既存の note パイプライン(`note.theme.generate` 等)はこの列を読まないため後方互換上の問題はない。
+将来アカウント別ジャンル方針(F-ANP-02)を実装する際の初期値として使う想定。
+
 ---
 
 ## 8. 段階的ロードマップ
@@ -437,6 +519,12 @@ API を提供するか、運営者が手動でステップアップ認証を突�
 - **Phase 2（一部実装済み・2026-09-15）**: note 公開オートメーション（`pipeline.note.publish`/`note.publish.dispatch`/`note.publish.status.sync`、§7）＋マルチアカウント別セッション（`note_accounts.session_state_enc`、移行/取込スクリプト）を実装。**未実装・要フォロー**: 有料記事の価格/有料ライン設定 UI 自動化（note の KYC 要件により本人確認完了後に追加実装が必要、§2.1 参照）、認証リレー(`note_auth_requests`＋LINE)、売上スクレイプ(`note.sales.fetch`)、価格自動決定(F-ANP-16)。
 - **Phase 3（一部実装済み・2026-09-16）**: SNS 自動販促（`promotion.note.article`、§7）／売上・KPI取得（`note.sales.fetch`/`note.sales.fetch.dispatch`、§7）／相互流入 F-ANP-31 最小版（note 本文への関連書籍紹介、§3.4）／ホーム集約 F-ANP-42 最小版（`apps/anp/app/page.tsx`）を実装。**未実装・要フォロー**: メンバーシップ運用そのもの（運用アカウント無しのため §2.2 のスクレイプ未検証）、org 自律連携（note 出版本部/note 販促本部）、有料記事の価格/有料ライン設定 UI（Phase 2 から継続）。
 - **Phase 4（一部実装済み・2026-09-18）**: 日次自動運転(F-ANP-17: `note.theme.auto` — テーマ自動生成＋自動採用＋パイプライン自動起動、§7)／価格・有料の自動提案(F-ANP-16 続き: judge が有料化提案、paid は KYC 未完了のため常に false 強制、§3.2/§7)／`needs_human_review` 再審査 UI(申し送り6 解消)／`note_accounts.handle` 編集 UI＋公開成功時の自動保存(申し送り13 解消)／A2P⇄note 相互送客の拡充(書籍LP→note 導線、F-ANP-31 最小版、§3.4)を実装。**未実装・要フォロー**: note→書籍化などクロスツール収益最適化、アカウント別のパイプライン自動パス設定(現状 `anp_auto_theme_enabled` 等はグローバル1設定)、org 自律連携、有料記事の価格/有料ライン設定 UI(Phase 2 から継続、KYC 完了待ち)、メンバーシップ運用実データ検証(Phase 3 から継続)。
+- **Phase 5（実装済み・2026-09-18）**: note アカウント設計 UI (F-ANP-01/03: `/accounts/design`
+  ブリーフ入力→`anp.strategist`が設計案生成→編集/画像生成/フィードバック再生成/採用・却下、
+  `note_accounts.status='pending_session'` 新設、§3.1/§6/§7)を実装。**未適用・要フォロー**:
+  本番 DB への migration `20260919000000_anp_account_design` 適用(raw SQL, 申し送り参照)、
+  `pnpm --filter @a2p/db run seed:anp` の再実行(`anp.strategist` role 追加分)、
+  `apps/anp/package.json` に追加した `@a2p/storage` 依存の `pnpm install` 実行。
 
 ---
 
@@ -475,4 +563,21 @@ Vercel AI SDK + Anthropic SDK / gpt-image / Cloudflare R2 / NextAuth(共有) / T
 15. **[Phase 4 実装メモ・DB マイグレーション運用]** migration `20260918000000_anp_theme_auto`（`app_settings` に `anp_auto_theme_enabled`/`anp_themes_per_day`/`anp_theme_cron`/`anp_autopass_enabled` の4列を追加）は #14 と同じ理由・同じ運用（raw SQL の `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` を直接適用 → `prisma migrate resolve --applied` で履歴のみ整合）で本番適用すること。プログラマーエージェントによる本タスクの成果物にはマイグレーションファイル作成までを含み、本番適用は行っていない。
 16. **[Phase 4 新規発見・最重要, 2026-09-18 本番実公開で発覚]** `pipeline.note.publish` の実公開(dry_run=false)で「投稿する」をクリックすると、note は本文ページへ遷移せず**公開設定画面の上に「記事が公開されました」モーダル(連続投稿日数＋X/Facebook/LINE/リンクコピーの共有ボタン)を重ねて表示する**ことが判明した。当初の URL 遷移監視のみに依存した実装ではこれを検知できず、実際には公開が成功しているのに `blocked` を誤って返す事故が発生した(記事 `anpart_mu2fk8np` で実測。DB は運営者が手動で `published` に補正済み)。対策として `waitForPublishConfirmation`(URL遷移 or モーダルのテキスト検知のどちらか)＋`resolvePublishedUrl`(note 公開API `GET /api/v3/notes/<noteId>` を最優先、URL遷移監視はフォールバック)を実装した(§2.1/§7 Phase4 参照)。**運営者へ**: 本番の記事のうち、この修正以前に `blocked`(メッセージ「投稿後の公開URLを確認できませんでした」)で終わっているのに note 上では実際に公開されている記事が他にも残っている可能性がある — note 管理画面のダッシュボード(記事別テーブル)で公開済みなのに `NoteArticle.status`/`publish_status` が `ready`/`draft` のままの記事が無いか確認し、あれば手動で `published`+`note_url` に補正すること。
 
-17. **[2026-09-18 デプロイ障害・解消済]** Railway の `pnpm --filter @anp/web build` が `/accounts` `/settings` `/` の静的プリレンダリングで Prisma を呼び `postgres.railway.internal` に届かず失敗し、9/15 17:40 以降の ANP デプロイが全件 FAILED だった（本番は 17:14 の古いビルドが稼働し続けていた）。DB を読む `page.tsx` には `export const dynamic = 'force-dynamic'` を必ず付けること（`apps/anp/app/{page,accounts/page,settings/page}.tsx` に適用済み。新規ページを足すときも同様）。
+17. **[2026-09-18 デプロイ障害・解消済]** Railway の `pnpm --filter @anp/web build` が `/accounts` `/settings` `/` の静的プリレンダリングで Prisma を呼び `postgres.railway.internal` に届かず失敗し、9/15 17:40 以降の ANP デプロイが全件 FAILED だった（本番は 17:14 の古いビルドが稼働し続けていた）。DB を読む `page.tsx` には `export const dynamic = 'force-dynamic'` を必ず付けること（`apps/anp/app/{page,accounts/page,settings/page}.tsx` に適用済み。新規ページを足すときも同様）。新規追加した `/accounts/design`・`/accounts/design/[id]` にも適用済み。
+18. **[Phase 5 実装メモ・要フォロー]** note アカウント設計 (F-ANP-01/03) 実装で以下が未適用のまま残っている:
+    - **DB migration**: `packages/db/migrations/20260919000000_anp_account_design/migration.sql`
+      (`note_account_designs` テーブル新規作成)。#14/#15 と同じ理由・同じ運用
+      (`CREATE TABLE IF NOT EXISTS` を raw SQL で直接適用 → `pnpm --filter @a2p/db exec prisma
+      migrate resolve --applied 20260919000000_anp_account_design` で履歴のみ整合) で本番適用すること。
+    - **seed**: `pnpm --filter @a2p/db run seed:anp` を再実行し、新規 role `anp.strategist` の
+      prompt/model_assignment (provider=anthropic, model=claude-opus-4-7) を投入すること
+      (idempotent upsert のため既存5 role には影響しない)。
+    - **依存追加**: `apps/anp/package.json` に `@a2p/storage`(`workspace:*`) を新規追加した
+      (設計案のアイコン/ヘッダー画像を署名付き URL で表示・ダウンロードさせるため
+      `getSignedDownloadUrl` が必要)。ワークスペースリンク未生成のため
+      **`pnpm install` の実行が必要**(CLAUDE.md ハードルールによりプログラマーエージェントは
+      実行していない — `pnpm --filter @anp/web run typecheck` はこの1点のみ
+      `Cannot find module '@a2p/storage/operations'` で失敗する状態、他のエラーは無し)。
+    - **設計判断の記録**: `note_accounts.genre_policy_json` の保存形 (`{ slugs: string[] }`) は
+      §7 Phase5 に記載済み。`NoteAccountDesign` に `cost_jpy_total` 相当の集計列を設けなかった
+      判断も同節に記載済み。

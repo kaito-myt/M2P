@@ -41,6 +41,9 @@
 - **⚠️ 注意**: note-acc-1「AI副業ラボ」は Phase 1 の暫定共有セッションのため、実際の note アカウントは A2P 販促ペルソナ
   「良い本を読む習慣（goodbooks_intro）」= ことは のアカウント。**AI 副業記事が読書ペルソナのアカウントに出る**状態。
   別アカウントで運用するなら note で新アカウントを作り `scripts/anp/note-session-capture.sh <note_account_id>` でセッション取込が必要。
+  → **運営者決定 (9/18 午後): note は別アカウントを新規作成する**。それまで `note-acc-1` は `status=paused`（日次生成/自動公開の対象外）にし、
+  読書ペルソナの X/IG に積まれていた AI 副業記事の告知 2 件は canceled にした。「どんなアカウントにするか」を ANP 上で設計する機能
+  （brief→AI 設計→編集/承認→アカウント作成→note 手作業チェックリスト→セッション取込）を実装中/済（下記参照）。
 - 実装（F-ANP-16/17/31、needs_human_review UI、handle 編集/自動保存）: 日次自動テーマ生成 `note.theme.auto`（AppSettings
   `anp_auto_theme_enabled` / `anp_themes_per_day` / `anp_theme_cron`(既定 JST 08:00) / `anp_autopass_enabled`、migration
   `20260918000000_anp_theme_auto` は本番に raw SQL 適用済み）、判定時の有料化提案（`paid` は KYC 未完了のため常に false、`price_jpy` に提案のみ）、

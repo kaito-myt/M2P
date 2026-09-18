@@ -22,9 +22,14 @@ export default async function AccountsPage() {
           <h1 className="text-sub-heading font-medium text-charcoal">{messages.accounts.pageTitle}</h1>
           <p className="mt-1 text-body text-muted">{messages.accounts.pageDescription}</p>
         </div>
-        <Link href="/settings" className="text-caption text-muted no-underline hover:underline">
-          {messages.settings.pageTitle}
-        </Link>
+        <div className="flex flex-col items-end gap-1">
+          <Link href="/accounts/design" className="text-caption text-muted no-underline hover:underline">
+            {messages.accounts.designLink}
+          </Link>
+          <Link href="/settings" className="text-caption text-muted no-underline hover:underline">
+            {messages.settings.pageTitle}
+          </Link>
+        </div>
       </header>
 
       <section className="mt-space-relaxed">
@@ -32,25 +37,35 @@ export default async function AccountsPage() {
           <p className="text-body text-muted">{messages.accounts.empty}</p>
         ) : (
           <ul className="flex flex-col gap-space-snug">
-            {accounts.map((a) => (
-              <li key={a.id}>
-                <Link
-                  href={`/accounts/${a.id}`}
-                  className="flex flex-col rounded-container border border-border-warm bg-cream-light p-space-relaxed no-underline hover:bg-charcoal-04"
-                >
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="text-card-title font-medium text-charcoal">{a.display_name}</span>
-                    <span className="rounded-pill border border-border-warm px-2 py-0.5 text-caption text-muted">
-                      {a.status}
-                    </span>
-                  </div>
-                  <p className="mt-1 text-body text-muted">
-                    ニッチ: {a.niche}
-                    {a.target_reader ? ` ／ 想定読者: ${a.target_reader}` : ''}
-                  </p>
-                </Link>
-              </li>
-            ))}
+            {accounts.map((a) => {
+              const statusLabel =
+                messages.accounts.statusLabel[a.status as keyof typeof messages.accounts.statusLabel] ??
+                a.status;
+              return (
+                <li key={a.id}>
+                  <Link
+                    href={`/accounts/${a.id}`}
+                    className="flex flex-col rounded-container border border-border-warm bg-cream-light p-space-relaxed no-underline hover:bg-charcoal-04"
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-card-title font-medium text-charcoal">{a.display_name}</span>
+                      <span className="rounded-pill border border-border-warm px-2 py-0.5 text-caption text-muted">
+                        {statusLabel}
+                      </span>
+                    </div>
+                    <p className="mt-1 text-body text-muted">
+                      ニッチ: {a.niche}
+                      {a.target_reader ? ` ／ 想定読者: ${a.target_reader}` : ''}
+                    </p>
+                    {a.status === 'pending_session' && (
+                      <p className="mt-1 text-caption text-muted">
+                        {messages.accounts.pendingSessionNotice(a.id)}
+                      </p>
+                    )}
+                  </Link>
+                </li>
+              );
+            })}
           </ul>
         )}
       </section>

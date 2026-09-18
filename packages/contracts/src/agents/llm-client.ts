@@ -83,7 +83,10 @@ export type AgentRole =
   | 'anp.judge'
   // F-ANP-30 — note 記事の SNS 告知投稿担当 (販促ペルソナで書く。content_creator の
   // 「自社宣伝禁止」ルールとは別の役割として分離する。docs/11 §7 参照)。
-  | 'anp.promo';
+  | 'anp.promo'
+  // F-ANP-01/03 — note アカウント設計担当 (ブリーフ→表示名/handle/bio/発信の柱/収益方針/
+  // 投稿頻度/初回テーマ/アイコン・ヘッダー画像プロンプトを一括設計。sns_strategist の note 版)。
+  | 'anp.strategist';
 
 /**
  * マルチモーダル入力用の画像添付。`content` (テキスト) と併せてユーザーメッセージに付与する。

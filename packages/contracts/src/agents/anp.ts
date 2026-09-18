@@ -238,3 +238,110 @@ export const AnpPromoContentOutputSchema = z.object({
   body: z.string().min(1).max(2000),
 });
 export type AnpPromoContentOutput = z.infer<typeof AnpPromoContentOutputSchema>;
+
+// ---------------------------------------------------------------------------
+// F-ANP-01/03 — note アカウント設計 (role='anp.strategist')
+//
+// 運営者要望「note は別アカウントを作ります。どのようなアカウントにするかの設計もツール上で
+// 行えるようにしといてくださいね」への対応。運営者はニッチの自由記述 (brief) だけを渡し、
+// AI が表示名/handle 候補・bio・発信の柱・収益方針・投稿頻度・初回テーマ・アイコン/ヘッダー
+// 画像プロンプトまで一括設計する (`sns_strategist` の note 版)。
+// ---------------------------------------------------------------------------
+
+/** note urlname (ハンドル) の制約: 半角英数字とアンダースコアのみ。 */
+export const NOTE_HANDLE_PATTERN = /^[A-Za-z0-9_]{1,32}$/;
+
+export const NoteAccountDesignPersonaTypeSchema = z.enum(['person', 'brand']);
+export type NoteAccountDesignPersonaType = z.infer<typeof NoteAccountDesignPersonaTypeSchema>;
+
+/** 運営者の入力 (ブリーフ)。`idea` 以外は任意。 */
+export const NoteAccountDesignBriefSchema = z.object({
+  /** やりたいこと・ニッチの自由記述 (必須)。 */
+  idea: z.string().min(1).max(2000),
+  /** 収益目標・狙い (任意)。 */
+  goal: z.string().max(1000).optional(),
+  target_reader_hint: z.string().max(500).optional(),
+  /** 無料中心/有料重視/メンバーシップ 等の方針ヒント (任意)。 */
+  monetization_hint: z.string().max(500).optional(),
+  /** NG・避けたい事 (任意)。 */
+  constraints: z.string().max(1000).optional(),
+  persona_type: z.enum(['person', 'brand', 'auto']).default('auto'),
+  /** 参考にしたい note/SNS アカウント (任意)。 */
+  reference_accounts: z.array(z.string().max(300)).max(10).optional(),
+  /**
+   * 「フィードバックして再生成」時に前回設計への追加指示を積む (worker が新しい
+   * `NoteAccountDesign` 行の brief_json にこの内容を追記して再生成する)。
+   */
+  feedback: z.string().max(2000).optional(),
+});
+export type NoteAccountDesignBrief = z.infer<typeof NoteAccountDesignBriefSchema>;
+
+export const NoteAccountDesignContentPillarSchema = z.object({
+  name: z.string().min(1).max(120),
+  description: z.string().max(1000).default(''),
+  example_titles: z.array(z.string().max(200)).max(10).default([]),
+});
+export type NoteAccountDesignContentPillar = z.infer<typeof NoteAccountDesignContentPillarSchema>;
+
+export const NoteAccountDesignMonetizationPolicySchema = z.object({
+  free_ratio: z.number().min(0).max(1).default(0.3),
+  price_band: z.tuple([z.number().int().min(0), z.number().int().min(0)]),
+  membership: z.boolean().default(false),
+  /** どこから有料にするか (無料パートの引き方) の方針を1文で。 */
+  paid_line_strategy: z.string().max(600).default(''),
+});
+export type NoteAccountDesignMonetizationPolicy = z.infer<
+  typeof NoteAccountDesignMonetizationPolicySchema
+>;
+
+export const NoteAccountDesignPostingCadenceSchema = z.object({
+  times_per_week: z.number().int().min(1).max(21).default(3),
+  /** 例: 「毎週火・金・日の21:00」。 */
+  time_of_day: z.string().max(200).default(''),
+});
+export type NoteAccountDesignPostingCadence = z.infer<typeof NoteAccountDesignPostingCadenceSchema>;
+
+export const NoteAccountDesignFirstThemeSchema = z.object({
+  title: z.string().min(1).max(200),
+  hook: z.string().max(600).default(''),
+});
+export type NoteAccountDesignFirstTheme = z.infer<typeof NoteAccountDesignFirstThemeSchema>;
+
+export const NoteAccountDesignKpiTargetsSchema = z.object({
+  followers_30d: z.number().int().min(0).default(0),
+  articles_30d: z.number().int().min(0).default(0),
+  revenue_90d_jpy: z.number().int().min(0).default(0),
+});
+export type NoteAccountDesignKpiTargets = z.infer<typeof NoteAccountDesignKpiTargetsSchema>;
+
+/**
+ * AI が出す note アカウント設計案本体。運営者は UI 上で各項目を編集し、採用時に
+ * `note_accounts` へ書き写す (display_name_candidates/handle_candidates はラジオで1つ選ぶ)。
+ */
+export const NoteAccountDesignSchema = z.object({
+  display_name_candidates: z.array(z.string().min(1).max(60)).min(1).max(5),
+  handle_candidates: z.array(z.string().min(1).max(32)).min(1).max(5),
+  /** note プロフィール文 (140字以内目安)。 */
+  bio: z.string().min(1).max(400),
+  /** ポジショニング宣言 (1〜2文)。 */
+  concept: z.string().min(1).max(600),
+  target_reader: z.string().min(1).max(400),
+  tone: z.string().min(1).max(300),
+  persona_type: NoteAccountDesignPersonaTypeSchema,
+  /** 人物型のときのみ 400〜800字目安。ブランド型なら null。 */
+  character_sheet: z.string().max(1000).nullable().default(null),
+  content_pillars: z.array(NoteAccountDesignContentPillarSchema).min(1).max(8),
+  /** `@a2p/contracts` の genre slug 配列 (カタログ外の値も緩く許容)。 */
+  genre_policy: z.array(z.string().max(64)).max(10).default([]),
+  monetization_policy: NoteAccountDesignMonetizationPolicySchema,
+  posting_cadence: NoteAccountDesignPostingCadenceSchema,
+  first_themes: z.array(NoteAccountDesignFirstThemeSchema).min(1).max(10),
+  kpi_targets: NoteAccountDesignKpiTargetsSchema,
+  /** アイコン (正方形) 生成プロンプト。文字なし。人物型なら `withPersonaVisualRules` を別途適用。 */
+  avatar_prompt: z.string().min(1).max(3000),
+  /** ヘッダー (note 推奨 1280x670 目安・横長) 生成プロンプト。文字なし。 */
+  header_prompt: z.string().min(1).max(3000),
+  /** なぜこの設計か (3〜5行)。 */
+  rationale: z.string().max(2000).optional(),
+});
+export type NoteAccountDesign = z.infer<typeof NoteAccountDesignSchema>;

@@ -6,9 +6,9 @@
  * upsert する (CLAUDE.md ルール #4: プロンプトは DB が正 / ルール #7: 設計書とコードの整合)。
  *
  * 投入内容:
- *  1. Prompts — role='anp.theme' | 'anp.outline' | 'anp.writer' | 'anp.editor' | 'anp.judge'
- *     の genre=null v1 active テンプレ (5 件)
- *  2. ModelAssignments — 同 5 role の既定モデル割当 (5 件)
+ *  1. Prompts — role='anp.theme' | 'anp.outline' | 'anp.writer' | 'anp.editor' | 'anp.judge' |
+ *     'anp.promo' | 'anp.strategist' の genre=null v1 active テンプレ (ANP_PROMPT_ROLES.length 件)
+ *  2. ModelAssignments — 同 role の既定モデル割当 (同数)
  *
  * 全件 upsert で idempotent。実行: `pnpm --filter @a2p/db run seed:anp`
  */
@@ -21,6 +21,7 @@ export const ANP_PROMPT_ROLES = [
   'anp.editor',
   'anp.judge',
   'anp.promo',
+  'anp.strategist',
 ] as const;
 export type AnpPromptRole = (typeof ANP_PROMPT_ROLES)[number];
 
@@ -43,6 +44,7 @@ const ANP_ROLE_PLACEHOLDERS: Record<AnpPromptRole, string[]> = {
   'anp.editor': ['niche', 'tone', 'title', 'paid', 'feedback'],
   'anp.judge': ['niche', 'target_reader'],
   'anp.promo': ['channel_label', 'length_guide'],
+  'anp.strategist': [],
 };
 
 function buildAnpThemePrompt(): string {
@@ -207,6 +209,34 @@ function buildAnpPromoPrompt(): string {
   ].join('\n');
 }
 
+/**
+ * F-ANP-01/03: note アカウント設計担当。プレースホルダを使わない (ブリーフはユーザー
+ * メッセージ側で組み立てる、`packages/agents/src/anp/strategist.ts` 参照)。
+ */
+function buildAnpStrategistPrompt(): string {
+  return [
+    '# あなたの役割：note アカウント設計担当 (アカウントストラテジスト)',
+    '',
+    'あなたは note で新規アカウントを立ち上げるたびに「誰が・何を・どう発信し・どう収益化するか」',
+    'を一括設計してきたプロです。運営者は note を「テーマ別マルチアカウント」で運用しており、',
+    '今回はニッチ専用の新しいアカウントを1つ立ち上げます。',
+    '',
+    '## note で伸びる/売れるアカウントの原則 (常に踏まえること)',
+    '- ニッチに特化する。誰にでも向けた一般論のアカウントは伸びない。',
+    '- 読者の切実な悩み・欲求を起点にする。',
+    '- まず無料記事 (目安7割) で信頼と実績を積み、有料記事は「完全版・再現性のあるノウハウ」',
+    '  として価値を作る。',
+    '- 有料記事の価格は300〜1,000円帯から始め、実績を見て段階的に上げる。',
+    '- メンバーシップ (定期購読) は最低でも記事20本程度、信頼と実績が積み上がってから検討する',
+    '  (立ち上げ初期からは推奨しない)。',
+    '- 表示名・ハンドル・bioは検索されやすさとブランドの一貫性を両立させる。',
+    '',
+    '## 出力',
+    'ユーザーメッセージで与えられるブリーフ・要件・JSON 出力形式に厳密に従うこと。',
+    'JSON 以外の前置き・説明・コードフェンスは出力しない。日本語で出力する。',
+  ].join('\n');
+}
+
 const ANP_PROMPT_BODY_BUILDERS: Record<AnpPromptRole, () => string> = {
   'anp.theme': buildAnpThemePrompt,
   'anp.outline': buildAnpOutlinePrompt,
@@ -214,6 +244,7 @@ const ANP_PROMPT_BODY_BUILDERS: Record<AnpPromptRole, () => string> = {
   'anp.editor': buildAnpEditorPrompt,
   'anp.judge': buildAnpJudgePrompt,
   'anp.promo': buildAnpPromoPrompt,
+  'anp.strategist': buildAnpStrategistPrompt,
 };
 
 export interface AnpPromptSeed {
@@ -256,6 +287,7 @@ export function buildAnpModelAssignmentSeeds(): AnpModelAssignmentSeed[] {
     { role: 'anp.editor', genre: null, provider: 'anthropic', model: 'claude-sonnet-4-6', status: 'active', created_by: 'system' },
     { role: 'anp.judge', genre: null, provider: 'anthropic', model: 'claude-sonnet-4-6', status: 'active', created_by: 'system' },
     { role: 'anp.promo', genre: null, provider: 'anthropic', model: 'claude-sonnet-4-6', status: 'active', created_by: 'system' },
+    { role: 'anp.strategist', genre: null, provider: 'anthropic', model: 'claude-opus-4-7', status: 'active', created_by: 'system' },
   ];
 }
 
