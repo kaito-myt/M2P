@@ -45,6 +45,9 @@
   `anp_auto_theme_enabled` / `anp_themes_per_day` / `anp_theme_cron`(既定 JST 08:00) / `anp_autopass_enabled`、migration
   `20260918000000_anp_theme_auto` は本番に raw SQL 適用済み）、判定時の有料化提案（`paid` は KYC 未完了のため常に false、`price_jpy` に提案のみ）、
   A2P ストアフロント（/shop・/blog）に「関連 note 記事」枠、`/accounts/[id]` に要確認記事の再審査/再校閲/公開可ボタンと handle フォーム。
+- **ANP の Railway デプロイは 9/15 17:40 以降すべて FAILED だった**（`anp.m2p.tools` は 17:14 の古いビルドが動いていた）。原因 = `next build` が
+  `/accounts` `/settings` `/` を静的プリレンダリングしようとして DB (`postgres.railway.internal`) に届かず失敗。DB を読むページに
+  `export const dynamic = 'force-dynamic'` を付けて解消（9/18 12:1x にデプロイ成功）。
 - **本番設定は全部 ON**: `anp_auto_theme_enabled=true`(1/日) / `anp_autopass_enabled=true` / `anp_auto_publish_enabled=true` /
   `anp_publish_dry_run=false`。= 毎朝テーマ生成→執筆→判定→無料記事として note 公開→X/IG 告知まで無人で回る。
 - 残（人手）: note の本人情報登録（KYC）→ 有料記事化、検証用下書き 5 件（n6845533ebcf7 / n9c510facf4dc / n1d09eea651e3 / ne071421d3e1d /

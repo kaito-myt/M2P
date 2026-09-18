@@ -292,3 +292,7 @@ export default async function AnpHomePage() {
     </div>
   );
 }
+
+// Railway のビルド時に静的プリレンダリングで DB (postgres.railway.internal) へ接続しようとして失敗する
+// (2026-09-15 以降の ANP デプロイが全て FAILED だった原因)。DB を読むページは常に動的レンダリングにする。
+export const dynamic = 'force-dynamic';
