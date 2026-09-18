@@ -6,8 +6,10 @@ import {
   accountAvatar,
   channelAvatar,
   channelBanner,
+  channelCarouselTemplate,
   bookPromoImage,
   promotionPostImage,
+  promotionPostCarouselCard,
   bookArtifact,
   catalogSnapshot,
   chapterDraft,
@@ -150,6 +152,18 @@ describe('補助キー (jobsArchive / catalogSnapshot / accountAvatar)', () => {
   it('promotionPostImage (F-059)', () => {
     expect(promotionPostImage('post_123')).toBe('promotion/posts/post_123.jpg');
     expect(() => promotionPostImage('bad id')).toThrow(ValidationError);
+  });
+
+  it('promotionPostCarouselCard (IG カルーセル要点カード)', () => {
+    expect(promotionPostCarouselCard('post_123', 0)).toBe('promotion/posts/post_123-p0.jpg');
+    expect(promotionPostCarouselCard('post_123', 3)).toBe('promotion/posts/post_123-p3.jpg');
+    expect(() => promotionPostCarouselCard('bad id', 0)).toThrow(ValidationError);
+    expect(() => promotionPostCarouselCard('post_123', -1)).toThrow(ValidationError);
+  });
+
+  it('channelCarouselTemplate (IG カルーセル固定テンプレ枚)', () => {
+    expect(channelCarouselTemplate('instagram')).toBe('promotion/instagram/meta/carousel-template.jpg');
+    expect(() => channelCarouselTemplate('IG')).toThrow(ValidationError);
   });
 
   it('dbBackup は archive/db/<ymd>.sql.gz を返す', () => {

@@ -12,12 +12,15 @@ import {
   FX_FETCH_CRON,
   KDP_PUBLISH_STATUS_SYNC_CRON,
   NOTE_PUBLISH_STATUS_SYNC_CRON,
+  NOTE_THEME_AUTO_CRON_DEFAULT,
+  PIPELINE_THEME_AUTO_CRON_DEFAULT,
   PROMOTION_PLAYBOOK_REFRESH_CRON,
   LOCKS_SWEEP_CRON,
   resolveCatalogFetchCron,
   resolveSalesFetchCron,
   SALES_FETCH_CRON_DEFAULT,
 } from '../src/crontab.js';
+import { NOTE_THEME_AUTO_TASK_NAME } from '../src/tasks/note-theme-auto.js';
 import { ALERT_COST_CHECK_TASK_NAME } from '../src/tasks/alert-cost-check.js';
 import { ARCHIVE_DB_BACKUP_TASK_NAME } from '../src/tasks/archive-db-backup.js';
 import { ARCHIVE_JOBS_TASK_NAME } from '../src/tasks/archive-jobs.js';
@@ -347,6 +350,43 @@ describe('crontab.ts', () => {
     expect(items).toHaveLength(24);
     expect(items.find((c) => c.task === SALES_FETCH_DISPATCHER_TASK_NAME)).toBeDefined();
     expect(items.find((c) => c.task === PROMOTION_DISPATCH_TASK_NAME)).toBeDefined();
+  });
+
+  // -----------------------------------------------------------------------
+  // docs/11-anp-design.md §7 Phase4: note 日次テーマ自動生成 (F-ANP-17)
+  // -----------------------------------------------------------------------
+
+  it('anp_auto_theme_enabled=false なら note.theme.auto を含まない', () => {
+    const items = buildCronItemsWithSettings({
+      sales_auto_fetch_enabled: false,
+      anp_auto_theme_enabled: false,
+    });
+    expect(items.find((c) => c.task === NOTE_THEME_AUTO_TASK_NAME)).toBeUndefined();
+  });
+
+  it('anp_auto_theme_enabled=true なら note.theme.auto を既定 cron (08:00 JST) で含む', () => {
+    const items = buildCronItemsWithSettings({
+      sales_auto_fetch_enabled: false,
+      anp_auto_theme_enabled: true,
+    });
+    const item = items.find((c) => c.task === NOTE_THEME_AUTO_TASK_NAME);
+    expect(item).toBeDefined();
+    expect(item!.match).toBe(NOTE_THEME_AUTO_CRON_DEFAULT);
+    expect(item!.identifier).toBe('note-theme-auto-daily');
+  });
+
+  it('anp_theme_cron の DB 値を cron match に使う', () => {
+    const items = buildCronItemsWithSettings({
+      sales_auto_fetch_enabled: false,
+      anp_auto_theme_enabled: true,
+      anp_theme_cron: '0 12 * * *',
+    });
+    const item = items.find((c) => c.task === NOTE_THEME_AUTO_TASK_NAME);
+    expect(item!.match).toBe('0 12 * * *');
+  });
+
+  it('note.theme.auto の既定 cron は A2P の pipeline.theme.auto (07:00 JST) と衝突しない', () => {
+    expect(NOTE_THEME_AUTO_CRON_DEFAULT).not.toBe(PIPELINE_THEME_AUTO_CRON_DEFAULT);
   });
 
   it('docs/05 §5.1 のドット表記タスク名 (archive.db.backup) を programmatic API で受け付ける', () => {

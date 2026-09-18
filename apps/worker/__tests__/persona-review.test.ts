@@ -43,6 +43,20 @@ describe('reviewDraftsWithPersona', () => {
     const arg = optimize.mock.calls[0]![0];
     expect(arg.content_pillars.length).toBeGreaterThan(0);
     expect(arg.persona).toContain('副業');
+    // 運営者要望「投稿にSNSのキャラクター性が出るように」— 戦略未設定なら既定ペルソナ「ことは」を渡す。
+    expect(arg.character_sheet).toContain('ことは');
+  });
+
+  it('戦略に character_sheet があればそれを optimize に渡す', async () => {
+    const optimize = vi.fn(async (_input: ContentOptimizerInput) => ({ revisions: [] }));
+    await reviewDraftsWithPersona({
+      channel: 'x',
+      profile: profile({ character_sheet: 'カスタムキャラクター' }),
+      drafts: [{ id: 'd1', kind: 'value', body: '元本文' }],
+      optimize,
+    });
+    const arg = optimize.mock.calls[0]![0];
+    expect(arg.character_sheet).toBe('カスタムキャラクター');
   });
 
   it('promo で URL が落ちる改善は破棄し原文据え置き', async () => {

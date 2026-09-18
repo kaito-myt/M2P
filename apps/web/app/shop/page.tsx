@@ -14,7 +14,8 @@ import type { Metadata } from 'next';
 import { prisma } from '@a2p/db';
 import { getSignedDownloadUrl } from '@a2p/storage';
 
-import { PseudoCover, SectionHeading, SiteFooter, SiteHeader } from '@/components/storefront/chrome';
+import { PseudoCover, RelatedNoteArticles, SectionHeading, SiteFooter, SiteHeader } from '@/components/storefront/chrome';
+import { loadRelatedNoteArticles } from '@/lib/related-note-articles';
 import { STOREFRONT_URL } from '@/lib/site';
 
 export const dynamic = 'force-dynamic';
@@ -52,6 +53,7 @@ const FOOTER_NAV = [
 ];
 
 export default async function BooksLandingPage() {
+  const relatedNoteArticles = await loadRelatedNoteArticles(3);
   const books = await prisma.book.findMany({
     where: { publish_status: 'published', asin: { not: null } },
     orderBy: [{ updated_at: 'desc' }],
@@ -177,6 +179,8 @@ export default async function BooksLandingPage() {
             </>
           )}
         </section>
+
+        <RelatedNoteArticles articles={relatedNoteArticles} />
 
         {/* ── 栞について ── */}
         <section id="about" className="mt-20 scroll-mt-24 border-t border-[#E4DAC6] pt-14">

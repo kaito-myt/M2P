@@ -119,6 +119,15 @@ export function shouldBlockPaidPublish(paid: boolean, dryRun: boolean): boolean 
   return paid && !dryRun;
 }
 
+/**
+ * note の公開 API (`user.urlname`) から公開 URL を組み立てる純関数 (ユニットテスト可能)。
+ * `note_accounts.handle` の自動保存(`extractNoteHandle`, pipeline-note-publish.ts)は
+ * この形式の URL を前提にしているため、フォーマットを一致させる。
+ */
+export function buildNotePublicUrl(urlname: string, noteId: string): string {
+  return `https://note.com/${urlname}/n/${noteId}`;
+}
+
 // ---------------------------------------------------------------------------
 // 実装
 // ---------------------------------------------------------------------------
@@ -265,12 +274,26 @@ async function publishOne(args: NotePublishArgs): Promise<NotePublishResult> {
     await page.waitForTimeout(6000);
     await screenshot(page, stageDir, `${a.id}-after-post`);
 
-    const publicUrl = await resolvePublicUrl(page, noteId);
+    // 「投稿する」クリック後、note は本文ページへ遷移せず公開設定画面の上に「記事が公開されました」
+    // モーダル(連続投稿日数 + X/Facebook/LINE/リンクコピーの共有ボタン)を出す挙動を確認済み
+    // (2026-09-18 本番実公開で発覚)。URL 遷移 or このモーダルのテキスト検知のどちらかを
+    // 投稿成功の確認とする(docs/11 §2.1/§7 参照)。
+    const publishConfirmed = await waitForPublishConfirmation(page, noteId);
+    if (!publishConfirmed) {
+      return {
+        ok: false,
+        reason: 'blocked',
+        message: '投稿後に公開完了を確認できませんでした(モーダル/URL遷移なし)',
+        noteUrl: draftEditUrl,
+      };
+    }
+
+    const publicUrl = await resolvePublishedUrl(page, noteId);
     if (!publicUrl) {
       return {
         ok: false,
         reason: 'blocked',
-        message: '投稿後の公開URLを確認できませんでした(本文ページ遷移なし)',
+        message: '投稿は完了しましたが公開URLを確定できませんでした(note 公開API未反映)',
         noteUrl: draftEditUrl,
       };
     }
@@ -458,13 +481,64 @@ async function selectPaidAndCheckKyc(page: Page): Promise<boolean> {
 // 価格/有料ライン UI 実装時に有効化するので、未使用警告を避けるためここで参照だけ残す。
 void selectPaidAndCheckKyc;
 
-/** 投稿後、note.com/<handle>/n/<noteId> 形式へ遷移しているか確認する。 */
-async function resolvePublicUrl(page: Page, noteId: string): Promise<string | null> {
+/**
+ * 「投稿する」後、投稿が実際に完了したかを確認する。note は本文ページへ遷移せず、
+ * 公開設定画面の上に「記事が公開されました」モーダル(連続投稿日数 + 共有ボタン)を出すため、
+ * URL 遷移 と モーダルのテキスト検知の**どちらか**が成立すれば成功とみなす
+ * (2026-09-18 本番実公開で発覚、docs/11 §2.1/§7 参照)。
+ */
+async function waitForPublishConfirmation(page: Page, noteId: string): Promise<boolean> {
+  const urlPattern = new RegExp(`note\\.com/[^/]+/n/${noteId}\\b`, 'i');
   for (let i = 0; i < 6; i++) {
-    const url = page.url();
-    const m = url.match(/note\.com\/[^/]+\/n\/([a-z0-9]+)/i);
-    if (m && m[1] === noteId) return url;
+    if (urlPattern.test(page.url())) return true;
+    const bodyText: string = await page.locator('body').innerText().catch(() => '');
+    if (/記事が公開されました/.test(bodyText)) return true;
+    await page.waitForTimeout(1500);
+  }
+  return false;
+}
+
+interface NotePublicApiNote {
+  status?: string;
+  user?: { urlname?: string };
+}
+
+/**
+ * note の公開 API (`GET /api/v3/notes/<noteId>`、認証不要) から `status`/`user.urlname` を取得する。
+ * 「投稿する」後は本文ページへ遷移しないため(`waitForPublishConfirmation` 参照)、公開 URL の確定は
+ * URL 遷移監視より本 API を最優先にする(2026-09-18 実測: `status==='published'` と
+ * `user.urlname` を安定して取得できることを確認済み)。
+ */
+async function fetchNotePublicApi(page: Page, noteId: string): Promise<NotePublicApiNote | null> {
+  try {
+    const resp = await page.request.get(`https://note.com/api/v3/notes/${noteId}`);
+    if (!resp.ok()) return null;
+    const json = (await resp.json()) as { data?: NotePublicApiNote };
+    return json?.data ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * 投稿後の公開 URL を確定する。
+ *   1. 公開 API (`fetchNotePublicApi`) を最優先 — `status==='published'` かつ `user.urlname` が
+ *      取れれば `https://note.com/<urlname>/n/<noteId>` を組み立てる(反映ラグを考慮し数回リトライ)。
+ *   2. API が失敗/未反映の場合のみ、URL 遷移(`note.com/<handle>/n/<noteId>`)を補助的に確認する。
+ */
+async function resolvePublishedUrl(page: Page, noteId: string): Promise<string | null> {
+  for (let i = 0; i < 5; i++) {
+    const api = await fetchNotePublicApi(page, noteId);
+    if (api?.status === 'published' && api.user?.urlname) {
+      return buildNotePublicUrl(api.user.urlname, noteId);
+    }
     await page.waitForTimeout(2000);
+  }
+  for (let i = 0; i < 3; i++) {
+    const url = page.url();
+    const m = url.match(/note\.com\/([^/]+)\/n\/([a-z0-9]+)/i);
+    if (m && m[2] === noteId) return url;
+    await page.waitForTimeout(1500);
   }
   return null;
 }

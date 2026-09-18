@@ -86,6 +86,18 @@ describe('createAnpArticlePromoContent', () => {
     expect(String(sys?.content)).toContain('140字');
   });
 
+  it('persona.character_sheet をユーザーメッセージに含め、人柄反映を短く指示する', async () => {
+    const client = makeClient(out());
+    await createAnpArticlePromoContent(
+      input({ persona: { concept: '良書紹介', tone_of_voice: '親しみやすい', character_sheet: '口癖: なんだよね' } }),
+      { createAgentClient: vi.fn(async () => client), loadActivePrompt: loadPromptStub() } as CreateAnpArticlePromoContentDeps,
+    );
+    const arg = (client.complete as ReturnType<typeof vi.fn>).mock.calls[0]![0] as LLMCompleteArgs;
+    const usr = String(arg.messages.find((mm) => mm.role === 'user')?.content ?? '');
+    expect(usr).toContain('口癖: なんだよね');
+    expect(usr).toContain('自分語りは全体の2〜3割まで');
+  });
+
   it('note_url は本文生成の指示に含めるが URL 自体は本文に混入させないよう指示する', async () => {
     const client = makeClient(out());
     await createAnpArticlePromoContent(input(), {

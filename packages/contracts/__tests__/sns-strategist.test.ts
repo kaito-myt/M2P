@@ -6,6 +6,8 @@ import { describe, expect, it } from 'vitest';
 import {
   AccountStrategyProfileSchema,
   SnsStrategistInputSchema,
+  DEFAULT_PERSONA_CHARACTER_SHEET,
+  resolveCharacterSheet,
 } from '../src/agents/sns-strategist.js';
 
 function validProfile() {
@@ -52,6 +54,33 @@ describe('AccountStrategyProfileSchema', () => {
   it('rationale は任意', () => {
     const withR = { ...validProfile(), rationale: '根拠' };
     expect(AccountStrategyProfileSchema.safeParse(withR).success).toBe(true);
+  });
+
+  it('character_sheet は任意(省略可)', () => {
+    expect(AccountStrategyProfileSchema.safeParse(validProfile()).success).toBe(true);
+    const withSheet = { ...validProfile(), character_sheet: '口癖: なんだよね' };
+    const res = AccountStrategyProfileSchema.safeParse(withSheet);
+    expect(res.success).toBe(true);
+    if (res.success) expect(res.data.character_sheet).toBe('口癖: なんだよね');
+  });
+});
+
+describe('resolveCharacterSheet', () => {
+  it('character_sheet が無ければ既定ペルソナ(ことは)を返す', () => {
+    expect(resolveCharacterSheet(null)).toBe(DEFAULT_PERSONA_CHARACTER_SHEET);
+    expect(resolveCharacterSheet(undefined)).toBe(DEFAULT_PERSONA_CHARACTER_SHEET);
+    expect(resolveCharacterSheet({})).toBe(DEFAULT_PERSONA_CHARACTER_SHEET);
+    expect(resolveCharacterSheet({ character_sheet: '  ' })).toBe(DEFAULT_PERSONA_CHARACTER_SHEET);
+  });
+
+  it('character_sheet があればそれを返す', () => {
+    expect(resolveCharacterSheet({ character_sheet: 'カスタム設定' })).toBe('カスタム設定');
+  });
+
+  it('既定ペルソナは600〜900字の日本語', () => {
+    expect(DEFAULT_PERSONA_CHARACTER_SHEET.length).toBeGreaterThanOrEqual(600);
+    expect(DEFAULT_PERSONA_CHARACTER_SHEET.length).toBeLessThanOrEqual(900);
+    expect(DEFAULT_PERSONA_CHARACTER_SHEET).toContain('ことは');
   });
 });
 

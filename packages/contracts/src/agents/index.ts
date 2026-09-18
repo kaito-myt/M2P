@@ -166,6 +166,8 @@ export {
   HashtagStrategySchema,
   AccountStrategyProfileSchema,
   buildAudiencePersona,
+  DEFAULT_PERSONA_CHARACTER_SHEET,
+  resolveCharacterSheet,
   type SnsCatalogSnapshot,
   type SnsStrategistInput,
   type ContentPillar,

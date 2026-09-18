@@ -18,6 +18,7 @@ describe('ContentCreatorInputSchema', () => {
     if (res.success) {
       expect(res.data.count).toBe(8);
       expect(res.data.pillars[0]!.description).toBe('');
+      expect(res.data.character_sheet).toBe(''); // 既定は空(呼出元が resolveCharacterSheet で解決)
     }
   });
   it('pillars 空は不合格', () => {

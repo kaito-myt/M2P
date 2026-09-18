@@ -12,7 +12,13 @@ import { SettingsForm } from './settings-form';
 export default async function SettingsPage() {
   const settings = await prisma.appSettings.findUnique({
     where: { id: 'singleton' },
-    select: { anp_auto_publish_enabled: true, anp_publish_dry_run: true },
+    select: {
+      anp_auto_publish_enabled: true,
+      anp_publish_dry_run: true,
+      anp_auto_theme_enabled: true,
+      anp_themes_per_day: true,
+      anp_autopass_enabled: true,
+    },
   });
 
   return (
@@ -31,6 +37,9 @@ export default async function SettingsPage() {
           initial={{
             anp_auto_publish_enabled: settings?.anp_auto_publish_enabled ?? false,
             anp_publish_dry_run: settings?.anp_publish_dry_run ?? true,
+            anp_auto_theme_enabled: settings?.anp_auto_theme_enabled ?? false,
+            anp_themes_per_day: settings?.anp_themes_per_day ?? 1,
+            anp_autopass_enabled: settings?.anp_autopass_enabled ?? false,
           }}
         />
       </section>

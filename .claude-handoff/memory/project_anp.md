@@ -1,31 +1,20 @@
 ---
 name: project-anp
-description: M2P第2ツール ANP (note版A2P) — note記事の出版＋販促をテーマ別マルチアカウントで自動化
-metadata: 
-  node_type: memory
+description: M2P 第2ツール ANP (note 自動出版) — 2026-09-18 に無人運転 ON (日次テーマ→執筆→判定→無料公開→X/IG 告知)。初の実公開 URL と共有セッションの注意、残タスク (KYC/有料化, TikTok)
+metadata:
   type: project
-  originSessionId: dbaf6a1f-f78c-456b-b7a9-4a5f4fae6ebf
-  modified: 2026-08-21T09:56:18.795Z
 ---
 
-**ANP = Automated Note Publishing Tool**（M2Pの第2ツール、A2Pのnote版）。2026-08-21着手。noteを新たな収益基盤に、**記事の企画→執筆→出版→販促→収益化を自動化**。設計=**docs/11-anp-design.md**。
+**状態 (2026-09-18)**: Phase 1〜4 の主要部を実装・デプロイ済み。設計 = `docs/11-anp-design.md`（実 DOM・制約・申し送りはここが正）。アプリ `apps/anp`、Railway サービス `ANP`、本番 `anp.m2p.tools`。
 
-**最重要前提: note はテーマ別に複数アカウントを持つ**（1アカウント=1ニッチ）。記事生成・価格戦略・販促・収益追跡をすべて`note_accounts`単位で回す（A2Pのaccounts＋org多アカウント販促戦略の延長）。
+**無人運転 ON (本番 AppSettings)**: `anp_auto_theme_enabled=true`(1/日, cron 既定 JST 08:00 `note.theme.auto`) / `anp_autopass_enabled=true`(自動採用→outline→body→editor→eyecatch→judge) / `anp_auto_publish_enabled=true`(`note.publish.dispatch` 30 分毎、無料記事のみ) / `anp_publish_dry_run=false`。cron は worker 起動時に設定を読んで条件付き登録（設定変更後は worker 再デプロイが要る）。
 
-**note収益モデル3種**: 有料記事(都度課金・無料+続き有料の「ライン」)／メンバーシップ(月額定期)／サポート(投げ銭)。
+**初の実公開 (2026-09-18 10:51 JST)**: `https://note.com/goodbooks_intro/n/nc3e4203790a3`。note は投稿後に本文ページへ遷移せず「記事が公開されました」モーダルを出すため、公開確認は **公開 API `GET https://note.com/api/v3/notes/<noteId>`**（認証不要、`data.status='published'`, `data.user.urlname`）で行う方式に修正済。
 
-**設計方針(A2P資産を全面流用)**: apps/anp(新規Next.js)＋共通packages流用(@a2p/auth[SSO]・db・agents・contracts・storage・notify)。runtimeエージェントはMarketer/Writer/Editor/Eyecatch/Judge/PriceOptimizerをroleを`anp.*`名前空間で追加。パイプライン=`pipeline.note.*`(既存worker拡張)。**note公式投稿APIは無い→KDPと同型のPlaywrightアシスト出版＋認証リレー(`note_auth_requests`+LINE webhook)**。売上はnoteダッシュボードスクレイプ(docs/09と同型・self-heal再ログイン)。プロンプトはDB(prompts)が正。token_usage記録必須。
+**⚠️ アカウント**: `note-acc-1`「AI副業ラボ」は暫定共有セッション＝実体は A2P 販促ペルソナ「良い本を読む習慣」(handle `goodbooks_intro`) の note アカウント。AI 副業記事が読書ペルソナに出る。分離するなら note 新アカウント作成→`scripts/anp/note-session-capture.sh <note_account_id>`。
 
-**新規DBモデル**: note_accounts/note_themes/note_articles/note_sales/note_membership_stats/note_auth_requests/note_locks。既存token_usage/prompts/eval_results等はrole名前空間で共用。
+**残 (人手)**: note 本人情報登録(KYC)→有料記事化（judge は `price_jpy` に提案のみ保存、`paid` は常に false）、検証用下書き 5 件の削除 (n6845533ebcf7 / n9c510facf4dc / n1d09eea651e3 / ne071421d3e1d / n800cf6101fa9)、メンバーシップ計測の実データ検証、TikTok 連動 (Phase 4)。
 
-**進捗(2026-08-21)**:
-- ①設計doc(docs/11)作成。②ポータルにロゴ付きタイル追加(tool-cardをlogo画像対応化)。
-- ③**apps/anp スキャフォールド完了**(portal複製ベース。@anp/web・port3003。SSO配線=buildAuthConfig+@a2p/auth/config・middleware・login・ホーム骨格app/page.tsx[実装予定6セクション提示]。型チェック通過)。
-- ④**Prisma に note_* 7モデル追加＆本番DBに適用済**(note_accounts/note_themes/note_articles/note_sales/note_membership_stats/note_auth_requests/note_locks)。適用は`prisma migrate diff --from-url <PUBLIC_URL> --to-schema-datamodel`で生成→**note_を含む文だけawk抽出**(既存テーブルのdrift除外が肝)→txでCREATE。schema=packages/db/schema.prisma(migrationsは実SQL無=db push運用)。
-- ⑤**ANP本番稼働**=Railwayサービス「ANP」(id 13ea91d3、build/start=`pnpm --filter @anp/web`、一時ドメイン`anp-production-5e61.up.railway.app`、env=DATABASE_URL/NEXTAUTH_SECRET[A2Pからコピー]/NEXTAUTH_URL/NEXT_PUBLIC_PORTAL_URL)。portalに`NEXT_PUBLIC_TOOL_ANP_URL`設定→**タイルがA2Pと横並びでライブ**。
+**罠**: `note.theme.generate` は `job_id` 必須。judge の `score_total` は breakdown 平均で再計算。本番 `_prisma_migrations` は壊れているので DB 変更は raw SQL 適用（`20260918000000_anp_theme_auto` は適用済）。
 
-**SSO本番化完了(2026-08-21)**: ANPも独自ドメイン **anp.m2p.tools**(Railwayカスタムドメイン id 2ad14fd3、CNAME先 c2q0z32h.up.railway.app、TXT `_railway-verify.anp`)＋`AUTH_COOKIE_DOMAIN=.m2p.tools`＋NEXTAUTH_URL=https://anp.m2p.tools で稼働・証明書VALID。portalのANPタイルも https://anp.m2p.tools にライブ。A2P/portalと同一cookieで1回ログイン素通り。詳細=[[project-platform-portal]]。
-
-**未着手(次)**: MVP実装=note_accounts管理UI・記事パイプライン(theme→writer→editor→eyecatch→judge→下書き)runtimeエージェント(role `anp.*`)＋worker task `pipeline.note.*`＋seed prompts。現状ホームは実装予定6セクションの骨格のみ。
-
-関連: [[project-platform-portal]] [[project-home-dashboard]] [[reference-pipeline-stuck-books]]
+関連: [[project-platform-portal]] [[project-sns-persona-visuals]]

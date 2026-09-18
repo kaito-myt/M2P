@@ -11,6 +11,10 @@ export interface NoteArticleUpdateData {
   quality_score?: number | null;
   status?: string;
   cost_jpy_total?: { increment: number };
+  /** F-ANP-16 (docs/11 申し送り8): judge 判定完了時に必ず false へ強制する。 */
+  paid?: boolean;
+  /** F-ANP-16: paid=false 確定時は「有料化の提案価格」の意味を持つ (推奨無ければ null)。 */
+  price_jpy?: number | null;
 }
 
 export interface NoteArticleRepo {

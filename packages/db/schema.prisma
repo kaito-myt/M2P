@@ -1278,6 +1278,18 @@ model AppSettings {
   anp_auto_publish_enabled        Boolean   @default(false)
   // true の間は「公開に進む」以降を押さず下書き保存で止める検証用ドライラン(既定ON=安全側)。
   anp_publish_dry_run             Boolean   @default(true)
+  // docs/11-anp-design.md §7 Phase4 F-ANP-17: note.theme.auto (日次テーマ自動生成) の
+  // マスタスイッチ(既定OFF)。ON で note_accounts.status='active' の各アカウントに
+  // 1日 anp_themes_per_day 件のテーマを自動生成する。
+  anp_auto_theme_enabled          Boolean   @default(false)
+  // 1アカウントあたり1日に自動生成するテーマ数 (1..20)。
+  anp_themes_per_day              Int       @default(1)
+  // note.theme.auto の既定 cron。A2P の pipeline_theme_cron (07:00 JST) と衝突しないよう
+  // 1 時間ずらした 08:00 JST (`0 23 * * *` UTC) を既定とする。
+  anp_theme_cron                  String    @default("0 23 * * *")
+  // ON で note.theme.auto が生成したテーマを自動採用し、outline→body→editor→eyecatch→judge の
+  // パイプラインを自動起動する(既定OFF=人手承認優先)。
+  anp_autopass_enabled            Boolean   @default(false)
   updated_at                      DateTime @updatedAt
 
   @@map("app_settings")

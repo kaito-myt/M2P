@@ -139,6 +139,49 @@ describe('pipeline.note.judge', () => {
     expect(addJob).not.toHaveBeenCalled();
   });
 
+  it('F-ANP-16: 合格時も paid は常に false へ強制し、有料推奨なら price_jpy に提案価格を保存する', async () => {
+    const { prisma, articleUpdates } = buildPrisma({
+      jobs: [{ id: 'job1', status: 'queued' }],
+      articles: [makeArticle({ paid: true, price_jpy: 300 })],
+      accounts: [{ id: 'acc1', niche: '副業', target_reader: null }],
+    });
+    const addJob: AddJobLike = vi.fn();
+    const judgeArticle = vi
+      .fn()
+      .mockResolvedValue({ ...PASS_OUTPUT, recommend_paid: true, suggested_price_jpy: 500 });
+
+    await runPipelineNoteJudge(
+      { note_article_id: 'art1', job_id: 'job1', retry_count: 0 },
+      addJob,
+      { prisma, logger: makeLogger(), judgeArticle, acquireLock: vi.fn().mockResolvedValue(undefined), releaseLock: vi.fn().mockResolvedValue(undefined) },
+    );
+
+    expect(articleUpdates[0]!.data).toMatchObject({
+      status: 'ready',
+      paid: false,
+      price_jpy: 500,
+      paywall_line_pos: null,
+    });
+  });
+
+  it('F-ANP-16: judge が有料化を推奨しない場合は price_jpy を null にクリアする', async () => {
+    const { prisma, articleUpdates } = buildPrisma({
+      jobs: [{ id: 'job1', status: 'queued' }],
+      articles: [makeArticle({ paid: true, price_jpy: 300 })],
+      accounts: [{ id: 'acc1', niche: '副業', target_reader: null }],
+    });
+    const addJob: AddJobLike = vi.fn();
+    const judgeArticle = vi.fn().mockResolvedValue({ ...PASS_OUTPUT, recommend_paid: false });
+
+    await runPipelineNoteJudge(
+      { note_article_id: 'art1', job_id: 'job1', retry_count: 0 },
+      addJob,
+      { prisma, logger: makeLogger(), judgeArticle, acquireLock: vi.fn().mockResolvedValue(undefined), releaseLock: vi.fn().mockResolvedValue(undefined) },
+    );
+
+    expect(articleUpdates[0]!.data).toMatchObject({ status: 'ready', paid: false, price_jpy: null });
+  });
+
   it('不合格 + retry_count=0 — editor へ差し戻し (retry_count=1 を forward)', async () => {
     const { prisma, articleUpdates, jobCreates } = buildPrisma({
       jobs: [{ id: 'job1', status: 'queued' }],
@@ -179,7 +222,12 @@ describe('pipeline.note.judge', () => {
       { prisma, logger: makeLogger(), judgeArticle, acquireLock: vi.fn().mockResolvedValue(undefined), releaseLock: vi.fn().mockResolvedValue(undefined) },
     );
 
-    expect(articleUpdates[0]!.data).toMatchObject({ status: 'needs_human_review', quality_score: 50 });
+    expect(articleUpdates[0]!.data).toMatchObject({
+      status: 'needs_human_review',
+      quality_score: 50,
+      paid: false,
+      paywall_line_pos: null,
+    });
     expect(jobCreates).toHaveLength(0);
     expect(addJob).not.toHaveBeenCalled();
   });

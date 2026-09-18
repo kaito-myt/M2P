@@ -2,7 +2,7 @@ import type { JobHelpers, Task } from 'graphile-worker';
 import { z } from 'zod';
 
 import { optimizeScheduledPosts as defaultOptimize } from '@a2p/agents';
-import { AccountStrategyProfileSchema, buildAudiencePersona } from '@a2p/contracts/agents';
+import { AccountStrategyProfileSchema, buildAudiencePersona, resolveCharacterSheet } from '@a2p/contracts/agents';
 
 import { pillarStrings } from './promotion-post/persona-review.js';
 import type {
@@ -150,6 +150,8 @@ export async function runPromotionReviewDaily(
         recent_posted: recent,
         drafts: upcoming.map((d) => ({ id: d.id, kind: d.kind, body: d.body })),
         playbook_guidance: playbookGuidanceFrom(setting.playbook_json),
+        // 運営者要望「投稿にSNSのキャラクター性が出るように」— 戦略未設定なら既定ペルソナ「ことは」。
+        character_sheet: resolveCharacterSheet(p),
       });
     } catch (err) {
       log.warn({ task: PROMOTION_REVIEW_DAILY_TASK_NAME, channel: setting.channel, err }, 'optimize failed — skip channel');

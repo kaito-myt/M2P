@@ -116,6 +116,9 @@ export function buildOptimizerUserMessage(
     '',
     input.concept ? `【アカウントのコンセプト(必ず沿わせる)】\n${input.concept}` : '',
     input.tone_of_voice ? `【トーン&マナー(この語り口で)】\n${input.tone_of_voice}` : '',
+    input.character_sheet
+      ? `【キャラクター設定(投稿の書き手の人柄。本文に最低1つ表れているか確認する)】\n${input.character_sheet}`
+      : '',
     `【発信の柱(このテーマ性から外れない)】\n${pillars}`,
     input.playbook_guidance ? `【研究に基づく販促プレイブック(これに沿って改善)】\n${input.playbook_guidance}` : '',
     `【定番ハッシュタグ(参考・本文には足さない)】\n${tags}`,
@@ -138,6 +141,9 @@ export function buildOptimizerUserMessage(
     "- kind='promo'(販促)は、本の魅力と『KU会員は無料』等の導線・URL を必ず保持する(URLは消さない・改変しない)。",
     "- kind='value'(育成)は宣伝を入れない。ハッシュタグは本文に足さない(後段で付与)。",
     '- 文字数はチャンネルに適した長さに収める(X は日本語で概ね120字以内)。',
+    input.character_sheet
+      ? '- 本文に上記キャラクター設定の人柄(口癖・日常の一コマ・率直な感情等)が最低1つ表れているか確認し、無ければ本の紹介の邪魔にならない範囲で自然に1つ加える(changed=true)。既に表れていれば無理に増やさない。'
+      : '',
     '- score(0-100): 改善後の投稿の総合品質(ペルソナの反応の良さ×戦略適合×具体性)。80以上を目指す。',
     '- 元が十分良ければ無理に変えず changed=false とし、revised_body には元の本文をそのまま返す(その場合も score は付ける)。',
     '',

@@ -94,8 +94,41 @@ describe('createHttpPublisherPort — webhook 経由', () => {
       mediaUrls: ['https://r2/signed/promo.png'],
     });
     const [, init] = fetchImpl.mock.calls[0]! as unknown as [string, { body: string }];
-    const sent = JSON.parse(init.body) as { channel: string; mediaUrls: string[] };
+    const sent = JSON.parse(init.body) as { channel: string; mediaUrls: string[]; imageUrl: string | null };
     expect(sent.channel).toBe('instagram');
     expect(sent.mediaUrls).toEqual(['https://r2/signed/promo.png']);
+    // 後方互換: 単一画像しか見ない旧い中継のための先頭要素も同梱する。
+    expect(sent.imageUrl).toBe('https://r2/signed/promo.png');
+  });
+
+  it('IG カルーセル(複数枚)は mediaUrls に全件、imageUrl は先頭のみ載せる', async () => {
+    const fetchImpl = fetchReturning(200, JSON.stringify({ url: 'https://instagram.com/p/carousel' }));
+    const port = createHttpPublisherPort({ fetchImpl });
+    await port.publish({
+      channel: 'instagram',
+      title: null,
+      body: 'キャプション',
+      config: { token: null, handle: '@me', extra: { webhook_url: 'https://hook.test/ig' } },
+      mediaUrls: ['https://r2/signed/1.jpg', 'https://r2/signed/2.jpg', 'https://r2/signed/3.jpg'],
+    });
+    const [, init] = fetchImpl.mock.calls[0]! as unknown as [string, { body: string }];
+    const sent = JSON.parse(init.body) as { mediaUrls: string[]; imageUrl: string | null };
+    expect(sent.mediaUrls).toHaveLength(3);
+    expect(sent.imageUrl).toBe('https://r2/signed/1.jpg');
+  });
+
+  it('mediaUrls 無しの投稿は imageUrl が null', async () => {
+    const fetchImpl = fetchReturning(200, JSON.stringify({ url: 'https://note.com/x/n/abc' }));
+    const port = createHttpPublisherPort({ fetchImpl });
+    await port.publish({
+      channel: 'note',
+      title: 'T',
+      body: '本文',
+      config: { token: null, handle: '@me', extra: { webhook_url: 'https://hook.test/relay' } },
+    });
+    const [, init] = fetchImpl.mock.calls[0]! as unknown as [string, { body: string }];
+    const sent = JSON.parse(init.body) as { mediaUrls: string[]; imageUrl: string | null };
+    expect(sent.mediaUrls).toEqual([]);
+    expect(sent.imageUrl).toBeNull();
   });
 });

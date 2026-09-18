@@ -185,6 +185,7 @@ import { RECURRING_COST_REFRESH_TASK_NAME, recurringCostRefreshTask } from './ta
 import { ORG_KDP_SCREEN_TASK_NAME, orgKdpScreenTask } from './tasks/org-kdp-screen.js';
 import { ORG_BAKEOFF_RECOMMEND_TASK_NAME, orgBakeoffRecommendTask } from './tasks/org-bakeoff-recommend.js';
 import { NOTE_THEME_GENERATE_TASK_NAME, noteThemeGenerateTask } from './tasks/note-theme-generate.js';
+import { NOTE_THEME_AUTO_TASK_NAME, noteThemeAutoTask } from './tasks/note-theme-auto.js';
 import {
   PIPELINE_NOTE_WRITER_OUTLINE_TASK_NAME,
   pipelineNoteWriterOutlineTask,
@@ -327,6 +328,7 @@ export function buildTaskList(): TaskList {
     [ORG_BAKEOFF_RECOMMEND_TASK_NAME]: orgBakeoffRecommendTask,
     // docs/11-anp-design.md §7 — ANP (note 記事) パイプライン。
     [NOTE_THEME_GENERATE_TASK_NAME]: noteThemeGenerateTask,
+    [NOTE_THEME_AUTO_TASK_NAME]: noteThemeAutoTask,
     [PIPELINE_NOTE_WRITER_OUTLINE_TASK_NAME]: pipelineNoteWriterOutlineTask,
     [PIPELINE_NOTE_WRITER_BODY_TASK_NAME]: pipelineNoteWriterBodyTask,
     [PIPELINE_NOTE_EDITOR_TASK_NAME]: pipelineNoteEditorTask,
@@ -445,6 +447,8 @@ async function fetchAppSettingsForCron(log: Logger): Promise<CronRuntimeSettings
     bw_auto_submit_enabled: false,
     bw_auto_submit_cron: null,
     anp_auto_publish_enabled: false,
+    anp_auto_theme_enabled: false,
+    anp_theme_cron: null,
   };
   try {
     const row = await prisma.appSettings.findUnique({
@@ -477,6 +481,8 @@ async function fetchAppSettingsForCron(log: Logger): Promise<CronRuntimeSettings
         bw_auto_submit_enabled: true,
         bw_auto_submit_cron: true,
         anp_auto_publish_enabled: true,
+        anp_auto_theme_enabled: true,
+        anp_theme_cron: true,
       },
     });
     if (!row) {
@@ -514,6 +520,8 @@ async function fetchAppSettingsForCron(log: Logger): Promise<CronRuntimeSettings
       bw_auto_submit_enabled: row.bw_auto_submit_enabled,
       bw_auto_submit_cron: row.bw_auto_submit_cron,
       anp_auto_publish_enabled: row.anp_auto_publish_enabled,
+      anp_auto_theme_enabled: row.anp_auto_theme_enabled,
+      anp_theme_cron: row.anp_theme_cron,
     };
   } catch (err) {
     log.warn({ err }, 'failed to read AppSettings; auto-dispatch crons disabled (safe default)');

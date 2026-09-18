@@ -4,6 +4,7 @@ import { NotFoundError, ValidationError } from '@a2p/contracts/errors';
 import type { Logger } from '@a2p/contracts/logger';
 
 import {
+  extractNoteHandle,
   PIPELINE_NOTE_PUBLISH_TASK_NAME,
   runPipelineNotePublish,
   type PipelineNotePublishPrisma,
@@ -45,6 +46,7 @@ interface AccountRecord {
   display_name: string;
   session_state_enc: string | null;
   status: string;
+  handle: string | null;
 }
 
 function buildPrisma(args: {
@@ -128,7 +130,13 @@ const BASE_ARTICLE: ArticleRecord = {
   note_url: null,
   status: 'ready',
 };
-const BASE_ACCOUNT: AccountRecord = { id: 'acc1', display_name: 'テストアカウント', session_state_enc: 'enc', status: 'active' };
+const BASE_ACCOUNT: AccountRecord = {
+  id: 'acc1',
+  display_name: 'テストアカウント',
+  session_state_enc: 'enc',
+  status: 'active',
+  handle: null,
+};
 
 describe('pipeline.note.publish', () => {
   it('payload zod 検証エラーで ValidationError', async () => {
@@ -233,6 +241,52 @@ describe('pipeline.note.publish', () => {
     expect(articles[0]!.publish_status).toBe('published');
     expect(articles[0]!.published_at).toBeInstanceOf(Date);
     expect(notify).toHaveBeenCalledWith(expect.stringContaining('note に公開しました'));
+  });
+
+  it('公開成功時: handle 未設定なら note_url から自動抽出して保存する (docs/11 §7 申し送り13)', async () => {
+    const { prisma, accounts, accountUpdates } = buildPrisma({
+      jobs: [{ id: 'job1', status: 'queued' }],
+      articles: [{ ...BASE_ARTICLE }],
+      accounts: [{ ...BASE_ACCOUNT, handle: null }],
+    });
+    const publishPort = makePort({ ok: true, status: 'published', noteUrl: 'https://note.com/ai_lab/n/nabc' });
+    await runPipelineNotePublish(
+      { note_article_id: 'art1', job_id: 'job1', dry_run: false },
+      {
+        prisma,
+        logger: makeLogger(),
+        publishPort,
+        acquireLock: vi.fn().mockResolvedValue(undefined),
+        releaseLock: vi.fn().mockResolvedValue(undefined),
+        decryptSession: () => '{}',
+        notify: vi.fn().mockResolvedValue(true),
+      },
+    );
+    expect(accounts[0]!.handle).toBe('ai_lab');
+    expect(accountUpdates.some((u) => u.data.handle === 'ai_lab')).toBe(true);
+  });
+
+  it('公開成功時: handle 設定済みなら上書きしない', async () => {
+    const { prisma, accounts, accountUpdates } = buildPrisma({
+      jobs: [{ id: 'job1', status: 'queued' }],
+      articles: [{ ...BASE_ARTICLE }],
+      accounts: [{ ...BASE_ACCOUNT, handle: 'existing_handle' }],
+    });
+    const publishPort = makePort({ ok: true, status: 'published', noteUrl: 'https://note.com/other_handle/n/nabc' });
+    await runPipelineNotePublish(
+      { note_article_id: 'art1', job_id: 'job1', dry_run: false },
+      {
+        prisma,
+        logger: makeLogger(),
+        publishPort,
+        acquireLock: vi.fn().mockResolvedValue(undefined),
+        releaseLock: vi.fn().mockResolvedValue(undefined),
+        decryptSession: () => '{}',
+        notify: vi.fn().mockResolvedValue(true),
+      },
+    );
+    expect(accounts[0]!.handle).toBe('existing_handle');
+    expect(accountUpdates.some((u) => 'handle' in u.data)).toBe(false);
   });
 
   it('公開成功時: addJob 注入済みなら promotion.note.article を job_key 付きで enqueue する (F-ANP-30)', async () => {
@@ -436,5 +490,17 @@ describe('pipeline.note.publish', () => {
 
   it('タスク名が docs/11 §7 と一致する', () => {
     expect(PIPELINE_NOTE_PUBLISH_TASK_NAME).toBe('pipeline.note.publish');
+  });
+
+  describe('extractNoteHandle', () => {
+    it('note.com/<handle>/n/<id> から handle を抽出する', () => {
+      expect(extractNoteHandle('https://note.com/ai_lab/n/nabc123')).toBe('ai_lab');
+    });
+    it('editor.note.com の下書き URL は抽出しない', () => {
+      expect(extractNoteHandle('https://editor.note.com/notes/nabc/edit/')).toBeNull();
+    });
+    it('undefined は null を返す', () => {
+      expect(extractNoteHandle(undefined)).toBeNull();
+    });
   });
 });

@@ -17,6 +17,10 @@ export type ActionResult<T> = { ok: true; data: T } | { ok: false; error: string
 const UpdateAnpSettingsSchema = z.object({
   anp_auto_publish_enabled: z.boolean().optional(),
   anp_publish_dry_run: z.boolean().optional(),
+  // F-ANP-17 (docs/11 §7 Phase4): 日次テーマ自動生成 + 自動採用パイプライン起動。
+  anp_auto_theme_enabled: z.boolean().optional(),
+  anp_themes_per_day: z.coerce.number().int().min(1).max(20).optional(),
+  anp_autopass_enabled: z.boolean().optional(),
 });
 
 export async function updateAnpSettings(input: unknown): Promise<ActionResult<void>> {

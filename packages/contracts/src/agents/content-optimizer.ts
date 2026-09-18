@@ -54,6 +54,11 @@ export const ContentOptimizerInputSchema = z.object({
   signals: OptimizerSignalsSchema.optional(),
   /** F-064 研究駆動プレイブックの実践指針（任意・そのまま注入する短い文字列）。 */
   playbook_guidance: z.string().default(''),
+  /**
+   * 運営者要望「投稿にSNSのキャラクター性が出るように」— 投稿の書き手の人物設定。
+   * 本文に人柄の要素が最低1つ表れているか確認し、無ければ自然に補う改善に使う。
+   */
+  character_sheet: z.string().default(''),
 });
 export type ContentOptimizerInput = z.infer<typeof ContentOptimizerInputSchema>;
 

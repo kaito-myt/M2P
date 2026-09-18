@@ -10,7 +10,7 @@
  *  - kind='promo' で元本文の URL が落ちる改善は破棄(購入導線を守る)。
  */
 import { optimizeScheduledPosts as defaultOptimize } from '@a2p/agents';
-import { buildAudiencePersona, type AccountStrategyProfile } from '@a2p/contracts/agents';
+import { buildAudiencePersona, resolveCharacterSheet, type AccountStrategyProfile } from '@a2p/contracts/agents';
 import type {
   ContentOptimizerInput,
   ContentOptimizerOutput,
@@ -71,6 +71,8 @@ export async function reviewDraftsWithPersona(args: {
       recent_posted: args.recent ?? [],
       drafts: args.drafts.map((d) => ({ id: d.id, kind: d.kind, body: d.body })),
       playbook_guidance: args.playbookGuidance ?? '',
+      // 運営者要望「投稿にSNSのキャラクター性が出るように」— 戦略未設定なら既定ペルソナ「ことは」。
+      character_sheet: resolveCharacterSheet(args.profile),
     });
   } catch (err) {
     args.logger?.warn({ channel: args.channel, err }, 'persona review optimize failed — keep original drafts');

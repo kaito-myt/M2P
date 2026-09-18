@@ -26,6 +26,50 @@ const CreateAccountSchema = z.object({
   membership: z.coerce.boolean().default(false),
 });
 
+const HANDLE_PATTERN = /^[A-Za-z0-9_]{1,32}$/;
+
+const UpdateAccountHandleSchema = z.object({
+  note_account_id: z.string().min(1),
+  // 空文字は「クリア(未設定に戻す)」として扱う。
+  handle: z
+    .string()
+    .trim()
+    .max(32)
+    .refine((v) => v.length === 0 || HANDLE_PATTERN.test(v), messages.accounts.errors.handleInvalid),
+});
+
+/**
+ * `note_accounts.handle` の手動編集 (docs/11-anp-design.md §7 申し送り13)。
+ * フォロワー数取得(`/<handle>/followers`)に必須なため、運営者が note 実ハンドルを設定できるようにする。
+ */
+export async function updateAccountHandle(input: unknown): Promise<ActionResult<void>> {
+  const session = await auth();
+  if (!session?.user) {
+    return { ok: false, error: messages.common.unauthorized };
+  }
+
+  const parsed = UpdateAccountHandleSchema.safeParse(input);
+  if (!parsed.success) {
+    const first = parsed.error.issues[0];
+    return { ok: false, error: first?.message ?? messages.accounts.errors.unknown };
+  }
+  const { note_account_id: accountId, handle } = parsed.data;
+
+  try {
+    await prisma.noteAccount.update({
+      where: { id: accountId },
+      data: { handle: handle.length > 0 ? handle : null },
+    });
+    revalidatePath(`/accounts/${accountId}`);
+    return { ok: true, data: undefined };
+  } catch (err) {
+    return {
+      ok: false,
+      error: err instanceof Error ? err.message : messages.accounts.errors.unknown,
+    };
+  }
+}
+
 export async function createAccount(
   input: unknown,
 ): Promise<ActionResult<{ id: string }>> {

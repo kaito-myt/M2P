@@ -118,6 +118,45 @@ export function SectionHeading({ jp, label }: { jp: string; label: string }) {
   );
 }
 
+/**
+ * F-ANP-31 Phase4: 公開済み ANP (note) 記事への相互送客セクション。0件なら何も描画しない。
+ * データ取得は呼出側 (`apps/web/lib/related-note-articles.ts`) が行い、ここでは表示のみ担う。
+ */
+export function RelatedNoteArticles({
+  articles,
+}: {
+  articles: Array<{ id: string; title: string; note_url: string }>;
+}) {
+  if (articles.length === 0) return null;
+  return (
+    <section className="border-t border-[#E4DAC6] py-14 md:py-16">
+      <SectionHeading jp="note でも読める" label="Related notes" />
+      <ul className="mt-9 grid grid-cols-1 gap-6 sm:grid-cols-3">
+        {articles.map((a) => (
+          <li key={a.id}>
+            <a
+              href={a.note_url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="group flex h-full flex-col justify-between border border-[#E4DAC6] bg-[#FBF6EA] p-5 no-underline transition-colors hover:border-[#1E5B49]"
+            >
+              <div>
+                <p className="font-display text-[11px] italic tracking-wide text-[#8B7E68]">note</p>
+                <h3 className="mt-2 font-serif text-[1.05rem] font-semibold leading-snug tracking-tight text-[#221D18] transition-colors group-hover:text-[#1E5B49]">
+                  {a.title}
+                </h3>
+              </div>
+              <span className="mt-4 inline-flex w-fit items-center gap-1 text-[12px] font-semibold text-[#B4471E]">
+                note で読む <span aria-hidden>→</span>
+              </span>
+            </a>
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}
+
 /* ────────────────────────────────────────────────────────────────────────
  * PseudoCover — 書影が無い記事/書籍のための「装丁風」擬似カバー。
  *

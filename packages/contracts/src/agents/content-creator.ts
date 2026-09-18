@@ -36,6 +36,12 @@ export const ContentCreatorInputSchema = z.object({
    * ハッシュタグ/避けるべきこと)。生成時にこれを踏まえて投稿を書く。空なら従来どおり。
    */
   playbook_guidance: z.string().max(4000).default(''),
+  /**
+   * 運営者要望「投稿にSNSのキャラクター性が出るように」— アカウントの人物設定
+   * (口癖・一人称・日常・価値観・弱み等)。空なら呼出元が `resolveCharacterSheet` で
+   * 既定値(`DEFAULT_PERSONA_CHARACTER_SHEET`)を解決して渡す。
+   */
+  character_sheet: z.string().max(2000).default(''),
 });
 export type ContentCreatorInput = z.infer<typeof ContentCreatorInputSchema>;
 

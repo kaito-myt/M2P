@@ -139,6 +139,9 @@ export function buildContentCreatorUserMessage(
     '',
     input.concept ? `【アカウントのコンセプト】\n${input.concept}` : '',
     input.tone_of_voice ? `【トーン&マナー】\n${input.tone_of_voice}` : '',
+    input.character_sheet
+      ? `【キャラクター設定(このアカウントの人柄。毎投稿に自然に滲ませる)】\n${input.character_sheet}`
+      : '',
     input.playbook_guidance
       ? `\n【市場リサーチに基づく販促プレイブック(最新の"今伸びている型"。必ず反映する)】\n${input.playbook_guidance}`
       : '',
@@ -160,6 +163,9 @@ export function buildContentCreatorUserMessage(
     '- **自社本やAmazonの宣伝・購入誘導・URLは入れない**(それは別の宣伝投稿が担う)。ハッシュタグも入れない(後段で付与)。',
     '- テンプレっぽさ・誇張・煽りを避け、トーンを一貫させる。',
     '- 各投稿に、どのテーマ軸かを pillar(柱の name)として付ける。',
+    input.character_sheet
+      ? '- 毎投稿に、上記キャラクター設定の人柄が伝わる要素(口癖・日常の一コマ・率直な感情・自分の失敗談のいずれか)を最低1つ自然に入れる。ただし主役は本の紹介・価値提供で、自分語りは投稿全体の2〜3割まで。'
+      : '',
     '',
     '【出す前の自己チェック(弱い案は作り直す)】各投稿が次を満たすか自問する: ①一瞬で読む手が止まるフックか ②想定読者が自分事に感じるか ③既視感がなく新規性があるか ④「この本読みたい」と思わせるか ⑤保存・人に教えたくなるか。満たさなければ書き直す。',
   ];

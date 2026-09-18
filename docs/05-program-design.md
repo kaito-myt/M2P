@@ -3282,6 +3282,7 @@ export const logger = pino({
   > `GET https://zernio.com/api/v1/accounts`(Bearer `ZERNIO_API_KEY`)で channel→platform のアカウントを解決し、
   > `POST /v1/posts`{content, publishNow:true, profileId, platforms:[{platform,accountId}],
   > mediaItems:[{type:'image'(IG)|'video'(TikTok), url(公開HTTPS=署名付きR2 URL)}], tiktokSettings(privacy PUBLIC_TO_EVERYONE等)}。
+  > **IG カルーセル (2026-09-18)**: 静止画が複数枚あれば `mediaItems` に全て(最大 10 枚)渡す。Zernio は 2〜10 枚でカルーセル投稿にする(docs.zernio.com/platforms/instagram)。動画(Reel)は 1 本のみ。
   > `defaultResolvePort` は **IG/TikTok && `ZERNIO_API_KEY` があれば Zernio を最優先**(Make/Ayrshare/自前TikTokより先)。
   > 未設定なら従来経路のまま=無破壊で段階移行。**IG 画像は 4:5〜1.91:1 必須**(生成の value 1024²/promo 1080² は正方形でOK、
   > 本表紙 0.67 は不可)。**IG・TikTok とも本番でエンドツーエンド公開検証済み (2026-08-06)**: `ZERNIO_API_KEY` を
@@ -3354,6 +3355,29 @@ export const logger = pino({
   count 本まとめて JSON で返すため必ず途中切れし、JSON が壊れて `posts` 欠落 → `ZodError` になっていた
   （2026-09-02〜16 の blog 育成投稿生成は 9 ジョブ × 最大 25 リトライが全滅、毎回 LLM 課金だけ発生）。
   `LONGFORM_CHANNELS = {blog, note}` は `maxOutputTokens=32,768` を使う（`content-creator/index.ts`）。
+- **F-097 SNS投稿へのキャラクター性注入 (2026-09-18)**: 運営者要望「投稿もSNSのキャラクター性が出るように」。
+  `AccountStrategyProfile`(F-057) に任意の `character_sheet` (string, max 2000) を追加
+  (`packages/contracts/src/agents/sns-strategist.ts`)。5チャンネル共通ペルソナ「ことは」
+  (20代・読書女子。名前/一人称「わたし」/口癖5個/日常/好み/価値観/弱み/NGを600〜900字で記述)を
+  `DEFAULT_PERSONA_CHARACTER_SHEET` として定義し、`resolveCharacterSheet(profile)` が
+  `strategy_json` に無ければこの既定値へフォールバックする(全エージェント・全呼出元で共有する
+  単一解決ロジック)。**生成エージェントへの注入**: `content_creator`(`ContentCreatorInput.character_sheet`)/
+  `promoter`(`PromotionInput.character_sheet`, x_posts・note_article・blog_outline に反映)/
+  `anp.promo`(`AnpPromoPersona.character_sheet`, docs/11 F-ANP-30。※本項の docs/11 反映は別途)の
+  各ユーザーメッセージに「【キャラクター設定】」節として渡し、「毎投稿に人柄が出る要素(口癖・日常の
+  一コマ・率直な感情・自分の失敗談のいずれか)を最低1つ入れる。ただし本の紹介・価値提供が主役で、
+  自分語りは全体の2〜3割まで」を指示する(コード側の user message 組み立てに実装、`playbook_guidance`
+  と同パターン)。各役割の DB active プロンプト(`content_creator`/`promoter`/`anp.promo`)にも
+  「## キャラクター性」節を追記した新版を投入(`packages/db/apply-character-sheet.ts`、現行 active
+  本文へ追記して version+1 で archive/create する冪等スクリプト。全文置換にしない理由は、CEOチャット
+  発の自律プロンプト改訂(F-089)で本文が git 上のテンプレより先に進んでいる場合があるため)。
+  **品質ゲート連携**: `content_optimizer`(F-061)の `ContentOptimizerInput.character_sheet` にも同じ
+  解決値を渡し、ユーザーメッセージ側で「本文に人柄の要素が最低1つ表れているか確認し、無ければ自然に
+  1つ加える」改善指示を追加(こちらは既存プロンプトが役割ルールを user message 側に持つ設計のため、
+  DB プロンプト本体は改版不要)。`promotion.posts.generate` の `reviewDraftsWithPersona` /
+  `promotion.review.daily` の直接呼び出し双方で配線。運営者の任意手作業: 各チャンネルの
+  `strategy_json` にアカウント固有のキャラクターを設定したい場合は UI(戦略カード)または直接
+  `character_sheet` を編集(未設定なら自動で既定ペルソナ「ことは」を使うため必須ではない)。
 - **F-060 TikTok スライド動画(多エージェント)**: 「続きが気になる(射幸心を煽る)」9:16 縦動画を自動生成。
   台本は5エージェントの直列パイプライン(`packages/agents/src/tiktok-video/`): `tiktok_scenario`(構成台本・強フック→小出し→クリフハンガー)→`tiktok_creator`(絵コンテ・背景画像プロンプト+テロップ)→`tiktok_editor`(尺配分・VideoScript確定)→`tiktok_proofreader`(校閲)→`tiktok_marketer`(フック/CTA/ハッシュタグ強化)。全て generateText+extractLlmJson。prompt=`apply-tiktok-video.ts`(scenario/marketer=Opus, 他=Sonnet)。
   レンダリング(`apps/worker/src/tasks/promotion-post/video-render.ts`): シーン毎に gpt-image-1(1024x1536縦・文字なし)→`composeCoverTypography`でテロップ焼込(Noto Sans JP流用)→OpenAI TTS(`tools/tts.ts` `audio.speech`, gpt-4o-mini-tts, mp3, cost=token_usage role='tts_audio')→ffmpegで画像+音声を1080x1920クリップ化(-shortest=音声尺)→concat。**ffmpegはapps/worker/Dockerfileにapt-getで追加**。child_processはexecFile(archive-db-backup前例)。
@@ -3417,7 +3441,7 @@ export const logger = pino({
 | `outline_review` | 章立ての構成校正 (重複/網羅漏れ/順序/粒度) | anthropic/claude-sonnet-4-6 |
 | `readings` | タイトル/著者名のカタカナ読み生成 (ローマ字は決定的変換) | anthropic/claude-sonnet-4-6 |
 | `promoter` | 出版後の販促施策プラン生成 (価格戦略/レビュー/告知文) | anthropic/claude-opus-4-7 |
-| `content_optimizer` | **SNS投稿の日次見直し (F-061)**。戦略のある各chの直近3日 scheduled 投稿を、コンセプト/トーン/定番ハッシュタグ/直近投稿/(将来の)実signalsを材料に非破壊で推敲。revised_body は公開本文のみ(メタ情報混入禁止) | anthropic/claude-sonnet-4-6 |
+| `content_optimizer` | **SNS投稿の日次見直し (F-061)**。戦略のある各chの直近3日 scheduled 投稿を、コンセプト/トーン/定番ハッシュタグ/直近投稿/(将来の)実signalsを材料に非破壊で推敲。revised_body は公開本文のみ(メタ情報混入禁止)。**F-097**: character_sheet(ユーザーメッセージ側)も渡し、人柄の要素が無ければ自然に1つ補う | anthropic/claude-sonnet-4-6 |
 | `cost_optimizer` | **週次コスト分析 (F-062)**。直近30日の token_usage を役割×モデルで集計し、モデル割当のより安価な代替/投稿頻度調整等の改善案＋推定削減額を提案 (switch_model_assignment / set_app_setting / advisory) | anthropic/claude-sonnet-4-6 |
 
 `marketer` プロンプトを改訂し、テーマ生成時に **Amazon Kindle 売れ筋ランキングを web_search で
@@ -3648,3 +3672,45 @@ ChatGPT ブラウザ版で高品質だった運営者の実証済みフォーマ
 - 全ゲートとも autopass 経路の DB 書込は try/catch で保護し、失敗時は warn ログのみで元タスク (writer.outline /
   editor / judge) 自体は `done` のまま完走する — 高価な LLM 呼出 (アウトライン生成/校閲/採点) の再実行を
   autopass 側の一時的な書込失敗で無駄にしないための設計判断。
+
+## SNS ペルソナ人物描写ルール + IG カルーセル投稿 (運営者要望 2026-09)
+
+運営者要望: SNS ペルソナの人物画像/動画は「顔を出さない・首から下のみ・フェミニンでかなりセクシー」に
+統一し（下着/ヌード/性的行為/過度な露出は厳禁、各SNS規約順守）、男性フォロワー増を狙う。加えて
+Instagram はカルーセル投稿にし、うち1枚は固定テンプレ（ブランド想起）にする。
+
+- **`PERSONA_VISUAL_RULES` (`packages/agents/src/lib/persona-visual.ts`)**: 人物描写ルールを1箇所に集約した
+  文字列定数 + `withPersonaVisualRules(prompt)` ヘルパ (`@a2p/agents` から export)。「もし人物を描く場合は」
+  という条件付き制約のため、人物が登場しない背景/静物プロンプトに付けても副作用がない。適用箇所:
+  - `sns-strategist/index.ts` の `generateStrategyImages` — avatar_prompt/banner_prompt (LLM生成) に
+    `NO_TEXT_GUARD` と合わせて強制付加。`buildSnsStrategistUserMessage` の指示文にも
+    「人物を描く場合は顔を映さず首から下のみ」を追記し、LLM 側のプロンプト設計自体もそれに沿わせる。
+  - `promotion-video-generate.ts` の `buildVeoHookPrompt` — TikTok/IG リールの Veo 3.1 実写級フック
+    (`personGeneration: 'allow_all'`) は人物が映り得るため必須で付加。
+  - `apps/worker/src/tasks/promotion-post/carousel.ts` の `buildCarouselTemplatePrompt` (下記)。
+- **IG カルーセル投稿 (`apps/worker/src/tasks/promotion-post/carousel.ts`)**: `promotion.post.publish` の
+  `defaultBuildMediaUrls` は `channel==='instagram'` のとき `buildInstagramCarouselKeys` で 3〜6 枚の R2 キー
+  配列を組み立てる (docs/08 §1・§9 準拠、`media_key` 事前セット済みのIGリール動画は従来どおり単一mp4優先)。
+  - **1枚目 = 見出しフック**: 既存の `ensureBookPromoImage`(本あり)/`generateValuePostImage`(本なし) をそのまま流用。
+  - **2〜N枚目 = 要点カード**: `extractKeyPoints(body, max=4)` が投稿本文(先頭文=見出し済みとして除外)から
+    1文=1要点を抽出し、`generateCarouselPointCardImage`(promo-image.ts, `buildValueCardImage2Prompt` 流用)が
+    gpt-image-2 で1枚ずつ生成 (`promotion/posts/{post_id}-p{n}.jpg`)。抽出できる文が無ければ本文全体を
+    1枚にフォールバックし、最低1要点は確保する。
+  - **最終枚 = 固定テンプレ枚**: `ensureCarouselTemplateImage(channel)` — ペルソナ写真(`PERSONA_VISUAL_RULES`
+    適用、本を持つ/読む首から下カット)＋固定CTA文言(「フォローで毎日、本の学びをひとつ」)を**チャンネルごとに
+    1回だけ**生成し `promotion/{channel}/meta/carousel-template.jpg` に保存、キーを
+    `promotion_channel_settings.config_json.carousel_template_key` にキャッシュして全投稿で使い回す
+    (「型を決めて同じ投稿」＝ブランド想起、毎回生成しない)。再生成は運営者が
+    `scripts/regen-channel-visuals.mjs --force` を実行するか、DB の `carousel_template_key` を消す。
+  - 生成失敗は該当カードを飛ばすだけで例外にせず、成功分だけで配列を返す(最低1枚も無ければメディア無し投稿)。
+- **配信ペイロード (`http-publisher-port.ts`)**: webhook JSON に `mediaUrls`(配列、既存)に加え
+  **`imageUrl`(先頭要素、後方互換の単一画像フィールド)** を追加。**Make 側の要対応**: IG シナリオが
+  `mediaUrls.length > 1` を検知したら Instagram Graph API のカルーセル手順
+  (子コンテナ `is_carousel_item=true` を画像枚数分作成 → `media_type=CAROUSEL` の親コンテナに
+  `children=[子ID...]` で連結 → `/media_publish`) に分岐させる必要がある(現行シナリオは単一画像 `/media` →
+  `/media_publish` のみ対応と想定)。**この Make シナリオ改修は運営者側の手動対応** (HANDOFF.md 参照)。
+- **アイコン/カバー再生成ツール (`scripts/regen-channel-visuals.mjs`)**: 新ルール適用後の avatar/banner/
+  カルーセル固定テンプレ枚を一括で作り直す一回性スクリプト (`--dry-run` でプロンプトのみ確認、
+  `--channel=`/`--only=avatar,banner,template`/`--force` で対象を絞る)。DB/R2 env は
+  `scripts/paperback/pb-env.sh` 経由、OpenAI キーのみ別途 `OPENAI_API_KEY` を要する。生成物は
+  `<key>.bak-<ts>` に退避してから上書き。**実行は運営者判断**（本追記時点では未実行）。

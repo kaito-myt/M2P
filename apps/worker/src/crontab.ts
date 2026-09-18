@@ -36,6 +36,7 @@ import { RECURRING_COST_REFRESH_TASK_NAME } from './tasks/recurring-cost-refresh
 import { NOTE_PUBLISH_DISPATCHER_TASK_NAME } from './tasks/note-publish-dispatcher.js';
 import { NOTE_PUBLISH_STATUS_SYNC_TASK_NAME } from './tasks/note-publish-status-sync.js';
 import { NOTE_SALES_FETCH_DISPATCHER_TASK_NAME } from './tasks/note-sales-fetch-dispatcher.js';
+import { NOTE_THEME_AUTO_TASK_NAME } from './tasks/note-theme-auto.js';
 
 /**
  * graphile-worker cron 定義 (docs/05 §5.4 / SP-01 仕様: `apps/worker/src/crontab.ts`)
@@ -298,6 +299,20 @@ export const NOTE_PUBLISH_STATUS_SYNC_CRON = '30 */6 * * *';
 export const NOTE_SALES_FETCH_DISPATCHER_CRON = '0 21 * * *';
 
 /**
+ * docs/11-anp-design.md §7 Phase4 F-ANP-17: note 日次テーマ自動生成の既定 cron。
+ * A2P の `pipeline_theme_cron` (07:00 JST) と衝突しないよう 1 時間ずらした 08:00 JST とする。
+ * AppSettings.anp_theme_cron の既定値 (schema.prisma) と一致させる。
+ */
+export const NOTE_THEME_AUTO_CRON_DEFAULT = '0 23 * * *';
+
+/** `note.theme.auto` の CronItem 定義 (AppSettings.anp_auto_theme_enabled=true のときのみ使用)。 */
+export const NOTE_THEME_AUTO_CRON_ITEM: CronItem = {
+  task: NOTE_THEME_AUTO_TASK_NAME,
+  match: NOTE_THEME_AUTO_CRON_DEFAULT,
+  identifier: 'note-theme-auto-daily',
+};
+
+/**
  * F-052: 販促投稿の自動ディスパッチ cron (既定 30分毎)。
  * AppSettings.promo_auto_post_enabled=true のときだけ条件付き追加する。
  */
@@ -461,6 +476,10 @@ export interface CronRuntimeSettings {
   bw_auto_submit_cron?: string | null;
   /** docs/11 §7 Phase2: note サーバー自動公開ディスパッチャ (note.publish.dispatch) を cron 有効化するか（既定OFF）。 */
   anp_auto_publish_enabled?: boolean;
+  /** docs/11 §7 Phase4 F-ANP-17: note 日次テーマ自動生成 (note.theme.auto) を cron 有効化するか（既定OFF）。 */
+  anp_auto_theme_enabled?: boolean;
+  /** docs/11 §7 Phase4: note.theme.auto cron (省略時は既定 08:00 JST)。 */
+  anp_theme_cron?: string | null;
 }
 
 /** 後方互換エイリアス (旧名)。 */
@@ -584,6 +603,14 @@ export function buildCronItemsWithSettings(settings: CronRuntimeSettings): CronI
 
   if (settings.anp_auto_publish_enabled) {
     items.push({ ...NOTE_PUBLISH_DISPATCHER_CRON_ITEM });
+  }
+
+  if (settings.anp_auto_theme_enabled) {
+    const cronMatch =
+      typeof settings.anp_theme_cron === 'string' && settings.anp_theme_cron.trim().length > 0
+        ? settings.anp_theme_cron.trim()
+        : NOTE_THEME_AUTO_CRON_DEFAULT;
+    items.push({ ...NOTE_THEME_AUTO_CRON_ITEM, match: cronMatch });
   }
 
   return items;

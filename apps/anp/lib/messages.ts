@@ -32,8 +32,11 @@ export const messages = {
       nicheRequired: 'ニッチを入力してください',
       displayNameRequired: '表示名を入力してください',
       unknown: 'アカウントの作成に失敗しました',
+      handleInvalid: 'ハンドルは半角英数字とアンダースコアのみ使用できます(空欄で未設定に戻せます)',
     },
     detailLink: '詳細を見る',
+    handleLabel: 'note ハンドル',
+    handlePlaceholder: '例: ai_fukugyo_lab',
   },
   accountDetail: {
     back: '← アカウント一覧',
@@ -63,12 +66,20 @@ export const messages = {
     recommendPaid: '有料推奨',
     recommendFree: '無料推奨',
     suggestedPrice: (price: number) => `想定価格 ¥${price.toLocaleString('ja-JP')}`,
+    // F-ANP-16: judge 確定後は paid=false のまま price_jpy に「提案価格」が残るため、
+    // 記事一覧では有料表示ではなく提案として案内する(note の KYC 未完了のため実公開は不可)。
+    priceSuggestionLabel: (price: number) => `提案: 有料 ¥${price.toLocaleString('ja-JP')}`,
     publishDryRun: '公開(下書き保存まで)',
     publish: '公開する',
     publishStatus: {
       draft: '下書き',
       published: '公開済み',
       unlisted: '非公開/取り下げ',
+    },
+    reviewActions: {
+      retryJudge: '再審査(品質判定をやり直す)',
+      retryEditor: '校閲からやり直す',
+      forceReady: 'そのまま公開可にする',
     },
     errors: {
       generateFailed: 'テーマ生成の起動に失敗しました',
@@ -77,6 +88,9 @@ export const messages = {
       publishFailed: 'note への公開起動に失敗しました',
       dryRunEnforced:
         'ドライラン設定が有効なため実公開はできません(/settings でドライランをOFFにしてください)',
+      retryJudgeFailed: '再審査の起動に失敗しました',
+      retryEditorFailed: '校閲やり直しの起動に失敗しました',
+      forceReadyFailed: '公開可への変更に失敗しました',
     },
     publishDryRunModeNotice: 'ドライラン設定が有効なため「公開する」は無効化されています(/settings で変更できます)',
   },
@@ -106,6 +120,13 @@ export const messages = {
       'ONにすると、公開準備完了(ready)の記事をアカウントごとに1件ずつ30分毎に自動で note へ送信します。',
     dryRun: 'ドライラン(下書き保存のみ)',
     dryRunDescription: 'ONの間は「公開に進む」以降を実行せず、下書き保存までで止めます(検証用・既定ON)。',
+    autoThemeEnabled: 'note 日次テーマ自動生成を有効化する',
+    autoThemeEnabledDescription:
+      'ONにすると、稼働中の note アカウントごとに毎日「テーマ生成数」件のテーマ候補を自動生成します。',
+    themesPerDay: '1日のテーマ生成数',
+    autopassEnabled: 'テーマを自動採用してパイプラインを自動起動する',
+    autopassEnabledDescription:
+      'ONにすると、自動生成したテーマを人手承認なしで採用し、執筆→校閲→アイキャッチ→品質判定まで自動で進めます(OFFの間は生成のみで承認は手動)。',
     saved: '保存しました',
     errors: {
       saveFailed: '設定の保存に失敗しました',

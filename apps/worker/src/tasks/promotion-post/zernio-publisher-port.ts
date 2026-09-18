@@ -101,7 +101,14 @@ export function createZernioPublisherPort(deps: ZernioPublisherDeps = {}): Publi
         publishNow: true,
         ...(profileId ? { profileId } : {}),
         platforms: [{ platform, accountId: account._id }],
-        mediaItems: [{ type: isVideo ? 'video' : 'image', url: mediaUrl }],
+        // 2026-09-18 IG カルーセル: 静止画が複数枚あれば全て渡す (Zernio は 2〜10 枚でカルーセル化、
+        // docs.zernio.com/platforms/instagram)。動画(Reel/TikTok)は 1 本のみ。
+        mediaItems: isVideo
+          ? [{ type: 'video', url: mediaUrl }]
+          : (input.mediaUrls ?? [])
+              .filter((u): u is string => typeof u === 'string' && u.length > 0)
+              .slice(0, 10)
+              .map((url) => ({ type: 'image', url })),
       };
       if (platform === 'tiktok') {
         // TikTok 公開投稿の必須フラグ(Content Posting API 準拠)。

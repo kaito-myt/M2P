@@ -23,6 +23,7 @@ import { createTikTokPublisherPort } from './promotion-post/tiktok-publisher-por
 import { createZernioPublisherPort } from './promotion-post/zernio-publisher-port.js';
 import { createNotePublisherPort } from './promotion-post/note-publisher-port.js';
 import { ensureBookPromoImage, generateValuePostImage, generateBookEyecatchImage2 } from './promotion-post/promo-image.js';
+import { buildInstagramCarouselKeys } from './promotion-post/carousel.js';
 
 /**
  * `promotion.post.publish` タスク (F-052)
@@ -206,8 +207,16 @@ async function defaultBuildMediaUrls(
     // spam/長さエラーで失敗するため、画像フォールバックはしない。
     return [];
   }
+  // IG は複数枚のカルーセル(見出しフック→本文の要点カード→固定テンプレ枚)にする
+  // (運営者要望 2026-09: 保存/シェアを稼ぐ勝ち型。docs/08-promo-playbook.md §1/§9)。
+  if (channel === 'instagram') {
+    const keys = await buildInstagramCarouselKeys(bookId, postId, body);
+    if (keys.length === 0) return [];
+    return Promise.all(keys.map((k) => storage.getSignedDownloadUrl(k, MEDIA_URL_TTL_SEC)));
+  }
+
   // note のアイキャッチは gpt-image-2 で「画像＋文字」を一発生成する(合成しない)。
-  // IG/TikTok の book 投稿は従来どおり実表紙を主役にした合成クリエイティブ。
+  // x の promo/value 投稿は従来どおり単一の販促画像/バリューカード。
   let key: string | null;
   if (bookId && channel === 'note') {
     key = await generateBookEyecatchImage2(postId, bookId);

@@ -108,6 +108,9 @@ export function buildUserMessage(
     '',
     input.persona.concept ? `【アカウントのコンセプト】\n${input.persona.concept}` : '',
     input.persona.tone_of_voice ? `【トーン&マナー】\n${input.persona.tone_of_voice}` : '',
+    input.persona.character_sheet
+      ? `【キャラクター設定(この投稿の書き手の人柄。短く自然に滲ませる)】\n${input.persona.character_sheet}`
+      : '',
     input.playbook_guidance ? `\n【市場リサーチに基づく販促プレイブック(反映する)】\n${input.playbook_guidance}` : '',
     '',
     '【紹介する記事】',
@@ -121,6 +124,9 @@ export function buildUserMessage(
     '- 「この記事読んでよかった」と素直に思わせる、記事の核心的な気づき・意外な要点を具体的に伝える。',
     '- URL・ハッシュタグは絶対に含めない(呼出側で付与する)。',
     '- テンプレっぽさ・誇張・煽りを避ける。',
+    input.persona.character_sheet
+      ? '- 上記キャラクター設定の人柄が伝わる要素(口癖・日常の一コマ・率直な感情のいずれか)を短く1つ自然に添える。ただし主役は記事の魅力で、自分語りは全体の2〜3割まで。'
+      : '',
     '',
     '出力形式: JSON で以下を返してください。',
     '{ "body": string }',

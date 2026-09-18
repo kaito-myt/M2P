@@ -145,5 +145,8 @@ describe('generateStrategyImages', () => {
     // 文字を描かせないガードが両方に含まれる
     expect(calls[0]!.prompt).toContain('文字');
     expect(calls[1]!.prompt).toContain('文字');
+    // 人物描写ルール(顔出し禁止/首から下)が両方に含まれる
+    expect(calls[0]!.prompt).toContain('顔は絶対に描かない');
+    expect(calls[1]!.prompt).toContain('顔は絶対に描かない');
   });
 });

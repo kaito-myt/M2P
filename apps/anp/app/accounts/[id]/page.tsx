@@ -8,7 +8,9 @@ import { prisma } from '@a2p/db';
 
 import { messages } from '@/lib/messages';
 
+import { ArticleReviewActions } from './article-review-actions';
 import { GenerateThemesButton } from './generate-themes-button';
+import { HandleForm } from './handle-form';
 import { PublishArticleButton } from './publish-article-button';
 import { ThemeCard } from './theme-card';
 
@@ -21,7 +23,15 @@ export default async function AccountDetailPage({
 
   const account = await prisma.noteAccount.findUnique({
     where: { id },
-    select: { id: true, niche: true, display_name: true, target_reader: true, tone: true, status: true },
+    select: {
+      id: true,
+      niche: true,
+      display_name: true,
+      target_reader: true,
+      tone: true,
+      status: true,
+      handle: true,
+    },
   });
   if (!account) notFound();
 
@@ -71,6 +81,7 @@ export default async function AccountDetailPage({
           {account.target_reader ? ` ／ 想定読者: ${account.target_reader}` : ''}
           {account.tone ? ` ／ トーン: ${account.tone}` : ''}
         </p>
+        <HandleForm noteAccountId={account.id} initialHandle={account.handle} />
       </header>
 
       <section className="mt-space-loose">
@@ -112,7 +123,11 @@ export default async function AccountDetailPage({
                   <div>
                     <p className="text-body font-medium text-charcoal">{a.title}</p>
                     <p className="text-caption text-muted">
-                      {a.paid ? `有料 ${a.price_jpy ? `¥${a.price_jpy.toLocaleString('ja-JP')}` : ''}` : '無料'}
+                      {a.paid
+                        ? `有料 ${a.price_jpy ? `¥${a.price_jpy.toLocaleString('ja-JP')}` : ''}`
+                        : a.price_jpy != null
+                          ? `無料 ・ ${messages.accountDetail.priceSuggestionLabel(a.price_jpy)}`
+                          : '無料'}
                       {a.quality_score != null ? ` ・ スコア ${a.quality_score}` : ''}
                       {` ・ ${publishStatusLabel}`}
                     </p>
@@ -129,6 +144,7 @@ export default async function AccountDetailPage({
                     {(a.status === 'ready' || a.status === 'needs_human_review') && (
                       <PublishArticleButton articleId={a.id} globalDryRunEnabled={globalDryRunEnabled} />
                     )}
+                    {a.status === 'needs_human_review' && <ArticleReviewActions articleId={a.id} />}
                   </div>
                   <span className="shrink-0 rounded-pill border border-border-warm px-2 py-0.5 text-caption text-muted">
                     {statusLabel}

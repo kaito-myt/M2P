@@ -63,6 +63,7 @@ function input(overrides: Partial<ContentCreatorInput> = {}): ContentCreatorInpu
     sample_titles: ['朝1分の習慣術'],
     count: overrides.count ?? 4,
     playbook_guidance: overrides.playbook_guidance ?? '',
+    character_sheet: overrides.character_sheet ?? '',
   };
 }
 
@@ -77,6 +78,29 @@ describe('createAccountContent', () => {
     } as ContentCreatorDeps);
     expect(res.posts.length).toBe(2);
     expect(res.posts[0]!.pillar).toBe('時短術');
+  });
+
+  it('character_sheet をユーザーメッセージに含め、人柄反映を指示する', async () => {
+    const client = makeClient(out());
+    await createAccountContent(input({ character_sheet: '口癖: なんだよね' }), {
+      createAgentClient: vi.fn(async () => client),
+      loadActivePrompt: loadPromptStub(),
+    } as ContentCreatorDeps);
+    const arg = (client.complete as ReturnType<typeof vi.fn>).mock.calls[0]![0] as LLMCompleteArgs;
+    const usr = String(arg.messages.find((mm) => mm.role === 'user')?.content ?? '');
+    expect(usr).toContain('口癖: なんだよね');
+    expect(usr).toContain('自分語りは投稿全体の2〜3割まで');
+  });
+
+  it('character_sheet 未指定なら人柄反映の指示を出さない', async () => {
+    const client = makeClient(out());
+    await createAccountContent(input({ character_sheet: '' }), {
+      createAgentClient: vi.fn(async () => client),
+      loadActivePrompt: loadPromptStub(),
+    } as ContentCreatorDeps);
+    const arg = (client.complete as ReturnType<typeof vi.fn>).mock.calls[0]![0] as LLMCompleteArgs;
+    const usr = String(arg.messages.find((mm) => mm.role === 'user')?.content ?? '');
+    expect(usr).not.toContain('キャラクター設定');
   });
 
   it('channel の length_guide をプロンプトに埋める', async () => {

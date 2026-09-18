@@ -183,6 +183,14 @@ export const NoteJudgeOutputSchema = z.object({
     search_inflow: z.number().int().min(0).max(100),
   }),
   judge_comments: z.record(z.string(), z.string()),
+  /**
+   * F-ANP-16 価格・有料の自動提案 (最小, docs/11 申し送り8): judge が本文の完成度を見た上で
+   * 「有料化を推奨するか」「推奨するならいくらか」を提案する。note の KYC 未完了のため
+   * 呼出側 (pipeline.note.judge) はこの提案を `NoteArticle.paid` には反映しない
+   * (paid は判定完了時に必ず false へ強制し、`price_jpy` に提案値だけを保存する)。
+   */
+  recommend_paid: z.boolean().optional(),
+  suggested_price_jpy: z.number().int().min(0).max(50000).optional(),
 });
 export type NoteJudgeOutput = z.infer<typeof NoteJudgeOutputSchema>;
 
@@ -200,6 +208,12 @@ export const NOTE_JUDGE_PASS_THRESHOLD = 80;
 export const AnpPromoPersonaSchema = z.object({
   concept: z.string().max(2000).optional(),
   tone_of_voice: z.string().max(1000).optional(),
+  /**
+   * 運営者要望「投稿にSNSのキャラクター性が出るように」— 5チャンネル共通ペルソナの
+   * 人物設定(口癖・一人称・日常・価値観・弱み等)。省略時は呼出元が
+   * `resolveCharacterSheet` で既定値(`DEFAULT_PERSONA_CHARACTER_SHEET`)を渡す。
+   */
+  character_sheet: z.string().max(2000).optional(),
 });
 export type AnpPromoPersona = z.infer<typeof AnpPromoPersonaSchema>;
 

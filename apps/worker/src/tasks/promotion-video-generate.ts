@@ -1,7 +1,7 @@
 import type { JobHelpers, Task } from 'graphile-worker';
 import { z } from 'zod';
 
-import { createTikTokVideoScript as defaultCreateScript } from '@a2p/agents';
+import { createTikTokVideoScript as defaultCreateScript, withPersonaVisualRules } from '@a2p/agents';
 import {
   AccountStrategyProfileSchema,
   type TikTokVideoInput,
@@ -85,13 +85,16 @@ export interface PromotionVideoGenerateDeps {
   veoTier?: VeoTier;
 }
 
-/** scene[0] から Veo 用の動画プロンプトを組み立てる（動き・カメラ・縦型・文字なしを明示）。 */
+/**
+ * scene[0] から Veo 用の動画プロンプトを組み立てる（動き・カメラ・縦型・文字なしを明示）。
+ * 実写級のため人物が映り得る — 顔出し回避/セクシー路線の共通ルール(PERSONA_VISUAL_RULES)を必ず付加する。
+ */
 export function buildVeoHookPrompt(imagePrompt: string): string {
-  return (
+  return withPersonaVisualRules(
     `${imagePrompt} ` +
-    'Cinematic vertical 9:16 short clip, subtle camera motion (slow push-in or gentle pan), ' +
-    'natural lighting, shallow depth of field, photoreal. ' +
-    'Absolutely no text, no captions, no logos, no numbers on screen.'
+      'Cinematic vertical 9:16 short clip, subtle camera motion (slow push-in or gentle pan), ' +
+      'natural lighting, shallow depth of field, photoreal. ' +
+      'Absolutely no text, no captions, no logos, no numbers on screen.',
   );
 }
 

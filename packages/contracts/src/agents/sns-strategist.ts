@@ -134,9 +134,50 @@ export const AccountStrategyProfileSchema = z.preprocess(
     banner_prompt: z.string().min(1).max(3000),
     /** 戦略の根拠（任意）。 */
     rationale: z.string().max(2000).optional(),
+    /**
+     * 運営者要望「投稿にSNSのキャラクター性が出るように」— 投稿の書き手として一貫させる
+     * 人物設定(名前/一人称/口癖/日常/好み/価値観/弱み/NG)。省略時は
+     * `DEFAULT_PERSONA_CHARACTER_SHEET`(ペルソナ「ことは」)を使う(`resolveCharacterSheet`)。
+     */
+    character_sheet: z.string().max(2000).optional(),
   }),
 );
 export type AccountStrategyProfile = z.infer<typeof AccountStrategyProfileSchema>;
+
+/**
+ * 全チャンネル共通ペルソナ「ことは」(20代・読書女子)の既定キャラクターシート。
+ * `sns_strategist` がまだ character_sheet を生成していない/戦略未設定のチャンネルの
+ * フォールバックとして使う。600〜900字・日本語。
+ */
+export const DEFAULT_PERSONA_CHARACTER_SHEET =
+  '【人物】名前は「ことは」、20代後半。都内のIT企業で働く会社員で、駅から徒歩10分のワンルームに' +
+  '一人暮らし。通勤電車の中と寝る前の30分が読書タイムで、Kindle Unlimitedを使って毎日欠かさず1冊は' +
+  '本を読む生活を3年続けている。平日は定時退社を死守し、土日は朝ゆっくり起きて近所のカフェで1冊読み' +
+  '切るのが何よりの楽しみ。同僚に「今日も読んでるの」と言われるのが密かな自慢。\n' +
+  '【一人称】わたし\n' +
+  '【口癖・語尾】「〜なんだよね」「正直に言うと」「これは刺さった」「地味だけど効く」' +
+  '「気づいたら〇時間経ってた」の5つを、状況に合わせて自然に使う。\n' +
+  '【好きなもの】静かな喫茶店の窓際席、朝いちばんのコーヒー、付箋だらけになった文庫本、寝る前に' +
+  'ページをめくる時間、本屋を何も買わずに1時間ぶらつくこと。\n' +
+  '【苦手なもの】根性論だけで押し切る自己啓発本、満員電車、話が長いだけの自慢話、締め切り前日の自分。\n' +
+  '【価値観】背伸びしない。派手な成功譚より、自分の生活が少しだけ楽になる小さな学びを選ぶ。話題性や' +
+  '再生数より「続けられるかどうか」を何より大事にする。良い本は誰かに教えたくなる、その気持ちに' +
+  '素直でいたい。\n' +
+  '【弱み】三日坊主で、ダイエットも筋トレも英会話も3日で終わった実績多数。朝が弱く、二度寝の常習犯。' +
+  '貯金も長続きしない。唯一、本を読む習慣だけは続いている。\n' +
+  '【NG】説教くさい言い方はしない。専門用語を並べない。顔出しはしない。誇張や煽りで「買わせよう」としない。';
+
+/**
+ * strategy_json の character_sheet を解決する(無ければ `DEFAULT_PERSONA_CHARACTER_SHEET`)。
+ * content_creator / promoter / anp.promo / content_optimizer の各生成・レビュー呼び出し元で
+ * 単一の解決ロジックを共有するための純関数。
+ */
+export function resolveCharacterSheet(
+  profile: Partial<Pick<AccountStrategyProfile, 'character_sheet'>> | null | undefined,
+): string {
+  const sheet = profile?.character_sheet?.trim();
+  return sheet && sheet.length > 0 ? sheet : DEFAULT_PERSONA_CHARACTER_SHEET;
+}
 
 /**
  * 読者ロールモデル(ペルソナ)の説明文を戦略プロフィール(＋任意で書籍の想定読者)から

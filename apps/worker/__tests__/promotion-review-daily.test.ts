@@ -4,6 +4,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import { runPromotionReviewDaily } from '../src/tasks/promotion-review-daily.js';
+import type { ContentOptimizerInput } from '@a2p/contracts/agents/content-optimizer';
 
 const strategy = {
   concept: 'ゆるり文庫',
@@ -50,7 +51,7 @@ describe('runPromotionReviewDaily', () => {
         { id: 'p2', kind: 'value', body: '据え置き本文B' },
       ],
     });
-    const optimize = vi.fn(async () => ({
+    const optimize = vi.fn(async (_input: ContentOptimizerInput) => ({
       revisions: [
         { id: 'p1', changed: true, revised_body: '改善された本文A（フック付き）', reason: 'フック追加' , score: 80, on_strategy: true, persona_reaction: '' },
         { id: 'p2', changed: false, revised_body: '据え置き本文B', reason: '' , score: 80, on_strategy: true, persona_reaction: '' },
@@ -59,6 +60,8 @@ describe('runPromotionReviewDaily', () => {
     const res = await runPromotionReviewDaily({}, { prisma: prisma as never, optimize, now: () => new Date('2026-07-22T00:00:00Z') });
     expect(res.updated).toBe(1);
     expect(updates).toEqual([{ id: 'p1', body: '改善された本文A（フック付き）' }]);
+    // 運営者要望「投稿にSNSのキャラクター性が出るように」— 戦略に無ければ既定ペルソナ「ことは」を渡す。
+    expect(optimize.mock.calls[0]![0].character_sheet).toContain('ことは');
   });
 
   it('販促投稿で URL が消える改善は破棄する（購入導線を守る）', async () => {

@@ -11,6 +11,7 @@ import {
 } from '@a2p/contracts/promotion/channels';
 import {
   AccountStrategyProfileSchema,
+  resolveCharacterSheet,
   type ContentCreatorInput,
   type AccountContentOutput,
 } from '@a2p/contracts/agents';
@@ -145,6 +146,8 @@ export async function runPromotionContentGenerate(
     sample_titles: titles,
     count,
     playbook_guidance: playbookGuidance,
+    // 運営者要望「投稿にSNSのキャラクター性が出るように」— 戦略未設定なら既定ペルソナ「ことは」。
+    character_sheet: resolveCharacterSheet(p),
   });
 
   // 4. 既存の未投稿 value を作り直す (promo は温存)。

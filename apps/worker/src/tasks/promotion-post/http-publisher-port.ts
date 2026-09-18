@@ -115,9 +115,15 @@ async function publishViaWebhook(
         title: input.title,
         body: input.body,
         handle: input.config.handle,
-        // F-058: IG/TikTok 用に AI 生成した販促画像の公開URL。中継(Make/Zapier)が
+        // F-058: IG/TikTok 用に AI 生成した販促画像/動画の公開URL(配列)。中継(Make/Zapier)が
         // これを投稿メディアに使う。無ければ空配列。
+        // 運営者要望(2026-09) の IG カルーセルでは 3〜6 件になる — Make 側は
+        // mediaUrls.length > 1 のとき Instagram Graph API のカルーセル
+        // (子コンテナ is_carousel_item=true → CAROUSEL 親コンテナ → publish) にする必要がある
+        // (docs/05-program-design.md 追補参照)。
         mediaUrls: input.mediaUrls ?? [],
+        // 後方互換: 単一画像しか見ない旧いシナリオ/中継のための先頭要素 (無ければ null)。
+        imageUrl: input.mediaUrls?.[0] ?? null,
       }),
     });
     const text = await res.text();

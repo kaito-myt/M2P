@@ -29,7 +29,7 @@ import type { Task } from 'graphile-worker';
 import { z } from 'zod';
 
 import { createAnpArticlePromoContent as defaultCreateAnpArticlePromoContent } from '@a2p/agents/anp/promo';
-import { AccountStrategyProfileSchema } from '@a2p/contracts/agents';
+import { AccountStrategyProfileSchema, resolveCharacterSheet } from '@a2p/contracts/agents';
 import type { AnpPromoContentInput } from '@a2p/contracts/agents/anp';
 import { PromoPlaybookSchema, playbookToGuidance } from '@a2p/contracts/agents/promo-strategist';
 import {
@@ -240,9 +240,14 @@ export async function runPromotionNoteArticle(
       const channel: PromoChannel = PROMO_CHANNELS[i]!;
       const setting = settingByChannel.get(channel);
       const profile = setting?.strategy_json ? AccountStrategyProfileSchema.safeParse(setting.strategy_json) : null;
+      // 運営者要望「投稿にSNSのキャラクター性が出るように」— 戦略未設定なら既定ペルソナ「ことは」。
       const persona = profile?.success
-        ? { concept: profile.data.concept, tone_of_voice: profile.data.tone_of_voice }
-        : {};
+        ? {
+            concept: profile.data.concept,
+            tone_of_voice: profile.data.tone_of_voice,
+            character_sheet: resolveCharacterSheet(profile.data),
+          }
+        : { character_sheet: resolveCharacterSheet(null) };
       const pbParsed = setting?.playbook_json ? PromoPlaybookSchema.safeParse(setting.playbook_json) : null;
       const playbookGuidance = pbParsed?.success ? playbookToGuidance(pbParsed.data) : '';
 

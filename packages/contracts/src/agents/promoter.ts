@@ -35,6 +35,13 @@ export const PromotionInputSchema = z.object({
    * ハッシュタグ/避けるべきこと)。SNS投稿文を書く際にこれを反映する。空なら従来どおり。
    */
   playbook_guidance: z.string().max(6000).default(''),
+  /**
+   * 運営者要望「投稿にSNSのキャラクター性が出るように」— アカウントの人物設定
+   * (口癖・一人称・日常・価値観・弱み等)。空なら呼出元が `resolveCharacterSheet` で
+   * 既定値(`DEFAULT_PERSONA_CHARACTER_SHEET`)を解決して渡す。x_posts/note_article/
+   * blog_outline に反映させる。
+   */
+  character_sheet: z.string().max(2000).default(''),
 });
 export type PromotionInput = z.infer<typeof PromotionInputSchema>;
 

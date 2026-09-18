@@ -10,6 +10,8 @@ import {
   offpeakScheduledForUtc,
   type PromotionNoteArticlePrisma,
 } from '../src/tasks/promotion-note-article.js';
+import { DEFAULT_PERSONA_CHARACTER_SHEET } from '@a2p/contracts/agents';
+import type { AnpPromoContentInput } from '@a2p/contracts/agents/anp';
 
 interface JobRecord {
   id: string;
@@ -34,6 +36,7 @@ function buildPrisma(args: {
   account?: { id: string; handle: string | null; niche: string } | null;
   existingPromo?: boolean;
   existingPosts?: PostRecord[];
+  channelSettings?: Array<{ channel: string; strategy_json: unknown; playbook_json: unknown }>;
 }) {
   const jobs = [...args.jobs];
   const created: Array<Record<string, unknown>> = [];
@@ -62,7 +65,7 @@ function buildPrisma(args: {
       findUnique: async ({ where }) => (args.account && args.account.id === where.id ? args.account : null),
     },
     promotionChannelSetting: {
-      findMany: async () => [],
+      findMany: async () => args.channelSettings ?? [],
     },
     promotionPost: {
       findFirst: async () => (args.existingPromo ? { id: 'existing' } : null),
@@ -182,6 +185,65 @@ describe('promotion.note.article', () => {
     const igRow = created.find((r) => r.channel === 'instagram')!;
     expect((igRow.scheduled_for as Date).toISOString()).toBe(offpeakScheduledForUtc(FIXED_NOW, 1, 15 * 60).toISOString());
     expect(jobs[0]!.status).toBe('done');
+  });
+
+  it('戦略未設定なら createContent に既定ペルソナ「ことは」の character_sheet を渡す', async () => {
+    const { prisma } = buildPrisma({
+      jobs: [{ id: 'job1', status: 'queued' }],
+      article: {
+        id: 'art1',
+        note_account_id: 'acc1',
+        title: 'T',
+        lead: 'L',
+        note_url: 'https://note.com/h/n/n1',
+        publish_status: 'published',
+      },
+      account: { id: 'acc1', handle: null, niche: 'n' },
+    });
+    const createContent = vi.fn().mockResolvedValue({ body: 'body' });
+    await runPromotionNoteArticle({ note_article_id: 'art1', job_id: 'job1' }, { prisma, createContent, now: () => FIXED_NOW });
+    const arg = (createContent.mock.calls[0]![0]) as AnpPromoContentInput;
+    expect(arg.persona.character_sheet).toBe(DEFAULT_PERSONA_CHARACTER_SHEET);
+  });
+
+  it('戦略に character_sheet があれば createContent にそれを渡す', async () => {
+    const { prisma } = buildPrisma({
+      jobs: [{ id: 'job1', status: 'queued' }],
+      article: {
+        id: 'art1',
+        note_account_id: 'acc1',
+        title: 'T',
+        lead: 'L',
+        note_url: 'https://note.com/h/n/n1',
+        publish_status: 'published',
+      },
+      account: { id: 'acc1', handle: null, niche: 'n' },
+      channelSettings: [
+        {
+          channel: 'x',
+          playbook_json: null,
+          strategy_json: {
+            concept: 'c',
+            display_name: 'd',
+            handle_suggestion: 'h',
+            bio: 'b',
+            content_pillars: [{ name: 'p' }],
+            tone_of_voice: 't',
+            posting_cadence: { frequency: 'f', best_times: [] },
+            hashtag_strategy: { core: [], rotating: [] },
+            growth_tactics: ['g'],
+            avatar_prompt: 'a',
+            banner_prompt: 'b',
+            character_sheet: 'カスタムキャラクター',
+          },
+        },
+      ],
+    });
+    const createContent = vi.fn().mockResolvedValue({ body: 'body' });
+    await runPromotionNoteArticle({ note_article_id: 'art1', job_id: 'job1' }, { prisma, createContent, now: () => FIXED_NOW });
+    const calls = createContent.mock.calls as unknown as AnpPromoContentInput[][];
+    const xCall = calls.find((c) => c[0]!.channel === 'x');
+    expect(xCall![0]!.persona.character_sheet).toBe('カスタムキャラクター');
   });
 
   it('日次上限(3件)に達している日はスキップし、空きのある翌日以降に配置する', async () => {

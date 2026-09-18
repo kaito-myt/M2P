@@ -12,7 +12,7 @@ import {
   type WithImageLoggingDeps,
 } from '@a2p/agents';
 import { composePromoCreative, promoAccent } from '@a2p/output-image';
-import { bookPromoImage, promotionPostImage } from '@a2p/storage/keys';
+import { bookPromoImage, promotionPostImage, promotionPostCarouselCard } from '@a2p/storage/keys';
 import { createLogger, type Logger } from '@a2p/contracts/logger';
 
 const NO_TEXT_GUARD =
@@ -357,6 +357,45 @@ export async function generateValuePostImage(
   const key = promotionPostImage(postId);
   await uploadBuffer(key, image, 'image/jpeg');
   log.info({ postId, key }, 'value post image generated');
+  return key;
+}
+
+/**
+ * IG カルーセルの「要点カード」(2枚目以降) を gpt-image-2 で 1 枚生成して R2 に保存する。
+ * 見出し(1枚目)と同じ `buildValueCardImage2Prompt` を流用し、要点1つを主役の見出しとして描く。
+ * 生成不可なら null（呼び出し側はそのカードを飛ばして枚数を減らす）。
+ */
+export async function generateCarouselPointCardImage(
+  postId: string,
+  index: number,
+  pointText: string,
+  deps: GenerateValuePostImageDeps = {},
+): Promise<string | null> {
+  const log = deps.logger ?? createLogger('worker.promotion.promo-image');
+  const uploadBuffer = deps.uploadBuffer ?? defaultUploadBuffer;
+  const baseFn: GenerateImageFn = deps.generateImage ?? defaultGenerateImage;
+  const genFn = withImageLogging(
+    baseFn,
+    { role: 'promo_image', themeSessionId: `carousel-point:${postId}:${index}` },
+    deps.withImageLoggingDeps,
+  );
+
+  const result = await genFn({
+    prompt: buildValueCardImage2Prompt(pointText),
+    width: 1024,
+    height: 1024,
+    quality: 'high',
+    outputFormat: 'jpeg',
+    outputCompression: 90,
+  });
+  const image = result.images[0];
+  if (!image) {
+    log.warn({ postId, index }, 'carousel point card generation returned no image');
+    return null;
+  }
+  const key = promotionPostCarouselCard(postId, index);
+  await uploadBuffer(key, image, 'image/jpeg');
+  log.info({ postId, index, key }, 'carousel point card generated');
   return key;
 }
 

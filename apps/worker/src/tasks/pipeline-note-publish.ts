@@ -65,6 +65,7 @@ interface NoteAccountRow {
   display_name: string;
   session_state_enc: string | null;
   status: string;
+  handle: string | null;
 }
 
 export interface PipelineNotePublishPrisma {
@@ -284,6 +285,7 @@ export async function runPipelineNotePublish(
       log.info({ articleId, noteUrl: result.noteUrl }, 'pipeline.note.publish 公開完了');
       await notify(`📝 ANP: 「${article.title}」を note に公開しました\n${result.noteUrl}`).catch(() => {});
       await enqueueArticlePromo(prisma, deps.addJob, articleId, log);
+      await autoSaveAccountHandle(prisma, account, result.noteUrl, log);
       return { ok: true, status: 'published', noteUrl: result.noteUrl };
     }
 
@@ -353,6 +355,32 @@ function serializeError(err: unknown): string {
 
 function errMsg(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
+}
+
+/** `note.com/<handle>/n/<noteId>` から handle 部分を抽出する (docs/11 §7 申し送り13)。 */
+export function extractNoteHandle(url: string | undefined): string | null {
+  if (!url) return null;
+  const m = /^https?:\/\/note\.com\/([^/]+)\/n\/[^/]+/.exec(url);
+  return m ? m[1]! : null;
+}
+
+/**
+ * 公開成功時、`note_accounts.handle` が未設定であれば公開 URL から自動抽出して保存する
+ * (docs/11 §7 申し送り13: フォロワー数取得 `/<handle>/followers` に handle が必須)。
+ * 既に手動設定済みの handle は上書きしない。失敗は無視 (公開自体の成功結果には影響させない)。
+ */
+async function autoSaveAccountHandle(
+  prisma: { noteAccount: PipelineNotePublishPrisma['noteAccount'] },
+  account: NoteAccountRow,
+  noteUrl: string | undefined,
+  log: Logger,
+): Promise<void> {
+  if (account.handle) return;
+  const handle = extractNoteHandle(noteUrl);
+  if (!handle) return;
+  await prisma.noteAccount
+    .update({ where: { id: account.id }, data: { handle } })
+    .catch((err) => log.warn({ err: errMsg(err), accountId: account.id, handle }, 'handle 自動保存に失敗(無視)'));
 }
 
 /**

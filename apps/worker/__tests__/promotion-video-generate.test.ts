@@ -126,6 +126,12 @@ describe('runPromotionVideoGenerate', () => {
     expect(p).toMatch(/no text/i);
   });
 
+  it('buildVeoHookPrompt は人物描写ルール(顔出し禁止/首から下)を含む', () => {
+    const p = buildVeoHookPrompt('a cozy reading nook');
+    expect(p).toContain('顔は絶対に描かない');
+    expect(p).toContain('首から下');
+  });
+
   it('レンダリング失敗時は draft を削除して再throw', async () => {
     const { deps, prisma } = makeDeps();
     (deps.renderVideo as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error('ffmpeg failed'));

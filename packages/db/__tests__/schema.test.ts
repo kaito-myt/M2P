@@ -57,6 +57,20 @@ const EXPECTED_MODELS = [
   'OrgObjective',
   'OrgTask',
   'OrgPlaybook',
+  // 2026-09 追加 (販促スナップショット/広告費/組織メッセージ/ANP 一式)
+  'PromotionGrowthSnapshot',
+  'PromotionXEngagement',
+  'PromotionSnsEngagement',
+  'RecurringCost',
+  'AdSpend',
+  'OrgCeoMessage',
+  'NoteAccount',
+  'NoteTheme',
+  'NoteArticle',
+  'NoteSalesRecord',
+  'NoteMembershipStat',
+  'NoteAuthRequest',
+  'NoteLock',
 ] as const;
 
 describe('schema.prisma', () => {

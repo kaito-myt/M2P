@@ -4,7 +4,7 @@ import { z } from 'zod';
 import { generatePromotionPlan as defaultGeneratePromotionPlan, type GeneratePromotionDeps } from '@a2p/agents';
 import type { PromotionInput, PromotionPlanOutput } from '@a2p/contracts/agents/promoter';
 import type { Genre } from '@a2p/contracts/agents';
-import { GENRE_SLUGS } from '@a2p/contracts/agents';
+import { AccountStrategyProfileSchema, GENRE_SLUGS, resolveCharacterSheet } from '@a2p/contracts/agents';
 import { PromoPlaybookSchema, playbookToGuidance } from '@a2p/contracts/agents/promo-strategist';
 import { NotFoundError, ValidationError } from '@a2p/contracts/errors';
 import { createLogger, type Logger } from '@a2p/contracts/logger';
@@ -83,8 +83,8 @@ export interface PipelineBookPromotionGeneratePrisma {
   promotionChannelSetting: {
     findMany: (args: {
       where: { channel: { in: string[] } };
-      select: { channel: true; playbook_json: true };
-    }) => Promise<Array<{ channel: string; playbook_json: unknown }>>;
+      select: { channel: true; playbook_json: true; strategy_json: true };
+    }) => Promise<Array<{ channel: string; playbook_json: unknown; strategy_json: unknown }>>;
   };
 }
 
@@ -107,7 +107,7 @@ async function loadPromoPlaybookGuidance(
   try {
     const rows = await prisma.promotionChannelSetting.findMany({
       where: { channel: { in: ['x', 'instagram', 'note'] } },
-      select: { channel: true, playbook_json: true },
+      select: { channel: true, playbook_json: true, strategy_json: true },
     });
     const parts: string[] = [];
     for (const r of rows) {
@@ -120,6 +120,32 @@ async function loadPromoPlaybookGuidance(
     return parts.join('\n\n').slice(0, 6000);
   } catch {
     return '';
+  }
+}
+
+/**
+ * 運営者要望「投稿にSNSのキャラクター性が出るように」— 5チャンネル共通ペルソナの
+ * character_sheet を x/instagram/note のいずれかの戦略から解決する(全チャンネル同一人物
+ * 運用のため、見つかった最初の値を採用)。無ければ `resolveCharacterSheet` の既定値。
+ */
+async function loadPersonaCharacterSheet(
+  prisma: PipelineBookPromotionGeneratePrisma,
+): Promise<string> {
+  try {
+    const rows = await prisma.promotionChannelSetting.findMany({
+      where: { channel: { in: ['x', 'instagram', 'note'] } },
+      select: { channel: true, playbook_json: true, strategy_json: true },
+    });
+    for (const r of rows) {
+      if (!r.strategy_json) continue;
+      const profile = AccountStrategyProfileSchema.safeParse(r.strategy_json);
+      if (profile.success && profile.data.character_sheet?.trim()) {
+        return resolveCharacterSheet(profile.data);
+      }
+    }
+    return resolveCharacterSheet(null);
+  } catch {
+    return resolveCharacterSheet(null);
   }
 }
 
@@ -183,6 +209,7 @@ export async function runPipelineBookPromotionGenerate(
       bookId,
       genre: normalizeGenre(book.theme?.genre),
       playbook_guidance: '',
+      character_sheet: '',
       book: {
         title: book.title,
         keywords: meta?.keywords ?? [],
@@ -205,6 +232,9 @@ export async function runPipelineBookPromotionGenerate(
     // F-064: 主要SNSチャンネルの販促プレイブック(web検索リサーチ)を材料として渡す。
     const guidance = await loadPromoPlaybookGuidance(prisma);
     if (guidance) input.playbook_guidance = guidance;
+
+    // 運営者要望「投稿にSNSのキャラクター性が出るように」— 5チャンネル共通ペルソナを反映。
+    input.character_sheet = await loadPersonaCharacterSheet(prisma);
 
     const plan = await generate(input);
 

@@ -198,6 +198,16 @@ export function channelBanner(channel: string): string {
   return `promotion/${channel}/meta/banner.jpg`;
 }
 
+/**
+ * `promotion/{channel}/meta/carousel-template.jpg` — IG カルーセル投稿の固定テンプレ枚(最終枚)。
+ * ペルソナ写真(首から下)＋固定 CTA レイアウトをチャンネルごとに 1 回だけ生成し、全投稿で使い回す
+ * (「型を決めて同じ投稿」のブランド想起狙い)。
+ */
+export function channelCarouselTemplate(channel: string): string {
+  assertChannel(channel);
+  return `promotion/${channel}/meta/carousel-template.jpg`;
+}
+
 /** `books/{book_id}/promo/social.jpg` — IG/TikTok 販促投稿用 AI 生成画像 (F-058, JPEG=IG必須)。 */
 export function bookPromoImage(bookId: string): string {
   assertId('bookId', bookId);
@@ -208,6 +218,16 @@ export function bookPromoImage(bookId: string): string {
 export function promotionPostImage(postId: string): string {
   assertId('postId', postId);
   return `promotion/posts/${postId}.jpg`;
+}
+
+/**
+ * `promotion/posts/{post_id}-p{n}.jpg` — IG カルーセルの要点カード(2枚目以降、本文から抽出した
+ * 要点1つずつ)。1枚目(見出しフック)は既存の `promotionPostImage`/`bookPromoImage` を使い回す。
+ */
+export function promotionPostCarouselCard(postId: string, index: number): string {
+  assertId('postId', postId);
+  assertNonNegativeInt('index', index);
+  return `promotion/posts/${postId}-p${index}.jpg`;
 }
 
 /** `promotion/videos/{post_id}.mp4` — TikTok スライド動画 (F-060)。 */

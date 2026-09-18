@@ -65,6 +65,10 @@ export {
   type OpenAIImagesClient,
 } from './tools/image-gen.js';
 export {
+  PERSONA_VISUAL_RULES,
+  withPersonaVisualRules,
+} from './lib/persona-visual.js';
+export {
   withImageLogging,
   type ImageLoggingContext,
   type WithImageLoggingDeps,

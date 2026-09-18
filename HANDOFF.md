@@ -1,4 +1,4 @@
-# A2P/M2P 作業引き継ぎ（2026-09-16 昼 時点）
+# A2P/M2P 作業引き継ぎ（2026-09-18 時点）
 
 別端末で続きを作業するための現況・残タスク・発見した制約のまとめ。
 起動後はまず本書＋`CLAUDE.md`＋`.claude-handoff/memory/*.md` を読むこと。
@@ -14,6 +14,54 @@
 4. ブラウザ自動化のログイン状態（`scripts/.kdp-userdata`, `scripts/.note-userdata*`）は gitignore。
    KDP は初回 OTP 再認証（LINE リレー or `kdp_auth_requests` 行を手動 fulfilled）。
    BW/Kobo/note のセッションは DB（app_settings / promotion_channel_settings）に暗号化保存済みなので端末非依存。
+
+## 2026-09-18（本機）で実施したこと
+運営者の依頼 4 件（入稿キューの検証 / SNS ペルソナ画像の実写・首から下化 / IG カルーセル / 投稿のキャラクター性）と
+「ANP をさっさと作り上げる」を実施。すべて main に push 済み・本番デプロイ済み。
+
+### KDP 入稿キューの検証結果
+- **9/16〜18 でキューから出版された本は 0 冊**。原因は KDP の「本の作成数制限（creation_limit）」で、サーバー dispatcher は毎日
+  11:07 JST に 1 冊試して制限→15:00 まで全体停止、ローカル日次も同じ。**本棚全頁スキャン（87 listing）では審査中・下書きが 0 件**なので
+  「審査滞留による制限」説は誤り → 新規タイトル作成数の期間上限（ローリング）の可能性が高い。KDP 側の制限で、コードでは解消不可。
+- 従来のスキャンは 1 頁目 50 件しか見ていなかった（`kdp-scan-bookshelf.mjs` をページ送り対応に修正）。DB の「submitted」20 冊のうち
+  **9 冊は実は販売中**（published に同期）、**11 冊は KDP に存在しない幽霊**（unlisted に戻しキューへ再投入）。キューは未入稿 47 冊。
+- `kdp-sync-shelf.sh` は同題別レコードの ASIN 衝突（books_asin_key）で落ちていたので回避を追加。
+- 日次ルーティンの Task Scheduler は「バッテリー駆動時は起動しない」既定条件で 9/17・9/18 とも走っていなかった（Last Result
+  0x800710E0）。条件を外し、未実行分の追いつき起動も有効化。
+
+### テーマ自動生成（さらに 2 晩失敗していた）
+- 9/16 の上限 4000 字修正後も 9/16・9/17 22:00 は `marketer.theme.invalid_output: schema validation failed`。原因 = LLM が
+  `competitors[].rank` を "1位" のような文字列、`asin/author` を null で返す。contracts `marketer.ts` を寛容パースに修正（回帰テスト付き）。
+  9/18 11:03 の手動再実行で **テーマ生成→自動採用→書籍パイプライン起動まで一気通貫で復帰**（1 週間ぶりの新刊企画）。
+
+### ANP（note）— 完成に向けた一括実装（設計 = docs/11 更新済み）
+- **初の実公開に成功**: `https://note.com/goodbooks_intro/n/nc3e4203790a3`（9/18 10:51 JST）。ただし worker は「公開完了モーダル」を
+  検知できず `blocked` 扱いにしていた → 公開 API `GET note.com/api/v3/notes/<id>` で `published` と `user.urlname` を確認する方式に修正済み。
+  DB は手動補正（記事 published、`note_accounts.handle=goodbooks_intro`）。SNS 告知（X/IG）も生成済み（9/20 配信予定）。
+- **⚠️ 注意**: note-acc-1「AI副業ラボ」は Phase 1 の暫定共有セッションのため、実際の note アカウントは A2P 販促ペルソナ
+  「良い本を読む習慣（goodbooks_intro）」= ことは のアカウント。**AI 副業記事が読書ペルソナのアカウントに出る**状態。
+  別アカウントで運用するなら note で新アカウントを作り `scripts/anp/note-session-capture.sh <note_account_id>` でセッション取込が必要。
+- 実装（F-ANP-16/17/31、needs_human_review UI、handle 編集/自動保存）: 日次自動テーマ生成 `note.theme.auto`（AppSettings
+  `anp_auto_theme_enabled` / `anp_themes_per_day` / `anp_theme_cron`(既定 JST 08:00) / `anp_autopass_enabled`、migration
+  `20260918000000_anp_theme_auto` は本番に raw SQL 適用済み）、判定時の有料化提案（`paid` は KYC 未完了のため常に false、`price_jpy` に提案のみ）、
+  A2P ストアフロント（/shop・/blog）に「関連 note 記事」枠、`/accounts/[id]` に要確認記事の再審査/再校閲/公開可ボタンと handle フォーム。
+- **本番設定は全部 ON**: `anp_auto_theme_enabled=true`(1/日) / `anp_autopass_enabled=true` / `anp_auto_publish_enabled=true` /
+  `anp_publish_dry_run=false`。= 毎朝テーマ生成→執筆→判定→無料記事として note 公開→X/IG 告知まで無人で回る。
+- 残（人手）: note の本人情報登録（KYC）→ 有料記事化、検証用下書き 5 件（n6845533ebcf7 / n9c510facf4dc / n1d09eea651e3 / ne071421d3e1d /
+  n800cf6101fa9）の削除、メンバーシップ計測の実データ検証、TikTok（Phase 4）。
+
+### SNS ペルソナ画像（実写・顔なし・首から下）と IG カルーセル
+- 共通ルール `PERSONA_VISUAL_RULES`（`packages/agents/src/lib/persona-visual.ts`）を人物が描かれ得る全プロンプト（アイコン/カバー、
+  IG 固定テンプレ枚、Veo フック）に付加。**実写写真・顔は映さない・首から下（鎖骨〜腰）・きれいめで女性らしい着こなし**。
+  OpenAI の安全フィルタ（safety_violations=[sexual]）は「かなりセクシー」「体のラインが出る」「下着/ヌードは描かない（否定形でも）」
+  「ショートパンツ/オフショルダー/太もも」を全部拒否したため、**露出・体型を直接指示する語は使えない**（実測 9/18、3 回試行）。
+- 5 チャンネル（x/instagram/tiktok/note/blog）のアイコン・カバー・IG 固定テンプレ枚を新ルールで再生成し R2 上書き済み（旧版は
+  `.bak-2026-09-18T0217`）。**各 SNS のプロフィール画像は運営者が手動で差し替える**。署名 URL（7 日有効）=
+  `scripts/paperback/out/persona-urls-2026-09-18.txt`（gitignore 対象）。再生成は `scripts/regen-channel-visuals.mjs`（失敗項目は継続して最後に一覧）。
+- IG は 3〜6 枚のカルーセル（1 枚目=見出し、2〜N=要点カード、最終=固定テンプレ枚）。配信は Zernio 経由で `mediaItems` に全枚渡す
+  （Zernio は 2〜10 枚でカルーセル化）。Make webhook 経路も `mediaUrls` 配列＋`imageUrl` を送るが、**Make シナリオ側のカルーセル対応は未実施**。
+- 投稿本文のキャラクター性（F-097）: `strategy_json.character_sheet`（既定 = ことは の設定）を content_creator / promoter / anp.promo /
+  content_optimizer に注入。本番 DB へのプロンプト新版投入は `pnpm --filter @a2p/db exec tsx apply-character-sheet.ts`（実行済みなら下記参照）。
 
 ## 2026-09-16（本機 C:\DEV\M2P 側）で実施したこと
 本書の指示どおり pull → 残作業を進めた。**3 件の本番障害を発見・修正・デプロイ済み**（worker/web とも `railway up`、
@@ -121,12 +169,17 @@
 - graphile-worker の残骸掃除は `graphile_worker._private_jobs`（`jobs` はビュー）。
 
 ## 次にやること（優先順）
-0. **翌朝の確認**: (a) `pipeline.theme.generate` が 9/16 22:00 JST に done になったか、(b) 復旧した 20 冊が judge→export まで進んだか
-   （`books.status in ('running','judging')` で 1 日以上更新の無い本が残っていないか）、(c) blog の育成投稿が生成されたか
-   （`promotion_posts where channel='blog' and kind='value' and status='scheduled'`）、(d) daily-publish のログ。
+0. **翌朝の確認（9/19）**: (a) 22:00 JST の A2P テーマ生成と 08:00 JST の ANP テーマ生成（`note.theme.auto`）が done か、(b) ANP 記事が
+   ready→published（note 公開）→ promotion_posts(kind=anp_article) まで進んだか、(c) IG カルーセルが Zernio で複数枚投稿になっているか
+   （`promotion_posts` の instagram 投稿の posted 結果と IG 上の見え方）、(d) daily-publish のログ（09:30 に走ったか）。
 1. ANP: 上記の人手待ち 1〜3 → 自動公開 ON → 有料記事対応（Phase 3.5）→ TikTok（Phase 4）。
 2. KDP: daily-publish は本機 Task Scheduler で毎日 09:30 に自動実行（PC がログオン状態のときのみ）。
 3. Kobo: **運営者が手動ログイン→セッション再保存** → テスト 1 冊の結果確認 → 残 87 冊の再送信可否判断。
 4. Booth 12 冊の手動公開。
 5. 収益: 週次で `docs/05` の KPI を見てテーマ方向を調整。
 6. ~~残っている無関係テスト 3 件の修正~~ → 2026-09-16 夕方に修正済み（全スイート green）。
+7. SNS: ペルソナ人物描写ルール(顔出し禁止/首から下/セクシー路線)＋IGカルーセル投稿を実装(未実行)。
+   `bash scripts/paperback/pb-env.sh corepack pnpm exec tsx scripts/regen-channel-visuals.mjs --dry-run` でプロンプト確認→
+   `OPENAI_API_KEY=... 同上（--dry-run なし）` で avatar/banner/カルーセル固定テンプレ枚を再生成し、
+   avatar/banner は各SNSへ運営者が手動適用。IG は Make シナリオを `mediaUrls.length>1` でカルーセル
+   (Graph API: 子コンテナ→CAROUSEL親→publish)に対応させる改修が必要(docs/05 参照)。

@@ -17,7 +17,8 @@ import { genreLabel, type Genre } from '@a2p/contracts/agents';
 import { prisma } from '@a2p/db';
 import { getSignedDownloadUrl } from '@a2p/storage';
 
-import { PseudoCover, SectionHeading, SiteFooter, SiteHeader } from '@/components/storefront/chrome';
+import { PseudoCover, RelatedNoteArticles, SectionHeading, SiteFooter, SiteHeader } from '@/components/storefront/chrome';
+import { loadRelatedNoteArticles } from '@/lib/related-note-articles';
 import { STOREFRONT_URL } from '@/lib/site';
 
 export const dynamic = 'force-dynamic';
@@ -125,7 +126,7 @@ const FOOTER_NAV = [
 ];
 
 export default async function BlogIndexPage() {
-  const posts = await loadPosts();
+  const [posts, relatedNoteArticles] = await Promise.all([loadPosts(), loadRelatedNoteArticles(3)]);
   const [featured, ...rest] = posts;
   const leads = rest.slice(0, 2);
   const list = rest.slice(2);
@@ -309,6 +310,10 @@ export default async function BlogIndexPage() {
           </>
         )}
       </main>
+
+      <div className="mx-auto w-full max-w-6xl px-5 sm:px-6">
+        <RelatedNoteArticles articles={relatedNoteArticles} />
+      </div>
 
       {/* ── 書籍導線バンド ── */}
       <section className="w-full border-t border-[#E4DAC6] bg-[#FBF6EA]">

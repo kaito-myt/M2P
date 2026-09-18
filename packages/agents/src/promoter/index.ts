@@ -81,7 +81,7 @@ export async function generatePromotionPlan(
   return PromotionPlanOutputSchema.parse(completion.text);
 }
 
-function buildUserMessage(input: PromotionInput): string {
+export function buildUserMessage(input: PromotionInput): string {
   const b = input.book;
   const lines = [
     '以下の Amazon KDP 電子書籍について、出版後に「売れる」状態へ持っていく',
@@ -113,6 +113,13 @@ function buildUserMessage(input: PromotionInput): string {
       input.playbook_guidance,
     );
   }
+  if (input.character_sheet) {
+    lines.push(
+      '',
+      '【キャラクター設定(promo_copy の書き手の人柄。x_posts/note_article/blog_outline に自然に滲ませる)】',
+      input.character_sheet,
+    );
+  }
   lines.push(
     '',
     '【求める内容】',
@@ -132,6 +139,16 @@ function buildUserMessage(input: PromotionInput): string {
     '   「この本を読んで良かった点・どんな人に薦めたいか」を紹介する体裁にする。書き出しで著者を',
     '   名乗らず、本の要点と読者ベネフィットを軸に、最後に購入導線を添える。',
     ' - ongoing_calendar: 出版後に継続すべき施策を when 付きで。',
+  );
+  if (input.character_sheet) {
+    lines.push(
+      ' - x_posts/note_article/blog_outline は上記キャラクター設定の人柄が伝わる要素(口癖・日常の一コマ・' +
+        '率直な感情のいずれか)を最低1つ自然に添える。ただし主役は本の魅力と購入導線で、自分語りは全体の' +
+        '2〜3割まで(x_posts は短いため一言添える程度でよい)。「事実の扱い」の禁止事項(価格/URL/セール/' +
+        '未確定実績)は自分語り部分でも破らない。',
+    );
+  }
+  lines.push(
     '',
     '指定された JSON スキーマに厳密に従って構造化出力してください。日本語で。',
     '重要: 配列・オブジェクトのフィールド(pricing / promo_copy / x_posts / *_actions / *_checklist / *_calendar)は',

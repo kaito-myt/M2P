@@ -209,10 +209,24 @@ export async function runPipelineNoteJudge(
     let phase: string;
     let nextJobId: string | null = null;
 
+    // F-ANP-16 (docs/11 申し送り8): note の本人確認(KYC)が未完了のため有料記事は公開できない。
+    // 判定が確定するタイミング(ready / needs_human_review の終端状態)では `paid` を必ず false へ
+    // 強制し、judge の提案があれば `price_jpy` に「提案価格」として保存する(UIで「提案: 有料 ¥xxx」
+    // と表示するための下準備。KYC完了後に有料化する際の初期値になる)。paywall_line_pos も同時に
+    // クリアする — paid=false のまま残すと `buildNoteBlocks` が有料エリア以降の本文を publish 時に
+    // 破棄してしまう(内容欠落)ため。
+    const finalPricing = resolveFinalPricing(article, judged);
+
     if (judged.score_total >= NOTE_JUDGE_PASS_THRESHOLD) {
       await prisma.noteArticle.update({
         where: { id: noteArticleId },
-        data: { quality_score: judged.score_total, status: 'ready' },
+        data: {
+          quality_score: judged.score_total,
+          status: 'ready',
+          paid: false,
+          price_jpy: finalPricing.price_jpy,
+          paywall_line_pos: null,
+        },
       });
       phase = 'ready';
       log.info(
@@ -269,7 +283,13 @@ export async function runPipelineNoteJudge(
     } else {
       await prisma.noteArticle.update({
         where: { id: noteArticleId },
-        data: { quality_score: judged.score_total, status: 'needs_human_review' },
+        data: {
+          quality_score: judged.score_total,
+          status: 'needs_human_review',
+          paid: false,
+          price_jpy: finalPricing.price_jpy,
+          paywall_line_pos: null,
+        },
       });
       phase = 'needs_human_review';
       log.warn(
@@ -312,6 +332,20 @@ export async function runPipelineNoteJudge(
       );
     }
   }
+}
+
+/**
+ * F-ANP-16: judge の有料化提案から「保存する price_jpy」を決める。
+ * 有料化を推奨しない(false)場合は null にクリアする — theme 生成時点の推奨が残っていても、
+ * 最終コンテンツを見た judge の判断を優先する。
+ */
+function resolveFinalPricing(
+  article: { paid: boolean; price_jpy: number | null },
+  judged: NoteJudgeOutput,
+): { price_jpy: number | null } {
+  const recommendPaid = judged.recommend_paid ?? article.paid;
+  if (!recommendPaid) return { price_jpy: null };
+  return { price_jpy: judged.suggested_price_jpy ?? article.price_jpy ?? null };
 }
 
 function toFeedbackItems(output: NoteJudgeOutput): string[] {

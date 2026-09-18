@@ -26,6 +26,7 @@ import {
 import type { LoggingContext, WithTokenLoggingDeps } from '../lib/with-token-logging.js';
 import type { LoadModelAssignmentDeps } from '../lib/load-model-assignment.js';
 import { generateImage as defaultGenerateImage, type GenerateImageFn } from '../tools/image-gen.js';
+import { withPersonaVisualRules } from '../lib/persona-visual.js';
 
 // リッチな日本語プロファイル(柱+画像プロンプト2本)は 3072 では途中切れし
 // generateObject が "No object generated" になるため十分に確保する。
@@ -152,6 +153,8 @@ export function buildSnsStrategistUserMessage(
     '  TikTok=フック優先の短尺, note=SEO長文, blog=内部リンク/回遊)。2〜8個。',
     '- avatar_prompt / banner_prompt: gpt-image-1 用の英語または日本語プロンプト。**画像に文字・ロゴ・',
     '  数字を一切入れない**前提で、世界観・色・被写体・雰囲気を具体的に。avatar は正方形、banner は横長。',
+    '  人物を描く場合は**実在の人物を撮影した実写写真(イラスト/アニメ調は不可)・顔を映さず首から下のみ**のカットにすること（顔出しリスク回避と「実際に人が運用している」印象のため。システム側でも',
+    '  強制するが、プロンプト自体もそのように設計する）。',
     '- 誇張せず、在庫と読者に接地した現実的な設計にする。',
   ];
   return lines.filter((l) => l !== '').join('\n');
@@ -188,14 +191,14 @@ export async function generateStrategyImages(
   const gen = deps.generateImage ?? defaultGenerateImage;
 
   const avatarRes = await gen({
-    prompt: `${profile.avatar_prompt}${NO_TEXT_GUARD}`,
+    prompt: withPersonaVisualRules(`${profile.avatar_prompt}${NO_TEXT_GUARD}`),
     width: 1024,
     height: 1024,
     quality: 'medium',
     outputFormat: 'png',
   });
   const bannerRes = await gen({
-    prompt: `${profile.banner_prompt}${NO_TEXT_GUARD}`,
+    prompt: withPersonaVisualRules(`${profile.banner_prompt}${NO_TEXT_GUARD}`),
     width: 1536,
     height: 1024,
     quality: 'medium',
