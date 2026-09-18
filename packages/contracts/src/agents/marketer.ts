@@ -65,6 +65,12 @@ function looseNumber(v: unknown): unknown {
   }
   return v;
 }
+/** 任意の文字列フィールド用: LLM が null / 空文字を返す揺れを undefined に倒す (2026-09-18: competitors[].asin/author が null で全滅)。 */
+function optionalText(v: unknown): unknown {
+  if (v === null || v === undefined) return undefined;
+  if (typeof v === 'string' && v.trim().length === 0) return undefined;
+  return typeof v === 'number' ? String(v) : v;
+}
 /** 必須の整数フィールド用: 文字列は数値化し、小数は四捨五入。読めなければそのまま渡して zod に弾かせる。 */
 function looseInt(v: unknown): unknown {
   const n = looseNumber(v);
@@ -72,13 +78,13 @@ function looseInt(v: unknown): unknown {
 }
 
 export const ThemeCompetitorSchema = z.object({
-  asin: z.string().optional(),
+  asin: z.preprocess(optionalText, z.string().optional()),
   title: z.string(),
-  author: z.string().optional(),
-  url: z.string().optional(),
+  author: z.preprocess(optionalText, z.string().optional()),
+  url: z.preprocess(optionalText, z.string().optional()),
   rank: z.preprocess(looseNumber, z.number().optional()),
-  review_summary: z.string().optional(),
-  note: z.string().optional(),
+  review_summary: z.preprocess(optionalText, z.string().optional()),
+  note: z.preprocess(optionalText, z.string().optional()),
 });
 export type ThemeCompetitor = z.infer<typeof ThemeCompetitorSchema>;
 
@@ -117,16 +123,16 @@ export const ThemeSignalsSchema = z.object({
     .array(
       z.object({
         title: z.string().max(300),
-        /** ランキング順位 (観測できた場合)。 */
-        rank: z.number().optional(),
-        /** 補足 (カテゴリ/レビュー数/価格帯 等)。 */
-        note: z.string().max(300).optional(),
+        /** ランキング順位 (観測できた場合)。"12位" 等の文字列も数値化。 */
+        rank: z.preprocess(looseNumber, z.number().optional()),
+        /** 補足 (カテゴリ/レビュー数/価格帯 等)。null は欠落扱い。 */
+        note: z.preprocess(optionalText, z.string().max(300).optional()),
       }),
     )
     .max(10)
     .default([]),
   /** 運営者向けの推薦コメント (なぜ売れる/避けるべきか)。 */
-  recommendation: z.string().max(600).optional(),
+  recommendation: z.preprocess(optionalText, z.string().max(600).optional()),
 });
 export type ThemeSignals = z.infer<typeof ThemeSignalsSchema>;
 
@@ -137,7 +143,7 @@ export type ThemeSignals = z.infer<typeof ThemeSignalsSchema>;
  */
 export const ThemeCandidateSchema = z.object({
   title: z.string().min(1).max(200),
-  subtitle: z.string().min(1).max(200).optional(),
+  subtitle: z.preprocess(optionalText, z.string().min(1).max(200).optional()),
   /** 差別化要素 / フック (docs/05 §6.3.1)。F-001: 「差別化要素」。 */
   hook: z.string().min(1).max(800),
   /** 想定読者 (docs/05 §6.3.1)。F-001: 「想定読者」。 */

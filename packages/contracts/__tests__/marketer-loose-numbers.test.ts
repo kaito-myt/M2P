@@ -34,6 +34,14 @@ describe('marketer schemas — 数値フィールドの寛容パース', () => {
     expect(ThemeSignalsSchema.safeParse({ ...base, market_score: 'high' }).success).toBe(false);
   });
 
+  it('competitors の asin/author が null、bestseller_evidence.rank が文字列でも通る (2026-09-18 回帰)', () => {
+    const c = ThemeCompetitorSchema.parse({ title: 'A', asin: null, author: null, url: '', note: null });
+    expect(c.asin).toBeUndefined(); expect(c.author).toBeUndefined(); expect(c.url).toBeUndefined();
+    const sig = ThemeSignalsSchema.parse({ reasoning: 'r', market_score: 70, bestseller_evidence: [{ title: 'B', rank: '12位', note: null }], recommendation: null });
+    expect(sig.bestseller_evidence[0]?.rank).toBe(12);
+    expect(sig.recommendation).toBeUndefined();
+  });
+
   it('Marketer 出力全体: rank が文字列でも候補が通る (回帰)', () => {
     const out = MarketerThemeOutputSchema.safeParse({
       candidates: [

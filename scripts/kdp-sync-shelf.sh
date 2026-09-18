@@ -18,7 +18,8 @@ const { Client } = createRequire(path.join('C:/DEV/M2P','package.json'))(path.jo
   let n = 0;
   for (const b of live) {
     let r = await c.query("update books set publish_status='published', updated_at=now() where asin=$1 and publish_status<>'published'", [b.asin]);
-    if (!r.rowCount) r = await c.query("update books set publish_status='published', asin=coalesce(asin,$2), updated_at=now() where title=$1 and publish_status in ('submitted','unlisted')", [b.title, b.asin]);
+    // 2026-09-18: 同題の別レコードが既に同じ ASIN を持つと books_asin_key で落ちる → ASIN 未使用のときだけタイトル一致で更新
+    if (!r.rowCount) r = await c.query("update books set publish_status='published', asin=coalesce(asin,$2), updated_at=now(), kdp_publish_queued=false, kdp_publish_queued_at=null where title=$1 and publish_status in ('submitted','unlisted') and not exists (select 1 from books b2 where b2.asin=$2 and b2.id<>books.id)", [b.title, b.asin]);
     n += r.rowCount;
   }
   console.log('本棚 販売中', live.length, '冊 / DB を published に更新', n, '冊');
