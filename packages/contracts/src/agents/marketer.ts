@@ -48,12 +48,35 @@ export type MarketerThemeInput = z.infer<typeof MarketerThemeInputSchema>;
  * 参考競合書籍 — docs/05 §6.3.1 既定形状 (asin/title/url + rank/review_summary)。
  * F-001 受入基準: 各候補に 1 件以上の URL を持つことが望ましい (空配列許容、警告は呼出側)。
  */
+/**
+ * LLM が数値フィールドを "1位" / "#3" / "約1,200" / "12,000件" のような文字列で返す揺れを吸収する
+ * (2026-09-16〜17 に `competitors[].rank` が文字列で返り、日次テーマ生成が 2 晩連続で
+ * `marketer.theme.invalid_output: schema validation failed` になった)。数値に読めなければ undefined
+ * (= 任意項目として欠落扱い)。null/空文字も undefined に倒す。
+ */
+function looseNumber(v: unknown): unknown {
+  if (v === null || v === undefined) return undefined;
+  if (typeof v === 'number') return Number.isFinite(v) ? v : undefined;
+  if (typeof v === 'string') {
+    const m = v.replace(/,/g, '').match(/-?\d+(?:\.\d+)?/);
+    if (!m) return undefined;
+    const n = Number(m[0]);
+    return Number.isFinite(n) ? n : undefined;
+  }
+  return v;
+}
+/** 必須の整数フィールド用: 文字列は数値化し、小数は四捨五入。読めなければそのまま渡して zod に弾かせる。 */
+function looseInt(v: unknown): unknown {
+  const n = looseNumber(v);
+  return typeof n === 'number' ? Math.round(n) : v;
+}
+
 export const ThemeCompetitorSchema = z.object({
   asin: z.string().optional(),
   title: z.string(),
   author: z.string().optional(),
   url: z.string().optional(),
-  rank: z.number().optional(),
+  rank: z.preprocess(looseNumber, z.number().optional()),
   review_summary: z.string().optional(),
   note: z.string().optional(),
 });
@@ -68,15 +91,17 @@ export const ThemeSignalsSchema = z.object({
   /** Marketer が候補選定に至った根拠 (F-001: 想定売上シグナル)。 */
   reasoning: z.string().min(1).max(1000),
   /** 市場性スコア 0-100 (UI で並べ替えに使用)。 */
-  market_score: z.number().int().min(0).max(100),
+  market_score: z.preprocess(looseInt, z.number().int().min(0).max(100)),
+
   /** 想定章数 (F-003 への申し送り、3-20)。 */
-  predicted_chapters: z.number().int().min(3).max(20).default(8),
+  predicted_chapters: z.preprocess((v) => (v === undefined || v === null ? undefined : looseInt(v)), z.number().int().min(3).max(20).default(8)),
+
   /** Marketer が想定する検索キーワード (KDP メタデータ生成 F-040 へ流用)。 */
   search_keywords: z.array(z.string()).max(10).default([]),
   /** docs/05 既定: 概算検索ボリューム (任意)。 */
-  search_volume: z.number().optional(),
+  search_volume: z.preprocess(looseNumber, z.number().optional()),
   /** docs/05 既定: 競合ランク推定 (任意)。 */
-  rank_estimate: z.number().optional(),
+  rank_estimate: z.preprocess(looseNumber, z.number().optional()),
   /** docs/05 既定: web_search で参照した URL リスト (任意)。 */
   sources: z.array(z.string()).default([]),
   // --- F-001b: Amazon 売れ筋レコメンド (signals_json に格納、DB 変更不要) ---

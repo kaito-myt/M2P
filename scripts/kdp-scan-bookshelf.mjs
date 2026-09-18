@@ -56,7 +56,9 @@ async function main() {
     await page.waitForTimeout(1200);
   }
   // 各 listing 行を editkindledetails リンク基点で収集。
-  const rows = await page.evaluate(() => {
+  // 2026-09-18: 表示件数の最大が 50 のため 1 頁では収まらない(本番 80 冊超)。
+  // 「次のページ」を辿って全頁を収集する (READ-ONLY)。
+  const collectPage = () => page.evaluate(() => {
     const out = [];
     const seen = new Set();
     const links = [...document.querySelectorAll('a[href*="editkindledetails"], a[href*="title-setup"]')];
@@ -103,6 +105,39 @@ async function main() {
     }
     return out;
   });
+  const clickNextPage = () => page.evaluate(() => {
+    const cands = [
+      ...document.querySelectorAll('li.a-last a, a[aria-label*="次"], button[aria-label*="次"], a[aria-label*="Next" i], button[aria-label*="Next" i], [data-testid*="next" i], a[title*="次"], button[title*="次"]'),
+    ];
+    const byText = [...document.querySelectorAll('a, button')].filter((el) => /^(次へ|次のページ|次|Next|›|»|>)$/.test((el.textContent || '').replace(/\s+/g, '')));
+    const all = [...cands, ...byText];
+    for (const el of all) {
+      const disabled = el.getAttribute('aria-disabled') === 'true' || el.hasAttribute('disabled') || /a-disabled|disabled/.test(el.className || '') || /a-disabled|disabled/.test(el.parentElement?.className || '');
+      if (disabled) continue;
+      el.scrollIntoView({ block: 'center' });
+      el.click();
+      return (el.getAttribute('aria-label') || el.textContent || el.className || 'next').replace(/\s+/g, ' ').trim().slice(0, 40);
+    }
+    // 見つからない場合は偵察用にページネーションらしき要素を返す
+    const hints = [...document.querySelectorAll('nav, ul, div')]
+      .filter((el) => /ページ|page|pagination/i.test(el.className + ' ' + (el.getAttribute('aria-label') || '') + ' ' + el.id))
+      .slice(0, 4)
+      .map((el) => el.outerHTML.replace(/\s+/g, ' ').slice(0, 300));
+    return hints.length ? 'NONE ' + hints.join(' || ') : null;
+  });
+  const rows = [];
+  const seenIds = new Set();
+  const pushRows = (list) => { let added = 0; for (const r of list) { if (seenIds.has(r.editId)) continue; seenIds.add(r.editId); rows.push(r); added++; } return added; };
+  pushRows(await collectPage());
+  for (let pageNo = 2; pageNo <= 12; pageNo++) {
+    const clicked = await clickNextPage().catch(() => null);
+    if (!clicked || clicked.startsWith('NONE')) { if (clicked) console.log('次ページ制御が見つからない:', clicked.slice(0, 400)); break; }
+    await page.waitForTimeout(6000);
+    for (let i = 0; i < 6; i++) { await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight)).catch(() => {}); await page.waitForTimeout(800); }
+    const added = pushRows(await collectPage());
+    console.log(`頁 ${pageNo}: +${added} 件 (via ${clicked})`);
+    if (added === 0) break;
+  }
   console.log(`=== 本棚 listing 総数: ${rows.length}（各詳細ページから実タイトル取得中…） ===`);
   // 一覧はタイトルを出さないので、各詳細ページ #data-title から実タイトルを読む(READ-ONLY)。
   const EDIT_BASE = 'https://kdp.amazon.co.jp/ja_JP/title-setup/kindle/';
