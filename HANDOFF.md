@@ -43,7 +43,13 @@
   別アカウントで運用するなら note で新アカウントを作り `scripts/anp/note-session-capture.sh <note_account_id>` でセッション取込が必要。
   → **運営者決定 (9/18 午後): note は別アカウントを新規作成する**。それまで `note-acc-1` は `status=paused`（日次生成/自動公開の対象外）にし、
   読書ペルソナの X/IG に積まれていた AI 副業記事の告知 2 件は canceled にした。「どんなアカウントにするか」を ANP 上で設計する機能
-  （brief→AI 設計→編集/承認→アカウント作成→note 手作業チェックリスト→セッション取込）を実装中/済（下記参照）。
+  （brief→AI 設計→編集/承認→アカウント作成→note 手作業チェックリスト→セッション取込）を **実装・デプロイ済み（9/18 13:56）**。
+  使い方: ANP `/accounts/design` で「やりたいこと」等の brief を入力→「設計を生成」（worker `note.account.design`, role `anp.strategist`）→
+  `/accounts/design/<id>` で表示名/ID 候補の選択・各項目の編集・「画像を生成」（アイコン/ヘッダー, 人物型は実写・首から下ルール）・
+  「フィードバックして再生成」→「この設計でアカウントを作成」で `note_accounts` に `status=pending_session` で登録され、note.com 側の
+  手作業チェックリスト（表示名/ID/プロフィール文のコピー、画像ダウンロード）が出る。note でアカウントを作ったら
+  `bash scripts/anp/note-session-capture.sh <note_account_id>` でセッション取込 → 自動で `active` になり、翌朝から日次生成→公開が回る。
+  DB: `note_account_designs`（migration 20260919000000 適用済）、seed で `anp.strategist` prompt/model_assignment 投入済。
 - 実装（F-ANP-16/17/31、needs_human_review UI、handle 編集/自動保存）: 日次自動テーマ生成 `note.theme.auto`（AppSettings
   `anp_auto_theme_enabled` / `anp_themes_per_day` / `anp_theme_cron`(既定 JST 08:00) / `anp_autopass_enabled`、migration
   `20260918000000_anp_theme_auto` は本番に raw SQL 適用済み）、判定時の有料化提案（`paid` は KYC 未完了のため常に false、`price_jpy` に提案のみ）、

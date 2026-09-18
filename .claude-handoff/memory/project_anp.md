@@ -13,7 +13,9 @@ metadata:
 
 **⚠️ アカウント**: `note-acc-1`「AI副業ラボ」は暫定共有セッション＝実体は A2P 販促ペルソナ「良い本を読む習慣」(handle `goodbooks_intro`) の note アカウント。AI 副業記事が読書ペルソナに出る。分離するなら note 新アカウント作成→`scripts/anp/note-session-capture.sh <note_account_id>`。
 
-**残 (人手)**: note 本人情報登録(KYC)→有料記事化（judge は `price_jpy` に提案のみ保存、`paid` は常に false）、検証用下書き 5 件の削除 (n6845533ebcf7 / n9c510facf4dc / n1d09eea651e3 / ne071421d3e1d / n800cf6101fa9)、メンバーシップ計測の実データ検証、TikTok 連動 (Phase 4)。
+**アカウント分離 (2026-09-18 午後)**: 運営者は note を別アカウントで運用する方針 → `note-acc-1` は `status=paused`。ANP に「アカウント設計」機能を追加 (`/accounts/design`: brief→`anp.strategist` が表示名/ID候補・bio・柱・収益方針・初回テーマ・KPI・画像プロンプトを設計→編集/承認→`note_accounts` に `pending_session` で作成→note 手作業チェックリスト→`note-session-capture.sh` で active 化)。テーブル `note_account_designs`、タスク `note.account.design` / `note.account.visuals`。
+
+**残 (人手)**: note で新アカウント作成＋セッション取込（設計機能の出力に従う）、 note 本人情報登録(KYC)→有料記事化（judge は `price_jpy` に提案のみ保存、`paid` は常に false）、検証用下書き 5 件の削除 (n6845533ebcf7 / n9c510facf4dc / n1d09eea651e3 / ne071421d3e1d / n800cf6101fa9)、メンバーシップ計測の実データ検証、TikTok 連動 (Phase 4)。
 
 **罠**: `note.theme.generate` は `job_id` 必須。judge の `score_total` は breakdown 平均で再計算。本番 `_prisma_migrations` は壊れているので DB 変更は raw SQL 適用（`20260918000000_anp_theme_auto` は適用済）。
 
