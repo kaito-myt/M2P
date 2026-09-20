@@ -18,8 +18,24 @@ function isActivePath(pathname: string, href: string): boolean {
   return pathname === href || pathname.startsWith(`${href}/`);
 }
 
+/**
+ * 現在パスに最も長くマッチする href だけを active にする。`/accounts` と `/accounts/design` の
+ * ように親子関係のナビ項目があるため、単純な前方一致だと両方が点灯してしまう。
+ */
+function resolveActiveHref(pathname: string): string | null {
+  let best: string | null = null;
+  for (const section of navSections) {
+    for (const item of section.items) {
+      if (!item.enabled || !isActivePath(pathname, item.href)) continue;
+      if (best === null || item.href.length > best.length) best = item.href;
+    }
+  }
+  return best;
+}
+
 export function SidebarNav({ onNavigate }: { onNavigate?: () => void }) {
   const pathname = usePathname() ?? '';
+  const activeHref = resolveActiveHref(pathname);
 
   return (
     <nav className="scrollbar-none flex-1 overflow-y-auto px-3 py-space-loose">
@@ -30,7 +46,7 @@ export function SidebarNav({ onNavigate }: { onNavigate?: () => void }) {
           </div>
           <ul className="space-y-0.5">
             {section.items.map((item) => {
-              const active = item.enabled && isActivePath(pathname, item.href);
+              const active = item.enabled && item.href === activeHref;
               return (
                 <li key={item.key}>
                   <Link
