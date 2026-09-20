@@ -62,6 +62,12 @@ ANP のアカウント戦略を AI に相談しながら策定）を実施。mai
 - DB: `note_account_consultations` / `note_account_consultation_messages`、`note_account_designs.consultation_id`
   （migration `20260921000000_anp_account_consult` 適用済）。設計 = docs/11 §3.1 F-ANP-04 / §6 / §7 Phase 6。
 
+### デプロイ結果（2026-09-21 01:08 JST）
+- A2P-Worker 00:56 / A2P 01:00 / ANP 01:05 いずれも SUCCESS（`railway up --detach` → `deployment list` で確認）。worker ログの task 一覧に
+  `note.account.consult` / `promotion.note.article.video` / `ads.spend.fetch` が登録済み、cronJobs=36。デプロイ時に実行中ジョブは 0 で孤児なし。
+- 本番 URL 疎通: `anp.m2p.tools/`・`/accounts/design/consult`・`a2p.m2p.tools/ads` は未ログインで 307→/login、`/anp-logo.png` `/anp-mark.png`
+  `/icon.png` は 200。
+
 ### DB マイグレーション履歴の整合
 - 本番 `_prisma_migrations` に未記録だった 20260915/0918/0919 と今日の 3 本を `prisma migrate resolve --applied` で記録。
   `migrate status` ではまだ 8 月〜9/9 の数本（20260826120000_ad_spend 〜 20260909000000_bw_retag）が未記録のまま
