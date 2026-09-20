@@ -28,7 +28,7 @@
 - [Content=良書紹介](project_growth_autonomy.md) — content_creator v3で全投稿を実在良書紹介化(F-080); 原因はfew-shot例がtipsだった→全チャンネルexample_post書換で解決。
 - [Video pipeline](project_video_pipeline.md) — TikTok/IGリール動画; Veo3.1ハイブリッド(冒頭フックのみ実写級)＋IGリール流用(F-084); 投稿はZernio経由。
 - [Platform portal](project_platform_portal.md) — A2Pはプラットフォーム第1ツール; apps/portal(共通ログイン+ツール選択ハブ)＋packages/auth(共有認証)＋SSO実装済(2026-08-20); フォルダC:\DEV\M2Pリネーム済; A2P→ポータル戻り導線はNEXT_PUBLIC_PORTAL_URL設定時のみ点灯(portal本番未デプロイ); 設計=docs/10。
-- [ANP (note tool)](project_anp.md) — note自動出版; 2026-09-18 無人運転ON(日次テーマ→執筆→判定→無料公開→告知)、初実公開済 goodbooks_intro; 残=KYC/有料化・TikTok・共有セッション分離。
+- [ANP (note tool)](project_anp.md) — note自動出版; 2026-09-18 無人運転ON、2026-09-21 AI相談(F-ANP-04 チャット壁打ち+Tavily)・サイドバー・新ロゴ; 残=KYC/有料化・TikTok・新noteアカウント作成。
 - [Pipeline stuck books](reference_pipeline_stuck_books.md) — 停止/滞留診断: 未投入ジョブ(graphile_job_id=null)・status不整合・ジャンル全件practical(theme生成がアカウント既定を刻印)＋復旧手順。
 - [Home dashboard](project_home_dashboard.md) — ホームS-002を実データRSC接続の経営ミッションコントロールへ全面再実装(2026-08-20出荷); 当月純利益ヒーロー中心; docs/04 §S-002・F-088。
 - [OpenAI fallback playbook](project_temp_openai_reroute.md) — Anthropic停止時に仕上げ工程だけgpt-5へ一時切替する手順(reroute-openai.cjs/revert-anthropic.cjs, 2026-09-01実施→同日完全復元済)。実測: editor¥16(vs¥68)/judge¥44(vs¥280)だが採点が甘い; readingsはgpt-5不可; 継続性欠陥は本文走査(namecheck/contcheck)で確認。

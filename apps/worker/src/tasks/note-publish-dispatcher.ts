@@ -17,6 +17,7 @@ import type { JobHelpers, Task } from 'graphile-worker';
 import { createLogger, type Logger } from '@a2p/contracts/logger';
 import { prisma as defaultPrisma } from '@a2p/db';
 
+import { resolveAutoPublishEnabled } from './lib/note-account-settings.js';
 import type { AddJobLike } from './sales-fetch-dispatcher.js';
 
 export const NOTE_PUBLISH_DISPATCHER_TASK_NAME = 'note.publish.dispatch';
@@ -33,9 +34,9 @@ export interface NotePublishDispatcherPrisma {
   noteAccount: {
     findMany(args: {
       where: { status: string };
-      select: { id: true };
+      select: { id: true; settings_json?: true };
       orderBy: { created_at: 'asc' };
-    }): Promise<Array<{ id: string }>>;
+    }): Promise<Array<{ id: string; settings_json?: unknown }>>;
   };
   noteArticle: {
     findFirst(args: {
@@ -81,13 +82,17 @@ export async function runNotePublishDispatcher(
 
   const accounts = await db.noteAccount.findMany({
     where: { status: 'active' },
-    select: { id: true },
+    select: { id: true, settings_json: true },
     orderBy: { created_at: 'asc' },
   });
 
   const articleIds: string[] = [];
   for (const account of accounts) {
     if (articleIds.length >= MAX_PER_TICK) break;
+    // [F-ANP-17] アカウント別設定でグローバル既定値(=ここでは確定 true)を上書きできる
+    // (未指定はグローバルに従う=true のまま)。グローバル OFF の間はこの関数自体が
+    // 早期 return するため、有効化できるのは「特定アカウントだけ OFF にする」方向のみ。
+    if (!resolveAutoPublishEnabled(account.settings_json, true)) continue;
     const article = await db.noteArticle.findFirst({
       where: { note_account_id: account.id, status: 'ready', publish_status: 'draft', paid: false },
       select: { id: true },

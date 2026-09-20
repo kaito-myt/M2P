@@ -5,9 +5,11 @@ import Link from 'next/link';
 import { notFound } from 'next/navigation';
 
 import { prisma } from '@a2p/db';
+import { parseNoteAccountSettings } from '@a2p/contracts/agents/anp';
 
 import { messages } from '@/lib/messages';
 
+import { AccountSettingsForm } from './account-settings-form';
 import { ArticleReviewActions } from './article-review-actions';
 import { GenerateThemesButton } from './generate-themes-button';
 import { HandleForm } from './handle-form';
@@ -31,11 +33,13 @@ export default async function AccountDetailPage({
       tone: true,
       status: true,
       handle: true,
+      settings_json: true,
     },
   });
   if (!account) notFound();
+  const accountSettings = parseNoteAccountSettings(account.settings_json);
 
-  const [themes, articles, appSettings] = await Promise.all([
+  const [themes, articles, appSettings, pendingReauth] = await Promise.all([
     prisma.noteTheme.findMany({
       where: { note_account_id: id },
       orderBy: { created_at: 'desc' },
@@ -65,11 +69,16 @@ export default async function AccountDetailPage({
       },
     }),
     prisma.appSettings.findUnique({ where: { id: 'singleton' }, select: { anp_publish_dry_run: true } }),
+    prisma.noteAuthRequest.findFirst({
+      where: { note_account_id: id, purpose: 'session_expired', status: 'pending' },
+      select: { id: true },
+    }),
   ]);
   const globalDryRunEnabled = appSettings?.anp_publish_dry_run ?? true;
+  const needsReauth = account.status === 'paused' || !!pendingReauth;
 
   return (
-    <div className="mx-auto flex min-h-screen max-w-4xl flex-col px-space-relaxed py-space-loose">
+    <div className="mx-auto flex max-w-4xl flex-col">
       <Link href="/accounts" className="text-caption text-muted no-underline hover:underline">
         {messages.accountDetail.back}
       </Link>
@@ -82,11 +91,24 @@ export default async function AccountDetailPage({
           {account.tone ? ` ／ トーン: ${account.tone}` : ''}
         </p>
         <HandleForm noteAccountId={account.id} initialHandle={account.handle} />
+        {needsReauth && (
+          <div className="mt-2 rounded-card border border-destructive-bg bg-destructive-bg px-3 py-2">
+            <p className="text-caption font-medium text-destructive">{messages.accounts.reauthNeeded}</p>
+            <p className="mt-0.5 text-caption text-destructive">{messages.accounts.reauthNeededDescription}</p>
+            <code className="mt-1 block text-caption text-destructive">
+              {messages.accounts.reauthCommand(account.id)}
+            </code>
+          </div>
+        )}
       </header>
 
       <section className="mt-space-loose">
+        <AccountSettingsForm noteAccountId={account.id} initial={accountSettings} />
+      </section>
+
+      <section className="mt-space-loose">
         <div className="flex items-center justify-between gap-2">
-          <h2 className="text-card-title font-medium text-charcoal">{messages.accountDetail.themesTitle}</h2>
+          <h2 className="text-section-title text-charcoal">{messages.accountDetail.themesTitle}</h2>
           <GenerateThemesButton noteAccountId={account.id} />
         </div>
         {themes.length === 0 ? (
@@ -101,7 +123,7 @@ export default async function AccountDetailPage({
       </section>
 
       <section className="mt-space-loose">
-        <h2 className="text-card-title font-medium text-charcoal">{messages.accountDetail.articlesTitle}</h2>
+        <h2 className="text-section-title text-charcoal">{messages.accountDetail.articlesTitle}</h2>
         {articles.length === 0 ? (
           <p className="mt-2 text-body text-muted">{messages.accountDetail.articlesEmpty}</p>
         ) : (
@@ -121,7 +143,12 @@ export default async function AccountDetailPage({
                   className="flex items-start justify-between gap-2 rounded-container border border-border-warm bg-cream-light p-space-relaxed"
                 >
                   <div>
-                    <p className="text-body font-medium text-charcoal">{a.title}</p>
+                    <Link
+                      href={`/articles/${a.id}`}
+                      className="text-body font-medium text-charcoal no-underline hover:underline"
+                    >
+                      {a.title}
+                    </Link>
                     <p className="text-caption text-muted">
                       {a.paid
                         ? `有料 ${a.price_jpy ? `¥${a.price_jpy.toLocaleString('ja-JP')}` : ''}`
@@ -158,3 +185,7 @@ export default async function AccountDetailPage({
     </div>
   );
 }
+
+// Railway のビルド時に静的プリレンダリングで DB (postgres.railway.internal) へ接続しようとして失敗する
+// (2026-09-15 以降の ANP デプロイが全て FAILED だった原因)。DB を読むページは常に動的レンダリングにする。
+export const dynamic = 'force-dynamic';

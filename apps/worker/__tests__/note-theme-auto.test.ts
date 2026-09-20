@@ -29,6 +29,7 @@ interface AccountRow {
   niche: string;
   target_reader: string | null;
   tone: string | null;
+  settings_json?: unknown;
 }
 
 function buildPrisma(args: {
@@ -240,5 +241,28 @@ describe('runNoteThemeAuto — anp_autopass_enabled ON', () => {
     // 失敗アカウント分の Job は failed に降格される
     const failedJobUpdate = captures.jobUpdates.find((u) => u.data.status === 'failed');
     expect(failedJobUpdate).toBeDefined();
+  });
+
+  it('F-ANP-17: アカウント別 settings_json.auto_theme_enabled=false のアカウントはスキップする', async () => {
+    const { prisma, captures } = buildPrisma({
+      appSettings: { anp_auto_theme_enabled: true, anp_themes_per_day: 1, anp_autopass_enabled: true },
+      accounts: [
+        { id: 'acc_off', niche: 'オフ', target_reader: null, tone: null, settings_json: { auto_theme_enabled: false } },
+        { id: 'acc_on', niche: 'オン', target_reader: null, tone: null },
+      ],
+    });
+    const generateThemes = vi.fn(async () => makeCandidates(1));
+    const addJob: AddJobLike = vi.fn();
+
+    const result = await runNoteThemeAuto({ prisma, logger: makeLogger(), generateThemes, addJob });
+
+    expect(generateThemes).toHaveBeenCalledOnce();
+    expect(generateThemes).toHaveBeenCalledWith(expect.objectContaining({ note_account_id: 'acc_on' }));
+    expect(result.accounts_processed).toBe(2);
+    expect(result.accounts).toContainEqual({ note_account_id: 'acc_off', generated: 0, accepted: 0 });
+    const onResult = result.accounts.find((a) => a.note_account_id === 'acc_on');
+    expect(onResult).toEqual({ note_account_id: 'acc_on', generated: 1, accepted: 1 });
+    // acc_off 分は job.create 自体が呼ばれない(スキップ)。acc_on 分のみ (テーマ生成Job + outline Job = 2件)。
+    expect(captures.jobCreates).toHaveLength(2);
   });
 });

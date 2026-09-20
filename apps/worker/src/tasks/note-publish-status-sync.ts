@@ -13,6 +13,7 @@ import { decryptKdpCredentials } from '@a2p/crypto';
 import { prisma as defaultPrisma } from '@a2p/db';
 
 import { pushLine } from './lib/line-auth-relay.js';
+import { notifyNoteSessionExpired, type NoteAuthRelayPrisma } from './lib/note-auth-relay.js';
 import type { NotePublishPort } from './note-publish/playwright-note-publish-port.js';
 
 export const NOTE_PUBLISH_STATUS_SYNC_TASK_NAME = 'note.publish.status.sync';
@@ -43,6 +44,7 @@ export interface NotePublishStatusSyncPrisma {
     }): Promise<NoteArticleRow[]>;
     update(args: { where: { id: string }; data: { publish_status: string } }): Promise<unknown>;
   };
+  noteAuthRequest: NoteAuthRelayPrisma['noteAuthRequest'];
 }
 
 export interface NotePublishStatusSyncDeps {
@@ -100,9 +102,7 @@ export async function runNotePublishStatusSync(
         if (res.reason === 'not_logged_in') {
           log.warn({ accountId: account.id }, 'note セッション失効を検知 — アカウントを一時停止');
           await db.noteAccount.update({ where: { id: account.id }, data: { status: 'paused' } }).catch(() => {});
-          await notify(
-            `⚠️ ANP: note アカウント「${account.display_name}」のセッションが失効しました。ローカルで scripts/anp/note-session-capture.sh を再実行してください(自動公開/同期は一時停止)。`,
-          ).catch(() => {});
+          await notifyNoteSessionExpired(db, account.id, account.display_name, notify);
           break; // このアカウントの残り記事は次回以降に持ち越し
         }
         log.warn({ articleId: article.id, reason: res.reason, message: res.message }, 'ステータス取得失敗 — スキップ');

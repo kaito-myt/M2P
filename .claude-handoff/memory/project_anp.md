@@ -1,6 +1,6 @@
 ---
 name: project-anp
-description: M2P 第2ツール ANP (note 自動出版) — 2026-09-18 に無人運転 ON (日次テーマ→執筆→判定→無料公開→X/IG 告知)。初の実公開 URL と共有セッションの注意、残タスク (KYC/有料化, TikTok)
+description: M2P 第2ツール ANP (note 自動出版) — 2026-09-18 無人運転 ON、2026-09-21 AI 相談(F-ANP-04)＋サイドバー＋新ロゴ。初の実公開 URL と共有セッションの注意、残タスク (KYC/有料化, TikTok)
 metadata:
   type: project
 ---
@@ -15,8 +15,12 @@ metadata:
 
 **アカウント分離 (2026-09-18 午後)**: 運営者は note を別アカウントで運用する方針 → `note-acc-1` は `status=paused`。ANP に「アカウント設計」機能を追加 (`/accounts/design`: brief→`anp.strategist` が表示名/ID候補・bio・柱・収益方針・初回テーマ・KPI・画像プロンプトを設計→編集/承認→`note_accounts` に `pending_session` で作成→note 手作業チェックリスト→`note-session-capture.sh` で active 化)。テーブル `note_account_designs`、タスク `note.account.design` / `note.account.visuals`。
 
+**AI 相談 (F-ANP-04, 2026-09-21)**: 運営者要望「戦略策定時に AI に相談しながらリサーチ・策定したい」→ `/accounts/design/consult` にチャット壁打ち。role `anp.consultant`（Opus 4.7）、2 段階（リサーチ計画 JSON→Tavily→返答 JSON: reply/brief_draft/ready_to_design/suggested_questions）。worker `note.account.consult`（CEO 対話と同型の非同期＋2.5s ポーリング）。テーブル `note_account_consultations`/`..._messages`、`note_account_designs.consultation_id`。「この内容で設計案を生成」で草案→`note.account.design`。Tavily キー未設定なら検索無しで会話のみ。
+
+**ロゴ (2026-09-21)**: 運営者支給のワードマーク（A2P と同系ネイビー×ティール）に差し替え。`apps/portal/public/tools/anp.png`＝`apps/anp/public/anp-logo.png`（ワードマーク）、`apps/anp/public/anp-mark.png`（正方形マーク）、`apps/anp/app/icon.png`（favicon、旧 favicon.ico 削除）。`sharp` でトリム/切り出し。
+
 **残 (人手)**: note で新アカウント作成＋セッション取込（設計機能の出力に従う）、 note 本人情報登録(KYC)→有料記事化（judge は `price_jpy` に提案のみ保存、`paid` は常に false）、検証用下書き 5 件の削除 (n6845533ebcf7 / n9c510facf4dc / n1d09eea651e3 / ne071421d3e1d / n800cf6101fa9)、メンバーシップ計測の実データ検証、TikTok 連動 (Phase 4)。
 
-**罠**: `note.theme.generate` は `job_id` 必須。judge の `score_total` は breakdown 平均で再計算。本番 `_prisma_migrations` は壊れているので DB 変更は raw SQL 適用（`20260918000000_anp_theme_auto` は適用済）。
+**罠**: `note.theme.generate` は `job_id` 必須。judge の `score_total` は breakdown 平均で再計算。本番 DB 変更は raw SQL 適用→`prisma migrate resolve --applied <name>` で履歴整合（2026-09-21 に 20260915/0918/0919/0921 分を resolve 済、以後 `migrate deploy` が通る可能性あり・要確認）。
 
 関連: [[project-platform-portal]] [[project-sns-persona-visuals]]

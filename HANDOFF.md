@@ -1,4 +1,4 @@
-# A2P/M2P 作業引き継ぎ（2026-09-18 時点）
+# A2P/M2P 作業引き継ぎ（2026-09-21 時点）
 
 別端末で続きを作業するための現況・残タスク・発見した制約のまとめ。
 起動後はまず本書＋`CLAUDE.md`＋`.claude-handoff/memory/*.md` を読むこと。
@@ -14,6 +14,58 @@
 4. ブラウザ自動化のログイン状態（`scripts/.kdp-userdata`, `scripts/.note-userdata*`）は gitignore。
    KDP は初回 OTP 再認証（LINE リレー or `kdp_auth_requests` 行を手動 fulfilled）。
    BW/Kobo/note のセッションは DB（app_settings / promotion_channel_settings）に暗号化保存済みなので端末非依存。
+
+## 2026-09-21（本機）で実施したこと
+運営者の依頼 5 件（Amazon Ads のパフォーマンス/コスト取込 / ANP の仕上げ / ANP メニューをサイドバーに / ANP ロゴ差し替え /
+ANP のアカウント戦略を AI に相談しながら策定）を実施。main に push 済み・本番デプロイ済み（下記「デプロイ結果」参照）。
+週末の運用は正常: A2P テーマ自動生成は 9/19・9/20 とも 07:00 JST に成功（各 1 テーマ→書籍化）、失敗ジョブなし。
+
+### Amazon Ads — 広告パフォーマンス＋コスト取込（F-090 拡張, S-030 `/ads`）
+- 既存 `ads.spend.fetch`（日次 04:00 JST）を拡張: `spCampaigns`→`ad_campaign_stats`（キャンペーン別）、`spAdvertisedProduct`→
+  `ad_product_stats`（書籍/ASIN 別）、`POST /sp/campaigns/list` で名前/状態/日予算、SB/SD は best-effort、JPY 以外は `latest_fx_rate` で換算、
+  Reporting API の 31 日制限に対応する期間分割。migration `20260921000000_ad_campaign_product_stats` は本番へ raw SQL 適用済み。
+- A2P に **`/ads`（S-030）** 新設（サイドバー「分析 > 広告」）: 接続状態＋「今すぐ取得」、当月 KPI（広告費/広告経由売上/ROAS/ACOS/CTR/CPC…前月比）、
+  日次トレンド、キャンペーン別、書籍別（広告費 vs 印税）。期間 = 当月/先月/直近 30 日。
+- **運営者の手順（未実施、これをやらないと未接続のまま）**:
+  1. https://advertising.amazon.com/API/docs で LwA セキュリティプロファイルを作り Client ID/Secret を取得、Allowed Return URL に
+     `http://localhost:8787/callback` を追加。
+  2. ローカルで `node scripts/ads/amazon-ads-oauth.mjs --client-id=<ID> --client-secret=<SECRET>`（既定 region=fe/日本）。表示された
+     認可 URL をブラウザで承認 → スクリプトがコールバックを受けて refresh token とプロファイル一覧を表示（`scripts/ads/README.md`）。
+  3. 表示された 5 つの env（`AMAZON_ADS_CLIENT_ID / _CLIENT_SECRET / _REFRESH_TOKEN / _PROFILE_ID / _REGION`）を Railway の
+     `A2P-Worker` に設定して再デプロイ（`--railway-set` オプションでも可）。翌 04:00 JST か `/ads` の「今すぐ取得」で取り込まれる。
+  4. 初回実行後、SB/SD レポートが 403 か成功か、レポート列名が想定どおりかを確認（未検証のまま実装、docs/05 に明記）。
+
+### ANP — 仕上げ一括（F-ANP-17/21、記事一覧/詳細、ホーム KPI、TikTok、サイドバー、ロゴ）
+- **サイドバー・シェル**（A2P と同構造）: `apps/anp/app/(app)/layout.tsx` + `components/layout/{header,sidebar,sidebar-nav,mobile-nav,
+  user-menu,nav-items}`。ナビ = ホーム / note アカウント / アカウント設計 / 記事 / 設定。既存ページは route group `(app)` に移動（URL 不変）。
+- **ロゴ差し替え**（運営者支給 `ChatGPT Image 2026年9月21日 00_19_44.png`）: ワードマーク = `apps/portal/public/tools/anp.png` と
+  `apps/anp/public/anp-logo.png`（1200x437、余白トリム済）、正方形マーク = `apps/anp/public/anp-mark.png`（512、狭幅ヘッダー用）、
+  favicon = `apps/anp/app/icon.png`（旧 `favicon.ico` 削除）。ヘッダー（sm 以上はワードマーク、未満はマーク）とログイン画面に適用。
+- **アカウント別設定 (F-ANP-17)**: `note_accounts.settings_json`（auto_theme/themes_per_day/autopass/auto_publish/tiktok_enabled を
+  グローバル設定の上書きとして保持）。`/accounts/[id]` に設定フォーム。**注意**: グローバル OFF のときアカウント側 ON にしても cron 自体が
+  登録されないので動かない（アカウント側は「OFF にする」用途）。
+- **セッション期限切れリレー (F-ANP-21)**: `note_auth_requests` に `note_account_id / fulfilled_at / consumed_at` を追加。セッション失効を
+  検知したタスク（publish/sales/status-sync/engage）はアカウントを `paused` にして LINE 通知＋`/accounts` にバナー。復旧は
+  `bash scripts/anp/note-session-capture.sh <id>`（paused も active に戻し、該当 auth_request を fulfilled にする）。
+- **記事 UI**: `/articles`（全アカウント横断の一覧、状態フィルタ）、`/articles/[id]`（本文プレビュー `lib/note-markdown.ts`、コスト、公開 URL）。
+  ホーム `(app)/page.tsx` は `lib/home-core.ts` で KPI を集約（要対応/進行中/公開数/売上）。
+- **TikTok 連動動画 (Phase 4)**: `promotion.note.article.video`（既存 `tiktok_*` role を流用、アカウント設定 `tiktok_enabled` 既定 OFF）。
+- migration `20260921010000_anp_account_settings_authrelay` は本番へ raw SQL 適用＋`migrate resolve` 済み。
+
+### ANP — アカウント戦略の AI 相談（F-ANP-04, `/accounts/design/consult`）
+- 運営者要望「最初にアカウント戦略を策定する時、AI に相談しながらリサーチ・策定したい」→ ブリーフ一発入力（F-ANP-01）の前段に
+  **チャット壁打ち**を追加。役割 `anp.consultant`（Opus 4.7、seed 済）。1 ターン = (1) LLM が「検索が要るか/クエリ 0〜3 件」を判断 →
+  Tavily 検索（本番は `api_credentials(provider=tavily)` 設定済）→ (2) 返答 JSON（`reply` / `brief_draft` / `ready_to_design` /
+  `suggested_questions`）。返答は worker `note.account.consult`（CEO 対話と同型の非同期、UI は 2.5 秒ポーリング）。
+- 画面: 左 = チャット（出典 URL の展開表示、次の一言チップ、失敗時「もう一度試す」）、右 = **ブリーフ草案**（AI が会話から毎回更新、
+  読み取り専用。修正は会話で伝える）→ 「この内容で設計案を生成」で `note.account.design` へ（設計案は `consultation_id` で相談に紐付く）。
+- DB: `note_account_consultations` / `note_account_consultation_messages`、`note_account_designs.consultation_id`
+  （migration `20260921000000_anp_account_consult` 適用済）。設計 = docs/11 §3.1 F-ANP-04 / §6 / §7 Phase 6。
+
+### DB マイグレーション履歴の整合
+- 本番 `_prisma_migrations` に未記録だった 20260915/0918/0919 と今日の 3 本を `prisma migrate resolve --applied` で記録。
+  `migrate status` ではまだ 8 月〜9/9 の数本（20260826120000_ad_spend 〜 20260909000000_bw_retag）が未記録のまま
+  （実 SQL は適用済みのはず）。全部 resolve すれば `migrate deploy` が通常運用に戻せる見込み（未実施・要確認）。
 
 ## 2026-09-18（本機）で実施したこと
 運営者の依頼 4 件（入稿キューの検証 / SNS ペルソナ画像の実写・首から下化 / IG カルーセル / 投稿のキャラクター性）と
@@ -78,11 +130,11 @@
 ## 2026-09-16（本機 C:\DEV\M2P 側）で実施したこと
 本書の指示どおり pull → 残作業を進めた。**3 件の本番障害を発見・修正・デプロイ済み**（worker/web とも `railway up`、
 `deployment list` で SUCCESS 確認）。詳細は各 docs/05 の該当節と memory `reference_rekick_freeze.md`。
-1. **日次テーマ自動生成が 9/11〜9/15 の 5 日間全滅**していた（`pipeline.theme.generate` が毎晩 22:00 JST に
+1. **日次テーマ自動生成が 9/11〜9/15 の 5 日間全滅**していた（`pipeline.theme.generate` が毎朝 07:00 JST（cron `0 22 * * *` UTC）に
    `ZodError too_big keywordOrBrief max 500`）。原因 = 9/11 に設定した 732 字の `pipeline_theme_direction` が
    Marketer 入力の上限 500 字に弾かれていた。修正 = 入口〜Marketer まで上限 4,000 字で統一
    （contracts `marketer.ts` / worker `pipeline-theme-generate.ts` / web `themes-core.ts`,`pipeline-settings-core.ts`）。
-   **今夜 22:00 JST の cron で復帰するはず。翌朝 `jobs where kind='pipeline.theme.generate'` が done か要確認。**
+   **→ 9/18 手動再実行で復帰、9/19・9/20 の 07:00 JST 自動実行も成功（各 1 テーマ→書籍化）。**
 2. **judge 再キック後の本が無言凍結**（running 17 冊 / judging 3 冊 = 計 20 冊、8/31〜9/4 から放置）。editor / writer.chapter の
    「二重 enqueue 防止」が初回パイプラインの done Job を見て次工程を enqueue しなかった。修正 = editor はサムネ生成済みなら
    judge 直行、writer.chapter 再キックは兄弟 Job 完了で editor 起動（retry_count/feedback 引継ぎ）。手動承認 SA も同様。
@@ -181,7 +233,10 @@
 - graphile-worker の残骸掃除は `graphile_worker._private_jobs`（`jobs` はビュー）。
 
 ## 次にやること（優先順）
-0. **翌朝の確認（9/19）**: (a) 22:00 JST の A2P テーマ生成と 08:00 JST の ANP テーマ生成（`note.theme.auto`）が done か、(b) ANP 記事が
+-1. **Amazon Ads の接続**（上記「運営者の手順」1〜4）。それまで `/ads` は「未接続」表示。
+-1'. **ANP の実運用開始**: `/accounts/design/consult` で AI と壁打ち → 設計案生成 → 採用 → note で新アカウント作成 →
+   `bash scripts/anp/note-session-capture.sh <note_account_id>` → 翌朝から日次生成・公開。
+0. **翌朝の確認**: (a) 07:00 JST の A2P テーマ生成と 08:00 JST の ANP テーマ生成（`note.theme.auto`）が done か、(b) ANP 記事が
    ready→published（note 公開）→ promotion_posts(kind=anp_article) まで進んだか、(c) IG カルーセルが Zernio で複数枚投稿になっているか
    （`promotion_posts` の instagram 投稿の posted 結果と IG 上の見え方）、(d) daily-publish のログ（09:30 に走ったか）。
 1. ANP: 上記の人手待ち 1〜3 → 自動公開 ON → 有料記事対応（Phase 3.5）→ TikTok（Phase 4）。

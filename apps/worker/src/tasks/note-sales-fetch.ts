@@ -24,6 +24,7 @@ import { decryptKdpCredentials } from '@a2p/crypto';
 import { prisma as defaultPrisma } from '@a2p/db';
 
 import { pushLine } from './lib/line-auth-relay.js';
+import { notifyNoteSessionExpired, type NoteAuthRelayPrisma } from './lib/note-auth-relay.js';
 import type { NoteSalesPort } from './note-sales/playwright-note-sales-port.js';
 
 export const NOTE_SALES_FETCH_TASK_NAME = 'note.sales.fetch';
@@ -92,6 +93,7 @@ export interface NoteSalesFetchPrisma {
       };
     }) => Promise<unknown>;
   };
+  noteAuthRequest: NoteAuthRelayPrisma['noteAuthRequest'];
   noteMembershipStat: {
     findFirst: (args: {
       where: { note_account_id: string; year_month: string };
@@ -190,9 +192,7 @@ export async function runNoteSalesFetch(
     if (!result.ok) {
       if (result.reason === 'not_logged_in') {
         await prisma.noteAccount.update({ where: { id: accountId }, data: { status: 'paused' } }).catch(() => {});
-        await notify(
-          `⚠️ ANP: note アカウント「${account.display_name}」のセッションが失効しました。ローカルで scripts/anp/note-session-capture.sh を再実行してください(売上取得/自動公開を一時停止)。`,
-        ).catch(() => {});
+        await notifyNoteSessionExpired(prisma, accountId, account.display_name, notify);
       }
       log.warn({ accountId, reason: result.reason, message: result.message }, 'note.sales.fetch failed');
       await finishJob(prisma, jobId, now(), { status: result.reason, error: result.message }, result.message);

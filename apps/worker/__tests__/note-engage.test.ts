@@ -64,8 +64,9 @@ describe('runNoteEngage', () => {
   it('note_engage_enabled=false なら no-op(enabled=false)', async () => {
     const prisma: NoteEngagePrisma = {
       appSettings: baseAppSettings(false),
-      noteAccount: { findMany: vi.fn() },
+      noteAccount: { findMany: vi.fn(), update: vi.fn() },
       promotionSnsEngagement: { findMany: vi.fn(), count: vi.fn(), upsert: vi.fn() },
+      noteAuthRequest: { findFirst: vi.fn(), create: vi.fn() },
     };
     const res = await runNoteEngage(
       {},
@@ -78,8 +79,9 @@ describe('runNoteEngage', () => {
   it('active セッション有りアカウントが無ければ skip(落とさない)', async () => {
     const prisma: NoteEngagePrisma = {
       appSettings: baseAppSettings(true),
-      noteAccount: { findMany: vi.fn().mockResolvedValue([]) },
+      noteAccount: { findMany: vi.fn().mockResolvedValue([]), update: vi.fn() },
       promotionSnsEngagement: { findMany: vi.fn(), count: vi.fn(), upsert: vi.fn() },
+      noteAuthRequest: { findFirst: vi.fn(), create: vi.fn() },
     };
     const res = await runNoteEngage(
       {},
@@ -97,12 +99,14 @@ describe('runNoteEngage', () => {
         findMany: vi.fn().mockResolvedValue([
           { id: 'acc1', niche: '読書', display_name: '本の虫', target_reader: '20代社会人', session_state_enc: 'ENC' },
         ]),
+        update: vi.fn(),
       },
       promotionSnsEngagement: {
         findMany: vi.fn().mockResolvedValue([]), // first row(ランプアップ) & engaged 除外の両方 空
         count: vi.fn().mockResolvedValue(0),
         upsert,
       },
+      noteAuthRequest: { findFirst: vi.fn(), create: vi.fn() },
     };
     const res = await runNoteEngage(
       {},
@@ -149,12 +153,14 @@ describe('runNoteEngage', () => {
         findMany: vi.fn().mockResolvedValue([
           { id: 'acc1', niche: '読書', display_name: '本の虫', target_reader: null, session_state_enc: 'BAD' },
         ]),
+        update: vi.fn(),
       },
       promotionSnsEngagement: {
         findMany: vi.fn().mockResolvedValue([]),
         count: vi.fn().mockResolvedValue(0),
         upsert: vi.fn(),
       },
+      noteAuthRequest: { findFirst: vi.fn(), create: vi.fn() },
     };
     const res = await runNoteEngage(
       {},
@@ -178,5 +184,51 @@ describe('runNoteEngage', () => {
       },
     );
     expect(res.skipped).toContain('acc1:session_decrypt_failed');
+  });
+
+  it('F-ANP-21: session_expired 検知でアカウントを一時停止し note_auth_requests を作って通知する', async () => {
+    const updateAccount = vi.fn().mockResolvedValue({});
+    const createAuthRequest = vi.fn().mockResolvedValue({ id: 'req1' });
+    const pushAlert = vi.fn().mockResolvedValue(true);
+    const prisma: NoteEngagePrisma = {
+      appSettings: baseAppSettings(true),
+      noteAccount: {
+        findMany: vi.fn().mockResolvedValue([
+          { id: 'acc1', niche: '読書', display_name: '本の虫', target_reader: null, session_state_enc: 'ENC' },
+        ]),
+        update: updateAccount,
+      },
+      promotionSnsEngagement: {
+        findMany: vi.fn().mockResolvedValue([]),
+        count: vi.fn().mockResolvedValue(0),
+        upsert: vi.fn(),
+      },
+      noteAuthRequest: { findFirst: vi.fn().mockResolvedValue(null), create: createAuthRequest },
+    };
+    const res = await runNoteEngage(
+      {},
+      {
+        prisma,
+        lineConfigured: () => true,
+        pushAlert,
+        resolveProxy: async () => null,
+        decryptSession: () => '{"cookies":[]}',
+        generate: async () => ({
+          channel: 'note',
+          summary: '',
+          actions: [
+            { action_type: 'follow', platform: 'note', target_handle: '@a', target_url: 'https://note.com/a', target_desc: 'x', reason: '', priority: 'high' },
+          ],
+          search_hashtags: [],
+          notes: [],
+        }),
+        port: { engageAll: async () => ({ outcomes: [], blocked: 'session_expired' }) },
+      },
+    );
+    expect(res.per_account['acc1']?.blocked).toBe('session_expired');
+    expect(updateAccount).toHaveBeenCalledWith({ where: { id: 'acc1' }, data: { status: 'paused' } });
+    expect(createAuthRequest).toHaveBeenCalledTimes(1);
+    expect(pushAlert).toHaveBeenCalledTimes(1);
+    expect(pushAlert.mock.calls[0]?.[0]).toContain('note-session-capture.sh acc1');
   });
 });

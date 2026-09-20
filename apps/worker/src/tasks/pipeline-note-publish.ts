@@ -31,6 +31,7 @@ import { prisma as defaultPrisma } from '@a2p/db';
 import { downloadBuffer } from '@a2p/storage';
 
 import { pushLine } from './lib/line-auth-relay.js';
+import { notifyNoteSessionExpired, type NoteAuthRelayPrisma } from './lib/note-auth-relay.js';
 import { buildNoteBlocks } from './note-publish/build-blocks.js';
 import type { NoteArticleInput, NotePublishPort, NotePublishResult } from './note-publish/playwright-note-publish-port.js';
 
@@ -98,6 +99,7 @@ export interface PipelineNotePublishPrisma {
     findUnique: (args: { where: { id: string } }) => Promise<NoteAccountRow | null>;
     update: (args: { where: { id: string }; data: Record<string, unknown> }) => Promise<unknown>;
   };
+  noteAuthRequest: NoteAuthRelayPrisma['noteAuthRequest'];
 }
 
 export type FetchAssetFn = (key: string) => Promise<Buffer | null>;
@@ -294,9 +296,7 @@ export async function runPipelineNotePublish(
       await prisma.noteAccount
         .update({ where: { id: account.id }, data: { status: 'paused' } })
         .catch((err) => log.warn({ err: errMsg(err) }, 'account pause 失敗(無視)'));
-      await notify(
-        `⚠️ ANP: note アカウント「${account.display_name}」のセッションが失効しました。ローカルで scripts/anp/note-session-capture.sh を再実行してください(自動公開は一時停止)。`,
-      ).catch(() => {});
+      await notifyNoteSessionExpired(prisma, account.id, account.display_name, notify);
     }
     await finishJob(prisma, jobId, now(), { status: result.reason, error: result.message }, result.message);
     return { ok: false, status: result.reason, reason: result.reason, noteUrl: result.noteUrl };

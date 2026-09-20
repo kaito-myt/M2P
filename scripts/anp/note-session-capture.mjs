@@ -93,13 +93,25 @@ await ctx.close();
 const json = JSON.stringify(state);
 console.log(`storageState 取得: cookies=${state.cookies.length} origins=${state.origins.length} (${Math.round(json.length / 1024)}KB)`);
 
-// docs/11-anp-design.md §7 F-ANP-01/03: status='pending_session' (アカウント設計から作成した
-// note_accounts 行) の場合、セッション取込完了をもって稼働可能な 'active' に昇格させる。
-// 既に 'active'/'paused'/'archived' の場合はそのステータスを尊重し変更しない。
+// docs/11-anp-design.md §7 F-ANP-01/03 / F-ANP-21: status='pending_session' (アカウント設計から
+// 作成した note_accounts 行) は、セッション取込完了をもって稼働可能な 'active' に昇格させる。
+// status='paused' (F-ANP-21: not_logged_in 検知で自動一時停止された状態) も、再取込成功時点で
+// 自動的に 'active' へ復旧させる(認証リレーの「復旧の自動反映」)。'archived' はそのまま変更しない。
 await c.query(
-  "UPDATE note_accounts SET session_state_enc=$1, status=(CASE WHEN status='pending_session' THEN 'active' ELSE status END), updated_at=NOW() WHERE id=$2",
+  "UPDATE note_accounts SET session_state_enc=$1, status=(CASE WHEN status IN ('pending_session','paused') THEN 'active' ELSE status END), updated_at=NOW() WHERE id=$2",
   [encrypt(json), noteAccountId],
 );
+
+// F-ANP-21: このアカウントの未解決 session_expired 認証リクエストを fulfilled にする
+// (pipeline.note.publish 等が作成した pending 行 — `apps/worker/src/tasks/lib/note-auth-relay.ts`)。
+const authReq = await c.query(
+  "UPDATE note_auth_requests SET status='fulfilled', fulfilled_at=NOW() WHERE note_account_id=$1 AND purpose='session_expired' AND status='pending'",
+  [noteAccountId],
+);
+if (authReq.rowCount > 0) {
+  console.log(`✔ note_auth_requests: session_expired ${authReq.rowCount}件を fulfilled に更新`);
+}
+
 await c.end();
 console.log(`✔ note_accounts.session_state_enc 保存 (id=${noteAccountId})`);
 process.exit(0);

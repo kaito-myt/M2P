@@ -7,7 +7,7 @@
  *
  * 投入内容:
  *  1. Prompts — role='anp.theme' | 'anp.outline' | 'anp.writer' | 'anp.editor' | 'anp.judge' |
- *     'anp.promo' | 'anp.strategist' の genre=null v1 active テンプレ (ANP_PROMPT_ROLES.length 件)
+ *     'anp.promo' | 'anp.strategist' | 'anp.consultant' の genre=null v1 active テンプレ (ANP_PROMPT_ROLES.length 件)
  *  2. ModelAssignments — 同 role の既定モデル割当 (同数)
  *
  * 全件 upsert で idempotent。実行: `pnpm --filter @a2p/db run seed:anp`
@@ -22,6 +22,7 @@ export const ANP_PROMPT_ROLES = [
   'anp.judge',
   'anp.promo',
   'anp.strategist',
+  'anp.consultant',
 ] as const;
 export type AnpPromptRole = (typeof ANP_PROMPT_ROLES)[number];
 
@@ -45,6 +46,7 @@ const ANP_ROLE_PLACEHOLDERS: Record<AnpPromptRole, string[]> = {
   'anp.judge': ['niche', 'target_reader'],
   'anp.promo': ['channel_label', 'length_guide'],
   'anp.strategist': [],
+  'anp.consultant': [],
 };
 
 function buildAnpThemePrompt(): string {
@@ -237,6 +239,37 @@ function buildAnpStrategistPrompt(): string {
   ].join('\n');
 }
 
+/**
+ * F-ANP-04: note アカウント戦略の AI 相談 (アドバイザー)。プレースホルダを使わない (会話履歴・
+ * リサーチ結果・草案はユーザーメッセージ側で組み立てる、`packages/agents/src/anp/consultant.ts` 参照)。
+ */
+function buildAnpConsultantPrompt(): string {
+  return [
+    '# あなたの役割：note アカウント戦略アドバイザー (壁打ち相手)',
+    '',
+    'あなたは note で「テーマ別マルチアカウント」を運用する運営者の戦略パートナーです。運営者はこれから',
+    '新しい note アカウントを立ち上げようとしており、あなたと会話しながらニッチ・想定読者・収益化・',
+    '人物設定を固めていきます。会話の到達点は「そのまま設計生成に渡せるブリーフ (idea / goal /',
+    'target_reader_hint / monetization_hint / constraints / persona_type / reference_accounts)」です。',
+    '',
+    '## 行動原則',
+    '- 反射的に同意しない。まず自分の見解 (賛成/反対とその根拠) を述べ、甘い見通しには反対し代替案を出す。',
+    '- 抽象論ではなく具体案で返す。ニッチ候補・読者像・記事例・価格帯・競合の名前など、判断材料を並べる。',
+    '- 1 回の返答で聞く質問は最大 2 つ。運営者が答えやすいよう選択肢付きで聞く。',
+    '- Web リサーチ結果が与えられたら、その根拠 (競合アカウント・需要の兆候・価格相場) を必ず返答に織り込み、',
+    '  推測と事実を区別する。リサーチ結果が無いときは無理に断定せず、確認すべき点として挙げる。',
+    '- note で伸びる/売れるアカウントの原則 (ニッチ特化・読者の切実な悩み起点・無料 7 割で信頼を作ってから',
+    '  有料は完全版を売る・有料は 300〜1,000 円帯から・メンバーシップは記事 20 本以降) を判断軸にする。',
+    '- 運営者が「決めた」と言ったことは brief_draft に確定事項として反映し、蒸し返さない。',
+    '- brief_draft は会話全体を反映した最新版を毎回フルで返す (前回の内容を引き継ぎ、決まった分だけ埋める)。',
+    '- idea・想定読者・収益方針が固まったら ready_to_design=true にし、「この内容で設計案を生成」を勧める。',
+    '',
+    '## 出力',
+    'ユーザーメッセージで与えられる会話履歴・リサーチ結果・JSON 出力形式に厳密に従うこと。',
+    'JSON 以外の前置き・説明・コードフェンスは出力しない。日本語で出力する。',
+  ].join('\n');
+}
+
 const ANP_PROMPT_BODY_BUILDERS: Record<AnpPromptRole, () => string> = {
   'anp.theme': buildAnpThemePrompt,
   'anp.outline': buildAnpOutlinePrompt,
@@ -245,6 +278,7 @@ const ANP_PROMPT_BODY_BUILDERS: Record<AnpPromptRole, () => string> = {
   'anp.judge': buildAnpJudgePrompt,
   'anp.promo': buildAnpPromoPrompt,
   'anp.strategist': buildAnpStrategistPrompt,
+  'anp.consultant': buildAnpConsultantPrompt,
 };
 
 export interface AnpPromptSeed {
@@ -288,6 +322,7 @@ export function buildAnpModelAssignmentSeeds(): AnpModelAssignmentSeed[] {
     { role: 'anp.judge', genre: null, provider: 'anthropic', model: 'claude-sonnet-4-6', status: 'active', created_by: 'system' },
     { role: 'anp.promo', genre: null, provider: 'anthropic', model: 'claude-sonnet-4-6', status: 'active', created_by: 'system' },
     { role: 'anp.strategist', genre: null, provider: 'anthropic', model: 'claude-opus-4-7', status: 'active', created_by: 'system' },
+    { role: 'anp.consultant', genre: null, provider: 'anthropic', model: 'claude-opus-4-7', status: 'active', created_by: 'system' },
   ];
 }
 

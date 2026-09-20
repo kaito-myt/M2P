@@ -86,7 +86,9 @@ export type AgentRole =
   | 'anp.promo'
   // F-ANP-01/03 — note アカウント設計担当 (ブリーフ→表示名/handle/bio/発信の柱/収益方針/
   // 投稿頻度/初回テーマ/アイコン・ヘッダー画像プロンプトを一括設計。sns_strategist の note 版)。
-  | 'anp.strategist';
+  | 'anp.strategist'
+  // F-ANP-04 — note アカウント戦略の AI 相談 (チャット壁打ち + Tavily リサーチ → ブリーフ草案)。
+  | 'anp.consultant';
 
 /**
  * マルチモーダル入力用の画像添付。`content` (テキスト) と併せてユーザーメッセージに付与する。

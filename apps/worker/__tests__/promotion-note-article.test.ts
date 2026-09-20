@@ -33,7 +33,7 @@ function buildPrisma(args: {
     note_url: string | null;
     publish_status: string;
   } | null;
-  account?: { id: string; handle: string | null; niche: string } | null;
+  account?: { id: string; handle: string | null; niche: string; settings_json?: unknown } | null;
   existingPromo?: boolean;
   existingPosts?: PostRecord[];
   channelSettings?: Array<{ channel: string; strategy_json: unknown; playbook_json: unknown }>;
@@ -56,6 +56,11 @@ function buildPrisma(args: {
         const j = jobs.find((x) => x.id === where.id);
         if (j && data.status) j.status = data.status;
         return { id: where.id };
+      },
+      create: async ({ data }) => {
+        const id = `job-${jobs.length + 1}`;
+        jobs.push({ id, status: data.status });
+        return { id };
       },
     },
     noteArticle: {
@@ -297,5 +302,47 @@ describe('promotion.note.article', () => {
     expect(res.ok).toBe(true);
     expect(res.created).toBe(1);
     expect(created).toHaveLength(1);
+  });
+
+  it('F-ANP-30続き: settings_json.tiktok_enabled=true なら promotion.note.article.video を enqueue する', async () => {
+    const { prisma } = buildPrisma({
+      jobs: [{ id: 'job1', status: 'queued' }],
+      article: {
+        id: 'art1',
+        note_account_id: 'acc1',
+        title: 'T',
+        lead: 'L',
+        note_url: 'https://note.com/h/n/n1',
+        publish_status: 'published',
+      },
+      account: { id: 'acc1', handle: null, niche: 'n', settings_json: { tiktok_enabled: true } },
+    });
+    const createContent = vi.fn().mockResolvedValue({ body: 'body' });
+    const addJob = vi.fn();
+    await runPromotionNoteArticle({ note_article_id: 'art1', job_id: 'job1' }, { prisma, createContent, addJob, now: () => FIXED_NOW });
+    expect(addJob).toHaveBeenCalledWith(
+      'promotion.note.article.video',
+      expect.objectContaining({ note_article_id: 'art1' }),
+      expect.objectContaining({ jobKey: 'anp-promo-video-art1' }),
+    );
+  });
+
+  it('settings_json.tiktok_enabled 未指定なら promotion.note.article.video を enqueue しない', async () => {
+    const { prisma } = buildPrisma({
+      jobs: [{ id: 'job1', status: 'queued' }],
+      article: {
+        id: 'art1',
+        note_account_id: 'acc1',
+        title: 'T',
+        lead: 'L',
+        note_url: 'https://note.com/h/n/n1',
+        publish_status: 'published',
+      },
+      account: { id: 'acc1', handle: null, niche: 'n' },
+    });
+    const createContent = vi.fn().mockResolvedValue({ body: 'body' });
+    const addJob = vi.fn();
+    await runPromotionNoteArticle({ note_article_id: 'art1', job_id: 'job1' }, { prisma, createContent, addJob, now: () => FIXED_NOW });
+    expect(addJob).not.toHaveBeenCalled();
   });
 });

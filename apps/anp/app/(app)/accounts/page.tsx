@@ -10,26 +10,23 @@ import { messages } from '@/lib/messages';
 import { CreateAccountForm } from './create-account-form';
 
 export default async function AccountsPage() {
-  const accounts = await prisma.noteAccount.findMany({
-    orderBy: { created_at: 'desc' },
-    select: { id: true, niche: true, display_name: true, target_reader: true, status: true, created_at: true },
-  });
+  const [accounts, pendingReauth] = await Promise.all([
+    prisma.noteAccount.findMany({
+      orderBy: { created_at: 'desc' },
+      select: { id: true, niche: true, display_name: true, target_reader: true, status: true, created_at: true },
+    }),
+    prisma.noteAuthRequest.findMany({
+      where: { purpose: 'session_expired', status: 'pending' },
+      select: { note_account_id: true },
+    }),
+  ]);
+  const reauthAccountIds = new Set(pendingReauth.map((r) => r.note_account_id).filter((id): id is string => !!id));
 
   return (
-    <div className="mx-auto flex min-h-screen max-w-4xl flex-col px-space-relaxed py-space-loose">
-      <header className="flex items-start justify-between gap-2">
-        <div>
-          <h1 className="text-sub-heading font-medium text-charcoal">{messages.accounts.pageTitle}</h1>
-          <p className="mt-1 text-body text-muted">{messages.accounts.pageDescription}</p>
-        </div>
-        <div className="flex flex-col items-end gap-1">
-          <Link href="/accounts/design" className="text-caption text-muted no-underline hover:underline">
-            {messages.accounts.designLink}
-          </Link>
-          <Link href="/settings" className="text-caption text-muted no-underline hover:underline">
-            {messages.settings.pageTitle}
-          </Link>
-        </div>
+    <div className="mx-auto flex max-w-4xl flex-col">
+      <header>
+        <h1 className="text-sub-heading font-medium text-charcoal">{messages.accounts.pageTitle}</h1>
+        <p className="mt-1 text-body text-muted">{messages.accounts.pageDescription}</p>
       </header>
 
       <section className="mt-space-relaxed">
@@ -61,6 +58,15 @@ export default async function AccountsPage() {
                       <p className="mt-1 text-caption text-muted">
                         {messages.accounts.pendingSessionNotice(a.id)}
                       </p>
+                    )}
+                    {(a.status === 'paused' || reauthAccountIds.has(a.id)) && (
+                      <div className="mt-2 rounded-card border border-destructive-bg bg-destructive-bg px-3 py-2">
+                        <p className="text-caption font-medium text-destructive">{messages.accounts.reauthNeeded}</p>
+                        <p className="mt-0.5 text-caption text-destructive">{messages.accounts.reauthNeededDescription}</p>
+                        <code className="mt-1 block text-caption text-destructive">
+                          {messages.accounts.reauthCommand(a.id)}
+                        </code>
+                      </div>
                     )}
                   </Link>
                 </li>

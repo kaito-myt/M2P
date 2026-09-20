@@ -9,7 +9,7 @@ import {
 function buildPrisma(args: {
   enabled: boolean;
   dryRun: boolean;
-  accounts: Array<{ id: string }>;
+  accounts: Array<{ id: string; settings_json?: unknown }>;
   articlesByAccount: Record<string, { id: string; paid?: boolean } | undefined>;
 }): NotePublishDispatcherPrisma {
   let jobCounter = 0;
@@ -106,5 +106,21 @@ describe('note.publish.dispatch', () => {
 
   it('タスク名が docs/11 §7 と一致する', () => {
     expect(NOTE_PUBLISH_DISPATCHER_TASK_NAME).toBe('note.publish.dispatch');
+  });
+
+  it('F-ANP-17: アカウント別 settings_json.auto_publish_enabled=false のアカウントはスキップする', async () => {
+    const prisma = buildPrisma({
+      enabled: true,
+      dryRun: true,
+      accounts: [
+        { id: 'acc_off', settings_json: { auto_publish_enabled: false } },
+        { id: 'acc_on' },
+      ],
+      articlesByAccount: { acc_off: { id: 'art_off' }, acc_on: { id: 'art_on' } },
+    });
+    const addJob = vi.fn();
+    const res = await runNotePublishDispatcher({ prisma, addJob });
+    expect(res.enqueued).toBe(1);
+    expect(res.articleIds).toEqual(['art_on']);
   });
 });

@@ -31,6 +31,7 @@ export default async function AccountDesignDetailPage({
       note_account_id: true,
       avatar_r2_key: true,
       header_r2_key: true,
+      consultation_id: true,
       created_at: true,
     },
   });
@@ -59,7 +60,7 @@ export default async function AccountDesignDetailPage({
   const designParsed = row.design_json ? NoteAccountDesignSchema.safeParse(row.design_json) : null;
 
   return (
-    <div className="mx-auto flex min-h-screen max-w-4xl flex-col px-space-relaxed py-space-loose">
+    <div className="mx-auto flex max-w-4xl flex-col">
       <Link href="/accounts/design" className="text-caption text-muted no-underline hover:underline">
         {dm.back}
       </Link>
@@ -69,6 +70,14 @@ export default async function AccountDesignDetailPage({
           <h1 className="text-sub-heading font-medium text-charcoal">{idea || dm.pageTitle}</h1>
           <p className="mt-1 text-body text-muted">
             {statusLabel} ・ {row.created_at.toLocaleString('ja-JP')}
+            {row.consultation_id && (
+              <>
+                {' ・ '}
+                <Link href={`/accounts/design/consult/${row.consultation_id}`} className="text-charcoal underline">
+                  {messages.accountConsult.fromConsultLink}
+                </Link>
+              </>
+            )}
           </p>
         </div>
       </header>

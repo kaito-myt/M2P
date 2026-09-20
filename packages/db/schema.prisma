@@ -977,6 +977,65 @@ model AdSpend {
   @@map("ad_spend")
 }
 
+// [F-090拡張] Amazon Ads キャンペーン別パフォーマンス (2026-09-21, 広告パフォーマンス取込)。
+// spCampaigns(+sbCampaigns/sdCampaigns best-effort) を campaign 粒度で日次取得。
+// name/state/budget は `/sp/campaigns/list` 由来 (レポートには含まれないため別 API で最新行にのみ反映)。
+model AdCampaignStat {
+  id              String   @id @default(cuid())
+  ads_date        String // "2026-09-20" (日次)
+  year_month      String // "2026-09" (月次集計用)
+  profile_id      String // Amazon Advertising profile id (広告アカウント)
+  ad_product      String // SP | SB | SD
+  campaign_id     String
+  campaign_name   String?
+  campaign_state  String? // enabled | paused | archived 等。campaigns/list 取得時のみ最新行に設定
+  budget_jpy      Int? // 日予算 (円換算)。campaigns/list 取得時のみ最新行に設定
+  spend_jpy       Int // 広告費 (円換算)
+  impressions     Int      @default(0)
+  clicks          Int      @default(0)
+  sales_jpy       Int      @default(0) // 広告経由売上 (attributed, 円)
+  orders          Int      @default(0)
+  units           Int      @default(0)
+  currency        String   @default("JPY")
+  amount_original Decimal? @db.Decimal(12, 2) // 元通貨額(USD等)。FX再換算用
+  fetched_at      DateTime @default(now())
+  updated_at      DateTime @updatedAt
+
+  @@unique([profile_id, ad_product, campaign_id, ads_date], map: "ad_campaign_stats_unique_key")
+  @@index([year_month], map: "ad_campaign_stats_year_month_idx")
+  @@index([campaign_id], map: "ad_campaign_stats_campaign_id_idx")
+  @@map("ad_campaign_stats")
+}
+
+// [F-090拡張] Amazon Ads 書籍(ASIN)別パフォーマンス。spAdvertisedProduct(SP)を日次取得。
+// `asin` は books.asin と非FK結合 (未登録ASINの行を許容するため)。
+model AdProductStat {
+  id              String   @id @default(cuid())
+  ads_date        String // "2026-09-20" (日次)
+  year_month      String // "2026-09" (月次集計用)
+  profile_id      String // Amazon Advertising profile id (広告アカウント)
+  ad_product      String // SP | SB | SD
+  campaign_id     String
+  ad_group_id     String?
+  asin            String?
+  sku             String?
+  spend_jpy       Int // 広告費 (円換算)
+  impressions     Int      @default(0)
+  clicks          Int      @default(0)
+  sales_jpy       Int      @default(0) // 広告経由売上 (attributed, 円)
+  orders          Int      @default(0)
+  units           Int      @default(0)
+  currency        String   @default("JPY")
+  amount_original Decimal? @db.Decimal(12, 2) // 元通貨額(USD等)。FX再換算用
+  fetched_at      DateTime @default(now())
+  updated_at      DateTime @updatedAt
+
+  @@unique([profile_id, ad_product, campaign_id, asin, ads_date], map: "ad_product_stats_unique_key")
+  @@index([asin], map: "ad_product_stats_asin_idx")
+  @@index([year_month], map: "ad_product_stats_year_month_idx")
+  @@map("ad_product_stats")
+}
+
 // =====================================================================
 // 売上自動取得実行履歴 [F-038]
 // =====================================================================
@@ -1406,11 +1465,15 @@ model NoteAccount {
   monetization_policy_json Json
   genre_policy_json        Json
   session_state_enc        String?  @db.Text
-  status                   String   @default("active") // active | paused | archived
+  status                   String   @default("active") // active | paused | archived | pending_session
   // [F-ANP-40] note.sales.fetch が `/<handle>/followers` から取得した最新フォロワー総数(累計)。
   // handle が null の間は取得できず既定 0 のまま。
   followers_total          Int      @default(0)
   followers_fetched_at     DateTime?
+  // [F-ANP-17] アカウント別パイプライン自動パス設定 (docs/11-anp-design.md §3.2/§7)。
+  // { auto_theme_enabled?, themes_per_day?, autopass_enabled?, auto_publish_enabled?, tiktok_enabled? }
+  // 未指定キーは AppSettings のグローバル既定値に従う (`note.theme.auto`/`note.publish.dispatch` が参照)。
+  settings_json            Json     @default("{}")
   created_at               DateTime @default(now())
   updated_at               DateTime @updatedAt
 
@@ -1418,6 +1481,7 @@ model NoteAccount {
   articles         NoteArticle[]
   membership_stats NoteMembershipStat[]
   designs          NoteAccountDesign[]
+  auth_requests    NoteAuthRequest[]
 
   @@index([status, created_at(sort: Desc)], map: "note_accounts_status_time_idx")
   @@map("note_accounts")
@@ -1436,13 +1500,60 @@ model NoteAccountDesign {
   note_account_id String?
   avatar_r2_key   String?
   header_r2_key   String?
+  // F-ANP-04: AI 相談 (NoteAccountConsultation) から生成した設計案なら相談 id を持つ。
+  consultation_id String?
   created_at      DateTime  @default(now())
   updated_at      DateTime  @updatedAt
 
-  account NoteAccount? @relation(fields: [note_account_id], references: [id], onDelete: SetNull)
+  account      NoteAccount?             @relation(fields: [note_account_id], references: [id], onDelete: SetNull)
+  consultation NoteAccountConsultation? @relation(fields: [consultation_id], references: [id], onDelete: SetNull)
 
   @@index([status, created_at(sort: Desc)], map: "note_account_designs_status_time_idx")
+  @@index([consultation_id], map: "note_account_designs_consultation_idx")
   @@map("note_account_designs")
+}
+
+// F-ANP-04 (docs/11-anp-design.md §3.1/§7) — note アカウント戦略の AI 相談 (チャット壁打ち)。
+// 運営者 ⇔ AI アドバイザー (`anp.consultant`) が会話しながらニッチ/読者/収益化を固め、
+// AI が毎ターン `brief_draft_json` (ブリーフ草案) を更新する。草案は「この内容で設計案を生成」で
+// `NoteAccountDesign` (F-ANP-01) に渡す。A2P の CEO 対話 (`OrgCeoMessage`) と同型の非同期方式。
+model NoteAccountConsultation {
+  id               String   @id @default(cuid())
+  // 一覧表示用の題 (最初の運営者メッセージから自動生成、AI が後で更新してよい)
+  title            String   @default("")
+  // active|archived
+  status           String   @default("active")
+  // NoteAccountConsultBriefDraft (contracts/agents/anp.ts)。最新の草案で毎回フル置換。
+  brief_draft_json Json?
+  // AI が「設計に渡せる水準」と判断したか
+  ready_to_design  Boolean  @default(false)
+  created_at       DateTime @default(now())
+  updated_at       DateTime @updatedAt
+
+  messages NoteAccountConsultationMessage[]
+  designs  NoteAccountDesign[]
+
+  @@index([status, updated_at(sort: Desc)], map: "note_account_consultations_status_time_idx")
+  @@map("note_account_consultations")
+}
+
+model NoteAccountConsultationMessage {
+  id              String   @id @default(cuid())
+  consultation_id String
+  // 'operator' = 運営者の発話 / 'advisor' = AI アドバイザーの返答
+  role            String
+  content         String   @db.Text
+  // operator: pending|processing|done|failed (AI 返答の生成状態) / advisor: done
+  status          String   @default("done")
+  error           String?  @db.Text
+  // advisor: 参照した Web リサーチ結果 NoteAccountConsultResearchItem[] と suggested_questions
+  research_json   Json?
+  created_at      DateTime @default(now())
+
+  consultation NoteAccountConsultation @relation(fields: [consultation_id], references: [id], onDelete: Cascade)
+
+  @@index([consultation_id, created_at], map: "note_account_consultation_messages_time_idx")
+  @@map("note_account_consultation_messages")
 }
 
 model NoteTheme {
@@ -1529,16 +1640,27 @@ model NoteMembershipStat {
   @@map("note_membership_stats")
 }
 
+// F-ANP-21 (docs/11-anp-design.md §3.3/§7) — note 認証リレー。
+// note はサーバー完結の再ログインが不可 (reCAPTCHA) なため、KDP の LINE OTP リレーと違い
+// `code` を LINE 返信で受け取る用途では使わない。`purpose` を「kind」として流用し、
+// セッション失効検知時は `purpose='session_expired'` の pending 行を作って運営者に通知する
+// (再取込は `scripts/anp/note-session-capture.sh` のローカル実行のみ可能なため)。
 model NoteAuthRequest {
-  id         String    @id @default(cuid())
-  purpose    String    @default("note_login_otp")
-  status     String    @default("pending") // pending | fulfilled | consumed | expired | cancelled
-  prompt     String?
-  code       String?
-  created_at DateTime  @default(now())
-  expires_at DateTime?
+  id              String    @id @default(cuid())
+  purpose         String    @default("note_login_otp") // note_login_otp | session_expired
+  status          String    @default("pending") // pending | fulfilled | consumed | expired | cancelled
+  prompt          String?
+  code            String?
+  note_account_id String?
+  created_at      DateTime  @default(now())
+  expires_at      DateTime?
+  fulfilled_at    DateTime?
+  consumed_at     DateTime?
+
+  account NoteAccount? @relation(fields: [note_account_id], references: [id], onDelete: SetNull)
 
   @@index([status, created_at], map: "note_auth_requests_status_idx")
+  @@index([note_account_id, purpose, status], map: "note_auth_requests_account_kind_status_idx")
   @@map("note_auth_requests")
 }
 

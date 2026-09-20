@@ -106,6 +106,10 @@ function buildPrisma(args: {
         return { id: where.id };
       },
     },
+    noteAuthRequest: {
+      findFirst: async () => null,
+      create: async () => ({ id: 'auth1' }),
+    },
   };
 
   return { prisma, jobs, articles, accounts, articleUpdates, accountUpdates, jobCreates };

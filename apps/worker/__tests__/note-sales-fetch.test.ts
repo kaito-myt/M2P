@@ -59,6 +59,10 @@ function buildPrisma(args: {
     noteArticle: {
       findMany: async () => args.articles ?? [],
     },
+    noteAuthRequest: {
+      findFirst: async () => null,
+      create: async () => ({ id: 'auth1' }),
+    },
     noteSalesRecord: {
       findFirst: async ({ where }) =>
         salesRecords.find((r) => r.note_article_id === where.note_article_id && r.year_month === where.year_month) ?? null,

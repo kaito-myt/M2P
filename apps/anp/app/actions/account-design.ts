@@ -25,12 +25,12 @@ import {
 } from '@a2p/contracts/agents/anp';
 
 import { auth } from '@/auth';
+import { createDesignAndEnqueue } from '@/lib/account-design-core';
 import { enqueueJob } from '@/lib/graphile-client';
 import { messages } from '@/lib/messages';
 
 export type ActionResult<T> = { ok: true; data: T } | { ok: false; error: string };
 
-const NOTE_ACCOUNT_DESIGN_TASK_NAME = 'note.account.design';
 const NOTE_ACCOUNT_VISUALS_TASK_NAME = 'note.account.visuals';
 
 const m = messages.accountDesign.errors;
@@ -78,26 +78,10 @@ export async function createAccountDesign(input: unknown): Promise<ActionResult<
       ...(referenceAccounts.length > 0 ? { reference_accounts: referenceAccounts } : {}),
     });
 
-    const design = await prisma.noteAccountDesign.create({
-      data: { brief_json: brief as unknown as Prisma.InputJsonValue, status: 'generating' },
-      select: { id: true },
-    });
-
-    const job = await prisma.job.create({
-      data: {
-        kind: NOTE_ACCOUNT_DESIGN_TASK_NAME,
-        status: 'queued',
-        payload_json: { design_id: design.id },
-      },
-    });
-    await enqueueJob(
-      NOTE_ACCOUNT_DESIGN_TASK_NAME,
-      { design_id: design.id, job_id: job.id },
-      { maxAttempts: 3 },
-    );
+    const designId = await createDesignAndEnqueue(brief);
 
     revalidatePath('/accounts/design');
-    return { ok: true, data: { id: design.id } };
+    return { ok: true, data: { id: designId } };
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : m.createFailed };
   }
@@ -172,33 +156,21 @@ export async function regenerateDesignWithFeedback(
   try {
     const prev = await prisma.noteAccountDesign.findUnique({
       where: { id: designId },
-      select: { brief_json: true },
+      select: { brief_json: true, consultation_id: true },
     });
     if (!prev) return { ok: false, error: m.notFound };
 
     const prevBrief = NoteAccountDesignBriefSchema.parse(prev.brief_json);
     const nextBrief: NoteAccountDesignBrief = { ...prevBrief, feedback };
 
-    const created = await prisma.noteAccountDesign.create({
-      data: { brief_json: nextBrief as unknown as Prisma.InputJsonValue, status: 'generating' },
-      select: { id: true },
-    });
-
-    const job = await prisma.job.create({
-      data: {
-        kind: NOTE_ACCOUNT_DESIGN_TASK_NAME,
-        status: 'queued',
-        payload_json: { design_id: created.id },
-      },
-    });
-    await enqueueJob(
-      NOTE_ACCOUNT_DESIGN_TASK_NAME,
-      { design_id: created.id, job_id: job.id },
-      { maxAttempts: 3 },
+    // 相談 (F-ANP-04) 由来の設計なら再生成版も同じ相談に紐付ける。
+    const createdId = await createDesignAndEnqueue(
+      nextBrief,
+      prev.consultation_id ? { consultationId: prev.consultation_id } : {},
     );
 
     revalidatePath('/accounts/design');
-    return { ok: true, data: { id: created.id } };
+    return { ok: true, data: { id: createdId } };
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : m.regenerateFailed };
   }

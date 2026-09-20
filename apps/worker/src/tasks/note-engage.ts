@@ -8,6 +8,7 @@ import { prisma as defaultPrisma } from '@a2p/db';
 import { generateGrowthTodo as defaultGenerate } from '@a2p/agents';
 
 import { isLineRelayConfigured, pushLine } from './lib/line-auth-relay.js';
+import { notifyNoteSessionExpired, type NoteAuthRelayPrisma } from './lib/note-auth-relay.js';
 import { resolveKdpProxy } from './sales-fetch/kdp-proxy.js';
 import { createPlaywrightNoteEngagePort } from './note-engage/playwright-note-engage-port.js';
 import {
@@ -60,12 +61,14 @@ export interface NoteEngagePrisma {
         session_state_enc?: string | null;
       }>
     >;
+    update: (args: { where: { id: string }; data: Record<string, unknown> }) => Promise<unknown>;
   };
   promotionSnsEngagement: {
     findMany: (args: unknown) => Promise<Array<{ channel: string; action_type: string; target_handle: string }>>;
     count: (args: unknown) => Promise<number>;
     upsert: (args: unknown) => Promise<unknown>;
   };
+  noteAuthRequest: NoteAuthRelayPrisma['noteAuthRequest'];
   job?: { update: (args: { where: { id: string }; data: Record<string, unknown> }) => Promise<unknown> };
 }
 
@@ -274,7 +277,16 @@ export async function runNoteEngage(payload: unknown, deps: NoteEngageDeps = {})
 
       if (blocked) {
         cell.blocked = blocked;
-        await alert(`⚠️ note 自動フォロー/スキが「${blocked}」で中断しました。凍結回避のため本日は停止します。`);
+        if (blocked === 'session_expired') {
+          // F-ANP-21 認証リレー: セッション失効はアカウントを一時停止し、再取込コマンド付きで通知する
+          // (pipeline.note.publish/note.sales.fetch/note.publish.status.sync と同型)。
+          await prisma.noteAccount
+            .update({ where: { id: account.id }, data: { status: 'paused' } })
+            .catch(() => {});
+          await notifyNoteSessionExpired(prisma, account.id, account.display_name, pushAlert);
+        } else {
+          await alert(`⚠️ note 自動フォロー/スキが「${blocked}」で中断しました。凍結回避のため本日は停止します。`);
+        }
         // ブロックされたら他アカウントも今回は止める(同一IP/プロファイル影響回避)。
         break;
       }

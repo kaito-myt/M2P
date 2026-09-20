@@ -47,7 +47,16 @@ export default async function LoginPage({ searchParams }: PageProps) {
         }}
       >
         <header style={{ textAlign: 'center' }}>
-          <h1 id="login-heading" style={{ margin: 0, fontSize: 28, fontWeight: 700, letterSpacing: '-0.02em' }}>
+          {/* 2026-09-21 運営者支給のワードマーク (1200x437) */}
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src="/anp-logo.png"
+            alt="ANP"
+            width={220}
+            height={80}
+            style={{ display: 'block', margin: '0 auto', width: 220, height: 'auto' }}
+          />
+          <h1 id="login-heading" style={{ position: 'absolute', width: 1, height: 1, overflow: 'hidden', clip: 'rect(0 0 0 0)', margin: -1 }}>
             ANP
           </h1>
           <p style={{ margin: '8px 0 0', color: 'var(--color-muted)', fontSize: 13 }}>

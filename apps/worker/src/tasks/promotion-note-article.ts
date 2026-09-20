@@ -5,8 +5,11 @@
  * content_creator 相当の `anp.promo` 役割で生成し、既存 `promotion_posts` に
  * `kind='anp_article'`(book_id=null) で INSERT する。配信は既存の `promotion.dispatch` /
  * `promotion.post.publish` にそのまま乗る (新規配信経路は作らない)。
- * **TikTok は対象外**（記事に無関係な動画をオンデマンド生成する経路 `tiktok-video.ts`
- * `ensureTikTokVideoForPost` に乗ってしまうため。記事連動動画パイプラインは Phase 4）。
+ * **TikTok は既定で対象外**（記事に無関係な動画をオンデマンド生成する経路 `tiktok-video.ts`
+ * `ensureTikTokVideoForPost` に乗ってしまうため独立させた）。ただし Phase 4 (F-ANP-30続き) で
+ * `note_accounts.settings_json.tiktok_enabled=true`(既定OFF、コスト保護) のアカウントに限り
+ * `promotion.note.article.video` を追加 enqueue し、記事連動 TikTok スライド動画も生成する
+ * (下記 `PROMOTION_NOTE_ARTICLE_VIDEO_TASK_NAME` 参照)。
  *
  * ペルソナは 5 チャンネル共通の `promotion_channel_settings.strategy_json`
  * (`AccountStrategyProfile`) を使う。content_creator (role='content_creator') は
@@ -25,7 +28,7 @@
  * 最初の未来日**の「枠外」時刻(既存 value の 09:00/20:00 と衝突しない JST 12:00 / 15:00)に配置する
  * (`findScheduledFor`)。
  */
-import type { Task } from 'graphile-worker';
+import type { JobHelpers, Task } from 'graphile-worker';
 import { z } from 'zod';
 
 import { createAnpArticlePromoContent as defaultCreateAnpArticlePromoContent } from '@a2p/agents/anp/promo';
@@ -41,6 +44,12 @@ import {
 import { NotFoundError, ValidationError } from '@a2p/contracts/errors';
 import { createLogger, type Logger } from '@a2p/contracts/logger';
 import { prisma as defaultPrisma } from '@a2p/db';
+
+import { resolveTiktokEnabled } from './lib/note-account-settings.js';
+import { jstDayBoundsUtc, offpeakScheduledForUtc } from './lib/promo-schedule.js';
+import { PROMOTION_NOTE_ARTICLE_VIDEO_TASK_NAME } from './promotion-note-article-video.js';
+
+export { jstDayBoundsUtc, offpeakScheduledForUtc };
 
 export const PROMOTION_NOTE_ARTICLE_TASK_NAME = 'promotion.note.article';
 
@@ -75,6 +84,7 @@ interface NoteAccountRow {
   id: string;
   handle: string | null;
   niche: string;
+  settings_json?: unknown;
 }
 
 export interface PromotionNoteArticlePrisma {
@@ -88,6 +98,10 @@ export interface PromotionNoteArticlePrisma {
       where: { id: string };
       data: { status?: string; finished_at?: Date; error?: string | null; result_json?: unknown };
     }) => Promise<unknown>;
+    /** [F-ANP-30続き] tiktok_enabled=true のアカウントで `promotion.note.article.video` の内部 Job を作る。 */
+    create: (args: {
+      data: { kind: string; status: string; payload_json: unknown };
+    }) => Promise<{ id: string }>;
   };
   noteArticle: {
     findUnique: (args: {
@@ -98,7 +112,7 @@ export interface PromotionNoteArticlePrisma {
   noteAccount: {
     findUnique: (args: {
       where: { id: string };
-      select: { id: true; handle: true; niche: true };
+      select: { id: true; handle: true; niche: true; settings_json?: true };
     }) => Promise<NoteAccountRow | null>;
   };
   promotionChannelSetting: {
@@ -132,11 +146,19 @@ export interface PromotionNoteArticlePrisma {
   };
 }
 
+export type AddJobLike = (
+  identifier: string,
+  payload: unknown,
+  spec?: Record<string, unknown>,
+) => Promise<unknown>;
+
 export interface PromotionNoteArticleDeps {
   prisma?: PromotionNoteArticlePrisma;
   logger?: Logger;
   now?: () => Date;
   createContent?: (input: AnpPromoContentInput, jobId?: string) => Promise<{ body: string }>;
+  /** [F-ANP-30続き] tiktok_enabled=true のアカウント向けに `promotion.note.article.video` を enqueue する。 */
+  addJob?: AddJobLike;
 }
 
 export interface PromotionNoteArticleResult {
@@ -210,7 +232,7 @@ export async function runPromotionNoteArticle(
 
     const account = await prisma.noteAccount.findUnique({
       where: { id: article.note_account_id },
-      select: { id: true, handle: true, niche: true },
+      select: { id: true, handle: true, niche: true, settings_json: true },
     });
     if (!account) {
       throw new NotFoundError(`NoteAccount not found: ${article.note_account_id}`, {
@@ -303,6 +325,24 @@ export async function runPromotionNoteArticle(
     }
 
     const created = await prisma.promotionPost.createMany({ data: rows });
+
+    // [F-ANP-30続き] アカウント設定で tiktok_enabled=true の場合のみ、記事連動 TikTok 動画も作る
+    // (既定 OFF・コスト保護)。失敗しても X/IG 告知自体の成功結果には影響させない。
+    if (resolveTiktokEnabled(account.settings_json) && deps.addJob) {
+      try {
+        const videoJob = await prisma.job.create({
+          data: { kind: PROMOTION_NOTE_ARTICLE_VIDEO_TASK_NAME, status: 'queued', payload_json: { note_article_id: articleId } },
+        });
+        await deps.addJob(
+          PROMOTION_NOTE_ARTICLE_VIDEO_TASK_NAME,
+          { note_article_id: articleId, job_id: videoJob.id },
+          { jobKey: `anp-promo-video-${articleId}`, jobKeyMode: 'preserve_run_at', maxAttempts: 2 },
+        );
+      } catch (err) {
+        log.warn({ err: errMsg(err), articleId }, 'promotion.note.article.video の enqueue に失敗(無視)');
+      }
+    }
+
     await finishJob(prisma, jobId, now(), { status: 'created', created: created.count });
     log.info(
       { task: PROMOTION_NOTE_ARTICLE_TASK_NAME, articleId, created: created.count },
@@ -315,30 +355,6 @@ export async function runPromotionNoteArticle(
   }
 }
 
-/**
- * JST 暦日 `now+dayOffset日` の 00:00〜24:00 を UTC Date の範囲として返す(頻度カウント用)。
- * 純関数 (DB 非依存) でユニットテスト可能。
- */
-export function jstDayBoundsUtc(now: Date, dayOffset: number): { start: Date; end: Date } {
-  const jst = new Date(now.getTime() + 9 * 3600_000);
-  const y = jst.getUTCFullYear();
-  const m = jst.getUTCMonth();
-  const d = jst.getUTCDate();
-  const start = new Date(Date.UTC(y, m, d + dayOffset, 0, 0, 0) - 9 * 3600_000);
-  const end = new Date(start.getTime() + 24 * 3600_000);
-  return { start, end };
-}
-
-/** JST 暦日 `now+dayOffset日` の `minuteOfDayJst` 分 (0-1439) を UTC Date で返す。純関数。 */
-export function offpeakScheduledForUtc(now: Date, dayOffset: number, minuteOfDayJst: number): Date {
-  const jst = new Date(now.getTime() + 9 * 3600_000);
-  const y = jst.getUTCFullYear();
-  const m = jst.getUTCMonth();
-  const d = jst.getUTCDate();
-  const hh = Math.floor(minuteOfDayJst / 60);
-  const mm = minuteOfDayJst % 60;
-  return new Date(Date.UTC(y, m, d + dayOffset, hh, mm) - 9 * 3600_000);
-}
 
 /**
  * チャンネル別の 2/日(既存value/promo)+anp1 の日次上限(`DAILY_CHANNEL_CAP`)を守り、
@@ -404,6 +420,6 @@ function errMsg(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
-export const promotionNoteArticleTask: Task = async (payload: unknown) => {
-  await runPromotionNoteArticle(payload);
+export const promotionNoteArticleTask: Task = async (payload: unknown, helpers: JobHelpers) => {
+  await runPromotionNoteArticle(payload, { addJob: helpers.addJob as unknown as AddJobLike });
 };

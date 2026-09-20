@@ -17,7 +17,7 @@ export default async function AccountDesignPage() {
   });
 
   return (
-    <div className="mx-auto flex min-h-screen max-w-4xl flex-col px-space-relaxed py-space-loose">
+    <div className="mx-auto flex max-w-4xl flex-col">
       <Link href="/accounts" className="text-caption text-muted no-underline hover:underline">
         {messages.accountDesign.back}
       </Link>
@@ -26,6 +26,21 @@ export default async function AccountDesignPage() {
         <h1 className="text-sub-heading font-medium text-charcoal">{messages.accountDesign.pageTitle}</h1>
         <p className="mt-1 text-body text-muted">{messages.accountDesign.pageDescription}</p>
       </header>
+
+      {/* F-ANP-04: ブリーフが固まっていないときは先に AI と壁打ちする導線 */}
+      <section className="mt-space-loose flex flex-wrap items-center justify-between gap-space-snug rounded-container border border-border-warm bg-white p-space-relaxed">
+        <div className="min-w-0">
+          <h2 className="text-card-title font-medium text-charcoal">{messages.accountConsult.entryLink}</h2>
+          <p className="mt-1 text-body text-muted">{messages.accountConsult.entryDescription}</p>
+        </div>
+        <Link
+          href="/accounts/design/consult"
+          className="shrink-0 rounded-card border border-border-warm bg-charcoal px-4 py-2 text-button-sm text-white no-underline"
+          data-testid="account-design-consult-link"
+        >
+          {messages.accountConsult.entryLink}
+        </Link>
+      </section>
 
       <section className="mt-space-loose rounded-container border border-border-warm bg-cream-light p-space-relaxed">
         <h2 className="text-card-title font-medium text-charcoal">{messages.accountDesign.briefForm.title}</h2>

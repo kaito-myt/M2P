@@ -6,6 +6,7 @@ import { createLogger, type Logger } from '@a2p/contracts/logger';
 import { prisma as defaultPrisma } from '@a2p/db';
 
 import { readAnpAutopass, type AnpAutopassPrisma } from './lib/anp-autopass.js';
+import { resolveThemeAutoSettings } from './lib/note-account-settings.js';
 import { NOTE_THEME_GENERATE_TASK_NAME } from './note-theme-generate.js';
 import { PIPELINE_NOTE_WRITER_OUTLINE_TASK_NAME } from './pipeline-note-writer-outline.js';
 
@@ -37,6 +38,8 @@ interface NoteAccountRow {
   niche: string;
   target_reader: string | null;
   tone: string | null;
+  /** [F-ANP-17] アカウント別設定 (`NoteAccountSettingsSchema`)。未選択/旧テストでは undefined。 */
+  settings_json?: unknown;
 }
 
 interface CreatedTheme {
@@ -51,7 +54,7 @@ export interface NoteThemeAutoPrisma extends AnpAutopassPrisma {
   noteAccount: {
     findMany: (args: {
       where: { status: string };
-      select: { id: true; niche: true; target_reader: true; tone: true };
+      select: { id: true; niche: true; target_reader: true; tone: true; settings_json?: true };
       orderBy: { created_at: 'asc' };
     }) => Promise<NoteAccountRow[]>;
   };
@@ -163,7 +166,7 @@ export async function runNoteThemeAuto(deps: NoteThemeAutoDeps = {}): Promise<No
 
   const accounts = await prisma.noteAccount.findMany({
     where: { status: 'active' },
-    select: { id: true, niche: true, target_reader: true, tone: true },
+    select: { id: true, niche: true, target_reader: true, tone: true, settings_json: true },
     orderBy: { created_at: 'asc' },
   });
 
@@ -172,6 +175,17 @@ export async function runNoteThemeAuto(deps: NoteThemeAutoDeps = {}): Promise<No
   const accountResults: NoteThemeAutoAccountResult[] = [];
 
   for (const account of accounts) {
+    // [F-ANP-17] アカウント別設定でグローバル既定値を上書き (未指定キーはグローバルに従う)。
+    // グローバル anp_auto_theme_enabled=false の間はこの関数自体が早期 return するため
+    // (上記)、ここで有効化できるのは「グローバル ON の中で特定アカウントだけ OFF にする」
+    // 方向のみ (docs/11-anp-design.md §7 申し送り参照)。
+    const effective = resolveThemeAutoSettings(account.settings_json, settings);
+    if (!effective.auto_theme_enabled) {
+      log.info({ task: NOTE_THEME_AUTO_TASK_NAME, noteAccountId: account.id }, 'account-level auto_theme disabled — skip');
+      accountResults.push({ note_account_id: account.id, generated: 0, accepted: 0 });
+      continue;
+    }
+
     try {
       const since = new Date(now().getTime() - EXCLUDE_LOOKBACK_DAYS * 24 * 60 * 60 * 1000);
       const recentAccepted = await prisma.noteTheme.findMany({
@@ -187,7 +201,7 @@ export async function runNoteThemeAuto(deps: NoteThemeAutoDeps = {}): Promise<No
           started_at: now(),
           payload_json: {
             note_account_id: account.id,
-            count: settings.anp_themes_per_day,
+            count: effective.themes_per_day,
             trigger: 'autopass',
           },
         },
@@ -197,7 +211,7 @@ export async function runNoteThemeAuto(deps: NoteThemeAutoDeps = {}): Promise<No
         note_account_id: account.id,
         job_id: genJob.id,
         account: { niche: account.niche, target_reader: account.target_reader, tone: account.tone },
-        count: settings.anp_themes_per_day,
+        count: effective.themes_per_day,
         exclude_titles_recent: recentAccepted.map((r) => r.title),
       };
 
@@ -243,7 +257,7 @@ export async function runNoteThemeAuto(deps: NoteThemeAutoDeps = {}): Promise<No
       });
 
       let accepted = 0;
-      if (settings.anp_autopass_enabled && addJob) {
+      if (effective.autopass_enabled && addJob) {
         for (const theme of createdThemes) {
           try {
             const guard = await prisma.noteTheme.updateMany({

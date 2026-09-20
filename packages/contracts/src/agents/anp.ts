@@ -345,3 +345,118 @@ export const NoteAccountDesignSchema = z.object({
   rationale: z.string().max(2000).optional(),
 });
 export type NoteAccountDesign = z.infer<typeof NoteAccountDesignSchema>;
+
+// ---------------------------------------------------------------------------
+// F-ANP-17 — アカウント別パイプライン自動パス設定 (`note_accounts.settings_json`)
+//
+// グローバル `AppSettings` (anp_auto_theme_enabled 等) をアカウント単位で上書きする。
+// 各キーは未指定 (undefined) ならグローバル既定値に従う (docs/11-anp-design.md §3.2/§7)。
+// ---------------------------------------------------------------------------
+
+export const NoteAccountSettingsSchema = z.object({
+  /** note.theme.auto によるテーマ自動生成を有効化するか。未指定ならグローバルに従う。 */
+  auto_theme_enabled: z.boolean().optional(),
+  /** 1日のテーマ自動生成数。未指定ならグローバルに従う。 */
+  themes_per_day: z.number().int().min(1).max(20).optional(),
+  /** 自動生成テーマを承認なしで採用しパイプラインを自動起動するか。未指定ならグローバルに従う。 */
+  autopass_enabled: z.boolean().optional(),
+  /** note.publish.dispatch による自動公開を有効化するか。未指定ならグローバルに従う。 */
+  auto_publish_enabled: z.boolean().optional(),
+  /** [Phase 4] 公開記事の TikTok 連動動画 (`promotion.note.article.video`) を作るか。既定 false。 */
+  tiktok_enabled: z.boolean().optional(),
+});
+export type NoteAccountSettings = z.infer<typeof NoteAccountSettingsSchema>;
+
+/** `note_accounts.settings_json` (unknown/Json) を安全にパースする。失敗時は空 (=全てグローバル追従)。 */
+export function parseNoteAccountSettings(json: unknown): NoteAccountSettings {
+  const parsed = NoteAccountSettingsSchema.safeParse(json ?? {});
+  return parsed.success ? parsed.data : {};
+}
+
+// ---------------------------------------------------------------------------
+// F-ANP-04 — note アカウント戦略の AI 相談 (role='anp.consultant')
+//
+// 運営者要望 (2026-09-21)「ANP で最初アカウント戦略策定する時に、AI に相談しながらリサーチや
+// 戦略策定を行えるようにして」への対応。ブリーフを一発入力する F-ANP-01 の前段として、
+// 運営者 ⇔ AI アドバイザーがチャットで壁打ちし、必要に応じて Web リサーチ (Tavily) を挟みながら
+// ニッチ/読者/収益化/人物設定を固めていく。AI は会話のたびに「ブリーフ草案」を更新し、
+// 運営者が納得した時点で草案をそのまま `NoteAccountDesignBrief` として設計生成へ渡す。
+// ---------------------------------------------------------------------------
+
+/** 会話の 1 ターン (古い順)。`operator` = 運営者 / `advisor` = AI アドバイザー。 */
+export const NoteAccountConsultTurnSchema = z.object({
+  role: z.enum(['operator', 'advisor']),
+  content: z.string(),
+});
+export type NoteAccountConsultTurn = z.infer<typeof NoteAccountConsultTurnSchema>;
+
+/**
+ * AI が会話から組み立てる「ブリーフ草案」。`NoteAccountDesignBrief` と同じキーだが全て任意
+ * (会話の初期はまだ何も決まっていないため)。`idea` が埋まった時点で設計生成に渡せる。
+ */
+export const NoteAccountConsultBriefDraftSchema = z.object({
+  idea: z.string().max(2000).optional(),
+  goal: z.string().max(1000).optional(),
+  target_reader_hint: z.string().max(500).optional(),
+  monetization_hint: z.string().max(500).optional(),
+  constraints: z.string().max(1000).optional(),
+  persona_type: z.enum(['person', 'brand', 'auto']).optional(),
+  reference_accounts: z.array(z.string().max(300)).max(10).optional(),
+});
+export type NoteAccountConsultBriefDraft = z.infer<typeof NoteAccountConsultBriefDraftSchema>;
+
+/** 段階 1: 返答前に Web リサーチが必要かを AI が判断し、検索クエリを出す。 */
+export const NoteAccountConsultResearchPlanSchema = z.object({
+  /** 実行する検索クエリ (0〜3 件)。空なら検索せず会話のみで返答する。 */
+  queries: z.array(z.string().min(1).max(200)).max(3).default([]),
+  /** なぜ検索する/しないか (ログ用)。 */
+  reason: z.string().max(300).optional(),
+});
+export type NoteAccountConsultResearchPlan = z.infer<typeof NoteAccountConsultResearchPlanSchema>;
+
+/** リサーチ結果 1 件 (advisor メッセージの `research_json` に保存し、UI で出典として出す)。 */
+export const NoteAccountConsultResearchItemSchema = z.object({
+  query: z.string(),
+  title: z.string(),
+  url: z.string(),
+  snippet: z.string().optional(),
+});
+export type NoteAccountConsultResearchItem = z.infer<typeof NoteAccountConsultResearchItemSchema>;
+
+/** 段階 2: AI アドバイザーの返答 (JSON)。 */
+export const NoteAccountConsultOutputSchema = z.object({
+  /** 運営者への返答 (Markdown 可)。 */
+  reply: z.string().min(1).max(8000),
+  /** 会話全体を反映した最新のブリーフ草案 (毎回フル置換)。 */
+  brief_draft: NoteAccountConsultBriefDraftSchema.default({}),
+  /** 草案が設計生成に渡せる水準に達したか (idea/読者/収益方針が固まった)。 */
+  ready_to_design: z.boolean().default(false),
+  /** 次に運営者へ聞くべき質問 (0〜3 件)。UI でクリック送信のショートカットにする。 */
+  suggested_questions: z.array(z.string().max(200)).max(3).default([]),
+});
+export type NoteAccountConsultOutput = z.infer<typeof NoteAccountConsultOutputSchema>;
+
+/**
+ * ブリーフ草案 → `NoteAccountDesignBrief`。`idea` が無ければ null (まだ設計に渡せない)。
+ * 空文字のフィールドは落とす。
+ */
+export function briefDraftToDesignBrief(
+  draft: NoteAccountConsultBriefDraft,
+): NoteAccountDesignBrief | null {
+  const idea = draft.idea?.trim();
+  if (!idea) return null;
+  const pick = (v: string | undefined): string | undefined => {
+    const t = v?.trim();
+    return t ? t : undefined;
+  };
+  const refs = (draft.reference_accounts ?? []).map((r) => r.trim()).filter((r) => r.length > 0);
+  return NoteAccountDesignBriefSchema.parse({
+    idea,
+    ...(pick(draft.goal) ? { goal: pick(draft.goal) } : {}),
+    ...(pick(draft.target_reader_hint) ? { target_reader_hint: pick(draft.target_reader_hint) } : {}),
+    ...(pick(draft.monetization_hint) ? { monetization_hint: pick(draft.monetization_hint) } : {}),
+    ...(pick(draft.constraints) ? { constraints: pick(draft.constraints) } : {}),
+    persona_type: draft.persona_type ?? 'auto',
+    ...(refs.length > 0 ? { reference_accounts: refs.slice(0, 10) } : {}),
+  });
+}

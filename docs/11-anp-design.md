@@ -223,6 +223,38 @@ ANP の機能は A2P の対応機能を note 向けに写像したもの。**太
     セッション取り込み成功時に `status='pending_session'` → `'active'` へ昇格させる
     （既に active/paused/archived の場合は変更しない）。`/accounts` 一覧に
     `pending_session` バッジと案内文を表示する。
+- **F-ANP-04 アカウント戦略の AI 相談（チャット壁打ち＋Web リサーチ、実装済み 2026-09-21）**:
+  運営者要望「ANP で最初アカウント戦略策定する時に、AI に相談しながらリサーチや戦略策定行えるように
+  して」への対応。F-ANP-01/03 のブリーフ一発入力の**前段**として、運営者 ⇔ AI アドバイザー
+  （role=`anp.consultant`）がチャットで壁打ちし、AI が毎ターン「ブリーフ草案」を更新する。草案は
+  「この内容で設計案を生成」でそのまま `NoteAccountDesignBrief` として `note.account.design` に渡す。
+  - 契約: `packages/contracts/src/agents/anp.ts` の `NoteAccountConsultTurnSchema`（operator/advisor）、
+    `NoteAccountConsultBriefDraftSchema`（ブリーフと同キーで全て任意）、
+    `NoteAccountConsultResearchPlanSchema`（段階1: `queries` 0〜3件）、
+    `NoteAccountConsultResearchItemSchema`（Tavily 結果: query/title/url/snippet）、
+    `NoteAccountConsultOutputSchema`（段階2: `reply` / `brief_draft` / `ready_to_design` /
+    `suggested_questions` 0〜3件）、`briefDraftToDesignBrief()`（idea 無しなら null）。
+  - エージェント: `packages/agents/src/anp/consultant.ts`（`consultNoteAccount`）。**2 段階**:
+    (1) リサーチ計画 — 会話＋新メッセージから「検索が必要か／クエリ」を小さな JSON で決める
+    （Tavily キー未設定なら丸ごと省略）、(2) 返答 — `TavilyWebSearch`（1 クエリ 5 件・最大 12 件・URL
+    重複除外）の結果を根拠ブロックとして注入し JSON を返す。Marketer と同じく純正 web_search の
+    エージェント的ループは使わない（チャット応答を数十秒に収めるため）。検索失敗・計画失敗は返答を
+    止めない（会話のみで続行）。出力パースは最大 2 回再試行。プロンプト/モデル割当は
+    `packages/db/seed-anp.ts`（`anp.consultant`, anthropic `claude-opus-4-7`）。
+  - DB: `note_account_consultations` / `note_account_consultation_messages`、
+    `note_account_designs.consultation_id`（§6）。
+  - worker タスク: `note.account.consult`（§7 Phase 6）。
+  - UI (`apps/anp`): `/accounts/design/consult`（S-ANP-07: 最初のメッセージで相談開始＋例文チップ＋
+    相談一覧）、`/accounts/design/consult/[id]`（S-ANP-08: 左=チャット、右=ブリーフ草案パネル）。
+    `/accounts/design` 先頭に「AI に相談しながら決める」導線、`/accounts/design/[id]` に
+    「AI 相談から作成（会話を見る）」戻りリンク。チャットは A2P の CEO 対話と同じ非同期方式
+    （Server Action で operator メッセージ保存＋enqueue → 返答待ちの間だけ 2.5 秒ポーリング
+    `getConsultationState`）。返答待ち中は次のメッセージを受け付けない（履歴順序を保つ）。
+    advisor メッセージには「参考にした情報 (N 件)」で出典 URL を展開表示、`suggested_questions` は
+    クリックで送信欄に入力。失敗した operator メッセージは「もう一度試す」で再 enqueue。
+    「この内容で設計案を生成」は `brief_draft.idea` があるときのみ有効で、生成した設計案は
+    `consultation_id` で相談に紐付き、相談画面の「この相談から作った設計案」に一覧される
+    （「フィードバックして再生成」の新行も同じ相談に紐付く）。
 
 ### 3.2 記事生成パイプライン（A2P の書籍パイプラインを短尺・高頻度化）
 - **F-ANP-10 テーマ候補生成（Marketer）**: アカウントのニッチ＋トレンド（Web検索）から記事テーマ候補を生成。A2P Marketer 準拠、出力は「記事タイトル/フック/想定読者/有料無料の推奨/想定価格/競合note」。
@@ -244,16 +276,44 @@ ANP の機能は A2P の対応機能を note 向けに写像したもの。**太
   1日 `anp_themes_per_day` 件のテーマを自動生成する。`anp_autopass_enabled=true` の間はさらに
   生成した全テーマを自動採用し `pipeline.note.writer.outline`(以降 body→editor→eyecatch→judge は
   既存の自動連結)を起動する — UI の「テーマ生成」→「承認」ボタンと同じ経路を worker から直接踏む。
-  アカウント別設定への拡張(現状は全アカウント共通のグローバル設定)は未実装・Phase 5 以降で検討。
+  **アカウント別設定を実装済み(2026-09-21)**: `note_accounts.settings_json`
+  (`auto_theme_enabled`/`themes_per_day`/`autopass_enabled`)で `note.theme.auto` の実効値を
+  アカウント単位に上書きできる(`apps/worker/src/tasks/lib/note-account-settings.ts`
+  `resolveThemeAutoSettings`)。未指定はグローバルに従う。**既知の制約は §6 Phase7 追記を参照**
+  (グローバル OFF の間は cron 自体が登録されないためアカウント側の force-on は効かない)。
+  `apps/anp/app/(app)/accounts/[id]/account-settings-form.tsx` に tri-state(グローバルに従う/
+  有効/無効)フォームを追加。
   `apps/anp/app/settings`(`SettingsForm`)にトグル3種(有効化/1日の生成数/自動採用)の UI を追加。
 
 ### 3.3 出版（note 公開）
 - **F-ANP-20 note 公開オートメーション（Playwright, アシスト型）**: 下書き作成→本文/画像流し込み→価格/ライン設定→予約 or 即時公開。KDP アシスト（`scripts/kdp-publish.mjs --assist`）と同型で `scripts/note-publish.mjs` を用意。
+  **アカウント別 `auto_publish_enabled` を実装済み(2026-09-21)**: `note.publish.dispatch` が
+  `resolveAutoPublishEnabled` でアカウント単位に自動公開の有効/無効を上書きできる(未指定はグローバル
+  `anp_auto_publish_enabled` に従う。同上の cron 登録条件の制約あり)。
 - **F-ANP-21 認証リレー**: `note_auth_requests` ＋ LINE webhook（A2P の `kdp_auth_requests` / `/api/line/webhook` を流用・拡張）。
+  **実装済み(2026-09-21)**: `apps/worker/src/tasks/lib/note-auth-relay.ts` の
+  `notifyNoteSessionExpired` が `pipeline.note.publish`/`note.sales.fetch`/
+  `note.publish.status.sync`/`note.engage` の `not_logged_in` 検知時に `note_auth_requests`
+  (`purpose='session_expired'`)へ pending 行を作り(重複排除)LINE通知、`/accounts`・
+  `/accounts/[id]` にバナー(再取込コマンド付き)を表示する。`note-session-capture.mjs` が
+  保存成功時に fulfilled 化 + アカウントを `active` へ自動復旧する(詳細は §6 Phase7)。
+  A2P の LINE 返信式 OTP リレー(`requestOtpViaLine`)とは異なり note は再ログイン自体が
+  reCAPTCHA によりサーバー完結不可なため、本リレーは「通知→ローカル再取込→自動反映」の
+  一方向フローである(§2.1 参照)。
 - **F-ANP-22 公開ステータス同期**: 公開済み/下書き/売上を定期スクレイプで同期（KDP publish.status.sync と同型の self-heal 再ログイン付き）。
 
 ### 3.4 販促（A2P promotion を流用）
-- **F-ANP-30 SNS 自動販促**: 各 note アカウントに紐づく X/Instagram へ、記事の告知投稿を自動生成・投稿（A2P の promotion チャンネル基盤を流用、生成 role は `anp.promo` として独立 — 理由は §7 参照）。**アカウント単位で導線（note記事URL）を差し込む**。**TikTok は対象外**（記事内容と無関係な動画をオンデマンド生成する既存経路 `tiktok-video.ts`/`ensureTikTokVideoForPost` に乗ってしまうため。記事連動動画パイプラインは Phase 4）。**実装済み(2026-09-16)**: `promotion.note.article`（§7）。
+- **F-ANP-30 SNS 自動販促**: 各 note アカウントに紐づく X/Instagram へ、記事の告知投稿を自動生成・投稿（A2P の promotion チャンネル基盤を流用、生成 role は `anp.promo` として独立 — 理由は §7 参照）。**アカウント単位で導線（note記事URL）を差し込む**。**実装済み(2026-09-16)**: `promotion.note.article`（§7）。
+  **TikTok 連動動画を実装済み(2026-09-21, Phase7)**: 当初は「記事内容と無関係な動画をオンデマンド
+  生成する既存経路 `tiktok-video.ts`/`ensureTikTokVideoForPost` に乗ってしまう」ため対象外として
+  いたが、専用タスク `promotion.note.article.video` を新設することで解決した。
+  `note_accounts.settings_json.tiktok_enabled=true`(既定 OFF・コスト保護)のアカウントに限り、
+  記事公開成功時に `promotion.note.article` から追加 enqueue される。台本生成は既存の
+  多エージェント経路(`createTikTokVideoScript`/`renderSlideVideo`、`promotion-video-generate.ts`
+  と同型)をそのまま使い、記事のタイトル/リードを「宣伝する本」相当の入力に差し替えるだけで
+  新しい生成器は作っていない。CTA「プロフィールの note で全文」を明示的に付加(`ensureNoteCta`)。
+  `promotion_posts` に `kind='anp_article', channel='tiktok', note_article_id=<article>` で登録し
+  既存 dispatcher にそのまま乗る(§7 参照)。
 - **F-ANP-31 相互流入設計**: 同一運営者の A2P 書籍 ⇄ note 記事の相互送客（書籍LPに note、note に書籍リンク）。
   **実装済み(最小・2026-09-16)**: `pipeline.note.writer.body` が同ジャンル(`NoteTheme.genre`)で
   `publish_status='published'` の A2P 書籍を最大2件(`asin`必須)取得し、`NoteWriterInput.related_books`
@@ -270,8 +330,10 @@ ANP の機能は A2P の対応機能を note 向けに写像したもの。**太
 ### 3.5 収益・コスト・運用
 - **F-ANP-40 売上/KPI 取得**: note ダッシュボードから 記事別売上・ビュー・スキ・フォロワー・メンバーシップ課金者数をスクレイプ取得（A2P の KDP 売上取得 `docs/09` と同型）。**実装済み(2026-09-16)**: `note.sales.fetch`/`note.sales.fetch.dispatch`（§7）。購入者数(`buyers`)はステップアップ認証の壁により取得不可(常に0、§2.2)。
 - **F-ANP-41 コスト/トークン可観測性**: 全 LLM/画像生成呼び出しを `token_usage` に記録（A2P ルール #5 準拠。ANP 分は `tool='anp'` 等で識別）。
-- **F-ANP-42 ホーム（ミッションコントロール）**: A2P の S-002 再実装版を流用。当月純利益/売上/コスト/公開記事数/アカウント別成長を集約。**最小版実装済み(2026-09-16)**: `apps/anp/app/page.tsx` が RSC で当月の公開記事数/総ビュー/総売上/AIコスト(token_usage role LIKE 'anp.%')/純利益とアカウント別内訳(記事数/ビュー/売上/フォロワー)を表示。コストのアカウント別内訳は `token_usage` にアカウント紐付け列が無いため未対応(全体合計のみ)。
-- **F-ANP-43 org 自律運用連携**: A2P の org（CEO+本部長+担当者・自律ループ）に「note 出版本部」「note 販促本部」を追加、または ANP 独立の org を持つ（§5 で選択）。
+- **F-ANP-42 ホーム（ミッションコントロール）**: A2P の S-002 再実装版を流用。当月純利益/売上/コスト/公開記事数/アカウント別成長を集約。**仕上げ実装済み(2026-09-21)**: `apps/anp/app/(app)/page.tsx` が RSC で当月の公開記事数/総ビュー/総売上/AIコスト(token_usage role LIKE 'anp.%')/純利益、アカウント別 KPI(フォロワー/公開数(累計・30日)/当月売上・コスト・純利益)、今日のパイプライン(実行中/待機中ジョブと直近24hの失敗)、セッション要再取込アラート、直近公開記事5件を表示する。集計ロジックは `apps/anp/lib/home-core.ts`(`computeAccountKpis`/`jstMonthRange`)に純関数化しユニットテスト済み。
+  **アカウント別コストの近似**: `token_usage` にアカウント紐付け列が無いため(§6 実装時の発見と同じ制約)、当月コストは `note_articles.cost_jpy_total`(当月作成分)の合計をアカウント単位の近似値として使う(記事単位の集計は `applyNoteArticleCostFromJob` で既に確定しているため厳密には token_usage 合計と一致するが、月をまたぐ編集ジョブがある場合はわずかにズレうる)。
+  **記事の全件横断ビューを新規実装(2026-09-21, F-ANP-42 関連)**: `/articles`(全記事一覧、アカウント/ステータス/有料提案でフィルタ)・`/articles/[id]`(記事詳細: 本文整形表示・アイキャッチ・品質判定内訳・コスト・ジョブ履歴・売上・告知投稿・公開/再審査操作)を追加した。本文の Markdown 相当表示は新規パーサ依存を増やさず `apps/anp/lib/note-markdown.ts`(`parseNoteMarkdown`)の自前実装で見出し/箇条書き/段落に整形する。ジョブ履歴は `Job.book_id` が常に null なため `Job.payload_json` の JSON path クエリ(`path:['note_article_id'], equals:<id>`、`alert-cost-check.ts` と同じ Prisma パターン)で突合する。
+- **F-ANP-43 org 自律運用連携**: A2P の org（CEO+本部長+担当者・自律ループ）に「note 出版本部」「note 販促本部」を追加、または ANP 独立の org を持つ（§5 で選択）。**今回のタスクではスコープ外**(運営者指示: 大規模なため対象外。org 連携は A2P 側の CEO/本部長/自律ループ全体を巻き込む設計判断が要り、本セッションの他項目(アカウント別設定/認証リレー/記事詳細UI/ホーム仕上げ/TikTok連動)と独立して大きいため次回以降に切り出す)。
 
 ---
 
@@ -301,6 +363,32 @@ packages/
 > A2P 固有パッケージは `@a2p/*` のまま。ANP 固有を切り出す場合のみ `@anp/*` を新設。
 > **判断**: まずは既存 `packages/*` を共有し、ANP 固有ロジックは `apps/anp` + `packages/agents` 内の
 > `anp/` サブディレクトリに置く（過度なパッケージ分割を避ける）。
+
+**サイドバーシェル（2026-09-21 実装, 運営者要望「M2P と同じようにメニューはサイドバーにしてほしい」）**:
+`apps/web` の `(app)` route group（Header + Sidebar + main の3分割シェル）と全く同じ構造・
+デザイントークンを `apps/anp` に移植した。
+
+- `apps/anp/components/layout/{header,sidebar,sidebar-nav,nav-items,mobile-nav,user-menu}.tsx` —
+  `apps/web/components/layout/*` と同一のクラス名/幅(サイドバー240px)/挙動(md:以上でサイドバー常駐、
+  未満はヘッダーのハンバーガー→ドロワー)。A2P 固有の `cost-meter`/`job-ticker`/`alert-badge`/
+  `comment-badge-header`(ANP に対応する計器が無い)は持ち込まなかった。
+- `apps/anp/app/(app)/` route group を新設し、認証必須ページ (`/`, `/accounts`,
+  `/accounts/design`, `/accounts/design/[id]`, `/accounts/[id]`, `/articles`, `/articles/[id]`,
+  `/settings`) をすべてこの配下に移動（`(auth)/login` は対象外・変更なし）。Next.js の route
+  group はディレクトリ名が URL に現れないため `middleware.ts` の matcher・各ページの URL は
+  無変更。
+- **新規依存を増やさない実装判断**: `apps/web` の `Sheet`(モバイルドロワー) は
+  `@radix-ui/react-dialog` + `class-variance-authority` を使うが、`apps/anp` はこれらを
+  持たない (CLAUDE.md ハードルール: 新規 npm 依存は宣言のみ→pnpm install 承認が要る)。
+  そのため `mobile-nav.tsx` は `useState` + 固定位置 div による自前の軽量ドロワーで実装し、
+  見た目・挙動(md未満でハンバーガー→左ドロワー、Escで閉じる)は `apps/web` と同等にした。
+  同様に `cn()` (`apps/anp/lib/cn.ts`) は `apps/web` の `tailwind-merge` 版ではなく `clsx` のみの
+  軽量実装 (ANP はまだ A2P ほど複雑なクラス競合が起きていないため)。
+- ナビ項目 (`nav-items.ts`): ホーム `/` / アカウント `/accounts` / アカウント設計
+  `/accounts/design` / 記事 `/articles` / 設定 `/settings` の単一セクション。
+- ヘッダー: 既存 `apps/anp/public/anp-logo.png`(= `apps/portal/public/tools/anp.png` と同一)を
+  ロゴに使用、ポータルへ戻るリンク(`NEXT_PUBLIC_PORTAL_URL` 設定時のみ、A2P と同じ挙動)、
+  ユーザーメニュー(設定リンク+サインアウト)。検索バー/ヘルプリンクは ANP に対応機能が無いため省略。
 
 ### 5.2 認証・SSO（A2P と同一）
 `buildAuthConfig`（`@a2p/auth/config`）を利用。`AUTH_SECRET`/`AUTH_COOKIE_DOMAIN=.m2p.tools` を
@@ -334,6 +422,12 @@ A2P の `books` 系を note 記事系に写像。**マルチアカウントを�
   運営者のブリーフ (`NoteAccountDesignBriefSchema`) から `anp.strategist` が設計案
   (`NoteAccountDesignSchema`) を生成し `design_json` に保持する。採用時に `note_accounts` を
   新規作成し `note_account_id` で紐付ける（詳細は §3.1/§7）。
+- **`note_account_consultations`（Phase 6 新規, F-ANP-04, migration `20260921000000_anp_account_consult`）**:
+  `id, title(最初の運営者メッセージ先頭40字), status(active|archived), brief_draft_json?(NoteAccountConsultBriefDraft・毎ターン全置換), ready_to_design:bool, created_at, updated_at`。
+- **`note_account_consultation_messages`（同上）**: `id, consultation_id(FK→note_account_consultations, onDelete:Cascade), role(operator|advisor), content, status(operator: pending|processing|done|failed / advisor: done), error?, research_json?({ research: NoteAccountConsultResearchItem[], suggested_questions: string[] }), created_at`。
+  A2P の `org_ceo_messages` と同型（運営者発話の status で AI 返答の生成状態を持つ）。
+- **`note_account_designs.consultation_id?`（同 migration で追加, FK→note_account_consultations, onDelete:SetNull）**:
+  AI 相談から生成した設計案の出自。相談画面の「この相談から作った設計案」一覧に使う。
 - **`note_themes`**（= theme_candidates 相当）: `id, note_account_id, title, hook, target_reader, recommend_paid:bool, suggested_price, competitors_json, genre, status(pending|accepted|rejected), rejected_reason, created_at`
 - **`note_articles`**（= books 相当）: `id, note_account_id, theme_id?, title, lead, body_md, paid:bool, price_jpy?, paywall_line_pos?, membership_magazine?, eyecatch_r2_key?, status(queued|writing|editing|eyecatch|judging|ready|published|failed|cancelled|needs_human_review), publish_status(draft|published|unlisted), note_url?, cost_jpy_total, has_pending_comments, quality_score?, published_at, created_at, updated_at`。
   `publish_status='unlisted'` は Phase 2 `note.publish.status.sync` が追加した状態（公開後に非公開化/404 を検知）。
@@ -358,6 +452,39 @@ A2P の `books` 系を note 記事系に写像。**マルチアカウントを�
 >   1記事1回の冪等性チェック（`findFirst({note_article_id, kind})`）にも使う。
 > - `note_accounts` に `followers_total Int @default(0)` / `followers_fetched_at DateTime?` を追加
 >   （§2.2 のフォロワー数取得結果を保持。KDP 系アカウントには無い ANP 固有のフィールド）。
+
+> ⚠️ **Phase 7 追加 (2026-09-21, F-ANP-17/21, migration `20260921010000_anp_account_settings_authrelay`)**:
+> - `note_accounts` に `settings_json Json @default("{}")` を追加。アカウント別パイプライン自動パス
+>   設定 (`NoteAccountSettingsSchema` = `packages/contracts/src/agents/anp.ts`): `{ auto_theme_enabled?,
+>   themes_per_day?, autopass_enabled?, auto_publish_enabled?, tiktok_enabled? }`。未指定キーは
+>   グローバル `AppSettings` に従う。`/accounts/[id]` に編集フォーム(`account-settings-form.tsx`、
+>   tri-state セレクト)を追加。
+>   **既知の制約**: `note.theme.auto`/`note.publish.dispatch` の cron item はそもそも**グローバル**
+>   `anp_auto_theme_enabled`/`anp_auto_publish_enabled` が true のときしか登録されない
+>   (`apps/worker/src/crontab.ts` の `buildCronItemsWithSettings`)。そのためアカウント別設定で
+>   実際に有効化できるのは「グローバル ON の中で特定アカウントだけ OFF にする」方向のみ
+>   (グローバル OFF の間はアカウント側で `auto_theme_enabled:true` 等を指定しても cron 自体が
+>   走らないため無効)。将来アカウント単独でグローバルを上書きして有効化したい場合は、cron
+>   登録条件を「いずれかのアカウントが有効なら登録」に変更する必要がある(本タスクでは未実施)。
+> - `note_auth_requests` に `note_account_id String?`(FK→note_accounts, onDelete:SetNull)/
+>   `fulfilled_at DateTime?`/`consumed_at DateTime?` を追加。F-ANP-21 認証リレー: 既存の `purpose`
+>   列を「kind」として流用し `purpose='session_expired'` の pending 行をアカウント単位で作る
+>   (新規 `kind` 列は追加せず、KdpAuthRequest と同型の既存列で表現できたため列を増やさなかった)。
+>   `apps/worker/src/tasks/lib/note-auth-relay.ts` の `notifyNoteSessionExpired` が
+>   `pipeline.note.publish`/`note.sales.fetch`/`note.publish.status.sync`/`note.engage` の
+>   `not_logged_in`(note.engage は `blocked==='session_expired'`) 検知時に、同一アカウントの
+>   pending 行が無ければ新規作成しLINE通知(既存の `pushLine`)する(重複排除・連投防止)。
+>   `scripts/anp/note-session-capture.mjs` はセッション保存成功時に (a) `note_accounts.status`
+>   を `pending_session`/`paused` の両方から `active` へ復旧(従来は `pending_session` のみ
+>   対応でPhase2の `paused` 復旧が漏れていたバグを修正)、(b) 該当アカウントの
+>   `session_expired`/pending 行を `fulfilled` に更新する。`/accounts`・`/accounts/[id]` に
+>   再取込コマンド付きバナーを表示する。
+> - `promotion.note.article` が対象アカウントの `settings_json.tiktok_enabled=true`(既定OFF、
+>   コスト保護)のときだけ `promotion.note.article.video` を追加 enqueue する(§7 参照)。TikTok
+>   台本生成は既存の多エージェント経路(`createTikTokVideoScript`/`renderSlideVideo`)を
+>   そのまま流用し、新しい生成器は作っていない(記事タイトル/リードを「宣伝する本」入力に
+>   差し替えるだけ)。CTA は「プロフィールの note で全文」を明示的に付加する
+>   (`ensureNoteCta`)。
 
 ---
 
@@ -510,21 +637,96 @@ Phase 1〜4 と同型。画像生成コストは `withImageLogging(role='anp.str
 既存の note パイプライン(`note.theme.generate` 等)はこの列を読まないため後方互換上の問題はない。
 将来アカウント別ジャンル方針(F-ANP-02)を実装する際の初期値として使う想定。
 
+### Phase 6 実装済みタスク — アカウント戦略の AI 相談 (F-ANP-04, 2026-09-21)
+
+運営者要望「ANP で最初アカウント戦略策定する時に、AI に相談しながらリサーチや戦略策定行えるようにして」
+への対応。A2P の `org.ceo.chat`（CEO 対話）と同型の非同期チャット。
+
+| タスク名 | ペイロード | 処理概要 | 完了後の遷移/状態 |
+|---|---|---|---|
+| `note.account.consult` | `{ consultation_id, message_id, job_id }` | `/accounts/design/consult` の相談開始・メッセージ送信・再試行から enqueue（`maxAttempts=2`）。operator メッセージを `pending/failed→processing` の CAS で取る（他状態=二重投入は Job を done にしてスキップ）。当該メッセージより前の `status='done'` メッセージを履歴（最大 30 ターン）、`brief_draft_json` を草案として `consultNoteAccount`（role=`anp.consultant`）に渡す。段階1 でリサーチ計画→Tavily 検索（キー未設定なら省略）、段階2 で返答 JSON。`NoteLock` は使わない | 成功: advisor メッセージ INSERT（`research_json` に出典と suggested_questions）、相談の `brief_draft_json`/`ready_to_design`/`title`（空なら初回メッセージから）更新、operator メッセージ `done`。失敗: operator メッセージ `failed`+`error`（UI の「もう一度試す」で再 enqueue）、Job `failed` |
+
+**設計判断**: (1) 返答生成を Server Action 内で同期実行せず worker に寄せたのは、LLM 呼出を
+`token_usage`/`model_assignments` の既存配線（`createAgentClient`）に乗せるためと、Vercel/Railway の
+リクエストタイムアウトを避けるため（Tavily 込みで 30〜90 秒かかる）。(2) リサーチを「LLM に
+クエリを決めさせてから Tavily を 1 往復」にしたのは Marketer テーマ生成と同じ理由（純正
+web_search ループは 3〜7 分）。(3) 草案はサーバ側（AI）が毎ターン全置換で持ち、UI は読み取り専用
+（修正は会話で伝える）。手直し UI が必要になれば `createDesignFromConsultation` の `brief_draft`
+引数（手直し草案を相談側にも保存）を使う。(4) 相談 → 設計案は多対一ではなく一対多
+（`note_account_designs.consultation_id`）: 同じ会話から複数案を出せる。
+
+### Phase 7 実装済みタスク — 残項目一括実装 (2026-09-21, 運営者指示「ANP の実装を仕上げちゃって」)
+
+| タスク名 | ペイロード | 処理概要 | 完了後の遷移/状態 |
+|---|---|---|---|
+| `promotion.note.article.video` | `{ note_article_id, job_id }` | `promotion.note.article` の公開成功時、対象アカウントの `settings_json.tiktok_enabled=true`(既定OFF)のときだけ enqueue(`job_key='anp-promo-video-<article_id>'`)。記事タイトル/リードを「宣伝する本」入力に差し替えて既存 `createTikTokVideoScript`/`renderSlideVideo`(F-060 と同じ多エージェント台本→レンダリング経路)に乗せる。CTA「プロフィールの note で全文」を `ensureNoteCta` で明示付加。冪等性: 同一記事の `kind='anp_article', channel='tiktok'` 投稿が既にあれば再生成しない | 成功: `promotion_posts`(`kind='anp_article', channel='tiktok', media_key=<mp4>, status='scheduled'`) 作成。レンダリング失敗時は draft post を削除し例外を再送出(既存 Job CAS が `failed` に降格) |
+
+**F-ANP-17 アカウント別設定の解決ヘルパー**: `apps/worker/src/tasks/lib/note-account-settings.ts`
+(`resolveThemeAutoSettings`/`resolveAutoPublishEnabled`/`resolveTiktokEnabled`)が
+`note_accounts.settings_json`(`NoteAccountSettingsSchema`)とグローバル `AppSettings` をマージする。
+`note.theme.auto`/`note.publish.dispatch`/`promotion.note.article` から呼ばれる(詳細は §3.2/§3.3/§3.4、
+既知の制約は §6 Phase7 追記を参照)。
+
+**F-ANP-21 認証リレーの共通ヘルパー**: `apps/worker/src/tasks/lib/note-auth-relay.ts`
+(`notifyNoteSessionExpired`)が `pipeline.note.publish`/`note.sales.fetch`/
+`note.publish.status.sync`/`note.engage` の4タスクから共通で呼ばれる。同一アカウントの
+`note_auth_requests`(`purpose='session_expired', status='pending'`)行が既にあれば新規作成・
+再通知をスキップする(連投防止)。`note.engage` は元々セッション失効時にアカウントを
+`paused` にしていなかった実装漏れがあったため、本タスクで他3タスクと同じ挙動
+(`status='paused'`更新＋通知)に揃えた。
+
+**循環 import 回避**: `promotion-note-article.ts`(X/IG告知)と`promotion-note-article-video.ts`
+(TikTok動画)は互いの関数を参照し合う設計になりかけたため、共通の予約時刻計算
+(`jstDayBoundsUtc`/`offpeakScheduledForUtc`)を `apps/worker/src/tasks/lib/promo-schedule.ts`
+に切り出した。`promotion-note-article.ts` は既存テストの import パス互換のためこの2関数を
+re-export している。
+
+**UI (`apps/anp`)**: `/accounts/[id]` に `account-settings-form.tsx`(tri-state: グローバルに従う/
+有効/無効、Server Action `updateAccountSettings`)、`/accounts`・`/accounts/[id]` にセッション
+要再取込バナー、`/articles`(全記事横断一覧、フィルタ: アカウント/ステータス/有料提案)、
+`/articles/[id]`(本文整形表示・アイキャッチ・品質判定内訳・コスト・ジョブ履歴・売上・
+告知投稿・公開/再審査操作)を追加。ホーム(`app/(app)/page.tsx`)を仕上げ(§3.5 参照)。
+サイドバーシェル移植は §5.1 参照。
+
 ---
 
 ## 8. 段階的ロードマップ
 
 - **Phase 0（設計・雛形）**: 本ドキュメント／`apps/anp` スキャフォールド（SSO で起動する骨格＋ホーム骨格）／portal タイル（済）。
 - **Phase 1（MVP・実装済み）**: 単一〜複数アカウントで theme→outline→writer.body→editor→eyecatch→judge→**status='ready' (下書き相当)** まで自動連結。`apps/anp` に `/accounts`・`/accounts/[id]` UI（アカウント作成・テーマ生成/承認/却下・記事一覧）を実装。note 公開はアシスト手動（Phase 2）。売上手入力。
-- **Phase 2（一部実装済み・2026-09-15）**: note 公開オートメーション（`pipeline.note.publish`/`note.publish.dispatch`/`note.publish.status.sync`、§7）＋マルチアカウント別セッション（`note_accounts.session_state_enc`、移行/取込スクリプト）を実装。**未実装・要フォロー**: 有料記事の価格/有料ライン設定 UI 自動化（note の KYC 要件により本人確認完了後に追加実装が必要、§2.1 参照）、認証リレー(`note_auth_requests`＋LINE)、売上スクレイプ(`note.sales.fetch`)、価格自動決定(F-ANP-16)。
+- **Phase 2（一部実装済み・2026-09-15）**: note 公開オートメーション（`pipeline.note.publish`/`note.publish.dispatch`/`note.publish.status.sync`、§7）＋マルチアカウント別セッション（`note_accounts.session_state_enc`、移行/取込スクリプト）を実装。**未実装・要フォロー**: 有料記事の価格/有料ライン設定 UI 自動化（note の KYC 要件により本人確認完了後に追加実装が必要、§2.1 参照）、~~認証リレー(`note_auth_requests`＋LINE)~~ → **Phase 7 で解消**、~~売上スクレイプ(`note.sales.fetch`)~~ → Phase 3 で解消、価格自動決定(F-ANP-16)。
 - **Phase 3（一部実装済み・2026-09-16）**: SNS 自動販促（`promotion.note.article`、§7）／売上・KPI取得（`note.sales.fetch`/`note.sales.fetch.dispatch`、§7）／相互流入 F-ANP-31 最小版（note 本文への関連書籍紹介、§3.4）／ホーム集約 F-ANP-42 最小版（`apps/anp/app/page.tsx`）を実装。**未実装・要フォロー**: メンバーシップ運用そのもの（運用アカウント無しのため §2.2 のスクレイプ未検証）、org 自律連携（note 出版本部/note 販促本部）、有料記事の価格/有料ライン設定 UI（Phase 2 から継続）。
-- **Phase 4（一部実装済み・2026-09-18）**: 日次自動運転(F-ANP-17: `note.theme.auto` — テーマ自動生成＋自動採用＋パイプライン自動起動、§7)／価格・有料の自動提案(F-ANP-16 続き: judge が有料化提案、paid は KYC 未完了のため常に false 強制、§3.2/§7)／`needs_human_review` 再審査 UI(申し送り6 解消)／`note_accounts.handle` 編集 UI＋公開成功時の自動保存(申し送り13 解消)／A2P⇄note 相互送客の拡充(書籍LP→note 導線、F-ANP-31 最小版、§3.4)を実装。**未実装・要フォロー**: note→書籍化などクロスツール収益最適化、アカウント別のパイプライン自動パス設定(現状 `anp_auto_theme_enabled` 等はグローバル1設定)、org 自律連携、有料記事の価格/有料ライン設定 UI(Phase 2 から継続、KYC 完了待ち)、メンバーシップ運用実データ検証(Phase 3 から継続)。
+- **Phase 4（一部実装済み・2026-09-18）**: 日次自動運転(F-ANP-17: `note.theme.auto` — テーマ自動生成＋自動採用＋パイプライン自動起動、§7)／価格・有料の自動提案(F-ANP-16 続き: judge が有料化提案、paid は KYC 未完了のため常に false 強制、§3.2/§7)／`needs_human_review` 再審査 UI(申し送り6 解消)／`note_accounts.handle` 編集 UI＋公開成功時の自動保存(申し送り13 解消)／A2P⇄note 相互送客の拡充(書籍LP→note 導線、F-ANP-31 最小版、§3.4)を実装。**未実装・要フォロー**: note→書籍化などクロスツール収益最適化、~~アカウント別のパイプライン自動パス設定(現状 `anp_auto_theme_enabled` 等はグローバル1設定)~~ → **Phase 7 で解消**、org 自律連携(F-ANP-43、運営者指示によりスコープ外)、有料記事の価格/有料ライン設定 UI(Phase 2 から継続、KYC 完了待ち)、メンバーシップ運用実データ検証(Phase 3 から継続)。
 - **Phase 5（実装済み・2026-09-18）**: note アカウント設計 UI (F-ANP-01/03: `/accounts/design`
   ブリーフ入力→`anp.strategist`が設計案生成→編集/画像生成/フィードバック再生成/採用・却下、
   `note_accounts.status='pending_session'` 新設、§3.1/§6/§7)を実装。**未適用・要フォロー**:
   本番 DB への migration `20260919000000_anp_account_design` 適用(raw SQL, 申し送り参照)、
   `pnpm --filter @a2p/db run seed:anp` の再実行(`anp.strategist` role 追加分)、
   `apps/anp/package.json` に追加した `@a2p/storage` 依存の `pnpm install` 実行。
+- **Phase 6（実装済み・2026-09-21）**: アカウント戦略の AI 相談 (F-ANP-04: `/accounts/design/consult`
+  チャット壁打ち＋Tavily リサーチ→ブリーフ草案→設計案生成、role `anp.consultant`、
+  `note.account.consult`、§3.1/§6/§7)。本番反映は migration `20260921000000_anp_account_consult`
+  の raw SQL 適用＋`seed:anp` 再実行（`anp.consultant` 追加分）。
+- **Phase 7（実装済み・2026-09-21、運営者指示「ANP の実装を仕上げちゃって」）**: 人手（note の
+  KYC・実データ）に依存しない残項目を一括実装。
+  (a) F-ANP-17 アカウント別パイプライン自動パス設定 (`note_accounts.settings_json`、
+  `/accounts/[id]` の tri-state フォーム、§3.2/§3.3/§6/§7)。
+  (b) F-ANP-21 note 認証リレー (`note_auth_requests` 拡張＋`notifyNoteSessionExpired`＋
+  `/accounts`・`/accounts/[id]` の再取込バナー、§3.3/§6/§7)。
+  (c) 記事の全件横断ビュー `/articles`・`/articles/[id]` (フィルタ一覧・本文整形表示・
+  品質判定内訳・コスト・ジョブ履歴・売上・告知投稿・公開/再審査操作、F-ANP-42 関連)。
+  (d) F-ANP-42 ホーム仕上げ (アカウント別 KPI テーブル・今日のパイプライン・
+  セッション要再取込アラート・直近公開記事、`lib/home-core.ts` に純関数化)。
+  (e) F-ANP-30 続き: TikTok 連動動画 (`promotion.note.article.video`、
+  `settings_json.tiktok_enabled` 既定OFF、§3.4/§7)。
+  (f) 運営者要望「M2P と同じようにメニューはサイドバーにしてほしい」への対応として
+  `apps/web` と同構造のサイドバーシェルを移植 (`apps/anp/components/layout/*`、
+  `app/(app)/` route group、§5.1)。
+  **対象外(理由付き)**: 有料記事の価格/有料ライン UI(KYC 完了待ち、Phase 2 から継続)、
+  メンバーシップ運用実データ検証(運用アカウント無し、Phase 3 から継続)、
+  F-ANP-43 org 自律運用連携(大規模なため運営者指示により今回スコープ外、§3.5)。
+  **未適用・要フォロー**: 本番 DB への migration `20260921010000_anp_account_settings_authrelay`
+  適用(raw SQL、§6 Phase7 参照)。新規 npm 依存は追加していないため `pnpm install` は不要。
 
 ---
 
@@ -538,7 +740,14 @@ Vercel AI SDK + Anthropic SDK / gpt-image / Cloudflare R2 / NextAuth(共有) / T
 ## 10. ブランド
 
 - 名称: **ANP（Automated Note Publishing Tool）**
-- ロゴ: `apps/portal/public/tools/anp.png`（深緑 #1f4d3f × チャコール #1f2933、書類＋出版フローの矢印）。アクセント = `#1f4d3f`。
+- ロゴ（2026-09-21 差し替え・運営者支給）: A2P ロゴと同系のワードマーク（ネイビー #1b3a5c 系の
+  「ANP」＋ティール #2cc6c0 系のアクセント、書類＋ペン先＋上向き矢印のアイコン、サブタイトル
+  "Automate note Publisher"）。ファイル: `apps/portal/public/tools/anp.png`（ワードマーク 1200x437、
+  ポータルタイル用）／`apps/anp/public/anp-logo.png`（同ワードマーク、ヘッダー用）／
+  `apps/anp/public/anp-mark.png`（アイコン部分のみの正方形マーク 512x512、狭い枠用）／
+  `apps/anp/app/icon.png`（同マーク 256x256 = favicon。旧 `favicon.ico` は削除）。
+  元画像は 1536x1024 の余白付きで、`sharp` で余白トリム＋アイコン部分を切り出した
+  （ワードマーク右端の「A」の脚とサブタイトルが切り出し枠に食い込むため x≥584,y≥472 を白塗り）。
 - ポータル表示: A2P と横並びのタイル（ロゴ画像）。本番サブドメイン案 `anp.m2p.tools`。
 
 ---
@@ -581,3 +790,25 @@ Vercel AI SDK + Anthropic SDK / gpt-image / Cloudflare R2 / NextAuth(共有) / T
     - **設計判断の記録**: `note_accounts.genre_policy_json` の保存形 (`{ slugs: string[] }`) は
       §7 Phase5 に記載済み。`NoteAccountDesign` に `cost_jpy_total` 相当の集計列を設けなかった
       判断も同節に記載済み。
+      **2026-09-21 解消済み**: `apps/anp/node_modules/@a2p/storage` のワークスペースリンクは
+      別セッションで `pnpm install` 済みで生成されており、`pnpm --filter @anp/web run typecheck`
+      は clean（このシンボリックリンクの存在で確認）。
+19. **[Phase 7 実装メモ・要フォロー、2026-09-21]** 本タスク（運営者指示「ANP の実装を仕上げちゃって」）
+    の成果物で以下が未適用のまま残っている:
+    - **DB migration**: `packages/db/migrations/20260921010000_anp_account_settings_authrelay/migration.sql`
+      (`note_accounts.settings_json` 追加、`note_auth_requests` に `note_account_id`/
+      `fulfilled_at`/`consumed_at` 追加)。#14/#15/#18 と同じ運用 (`ALTER TABLE ... ADD COLUMN
+      IF NOT EXISTS` を raw SQL で直接適用 → `pnpm --filter @a2p/db exec prisma migrate resolve
+      --applied 20260921010000_anp_account_settings_authrelay` で履歴のみ整合) で本番適用すること。
+      **タイムスタンプ注記**: 同日 `20260921000000` 台で他セッションの migration
+      (`20260921000000_ad_campaign_product_stats` / `20260921000000_anp_account_consult`) が
+      並行して作られたため、本 migration は衝突回避のため `20260921010000`(1分後)にした。
+    - **seed 追加は不要**: 本タスクは新規 LLM role を追加していない（既存 `anp.*` role をそのまま
+      利用、TikTok 動画生成も既存 `tiktok_*` role を流用）。
+    - **新規 npm 依存は無し**: サイドバーシェルは `@radix-ui/react-dialog` 等を使わず既存依存
+      (`clsx`/`lucide-react`)のみで実装したため `pnpm install` は不要（§5.1 参照）。
+    - **運用上の注意**: `note.theme.auto`/`note.publish.dispatch` のアカウント別設定は、
+      グローバル `AppSettings` が OFF の間は cron 自体が登録されないため「アカウント単独で
+      グローバルより先に有効化する」ことはできない(§6 Phase7 追記に既知の制約として記載)。
+      運営者が特定アカウントだけ自動化したい場合は、グローバル設定を先に ON にしたうえで
+      他アカウントを `/accounts/[id]` の設定で個別に OFF にする運用を想定している。

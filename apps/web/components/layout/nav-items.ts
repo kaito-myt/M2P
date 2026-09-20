@@ -84,6 +84,7 @@ export const navSections: readonly NavSection[] = [
     items: [
       { key: 'sales', label: m.itemSalesKpi, href: '/sales', enabled: true },
       { key: 'cost', label: m.itemCostDetail, href: '/cost', enabled: true },
+      { key: 'ads', label: m.itemAds, href: '/ads', enabled: true },
     ],
   },
   {

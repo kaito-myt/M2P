@@ -1,8 +1,6 @@
 /**
  * S-ANP-03 — パイプライン設定 (docs/11-anp-design.md §7 Phase2): note 自動公開のマスタスイッチ。
  */
-import Link from 'next/link';
-
 import { prisma } from '@a2p/db';
 
 import { messages } from '@/lib/messages';
@@ -22,12 +20,8 @@ export default async function SettingsPage() {
   });
 
   return (
-    <div className="mx-auto flex min-h-screen max-w-4xl flex-col px-space-relaxed py-space-loose">
-      <Link href="/accounts" className="text-caption text-muted no-underline hover:underline">
-        {messages.accountDetail.back}
-      </Link>
-
-      <header className="mt-space-snug">
+    <div className="mx-auto flex max-w-4xl flex-col">
+      <header>
         <h1 className="text-sub-heading font-medium text-charcoal">{messages.settings.pageTitle}</h1>
         <p className="mt-1 text-body text-muted">{messages.settings.pageDescription}</p>
       </header>

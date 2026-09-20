@@ -188,6 +188,7 @@ import { NOTE_THEME_GENERATE_TASK_NAME, noteThemeGenerateTask } from './tasks/no
 import { NOTE_THEME_AUTO_TASK_NAME, noteThemeAutoTask } from './tasks/note-theme-auto.js';
 import { NOTE_ACCOUNT_DESIGN_TASK_NAME, noteAccountDesignTask } from './tasks/note-account-design.js';
 import { NOTE_ACCOUNT_VISUALS_TASK_NAME, noteAccountVisualsTask } from './tasks/note-account-visuals.js';
+import { NOTE_ACCOUNT_CONSULT_TASK_NAME, noteAccountConsultTask } from './tasks/note-account-consult.js';
 import {
   PIPELINE_NOTE_WRITER_OUTLINE_TASK_NAME,
   pipelineNoteWriterOutlineTask,
@@ -212,6 +213,10 @@ import {
   PROMOTION_NOTE_ARTICLE_TASK_NAME,
   promotionNoteArticleTask,
 } from './tasks/promotion-note-article.js';
+import {
+  PROMOTION_NOTE_ARTICLE_VIDEO_TASK_NAME,
+  promotionNoteArticleVideoTask,
+} from './tasks/promotion-note-article-video.js';
 import { NOTE_SALES_FETCH_TASK_NAME, noteSalesFetchTask } from './tasks/note-sales-fetch.js';
 import {
   NOTE_SALES_FETCH_DISPATCHER_TASK_NAME,
@@ -333,6 +338,7 @@ export function buildTaskList(): TaskList {
     [NOTE_THEME_AUTO_TASK_NAME]: noteThemeAutoTask,
     [NOTE_ACCOUNT_DESIGN_TASK_NAME]: noteAccountDesignTask,
     [NOTE_ACCOUNT_VISUALS_TASK_NAME]: noteAccountVisualsTask,
+    [NOTE_ACCOUNT_CONSULT_TASK_NAME]: noteAccountConsultTask,
     [PIPELINE_NOTE_WRITER_OUTLINE_TASK_NAME]: pipelineNoteWriterOutlineTask,
     [PIPELINE_NOTE_WRITER_BODY_TASK_NAME]: pipelineNoteWriterBodyTask,
     [PIPELINE_NOTE_EDITOR_TASK_NAME]: pipelineNoteEditorTask,
@@ -343,6 +349,7 @@ export function buildTaskList(): TaskList {
     [NOTE_PUBLISH_STATUS_SYNC_TASK_NAME]: notePublishStatusSyncTask,
     // docs/11-anp-design.md §7 Phase3 — SNS 販促 (F-ANP-30) / 売上・KPI 取得 (F-ANP-40)。
     [PROMOTION_NOTE_ARTICLE_TASK_NAME]: promotionNoteArticleTask,
+    [PROMOTION_NOTE_ARTICLE_VIDEO_TASK_NAME]: promotionNoteArticleVideoTask,
     [NOTE_SALES_FETCH_TASK_NAME]: noteSalesFetchTask,
     [NOTE_SALES_FETCH_DISPATCHER_TASK_NAME]: noteSalesFetchDispatcherTask,
   };

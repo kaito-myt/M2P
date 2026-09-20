@@ -3431,6 +3431,26 @@ export const logger = pino({
   同じテーブル/webhook を共有するが、同時に両方が認証待ちになる運用は想定していない。
   純粋ロジックは `apps/web/lib/line-webhook-core.ts` (`extractOtpCode`/`processLineEvents`)、署名検証/
   返信 API 呼び出しは `apps/web/lib/line-client.ts` に分離。
+- **`ad_spend`** (F-090, 2026-08-26)。Amazon Advertising API 由来の広告費・広告経由売上の**日次合計**
+  (`ads_date`, `year_month`, `profile_id`, `spend_jpy`, `impressions`, `clicks`, `sales_jpy`, `orders`,
+  `currency`, `amount_original`(非JPY時のFX再換算用), `source`)。`unique(profile_id, ads_date)`。
+  当月コスト・純利益・ROAS に自動算入(`apps/web/lib/cost-meter-core.ts`)。
+  worker `ads.spend.fetch`（日次cron `0 19 * * *`=JST04:00・常時ON。creds未設定ならno-opスキップ）が
+  Reporting API v3 `spCampaigns`(groupBy campaign)を取得し日次合算して upsert。詳細は「追加 worker タスク」節。
+- **`ad_campaign_stats` / `ad_product_stats`** (F-090拡張, 2026-09-21)。運営者要望「広告パフォーマンス
+  (キャンペーン別・書籍別)とコストを見られるように」に対応し、`ad_spend`(日次合計)に加えて内訳を保存する。
+  - **`ad_campaign_stats`**: キャンペーン別の日次パフォーマンス。`profile_id`, `ad_product`('SP'|'SB'|'SD'),
+    `campaign_id`, `campaign_name`, `campaign_state`(enabled|paused|archived等。**当該キャンペーンの最新日行にのみ設定**),
+    `budget_jpy`(日予算、**最新日行にのみ設定**), `ads_date`, `year_month`, `spend_jpy`, `impressions`, `clicks`,
+    `sales_jpy`, `orders`, `units`, `currency`, `amount_original`。`unique(profile_id, ad_product, campaign_id, ads_date)`、
+    `index(year_month)`, `index(campaign_id)`。
+  - **`ad_product_stats`**: 書籍(ASIN)別の日次パフォーマンス。`profile_id`, `ad_product`, `campaign_id`,
+    `ad_group_id`, `asin`(nullable — `books.asin` と**非FK結合**。未登録ASINの行も許容), `sku`, `ads_date`,
+    `year_month`, `spend_jpy`, `impressions`, `clicks`, `sales_jpy`, `orders`, `units`, `currency`, `amount_original`。
+    `unique(profile_id, ad_product, campaign_id, asin, ads_date)`、`index(asin)`, `index(year_month)`。
+  - 取得元は `spCampaigns`(campaign粒度, → ad_campaign_stats ＋ 日次合計を ad_spend へ)、
+    `spAdvertisedProduct`(ASIN粒度, → ad_product_stats)、`POST /sp/campaigns/list`(name/state/budgetメタ)。
+    詳細な API 事実・実装は「追加 worker タスク」節を参照。
 
 ## 追加エージェントロール (prompts / model_assignments 対象)
 
@@ -3525,6 +3545,61 @@ gpt-image-2 単価行を seed 済 (`apply-openai-catalog.ts`)。本ドキュメ�
   事業者名/連絡先/連携サービスは `apps/web/app/legal/config.ts` で管理。TikTok 等の審査で Privacy Policy / Terms URL に使う。
 - **新規 DB**: `cost_improvement_proposals`（status: proposed|applied|dismissed|failed、action_json、推定削減額等）。
   `app_settings` に `promo_daily_review_enabled`/`promo_review_cron`/`cost_auto_analyze_enabled`/`cost_analyze_cron` を追加。
+- **`ads.spend.fetch`**（F-090, 2026-08-26 実装／2026-09-21 拡張。日次cron `0 19 * * *`=JST04:00・常時ON。
+  タスク名は拡張後も不変）: Amazon Advertising API から広告費・パフォーマンスを取得する。
+  `apps/worker/src/tasks/ads-spend-fetch.ts` + `apps/worker/src/tasks/ads-spend/{amazon-ads-client,ads-report-transform}.ts`。
+  - **認証**: LwA `refresh_token` → `access_token`。`adsCredsFromEnv`(env `AMAZON_ADS_CLIENT_ID` /
+    `_CLIENT_SECRET` / `_REFRESH_TOKEN` / `_PROFILE_ID` / `_REGION`(既定 `fe`))が不足していれば
+    `{ok:true, skipped:true, reason:'not_connected'}` で no-op スキップ(未接続扱い)。
+  - **Amazon Ads API の事実 (2026-09-21 時点, 要実データ最終検証)**:
+    - LwA 認可 URL: NA `https://www.amazon.com/ap/oa` / EU `https://eu.account.amazon.com/ap/oa` /
+      **FE(日本) `https://apac.account.amazon.com/ap/oa`**。`scope=advertising::campaign_management`。
+    - トークン URL: NA `https://api.amazon.com/auth/o2/token` / EU `https://api.amazon.co.uk/auth/o2/token` /
+      **FE `https://api.amazon.co.jp/auth/o2/token`**。**region 別 URL が失敗(非2xx)したら `api.amazon.com`
+      へ1度だけフォールバックする**(`amazon-ads-client.ts` `refreshAccessToken`)。
+    - Reporting v3 (`POST /reporting/reports`, content-type `application/vnd.createasyncreportrequest.v3+json`) →
+      非同期作成 → `GET /reporting/reports/{id}` でポーリング(最大 ~5分, 10s×30) → `COMPLETED` の `url` から
+      GZIP_JSON をダウンロード。**DAILY は 1 リクエスト最大 31 日**のため `chunkDateRange`(30日窓は通常1チャンク)
+      で分割。
+      - `spCampaigns`(groupBy `['campaign']`, columns `date,campaignId,campaignName,campaignStatus,
+        impressions,clicks,cost,sales14d,purchases14d`) → キャンペーン別行を `ad_campaign_stats` へ、
+        同じ行を date で合算した日次合計を `ad_spend` へ(既存 F-090 挙動を維持)。
+      - `spAdvertisedProduct`(groupBy `['advertiser']`, columns 上記+`adGroupId,adGroupName,
+        advertisedAsin,advertisedSku,unitsSoldClicks14d`) → ASIN 別行を `ad_product_stats` へ。
+      - SB/SD (`sbCampaigns`/`sdCampaigns`, adProduct `SPONSORED_BRANDS`/`SPONSORED_DISPLAY`) は
+        **best-effort**: KDP 著者アカウントでは権限が無く 4xx になる場合があるため try/catch で warn ログに
+        留め、タスク全体は継続する(結果 `sb_sd_skipped` に記録)。カラム名は SP と同型と仮定した未検証実装
+        — 実 creds 到着後に 1 回実走して確認すること。
+    - キャンペーンのメタ(name/state/budget): `POST /sp/campaigns/list`(content-type/accept
+      `application/vnd.spCampaign.v3+json`, body `{maxResults:100, nextToken?}`, `nextToken` でページング
+      最大10ページ) → `campaigns[]{campaignId,name,state,budget{budget,budgetType},...}`。**SP のみ対応**
+      (SB/SD の同等エンドポイントは未実装)。取得した name/state/budget は当該キャンペーンの**最新日行にのみ**
+      反映する(`buildCampaignStatRows`。過去日の履歴を書き換えない)。失敗時は warn ログのみで継続、
+      campaign_name はレポート行自身の `campaignName` 列にフォールバック。
+    - プロファイル一覧: `GET https://advertising-api-fe.amazon.com/v2/profiles`(region別ホスト。
+      headers `Authorization: Bearer`, `Amazon-Advertising-API-ClientId`) → `profileId, countryCode,
+      currencyCode, timezone, accountInfo{marketplaceStringId,id,type,subType,name}`。KDP 著者は
+      `subType` が `KDP_AUTHOR` になる想定(要実データ確認)。`fetchProfileCurrency` が対象 profileId の
+      `currencyCode` を解決(取得失敗時は region 既定通貨(fe=JPY/na=USD/eu=EUR)へフォールバック)。
+  - **通貨換算**: `currencyCode` が JPY 以外なら `app_settings.latest_fx_rate`(USD/JPY, 無ければ既定150)
+    で円換算し、`amount_original` に元通貨額を保存(`ad_spend` と同じ扱い)。JP マーケットプレイス(region=fe)は
+    通常 JPY のため通常は無変換。
+  - **DI 設計**: `AdsSpendFetchDeps` に `fetchCampaignReportRows`/`fetchProductReportRows`/
+    `fetchCampaignsMeta`/`fetchCurrency` を注入可能にし、ネットワーク非依存で Vitest ユニットテスト可能
+    (`apps/worker/__tests__/ads-spend-fetch.test.ts`)。純粋なレポート変換/集計/日付分割/FX換算ロジックは
+    `ads-report-transform.ts` に分離しテスト(`apps/worker/__tests__/ads-report-transform.test.ts`)。
+  - **OAuth ヘルパー**: `scripts/ads/amazon-ads-oauth.mjs`(運営者がローカルで1回実行。使い方は
+    `scripts/ads/README.md`)。ローカル HTTP サーバでコールバック受信 → 認可コード交換 → `/v2/profiles`
+    表示 → Railway `A2P-Worker` に設定すべき 5 env(`AMAZON_ADS_CLIENT_ID`/`_CLIENT_SECRET`/
+    `_REFRESH_TOKEN`/`_PROFILE_ID`/`_REGION`)を表示(`--railway-set` で `railway variables --set` 自動実行)。
+    ローカルでコールバックを受け取れない場合は `--redirect-url`/`--code` で手動投入可。
+  - **UI**: `/ads`(S-030。docs/04 §S-030)。接続状態バナー(未接続時は上記スクリプトの実行案内)、
+    当月 KPI(広告費/売上/ROAS/ACOS/インプレッション/クリック/CTR/CPC/注文数、前月比)、日次トレンド、
+    キャンペーン別(ROAS降順)、書籍別(`ad_product_stats.asin`を`books.asin`で結合。未登録は
+    「(未登録 ASIN)」表示、当月の`sales_records.royalty_jpy`と広告費の差分を表示)。期間は
+    当月/先月/直近30日の3択。「今すぐ取得」は Server Action `triggerAdsFetch`(`app/actions/ads.ts` →
+    `lib/ads-fetch-core.ts`)が `enqueueJob('ads.spend.fetch', ...)` するのみ(run 追跡テーブルは無い)。
+    集計・整形の純関数は `apps/web/lib/ads-core.ts`(Vitest: `apps/web/__tests__/ads-core.test.ts`)。
 
 ## サムネ生成方式の変更 (F-007)
 
@@ -3621,6 +3696,8 @@ ChatGPT ブラウザ版で高品質だった運営者の実証済みフォーマ
   (`lib/kdp-report-core.ts` + `app/actions/kdp-report.ts` + `KdpReportImportPanel`)
 - テーマ詳細に「Amazon 売れ筋レコメンド」「著者名・レーベル名」セクション追加。
 - KDP入稿チェックリストを一覧→詳細構成に変更、フリガナ/ローマ字項目・入稿ステータス手動切替・一括DL追加。
+- `/ads`（S-030, F-090拡張, 2026-09-21）: 広告（Amazon Ads）ダッシュボード。詳細は本節「追加 worker タスク」
+  の `ads.spend.fetch` 節・docs/04 §S-030 を参照。サイドバー「分析」セクションに追加。
 
 ## デザイン / インフラ
 
