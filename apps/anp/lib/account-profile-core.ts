@@ -69,7 +69,40 @@ async function signedUrlOrNull(key: string | null, filename: string): Promise<st
   }
 }
 
+/**
+ * worker の再デプロイ/クラッシュで `running` のまま取り残されたジョブの判定 (2026-09-22 障害: 「AI で生成」を押しても
+ * 方針が作成されない = 前回のジョブが running のまま残り、UI が生成中表示＆新規起動を拒否し続けていた)。
+ * running は started_at から 20 分、queued は created_at から 30 分を超えたら stale とみなす。
+ */
+export const STALE_RUNNING_MS = 20 * 60_000;
+export const STALE_QUEUED_MS = 30 * 60_000;
+
+export function isStaleJob(job: { status: string; created_at: Date; started_at: Date | null }, now: Date = new Date()): boolean {
+  if (job.status === 'running') return now.getTime() - (job.started_at ?? job.created_at).getTime() > STALE_RUNNING_MS;
+  if (job.status === 'queued') return now.getTime() - job.created_at.getTime() > STALE_QUEUED_MS;
+  return false;
+}
+
+export const STALE_JOB_ERROR = '生成が中断されました (worker の再起動または時間切れ)。もう一度お試しください';
+
+/** stale な note.account.profile ジョブを failed に落とす (Server Action の起動前と状態取得時に呼ぶ)。戻り値 = 更新件数。 */
+export async function failStaleProfileJobs(noteAccountId: string, now: Date = new Date()): Promise<number> {
+  const rows = await prisma.job.findMany({
+    where: { kind: NOTE_ACCOUNT_PROFILE_TASK_NAME, status: { in: ['queued', 'running'] }, payload_json: { path: ['note_account_id'], equals: noteAccountId } },
+    select: { id: true, status: true, created_at: true, started_at: true },
+  });
+  const stale = rows.filter((r) => isStaleJob(r, now)).map((r) => r.id);
+  if (stale.length === 0) return 0;
+  const res = await prisma.job.updateMany({
+    where: { id: { in: stale }, status: { in: ['queued', 'running'] } },
+    data: { status: 'failed', finished_at: now, error: STALE_JOB_ERROR },
+  });
+  return res.count;
+}
+
 export async function loadAccountProfileState(noteAccountId: string): Promise<AccountProfileState | null> {
+  // 取り残されたジョブがあれば先に failed へ (UI が永遠に「生成中」にならないように)。
+  await failStaleProfileJobs(noteAccountId).catch(() => 0);
   const account = await prisma.noteAccount.findUnique({
     where: { id: noteAccountId },
     select: { bio: true, avatar_r2_key: true, header_r2_key: true, profile_generated_at: true, niche: true, target_reader: true, tone: true, editorial_policy: true },

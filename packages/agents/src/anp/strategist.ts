@@ -48,6 +48,11 @@ import {
 } from '../tools/image-gen.js';
 
 const DEFAULT_MAX_OUTPUT_TOKENS = 8192;
+/**
+ * 方針/施策/プロフィールの JSON は日本語で数千字になるため 4096 では途中で切れて
+ * `failed to parse JSON` になる (2026-09-21 実障害)。16384 は Anthropic の非ストリーミング上限内。
+ */
+const LONG_JSON_MAX_OUTPUT_TOKENS = 16384;
 const MAX_PARSE_RETRIES = 2;
 
 export interface PlanNoteAccountDesignDeps {
@@ -241,7 +246,7 @@ export async function generateNoteAccountProfile(
         { role: 'system', content: systemPrompt },
         { role: 'user', content: userMessage, ...(images.length > 0 ? { images } : {}) },
       ],
-      maxOutputTokens: 4096,
+      maxOutputTokens: LONG_JSON_MAX_OUTPUT_TOKENS,
     });
     const rawText = completion.text;
     if (typeof rawText !== 'string' || rawText.trim().length === 0) {
@@ -373,7 +378,7 @@ export async function generateNoteAccountEditorial(
         { role: 'system', content: systemPrompt },
         { role: 'user', content: userMessage, ...(images.length > 0 ? { images } : {}) },
       ],
-      maxOutputTokens: 4096,
+      maxOutputTokens: LONG_JSON_MAX_OUTPUT_TOKENS,
     });
     const rawText = completion.text;
     if (typeof rawText !== 'string' || rawText.trim().length === 0) {
@@ -492,7 +497,7 @@ export async function generateNoteAccountPromotionPolicy(
         { role: 'system', content: systemPrompt },
         { role: 'user', content: userMessage, ...(images.length > 0 ? { images } : {}) },
       ],
-      maxOutputTokens: 4096,
+      maxOutputTokens: LONG_JSON_MAX_OUTPUT_TOKENS,
     });
     const rawText = completion.text;
     if (typeof rawText !== 'string' || rawText.trim().length === 0) {

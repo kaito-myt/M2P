@@ -374,6 +374,14 @@ ANP の機能は A2P の対応機能を note 向けに写像したもの。**太
   `anp/accounts/<id>/avatar-u<stamp>.<ext>` / `header-u<stamp>.<ext>`（`anpAccountAvatar/anpAccountHeader` に拡張子引数を追加）
   へ保存し `avatar_r2_key` / `header_r2_key` を差し替える（旧キーは残す＝生成物と同じ扱い）。DL ファイル名はキーの拡張子に追従
   （`extOfKey`）。生成中はアップロード不可。
+- **障害と対策（2026-09-22「AI で生成をクリックしても記事の方針が作成されない」）**: 原因は 2 つ。(1) 方針の JSON が
+  日本語で数千字になり `maxOutputTokens: 4096` で途中切れ → `anp.strategist.editorial.invalid_output: failed to parse JSON`
+  （2 回連続失敗）→ `LONG_JSON_MAX_OUTPUT_TOKENS = 16384` に引き上げ（bio/画像プロンプト・方針・販促施策の 3 箇所）。
+  (2) worker の再デプロイ中に走っていたジョブが内部 `jobs` で `running` のまま取り残され、UI は永遠に「生成中」、
+  Server Action は多重起動として新規を拒否、graphile の再試行も CAS（queued/failed のみ）で空振り → **stale 判定**を追加
+  （`lib/account-profile-core.ts` `isStaleJob` / `failStaleProfileJobs`: running は started_at から 20 分、queued は 30 分で
+  failed に落とす。`loadAccountProfileState` / `loadAccountPromotionState` / `generateAccountProfile` の入口で実行）。
+  取り残されていた本番ジョブは手動で failed にし、graphile 側も打ち切った。
 - **S-ANP-13 テーマ一覧（実装済み 2026-09-22）**: 運営者要望「テーマ一覧はアカウント詳細じゃなくて、メニューにテーマ一覧を
   作って」「記事もアカウント詳細には乗せなくていいよ」。`/themes`（`app/(app)/themes/page.tsx`、URL `?status=&account=`）に
   全アカウントのテーマ候補を状態タブ（すべて / 未承認 / 承認済み / 却下、件数付き）とアカウント切替ピルで横断表示。承認/却下は

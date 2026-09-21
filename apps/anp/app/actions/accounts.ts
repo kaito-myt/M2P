@@ -11,7 +11,7 @@ import { NOTE_PROMOTION_CHANNELS, NoteAccountProfileTargetSchema, NoteAccountSet
 import { encryptKdpCredentials } from '@a2p/crypto';
 
 import { auth } from '@/auth';
-import { loadAccountProfileState, type AccountProfileState } from '@/lib/account-profile-core';
+import { failStaleProfileJobs, loadAccountProfileState, type AccountProfileState } from '@/lib/account-profile-core';
 import { enqueueJob } from '@/lib/graphile-client';
 import { messages } from '@/lib/messages';
 import {
@@ -378,6 +378,8 @@ export async function generateAccountProfile(input: unknown): Promise<ActionResu
     const account = await prisma.noteAccount.findUnique({ where: { id: noteAccountId }, select: { id: true } });
     if (!account) return { ok: false, error: messages.accounts.errors.notFound };
 
+    // worker 再起動で running のまま残ったジョブがあれば failed に落としてから多重起動判定する (2026-09-22 障害対応)。
+    await failStaleProfileJobs(noteAccountId);
     const inflight = await prisma.job.count({
       where: {
         kind: NOTE_ACCOUNT_PROFILE_TASK_NAME,

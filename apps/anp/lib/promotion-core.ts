@@ -8,7 +8,7 @@
 import { isNotePromotionChannelEnabled, parseNoteAccountSettings, parseNotePromotionPolicy, type NotePromotionChannel } from '@a2p/contracts/agents/anp';
 import { prisma } from '@a2p/db';
 
-import { NOTE_ACCOUNT_PROFILE_TASK_NAME } from './account-profile-core';
+import { NOTE_ACCOUNT_PROFILE_TASK_NAME, failStaleProfileJobs } from './account-profile-core';
 import { isNotePromotionChannel, type AccountPromotionState, type PromotionJobView } from './promotion-view';
 
 export * from './promotion-view';
@@ -21,6 +21,7 @@ export async function loadAccountPromotionState(noteAccountId: string, channel: 
   if (!account) return null;
   const policy = parseNotePromotionPolicy(account.promotion_policy_json);
   const settings = parseNoteAccountSettings(account.settings_json);
+  await failStaleProfileJobs(noteAccountId).catch(() => 0);
   const job = await prisma.job.findFirst({
     where: { kind: NOTE_ACCOUNT_PROFILE_TASK_NAME, payload_json: { path: ['note_account_id'], equals: noteAccountId } },
     orderBy: { created_at: 'desc' },
