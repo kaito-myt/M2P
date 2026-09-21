@@ -27,8 +27,8 @@
 - [Growth autonomy](project_growth_autonomy.md) — 全社ToDo自動承認スイープ(F-082)＋販促強化継続AIループ(F-081)出荷; ベースライン=Xフォロワー2人/到達1.7/当月349円(未黒字化)。
 - [Content=良書紹介](project_growth_autonomy.md) — content_creator v3で全投稿を実在良書紹介化(F-080); 原因はfew-shot例がtipsだった→全チャンネルexample_post書換で解決。
 - [Video pipeline](project_video_pipeline.md) — TikTok/IGリール動画; Veo3.1ハイブリッド(冒頭フックのみ実写級)＋IGリール流用(F-084); 投稿はZernio経由。
-- [Platform portal](project_platform_portal.md) — A2Pはプラットフォーム第1ツール; apps/portal(共通ログイン+ツール選択ハブ)＋packages/auth(共有認証)＋SSO実装済(2026-08-20); フォルダC:\DEV\M2Pリネーム済; A2P→ポータル戻り導線はNEXT_PUBLIC_PORTAL_URL設定時のみ点灯(portal本番未デプロイ); 設計=docs/10。
-- [ANP (note tool)](project_anp.md) — note自動出版; 2026-09-18 無人運転ON、2026-09-21 AI相談(F-ANP-04 チャット壁打ち+Tavily)・サイドバー・新ロゴ; 残=KYC/有料化・TikTok・新noteアカウント作成。
+- [Platform portal](project_platform_portal.md) — A2Pはプラットフォーム第1ツール; apps/portal(共通ログイン+ツール選択ハブ)＋packages/auth(共有認証)＋SSO実装済(2026-08-20); フォルダC:\DEV\M2Pリネーム済; A2P→ポータル戻り導線はNEXT_PUBLIC_PORTAL_URL設定時のみ点灯(portal本番未デプロイ); 設計=docs/10。2026-09-21 API 管理 (APIキー+R2/LINE/Ads を @a2p/credentials で DB 優先) 実装; instrumentation.ts は if-block dynamic import 必須。
+- [ANP (note tool)](project_anp.md) — note自動出版; 2026-09-18 無人運転ON、2026-09-21 AI相談・作成ウィザード・画像添付・記事方針・アカウント設定(収益化)・販促施策/promotion・設定タブ+カスタムロール・分析ダッシュボード; UIは絞り込みをピル型ボタンで; 残=KYC/有料化・ブログ/カスタムロール配線。
 - [Pipeline stuck books](reference_pipeline_stuck_books.md) — 停止/滞留診断: 未投入ジョブ(graphile_job_id=null)・status不整合・ジャンル全件practical(theme生成がアカウント既定を刻印)＋復旧手順。
 - [Home dashboard](project_home_dashboard.md) — ホームS-002を実データRSC接続の経営ミッションコントロールへ全面再実装(2026-08-20出荷); 当月純利益ヒーロー中心; docs/04 §S-002・F-088。
 - [OpenAI fallback playbook](project_temp_openai_reroute.md) — Anthropic停止時に仕上げ工程だけgpt-5へ一時切替する手順(reroute-openai.cjs/revert-anthropic.cjs, 2026-09-01実施→同日完全復元済)。実測: editor¥16(vs¥68)/judge¥44(vs¥280)だが採点が甘い; readingsはgpt-5不可; 継続性欠陥は本文走査(namecheck/contcheck)で確認。
@@ -41,4 +41,4 @@
 - [Railway deploy](reference_railway_deploy.md) — redeploy --from-source は反映されない; railway up --service X --detach を使う
 - [Re-kick freeze](reference_rekick_freeze.md) — judge再キック後に本がrunning/judgingで無言凍結(doneジョブを見るdedupeガード); 2026-09-16修正＋復旧手順(unfreeze)。
 - [SNS persona visuals](project_sns_persona_visuals.md) — ペルソナ画像=実写・顔なし・首から下(2026-09-18再生成済)、IGカルーセル＋固定テンプレ枚、character_sheet注入; OpenAI安全フィルタでNGな語彙の実測。
-- [Bash backslash collapse](reference_bash_backslash_collapse.md) — Bashツールのコマンド内 `\` は `\` に潰れる; python heredocパッチで改行エスケープを書くと実改行になりTSが壊れる→chr(92)かWrite/Editを使う。
+- [Bash backslash collapse](reference_bash_backslash_collapse.md) — Bashツールのコマンド内の二重バックスラッシュ `\\` は単一 `\` に潰れる; python heredocパッチで改行エスケープを書くと実改行になりTSが壊れる→chr(92)かWrite/Editを使う。

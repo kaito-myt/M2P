@@ -48,3 +48,5 @@ metadata:
 **残タスク**: (1)ユーザーによるブラウザSSO素通り実クリック検証 (2)経営ダッシュボードの実データ化(全ツールDB横断で売上/コスト/純利益を集計するコネクタ) (3)3つ目ツール追加時tools.tsへ登録＋独自ドメイン(CNAME+TXT) (4)A2Pダークテーマ＆ポータル新タブの本番反映(railway up)＋ブラウザ実機の見た目確認。
 
 関連: [[project-line-auth-relay]] [[project-prod-deploy]] [[project-home-dashboard]]
+
+**API 管理 (2026-09-21)**: ポータル `/settings/api-keys`「API 管理」= サービサー API キー (Anthropic/OpenAI/Google/Tavily) ＋ サービス連携 (Cloudflare R2 / LINE / Amazon Ads)。後者は新パッケージ `@a2p/credentials` (`packages/credentials`: 仕様 spec / 保存・リゾルバ store / 疎通テスト test / 起動登録 register) が同じ `api_credentials` に provider `r2|line|amazon_ads` の多項目 JSON を暗号化保存。各プロセスは DB 優先 → env フォールバック (worker `index.ts` で install+prime 65s、web/anp/portal は `instrumentation.ts` — **`if (NEXT_RUNTIME==='nodejs') { await import() }` の形必須**、早期 return だと edge ビルドに Prisma が束ねられて失敗)。R2_* env は optional 化。worker Dockerfile は deps ステージで各 `packages/*/package.json` を COPY するため新パッケージ追加時は追記が要る。AI モデル割当は各ツール側 (運営者判断)。

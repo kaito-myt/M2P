@@ -1,6 +1,6 @@
 ---
 name: project-anp
-description: M2P 第2ツール ANP (note 自動出版) — 2026-09-18 無人運転 ON、2026-09-21 AI 相談(F-ANP-04)＋サイドバー＋新ロゴ。初の実公開 URL と共有セッションの注意、残タスク (KYC/有料化, TikTok)
+description: M2P 第2ツール ANP (note 自動出版) — 2026-09-18 無人運転 ON、2026-09-21 AI 相談・作成ウィザード・画像添付・記事方針・アカウント設定・販促施策・設定タブ・分析ダッシュボード。残タスク (KYC/有料化, ブログ配線, カスタムロール配線)
 metadata:
   type: project
 ---
@@ -20,6 +20,8 @@ metadata:
 **ロゴ (2026-09-21)**: 運営者支給のワードマーク（A2P と同系ネイビー×ティール）に差し替え。`apps/portal/public/tools/anp.png`＝`apps/anp/public/anp-logo.png`（ワードマーク）、`apps/anp/public/anp-mark.png`（正方形マーク）、`apps/anp/app/icon.png`（favicon、旧 favicon.ico 削除）。`sharp` でトリム/切り出し。
 
 **note 連携は画面から (F-ANP-20b, 2026-09-21)**: `/accounts/[id]`「note アカウント連携」に note ログイン中ブラウザの Cookie (`note_gql_auth_token`) を貼り付け → `GET note.com/api/v2/current_user`（未認証 401）で検証 → storageState(.note.com, origins 空) を `KDP_CRED_KEY` で暗号化保存 → handle=urlname, active 化。ANP サービスにも `KDP_CRED_KEY` 設定済。ローカルスクリプトは代替。**未検証**: Cookie のみで自動公開 (エディタ) が通るか。記事一覧 `/articles` は段階タブ（作成中/公開前/公開中/失敗・非公開、`lib/article-stage.ts`）。
+
+**2026-09-21 夜の追加 (全て本番反映)**: 画像添付付き AI 指示 (`ImageAttachTextarea`、R2 `anp/uploads/`、worker が縮小して vision 入力) / 記事の方針・トンマナ `editorial_policy` (全記事プロンプトに注入) / `/accounts/new` 作成ウィザード (旧「アカウント設計」タブ廃止) / 表示名編集 / **アカウント設定** (自動運転トグル＝全体設定に従う/専用、1 日テーマ数はアカウント値が正、収益化: `paid_ratio`(有料比率, 未設定=AI 任せ)・`free_ratio`・価格帯・メンバーシップ → `monetizationLines` でテーマ生成に注入) / **販促施策 `/promotion`** (F-ANP-32: `note_accounts.promotion_policy_json` 媒体別 {enabled, policy, hashtags, posts_per_week, cta}、`promotion.note.article` が enabled と policy/cta/tags を反映、AI 生成は `note.account.profile` targets=['promotion']+channel、ブログ配線は未接続) / **設定** `?tab=models|ops` (運用はトグル、モデル設定に「新しい AI ロール作成」= `anp_agent_roles`+prompts+model_assignments、パイプライン配線は未接続) / **分析** `/analytics/sales`・`/analytics/cost` (`lib/analytics-core.ts`) / ピル型アカウント切替 (`components/account-pills.tsx`)。UI ルール: 横断ページの絞り込みはドロップダウンでなくピル型ボタン。
 
 **残 (人手)**: note で新アカウント作成＋セッション取込（設計機能の出力に従う）、 note 本人情報登録(KYC)→有料記事化（judge は `price_jpy` に提案のみ保存、`paid` は常に false）、検証用下書き 5 件の削除 (n6845533ebcf7 / n9c510facf4dc / n1d09eea651e3 / ne071421d3e1d / n800cf6101fa9)、メンバーシップ計測の実データ検証、TikTok 連動 (Phase 4)。
 
