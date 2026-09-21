@@ -64,6 +64,7 @@ export async function generateThemes(input: unknown): Promise<ActionResult<{ job
     );
 
     revalidatePath(`/accounts/${noteAccountId}`);
+    revalidatePath('/themes');
     return { ok: true, data: { job_id: job.id } };
   } catch (err) {
     return {
@@ -133,6 +134,8 @@ export async function approveTheme(
     );
 
     revalidatePath(`/accounts/${theme.note_account_id}`);
+    revalidatePath('/themes');
+    revalidatePath('/articles');
     return { ok: true, data: { note_article_id: article.id } };
   } catch (err) {
     return {
@@ -174,6 +177,9 @@ export async function rejectTheme(input: unknown): Promise<ActionResult<void>> {
       select: { note_account_id: true },
     });
     if (theme) revalidatePath(`/accounts/${theme.note_account_id}`);
+    revalidatePath('/themes');
+    revalidatePath('/themes');
+    revalidatePath('/articles');
     return { ok: true, data: undefined };
   } catch (err) {
     return {

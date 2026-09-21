@@ -11,14 +11,10 @@ import { loadAccountProfileState } from '@/lib/account-profile-core';
 import { messages } from '@/lib/messages';
 
 import { AccountSettingsForm } from './account-settings-form';
-import { ArticleReviewActions } from './article-review-actions';
-import { GenerateThemesButton } from './generate-themes-button';
 import { HandleForm } from './handle-form';
 import { EditorialPanel } from './editorial-panel';
 import { NoteLinkForm } from './note-link-form';
 import { ProfilePanel } from './profile-panel';
-import { PublishArticleButton } from './publish-article-button';
-import { ThemeCard } from './theme-card';
 
 export default async function AccountDetailPage({
   params,
@@ -57,35 +53,7 @@ export default async function AccountDetailPage({
   const accountSettings = parseNoteAccountSettings(account.settings_json);
   const monetization = parseNoteMonetizationPolicy(account.monetization_policy_json);
 
-  const [themes, articles, appSettings, pendingReauth] = await Promise.all([
-    prisma.noteTheme.findMany({
-      where: { note_account_id: id },
-      orderBy: { created_at: 'desc' },
-      select: {
-        id: true,
-        title: true,
-        hook: true,
-        target_reader: true,
-        recommend_paid: true,
-        suggested_price: true,
-        status: true,
-      },
-    }),
-    prisma.noteArticle.findMany({
-      where: { note_account_id: id },
-      orderBy: { created_at: 'desc' },
-      select: {
-        id: true,
-        title: true,
-        status: true,
-        paid: true,
-        price_jpy: true,
-        quality_score: true,
-        publish_status: true,
-        note_url: true,
-        created_at: true,
-      },
-    }),
+  const [appSettings, pendingReauth] = await Promise.all([
     prisma.appSettings.findUnique({
       where: { id: 'singleton' },
       select: { anp_publish_dry_run: true, anp_auto_theme_enabled: true, anp_themes_per_day: true, anp_autopass_enabled: true, anp_auto_publish_enabled: true },
@@ -95,7 +63,6 @@ export default async function AccountDetailPage({
       select: { id: true },
     }),
   ]);
-  const globalDryRunEnabled = appSettings?.anp_publish_dry_run ?? true;
   const needsReauth = account.status === 'paused' || !!pendingReauth;
 
   return (
@@ -187,81 +154,18 @@ export default async function AccountDetailPage({
         </div>
       </section>
 
-      <section className="mt-space-loose">
-        <div className="flex items-center justify-between gap-2">
-          <h2 className="text-section-title text-charcoal">{messages.accountDetail.themesTitle}</h2>
-          <GenerateThemesButton noteAccountId={account.id} />
+      {/* テーマ候補と記事は横断ページ (/themes, /articles) へ移動 (運営者要望 2026-09-22)。 */}
+      <section className="mt-space-loose rounded-container border border-border-warm bg-white p-space-relaxed">
+        <h2 className="text-card-title font-medium text-charcoal">{messages.accountDetail.listsTitle}</h2>
+        <p className="mt-1 text-caption text-muted">{messages.accountDetail.listsDescription}</p>
+        <div className="mt-space-snug flex flex-wrap gap-2">
+          <Link href={`/themes?account=${account.id}`} className="rounded-card border border-border-warm bg-cream-light px-3 py-1.5 text-button-sm text-charcoal no-underline hover:bg-charcoal-04" data-testid="account-open-themes">
+            {messages.accountDetail.openThemes}
+          </Link>
+          <Link href={`/articles?account=${account.id}`} className="rounded-card border border-border-warm bg-cream-light px-3 py-1.5 text-button-sm text-charcoal no-underline hover:bg-charcoal-04" data-testid="account-open-articles">
+            {messages.accountDetail.openArticles}
+          </Link>
         </div>
-        {themes.length === 0 ? (
-          <p className="mt-2 text-body text-muted">{messages.accountDetail.themesEmpty}</p>
-        ) : (
-          <ul className="mt-space-snug flex flex-col gap-space-snug">
-            {themes.map((t) => (
-              <ThemeCard key={t.id} theme={t} />
-            ))}
-          </ul>
-        )}
-      </section>
-
-      <section className="mt-space-loose">
-        <h2 className="text-section-title text-charcoal">{messages.accountDetail.articlesTitle}</h2>
-        {articles.length === 0 ? (
-          <p className="mt-2 text-body text-muted">{messages.accountDetail.articlesEmpty}</p>
-        ) : (
-          <ul className="mt-space-snug flex flex-col gap-space-snug">
-            {articles.map((a) => {
-              const statusLabel =
-                messages.accountDetail.articleStatus[
-                  a.status as keyof typeof messages.accountDetail.articleStatus
-                ] ?? a.status;
-              const publishStatusLabel =
-                messages.accountDetail.publishStatus[
-                  a.publish_status as keyof typeof messages.accountDetail.publishStatus
-                ] ?? a.publish_status;
-              return (
-                <li
-                  key={a.id}
-                  className="flex items-start justify-between gap-2 rounded-container border border-border-warm bg-cream-light p-space-relaxed"
-                >
-                  <div>
-                    <Link
-                      href={`/articles/${a.id}`}
-                      className="text-body font-medium text-charcoal no-underline hover:underline"
-                    >
-                      {a.title}
-                    </Link>
-                    <p className="text-caption text-muted">
-                      {a.paid
-                        ? `有料 ${a.price_jpy ? `¥${a.price_jpy.toLocaleString('ja-JP')}` : ''}`
-                        : a.price_jpy != null
-                          ? `無料 ・ ${messages.accountDetail.priceSuggestionLabel(a.price_jpy)}`
-                          : '無料'}
-                      {a.quality_score != null ? ` ・ スコア ${a.quality_score}` : ''}
-                      {` ・ ${publishStatusLabel}`}
-                    </p>
-                    {a.note_url && (
-                      <a
-                        href={a.note_url}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="text-caption text-charcoal underline"
-                      >
-                        {a.note_url}
-                      </a>
-                    )}
-                    {(a.status === 'ready' || a.status === 'needs_human_review') && (
-                      <PublishArticleButton articleId={a.id} globalDryRunEnabled={globalDryRunEnabled} />
-                    )}
-                    {a.status === 'needs_human_review' && <ArticleReviewActions articleId={a.id} />}
-                  </div>
-                  <span className="shrink-0 rounded-pill border border-border-warm px-2 py-0.5 text-caption text-muted">
-                    {statusLabel}
-                  </span>
-                </li>
-              );
-            })}
-          </ul>
-        )}
       </section>
     </div>
   );
