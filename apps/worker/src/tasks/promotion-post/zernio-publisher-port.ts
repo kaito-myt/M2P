@@ -77,16 +77,23 @@ export function createZernioPublisherPort(deps: ZernioPublisherDeps = {}): Publi
         };
       }
 
-      // 接続アカウントを解決。
+      // 接続アカウントを解決。[F-ANP-33] 台帳 (promotion_accounts.config_json.zernio_account_id) で
+      // 特定の Zernio アカウントが指定されていればそれを使う (note アカウントごとに SNS アカウントが違う)。
+      // 指定があるのに見つからない場合は既定へ落とさず not_connected にする (別アカウントへの誤投稿防止)。
+      const wanted = typeof input.config.extra['zernio_account_id'] === 'string' ? (input.config.extra['zernio_account_id'] as string) : '';
       let account: ZernioAccount | undefined;
       try {
         const accounts = await loadAccounts();
-        account = accounts.find((a) => a.platform === platform);
+        account = wanted ? accounts.find((a) => a._id === wanted && a.platform === platform) : accounts.find((a) => a.platform === platform);
       } catch (err) {
         return { ok: false, reason: 'unknown', message: `zernio accounts 取得失敗: ${String(err)}` };
       }
       if (!account) {
-        return { ok: false, reason: 'not_connected', message: `Zernio に ${platform} 未接続` };
+        return {
+          ok: false,
+          reason: 'not_connected',
+          message: wanted ? `Zernio に指定の ${platform} アカウント (${wanted}) が見つかりません` : `Zernio に ${platform} 未接続`,
+        };
       }
       if (account.needsReconnection) {
         return { ok: false, reason: 'auth', message: `Zernio ${platform} 再接続が必要です` };

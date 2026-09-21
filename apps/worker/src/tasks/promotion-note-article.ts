@@ -123,6 +123,13 @@ export interface PromotionNoteArticlePrisma {
       select: { channel: true; strategy_json: true; playbook_json: true };
     }) => Promise<Array<{ channel: string; strategy_json: unknown; playbook_json: unknown }>>;
   };
+  /** [F-ANP-33] note アカウントに連携された販促アカウント (channel 別)。旧テストでは未定義可。 */
+  promotionAccount?: {
+    findMany: (args: {
+      where: { note_account_id: string; status: string };
+      select: { id: true; channel: true };
+    }) => Promise<Array<{ id: string; channel: string }>>;
+  };
   promotionPost: {
     findFirst: (args: {
       where: { note_article_id: string; kind: string };
@@ -137,7 +144,7 @@ export interface PromotionNoteArticlePrisma {
         book_id: null;
         channel: string;
         kind: string;
-        account_id: null;
+        account_id: string | null;
         note_article_id: string;
         title: null;
         body: string;
@@ -248,11 +255,18 @@ export async function runPromotionNoteArticle(
     });
     const settingByChannel = new Map(settings.map((s) => [s.channel, s]));
 
+    // [F-ANP-33] note アカウントごとの販促 SNS アカウント。連携済み (connected) ならその台帳へ routing、
+    // 無ければ従来どおり channel 既定 (A2P 共通ペルソナ) に投稿する。
+    const linked = prisma.promotionAccount
+      ? await prisma.promotionAccount.findMany({ where: { note_account_id: account.id, status: 'connected' }, select: { id: true, channel: true } })
+      : [];
+    const linkedByChannel = new Map(linked.map((l) => [l.channel, l.id]));
+
     const rows: Array<{
       book_id: null;
       channel: string;
       kind: string;
-      account_id: null;
+      account_id: string | null;
       note_article_id: string;
       title: null;
       body: string;
@@ -325,7 +339,7 @@ export async function runPromotionNoteArticle(
         book_id: null,
         channel,
         kind: 'anp_article',
-        account_id: null,
+        account_id: linkedByChannel.get(channel) ?? null,
         note_article_id: articleId,
         title: null,
         body,

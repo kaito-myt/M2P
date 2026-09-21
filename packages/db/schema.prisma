@@ -352,12 +352,18 @@ model PromotionAccount {
   token_enc      String?  @db.Text
   token_mask     String?
   config_json    Json?
+  // [F-ANP-33] ANP: この販促アカウントを使う note アカウント (note アカウントごとに SNS アカウントが違うため)。
+  // `promotion.note.article` / `.video` が (note_account_id, channel, status='connected') で引いて
+  // promotion_posts.account_id に載せる。null = A2P 共通 (栞ペルソナ) の台帳。
+  note_account_id String?
   created_at     DateTime @default(now())
   updated_at     DateTime @updatedAt
 
-  posts PromotionPost[]
+  posts        PromotionPost[]
+  note_account NoteAccount?    @relation(fields: [note_account_id], references: [id], onDelete: SetNull)
 
   @@index([channel, status])
+  @@index([note_account_id, channel], map: "promotion_accounts_note_account_channel_idx")
   @@map("promotion_accounts")
 }
 
@@ -1495,11 +1501,12 @@ model NoteAccount {
   created_at               DateTime @default(now())
   updated_at               DateTime @updatedAt
 
-  themes           NoteTheme[]
-  articles         NoteArticle[]
-  membership_stats NoteMembershipStat[]
-  designs          NoteAccountDesign[]
-  auth_requests    NoteAuthRequest[]
+  themes             NoteTheme[]
+  articles           NoteArticle[]
+  membership_stats   NoteMembershipStat[]
+  designs            NoteAccountDesign[]
+  auth_requests      NoteAuthRequest[]
+  promotion_accounts PromotionAccount[]
 
   @@index([status, created_at(sort: Desc)], map: "note_accounts_status_time_idx")
   @@map("note_accounts")

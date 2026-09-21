@@ -15,7 +15,11 @@ import { GenerationProgress } from '@/components/generation-progress';
 import { ImageAttachTextarea, type ImageAttachment } from '@/components/image-attach-textarea';
 import { Switch } from '@/components/switch';
 import { messages } from '@/lib/messages';
+import type { LinkedPromotionAccountView } from '@/lib/promotion-accounts-core';
 import { formatHashtags, type AccountPromotionState, type PromotionChannelSummary, type PromotionPostView } from '@/lib/promotion-view';
+import type { ZernioAccountView } from '@/lib/zernio';
+
+import { LinkedAccountCard } from './linked-account-card';
 
 const POLL_MS = 3000;
 const ESTIMATE_SEC = 45;
@@ -30,11 +34,16 @@ export function PromotionPanel({
   initial,
   posts,
   summary,
+  linked,
+  zernio,
 }: {
   noteAccountId: string;
   initial: AccountPromotionState;
   posts: PromotionPostView[];
   summary: PromotionChannelSummary;
+  /** F-ANP-33: この媒体の投稿先アカウント連携。 */
+  linked: LinkedPromotionAccountView;
+  zernio: { configured: boolean; accounts: ZernioAccountView[] } | null;
 }) {
   const channel = initial.channel;
   const [state, setState] = useState<AccountPromotionState>(initial);
@@ -227,6 +236,10 @@ export function PromotionPanel({
         </div>
       </section>
 
+      <div className="flex flex-col gap-space-relaxed">
+      {/* 投稿先アカウント連携 (F-ANP-33) */}
+      <LinkedAccountCard noteAccountId={noteAccountId} channel={channel} initial={linked} zernio={zernio} />
+
       {/* 投稿一覧 */}
       <section className="rounded-container border border-border-warm bg-white p-space-relaxed" data-testid="promotion-posts-panel">
         <h2 className="text-card-title font-medium text-charcoal">{m.postsTitle}</h2>
@@ -276,6 +289,7 @@ export function PromotionPanel({
           </ul>
         )}
       </section>
+      </div>
     </div>
   );
 }

@@ -149,6 +149,23 @@ describe('promotion.note.article', () => {
     expect(created).toEqual([]);
   });
 
+  it('[F-ANP-33] note アカウントに連携された販促アカウントがあれば account_id に載せ、無い媒体は null (既定) にする', async () => {
+    const { prisma, created } = buildPrisma({
+      jobs: [{ id: 'job1', status: 'queued' }],
+      article: { id: 'art1', note_account_id: 'acc1', title: 'T', lead: null, note_url: 'https://note.com/x/n/1', publish_status: 'published' },
+      account: { id: 'acc1', handle: 'h', niche: 'n' },
+    });
+    const findMany = vi.fn(async () => [{ id: 'pa-x', channel: 'x' }]);
+    (prisma as unknown as { promotionAccount: { findMany: typeof findMany } }).promotionAccount = { findMany };
+    const createContent = vi.fn().mockResolvedValue({ body: '本文' });
+    const res = await runPromotionNoteArticle({ note_article_id: 'art1', job_id: 'job1' }, { prisma, createContent, now: () => FIXED_NOW });
+    expect(res.ok).toBe(true);
+    expect(findMany).toHaveBeenCalledWith({ where: { note_account_id: 'acc1', status: 'connected' }, select: { id: true, channel: true } });
+    const byChannel = new Map(created.map((r) => [r.channel, r.account_id]));
+    expect(byChannel.get('x')).toBe('pa-x');
+    expect(byChannel.get('instagram')).toBeNull();
+  });
+
   it('X/Instagram の 2 チャンネル分の告知投稿を生成し note_url と handle を本文に含める(280字以内)', async () => {
     const { prisma, created, jobs } = buildPrisma({
       jobs: [{ id: 'job1', status: 'queued' }],

@@ -462,6 +462,23 @@ ANP の機能は A2P の対応機能を note 向けに写像したもの。**太
   `getAccountPromotionState`）、純関数は `lib/promotion-view.ts`（クライアント可）、DB ローダは `lib/promotion-core.ts`。
   投稿一覧は `promotion_posts`（`note_article_id` がそのアカウントの記事、`channel` 一致）の直近 30 件＋投稿済み/予約/
   表示回数の集計。ブログは施策設計のみ（自動投稿の配線は未接続、UI に明記）。
+- **F-ANP-33 販促 SNS アカウントの連携（note アカウント別、実装済み 2026-09-22）**: 運営者要望「販促施策で各媒体と連携する
+  機能がないから実装して。note アカウントごとに販促を行う SNS アカウントも違うはずだからそれも考慮して」。A2P の販促アカウント台帳
+  `promotion_accounts` に `note_account_id`（migration `20260922000000_anp_promotion_account_link`、FK SetNull、index
+  (note_account_id, channel)）を追加し、(note アカウント, 媒体) ごとに 1 行 = 投稿先。`/promotion` の各媒体タブ右列に
+  「投稿先アカウント」カード（`linked-account-card.tsx`）: **X** = OAuth 1.0a の API Key / Secret / Access Token / Secret
+  （`serializeXOAuth1` → `encryptApiKey`(API_CRED_KEY) で `token_enc`、4 項目空なら資格情報据え置きでハンドルのみ更新）、
+  **Instagram / TikTok** = Zernio の接続アカウントを選択（`lib/zernio.ts` `listZernioAccounts`、env `ZERNIO_API_KEY`
+  未設定なら id 手入力）→ `config_json.zernio_account_id`、**ブログ** = 対象外（共通ブログ）。疎通テスト = X は
+  `GET /2/users/me`（OAuth1 署名）、IG/TikTok は Zernio 一覧に存在し `needsReconnection` でないこと（結果は
+  `config_json.last_test`）。解除 = `status='archived'`。Server Action `app/actions/promotion-accounts.ts`
+  （`linkPromotionAccount` / `unlinkPromotionAccount` / `testPromotionAccount` / `getZernioAccounts`、audit_log は A2P と同じ
+  `promotion.account.connect/archive`）。**worker**: `promotion.note.article` は (note_account_id, status='connected') の台帳を
+  引いて媒体ごとに `promotion_posts.account_id` を設定、`promotion.note.article.video` も TikTok 台帳を設定。
+  `promotion.post.publish` は既存の多アカウント routing でその資格情報を使う。Zernio ポートは `config.extra.zernio_account_id`
+  があればそのアカウントに投稿（指定があるのに見つからなければ既定へ落とさず not_connected）。未連携の媒体は従来どおり
+  channel 既定（A2P 共通ペルソナ）に投稿され、UI に「未連携 (既定アカウントに投稿)」と明示。ANP サービスに
+  `API_CRED_KEY` / `ZERNIO_API_KEY` を設定済み。
 - **F-ANP-31 相互流入設計**: 同一運営者の A2P 書籍 ⇄ note 記事の相互送客（書籍LPに note、note に書籍リンク）。
   **実装済み(最小・2026-09-16)**: `pipeline.note.writer.body` が同ジャンル(`NoteTheme.genre`)で
   `publish_status='published'` の A2P 書籍を最大2件(`asin`必須)取得し、`NoteWriterInput.related_books`

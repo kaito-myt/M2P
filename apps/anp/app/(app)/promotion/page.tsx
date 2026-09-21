@@ -13,6 +13,8 @@ import { prisma } from '@a2p/db';
 import { AccountPills } from '@/components/account-pills';
 import { cn } from '@/lib/cn';
 import { messages } from '@/lib/messages';
+import { loadLinkedPromotionAccount } from '@/lib/promotion-accounts-core';
+import { isZernioConfigured, listZernioAccounts } from '@/lib/zernio';
 import {
   NOTE_PROMOTION_CHANNELS,
   PROMOTION_POST_CHANNEL,
@@ -55,7 +57,7 @@ export default async function PromotionPage({ searchParams }: { searchParams: Pr
     ? await prisma.noteArticle.findMany({ where: { note_account_id: account.id }, select: { id: true, title: true } })
     : [];
   const titleById = new Map(articles.map((a) => [a.id, a.title]));
-  const [state, postRows] = account
+  const [state, postRows, linked, zernio] = account
     ? await Promise.all([
         loadAccountPromotionState(account.id, channel),
         articles.length > 0
@@ -79,8 +81,19 @@ export default async function PromotionPage({ searchParams }: { searchParams: Pr
               },
             })
           : Promise.resolve([]),
+        loadLinkedPromotionAccount(account.id, channel),
+        channel === 'instagram' || channel === 'tiktok'
+          ? (async () => {
+              if (!isZernioConfigured()) return { configured: false, accounts: [] };
+              try {
+                return { configured: true, accounts: await listZernioAccounts(channel) };
+              } catch {
+                return { configured: true, accounts: [] };
+              }
+            })()
+          : Promise.resolve(null),
       ])
-    : [null, []];
+    : [null, [], null, null];
   const posts = postRows.map((r) =>
     toPromotionPostView({
       ...r,
@@ -150,8 +163,8 @@ export default async function PromotionPage({ searchParams }: { searchParams: Pr
             })}
           </nav>
 
-          {state && (
-            <PromotionPanel key={`${account.id}:${channel}`} noteAccountId={account.id} initial={state} posts={posts} summary={summary} />
+          {state && linked && (
+            <PromotionPanel key={`${account.id}:${channel}`} noteAccountId={account.id} initial={state} posts={posts} summary={summary} linked={linked} zernio={zernio} />
           )}
         </>
       )}

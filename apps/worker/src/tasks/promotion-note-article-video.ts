@@ -51,6 +51,13 @@ interface NoteAccountRow {
 }
 
 export interface PromotionNoteArticleVideoPrisma {
+  /** [F-ANP-33] note アカウントに連携された TikTok 台帳。旧テストでは未定義可。 */
+  promotionAccount?: {
+    findFirst: (args: {
+      where: { note_account_id: string; channel: string; status: string };
+      select: { id: true };
+    }) => Promise<{ id: string } | null>;
+  };
   job: {
     findUnique: (args: { where: { id: string }; select: { status: true } }) => Promise<{ status: string } | null>;
     updateMany: (args: {
@@ -229,12 +236,16 @@ export async function runPromotionNoteArticleVideo(
     const tags = resolveHashtags([...new Set([...(script.hashtags ?? []), ...coreTags])]);
     const body = appendHashtags('tiktok', captionWithCta, tags);
 
+    // [F-ANP-33] note アカウントに連携された TikTok 台帳があればそこへ routing (無ければ channel 既定)。
+    const linkedTikTok = prisma.promotionAccount
+      ? await prisma.promotionAccount.findFirst({ where: { note_account_id: article.note_account_id, channel: 'tiktok', status: 'connected' }, select: { id: true } })
+      : null;
     const post = await prisma.promotionPost.create({
       data: {
         book_id: null,
         channel: 'tiktok',
         kind: 'anp_article',
-        account_id: null,
+        account_id: linkedTikTok?.id ?? null,
         note_article_id: articleId,
         title: null,
         body,
