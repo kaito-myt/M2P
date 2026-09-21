@@ -286,6 +286,27 @@ ANP の機能は A2P の対応機能を note 向けに写像したもの。**太
   `apps/anp/app/settings`(`SettingsForm`)にトグル3種(有効化/1日の生成数/自動採用)の UI を追加。
 
 ### 3.3 出版（note 公開）
+- **F-ANP-20b note アカウント連携（ANP 画面からの Cookie 貼り付け、実装済み 2026-09-21）**: 運営者要望
+  「アカウント戦略（bio 等は AI レコメンド）→ note でアカウント作成 → ANP 側から note のアカウントを
+  連携できるようにして」への対応。note のログインは reCAPTCHA のためサーバー側で代行できない（§2.1）ので、
+  運営者がブラウザで note にログインした状態の **Cookie（`note_gql_auth_token` 必須、`_note_session_v5`
+  等は任意）を `/accounts/[id]` の「note アカウント連携」欄に貼り付ける**方式にした。受け付ける形は
+  Cookie ヘッダ形式 / DevTools のテーブル貼り付け / トークン値のみ（`apps/anp/lib/note-session-link.ts`
+  `parseNoteCookies`、許可リスト外の Cookie は捨てる）。Server Action `linkNoteAccountSession`
+  （`app/actions/accounts.ts`）が (1) `GET https://note.com/api/v2/current_user` を Cookie 付きで叩いて
+  ログイン状態を検証（未認証は 401 `{"data":"認証に失敗しました"}`、2026-09-21 実測）し `urlname`/`nickname`
+  を取得、(2) Playwright storageState（domain `.note.com`, expires -1, origins 空）に組み立てて
+  `encryptKdpCredentials`（`KDP_CRED_KEY`、ANP サービスにも同じ鍵を設定済み）で暗号化し
+  `note_accounts.session_state_enc` に保存（ローカルスクリプトと同じ保存形式）、(3) `handle=urlname`、
+  `status` は `pending_session`/`paused` → `active`、`session_linked_at`/`session_source='cookie_import'`
+  を記録、未解決の `session_expired` 認証リクエストを fulfilled にする（F-ANP-21 の復旧をこの画面で
+  完結させる）。既に handle が入っていて Cookie のユーザーと食い違う場合は「別アカウントの Cookie」と
+  して拒否する。`pending_session` のアカウント詳細には採用済み設計案の表示名/ハンドル/bio を再掲
+  （note 側に設定する内容のコピー元）し、設計案ページの採用後セクションにも「アカウント詳細で note を
+  連携する」ボタンを置いた。従来のローカルスクリプト（`scripts/anp/note-session-capture.mjs`）は代替手段
+  として残し、`session_source='script'` を記録するよう変更。**未検証**: Cookie のみ（localStorage 無し）の
+  storageState で `pipeline.note.publish` のエディタ操作が通るか — 初回の自動公開で `not_logged_in` に
+  なった場合はスクリプト経路にフォールバックする。
 - **F-ANP-20 note 公開オートメーション（Playwright, アシスト型）**: 下書き作成→本文/画像流し込み→価格/ライン設定→予約 or 即時公開。KDP アシスト（`scripts/kdp-publish.mjs --assist`）と同型で `scripts/note-publish.mjs` を用意。
   **アカウント別 `auto_publish_enabled` を実装済み(2026-09-21)**: `note.publish.dispatch` が
   `resolveAutoPublishEnabled` でアカウント単位に自動公開の有効/無効を上書きできる(未指定はグローバル
@@ -332,7 +353,7 @@ ANP の機能は A2P の対応機能を note 向けに写像したもの。**太
 - **F-ANP-41 コスト/トークン可観測性**: 全 LLM/画像生成呼び出しを `token_usage` に記録（A2P ルール #5 準拠。ANP 分は `tool='anp'` 等で識別）。
 - **F-ANP-42 ホーム（ミッションコントロール）**: A2P の S-002 再実装版を流用。当月純利益/売上/コスト/公開記事数/アカウント別成長を集約。**仕上げ実装済み(2026-09-21)**: `apps/anp/app/(app)/page.tsx` が RSC で当月の公開記事数/総ビュー/総売上/AIコスト(token_usage role LIKE 'anp.%')/純利益、アカウント別 KPI(フォロワー/公開数(累計・30日)/当月売上・コスト・純利益)、今日のパイプライン(実行中/待機中ジョブと直近24hの失敗)、セッション要再取込アラート、直近公開記事5件を表示する。集計ロジックは `apps/anp/lib/home-core.ts`(`computeAccountKpis`/`jstMonthRange`)に純関数化しユニットテスト済み。
   **アカウント別コストの近似**: `token_usage` にアカウント紐付け列が無いため(§6 実装時の発見と同じ制約)、当月コストは `note_articles.cost_jpy_total`(当月作成分)の合計をアカウント単位の近似値として使う(記事単位の集計は `applyNoteArticleCostFromJob` で既に確定しているため厳密には token_usage 合計と一致するが、月をまたぐ編集ジョブがある場合はわずかにズレうる)。
-  **記事の全件横断ビューを新規実装(2026-09-21, F-ANP-42 関連)**: `/articles`(全記事一覧、アカウント/ステータス/有料提案でフィルタ)・`/articles/[id]`(記事詳細: 本文整形表示・アイキャッチ・品質判定内訳・コスト・ジョブ履歴・売上・告知投稿・公開/再審査操作)を追加した。本文の Markdown 相当表示は新規パーサ依存を増やさず `apps/anp/lib/note-markdown.ts`(`parseNoteMarkdown`)の自前実装で見出し/箇条書き/段落に整形する。ジョブ履歴は `Job.book_id` が常に null なため `Job.payload_json` の JSON path クエリ(`path:['note_article_id'], equals:<id>`、`alert-cost-check.ts` と同じ Prisma パターン)で突合する。
+  **記事の全件横断ビューを新規実装(2026-09-21, F-ANP-42 関連)**: `/articles`(全記事一覧。運営者要望「作成中、公開前、公開中の記事が全部一覧化」に合わせ **段階タブ = すべて/作成中/公開前/公開中/失敗・非公開**（件数バッジ付き。定義は `apps/anp/lib/article-stage.ts`: 作成中=queued/writing/editing/eyecatch/judging、公開前=ready/needs_human_review（+公開同期前の status=published & publish_status=draft）、公開中=publish_status=published、失敗・非公開=failed/cancelled/unlisted）＋アカウント/有料提案でフィルタ、note 記事リンクと更新/公開日時列。サイドバーの項目名は「記事一覧」)・`/articles/[id]`(記事詳細: 本文整形表示・アイキャッチ・品質判定内訳・コスト・ジョブ履歴・売上・告知投稿・公開/再審査操作)を追加した。本文の Markdown 相当表示は新規パーサ依存を増やさず `apps/anp/lib/note-markdown.ts`(`parseNoteMarkdown`)の自前実装で見出し/箇条書き/段落に整形する。ジョブ履歴は `Job.book_id` が常に null なため `Job.payload_json` の JSON path クエリ(`path:['note_article_id'], equals:<id>`、`alert-cost-check.ts` と同じ Prisma パターン)で突合する。
 - **F-ANP-43 org 自律運用連携**: A2P の org（CEO+本部長+担当者・自律ループ）に「note 出版本部」「note 販促本部」を追加、または ANP 独立の org を持つ（§5 で選択）。**今回のタスクではスコープ外**(運営者指示: 大規模なため対象外。org 連携は A2P 側の CEO/本部長/自律ループ全体を巻き込む設計判断が要り、本セッションの他項目(アカウント別設定/認証リレー/記事詳細UI/ホーム仕上げ/TikTok連動)と独立して大きいため次回以降に切り出す)。
 
 ---
@@ -422,6 +443,8 @@ A2P の `books` 系を note 記事系に写像。**マルチアカウントを�
   運営者のブリーフ (`NoteAccountDesignBriefSchema`) から `anp.strategist` が設計案
   (`NoteAccountDesignSchema`) を生成し `design_json` に保持する。採用時に `note_accounts` を
   新規作成し `note_account_id` で紐付ける（詳細は §3.1/§7）。
+- **`note_accounts.session_linked_at? / session_source?`（F-ANP-20b, migration `20260921020000_anp_session_link`）**:
+  セッションを最後に取り込んだ日時と経路（`cookie_import` = ANP UI / `script` = ローカルスクリプト）。null = 未連携。
 - **`note_account_consultations`（Phase 6 新規, F-ANP-04, migration `20260921000000_anp_account_consult`）**:
   `id, title(最初の運営者メッセージ先頭40字), status(active|archived), brief_draft_json?(NoteAccountConsultBriefDraft・毎ターン全置換), ready_to_design:bool, created_at, updated_at`。
 - **`note_account_consultation_messages`（同上）**: `id, consultation_id(FK→note_account_consultations, onDelete:Cascade), role(operator|advisor), content, status(operator: pending|processing|done|failed / advisor: done), error?, research_json?({ research: NoteAccountConsultResearchItem[], suggested_questions: string[] }), created_at`。

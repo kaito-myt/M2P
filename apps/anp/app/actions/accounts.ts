@@ -8,9 +8,16 @@ import { z } from 'zod';
 
 import { prisma } from '@a2p/db';
 import { NoteAccountSettingsSchema } from '@a2p/contracts/agents/anp';
+import { encryptKdpCredentials } from '@a2p/crypto';
 
 import { auth } from '@/auth';
 import { messages } from '@/lib/messages';
+import {
+  buildNoteStorageState,
+  NOTE_AUTH_COOKIE,
+  parseNoteCookies,
+  verifyNoteSession,
+} from '@/lib/note-session-link';
 
 export type ActionResult<T> =
   | { ok: true; data: T }
@@ -163,5 +170,96 @@ export async function createAccount(
       ok: false,
       error: err instanceof Error ? err.message : messages.accounts.errors.unknown,
     };
+  }
+}
+
+// ---------------------------------------------------------------------------
+// linkNoteAccountSession — F-ANP-20: ANP 画面からの note セッション連携 (Cookie 貼り付け)
+// ---------------------------------------------------------------------------
+
+const LinkSessionSchema = z.object({
+  note_account_id: z.string().min(1),
+  /** Cookie ヘッダ / DevTools テーブル / トークン単体 のいずれか (lib/note-session-link.ts `parseNoteCookies`)。 */
+  cookies_text: z.string().trim().min(1, messages.accounts.link.errors.cookiesRequired).max(20_000),
+});
+
+export interface LinkedNoteSessionInfo {
+  handle: string;
+  nickname: string;
+  status: string;
+}
+
+/**
+ * 運営者がブラウザで note にログインした状態の Cookie を貼り付けて、アカウントに紐付ける。
+ * 1. Cookie をパース (`note_gql_auth_token` 必須)
+ * 2. `GET note.com/api/v2/current_user` でログイン状態を検証し urlname/nickname を得る
+ * 3. Playwright storageState に組み立て → `KDP_CRED_KEY` で暗号化 → `session_state_enc` 保存
+ *    (ローカルスクリプト `scripts/anp/note-session-capture.mjs` と同じ保存形式)
+ * 4. status: pending_session / paused → active。handle = urlname。未解決の session_expired
+ *    認証リクエストを fulfilled にする (F-ANP-21)。
+ */
+export async function linkNoteAccountSession(input: unknown): Promise<ActionResult<LinkedNoteSessionInfo>> {
+  const session = await auth();
+  if (!session?.user) return { ok: false, error: messages.common.unauthorized };
+
+  const parsed = LinkSessionSchema.safeParse(input);
+  if (!parsed.success) {
+    return { ok: false, error: parsed.error.issues[0]?.message ?? messages.accounts.link.errors.linkFailed };
+  }
+  const { note_account_id: noteAccountId, cookies_text: cookiesText } = parsed.data;
+  const lm = messages.accounts.link;
+
+  try {
+    const account = await prisma.noteAccount.findUnique({
+      where: { id: noteAccountId },
+      select: { id: true, status: true, handle: true },
+    });
+    if (!account) return { ok: false, error: messages.accounts.errors.notFound };
+
+    const cookies = parseNoteCookies(cookiesText);
+    if (!cookies[NOTE_AUTH_COOKIE]) return { ok: false, error: lm.errors.authCookieMissing };
+
+    const verified = await verifyNoteSession(cookies);
+    if (!verified.ok) {
+      return {
+        ok: false,
+        error: verified.reason === 'unauthorized' ? lm.errors.notLoggedIn : `${lm.errors.verifyFailed} (${verified.message})`,
+      };
+    }
+
+    // 別アカウントの Cookie を貼った事故を検出: 既に handle が入っていて urlname と食い違う場合は拒否。
+    if (account.handle && account.handle !== verified.urlname) {
+      return { ok: false, error: lm.errors.handleMismatch(account.handle, verified.urlname) };
+    }
+
+    const stateJson = JSON.stringify(buildNoteStorageState(cookies));
+    const encrypted = encryptKdpCredentials(stateJson);
+
+    const nextStatus =
+      account.status === 'pending_session' || account.status === 'paused' ? 'active' : account.status;
+
+    await prisma.$transaction([
+      prisma.noteAccount.update({
+        where: { id: noteAccountId },
+        data: {
+          session_state_enc: encrypted,
+          session_linked_at: new Date(),
+          session_source: 'cookie_import',
+          handle: verified.urlname,
+          status: nextStatus,
+        },
+      }),
+      prisma.noteAuthRequest.updateMany({
+        where: { note_account_id: noteAccountId, purpose: 'session_expired', status: 'pending' },
+        data: { status: 'fulfilled', fulfilled_at: new Date() },
+      }),
+    ]);
+
+    revalidatePath('/accounts');
+    revalidatePath(`/accounts/${noteAccountId}`);
+    revalidatePath('/');
+    return { ok: true, data: { handle: verified.urlname, nickname: verified.nickname, status: nextStatus } };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : lm.errors.linkFailed };
   }
 }

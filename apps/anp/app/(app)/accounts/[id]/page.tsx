@@ -5,7 +5,7 @@ import Link from 'next/link';
 import { notFound } from 'next/navigation';
 
 import { prisma } from '@a2p/db';
-import { parseNoteAccountSettings } from '@a2p/contracts/agents/anp';
+import { NoteAccountDesignSchema, parseNoteAccountSettings } from '@a2p/contracts/agents/anp';
 
 import { messages } from '@/lib/messages';
 
@@ -13,6 +13,7 @@ import { AccountSettingsForm } from './account-settings-form';
 import { ArticleReviewActions } from './article-review-actions';
 import { GenerateThemesButton } from './generate-themes-button';
 import { HandleForm } from './handle-form';
+import { NoteLinkForm } from './note-link-form';
 import { PublishArticleButton } from './publish-article-button';
 import { ThemeCard } from './theme-card';
 
@@ -34,9 +35,22 @@ export default async function AccountDetailPage({
       status: true,
       handle: true,
       settings_json: true,
+      session_state_enc: true,
+      session_linked_at: true,
+      session_source: true,
+      // F-ANP-01/03: 設計案から作られたアカウントなら、note 側に設定する表示名/bio を再掲する。
+      designs: {
+        where: { status: 'adopted' },
+        orderBy: { created_at: 'desc' },
+        take: 1,
+        select: { id: true, design_json: true },
+      },
     },
   });
   if (!account) notFound();
+  const adoptedDesign = account.designs[0] ?? null;
+  const adoptedDesignParsed = adoptedDesign?.design_json ? NoteAccountDesignSchema.safeParse(adoptedDesign.design_json) : null;
+  const adoptedBio = adoptedDesignParsed?.success ? adoptedDesignParsed.data.bio : null;
   const accountSettings = parseNoteAccountSettings(account.settings_json);
 
   const [themes, articles, appSettings, pendingReauth] = await Promise.all([
@@ -101,6 +115,54 @@ export default async function AccountDetailPage({
           </div>
         )}
       </header>
+
+      {/* F-ANP-20: note アカウント連携 (Cookie 貼り付け)。未連携/失効時は先頭に置いて次の一手を明示する。 */}
+      <section className="mt-space-loose flex flex-col gap-space-snug">
+        {account.status === 'pending_session' && (adoptedBio || adoptedDesign) && (
+          <div className="rounded-container border border-border-warm bg-white p-space-relaxed">
+            <h2 className="text-card-title font-medium text-charcoal">{messages.accounts.setupTitle}</h2>
+            <p className="mt-1 text-caption text-muted">{messages.accounts.setupDescription}</p>
+            <dl className="mt-2 flex flex-col gap-2">
+              <div>
+                <dt className="text-caption text-muted">{messages.accounts.form.displayName}</dt>
+                <dd className="rounded-card border border-border-warm bg-cream-light px-3 py-2 text-body text-charcoal">
+                  {account.display_name}
+                </dd>
+              </div>
+              {account.handle && (
+                <div>
+                  <dt className="text-caption text-muted">{messages.accounts.handleLabel}</dt>
+                  <dd className="rounded-card border border-border-warm bg-cream-light px-3 py-2 text-body text-charcoal">
+                    {account.handle}
+                  </dd>
+                </div>
+              )}
+              {adoptedBio && (
+                <div>
+                  <dt className="text-caption text-muted">{messages.accountDesign.detail.bio}</dt>
+                  <dd className="whitespace-pre-wrap rounded-card border border-border-warm bg-cream-light px-3 py-2 text-body text-charcoal">
+                    {adoptedBio}
+                  </dd>
+                </div>
+              )}
+            </dl>
+            {adoptedDesign && (
+              <Link href={`/accounts/design/${adoptedDesign.id}`} className="mt-2 inline-block text-caption text-charcoal underline">
+                {messages.accounts.setupDesignLink}
+              </Link>
+            )}
+          </div>
+        )}
+        <NoteLinkForm
+          noteAccountId={account.id}
+          handle={account.handle}
+          status={account.status}
+          sessionLinkedAt={account.session_linked_at ? account.session_linked_at.toISOString() : null}
+          sessionSource={account.session_source}
+          hasSession={!!account.session_state_enc}
+          needsReauth={needsReauth}
+        />
+      </section>
 
       <section className="mt-space-loose">
         <AccountSettingsForm noteAccountId={account.id} initial={accountSettings} />

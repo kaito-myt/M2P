@@ -1465,6 +1465,10 @@ model NoteAccount {
   monetization_policy_json Json
   genre_policy_json        Json
   session_state_enc        String?  @db.Text
+  // [F-ANP-20] セッションを最後に取り込んだ日時と経路 ('cookie_import' = ANP UI の Cookie 貼り付け /
+  // 'script' = scripts/anp/note-session-capture.mjs)。null = 未連携。
+  session_linked_at        DateTime?
+  session_source           String?
   status                   String   @default("active") // active | paused | archived | pending_session
   // [F-ANP-40] note.sales.fetch が `/<handle>/followers` から取得した最新フォロワー総数(累計)。
   // handle が null の間は取得できず既定 0 のまま。

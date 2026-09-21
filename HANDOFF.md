@@ -74,6 +74,16 @@ ANP のアカウント戦略を AI に相談しながら策定）を実施。mai
 - 本番 URL 疎通: `anp.m2p.tools/`・`/accounts/design/consult`・`a2p.m2p.tools/ads` は未ログインで 307→/login、`/anp-logo.png` `/anp-mark.png`
   `/icon.png` は 200。
 
+### ANP — note アカウント連携を画面から（F-ANP-20b）と記事一覧の段階タブ（9/21 深夜追加）
+- 運営者要望「アカウント戦略（bio 等は AI レコメンド）→ note でアカウント作成 → ANP 側から note のアカウントを連携」:
+  `/accounts/[id]` に **「note アカウント連携」**（note にログイン中のブラウザの Cookie `note_gql_auth_token` を貼り付け →
+  `note.com/api/v2/current_user` で検証 → storageState を暗号化保存 → handle 自動設定 → active 化 → 失効リクエスト fulfilled）。
+  `pending_session` のアカウントには設計案の表示名/ハンドル/bio を再掲。ローカルスクリプトは代替手段として残置。
+  ANP サービスに `KDP_CRED_KEY` を設定（worker と同じ鍵）。migration `20260921020000_anp_session_link` 適用＋resolve 済み。
+  **未検証**: Cookie だけの storageState で自動公開（エディタ操作）が通るか。初回公開で not_logged_in になったらスクリプト経路で取込。
+- 「メニューに記事一覧を追加して。作成中、公開前、公開中の記事が全部一覧化して」: サイドバー「記事一覧」＝`/articles` を
+  段階タブ（すべて/作成中/公開前/公開中/失敗・非公開、件数付き）に再構成（`lib/article-stage.ts`）。
+
 ### DB マイグレーション履歴の整合
 - 本番 `_prisma_migrations` に未記録だった 20260915/0918/0919 と今日の 3 本を `prisma migrate resolve --applied` で記録。
   `migrate status` ではまだ 8 月〜9/9 の数本（20260826120000_ad_spend 〜 20260909000000_bw_retag）が未記録のまま
@@ -246,8 +256,8 @@ ANP のアカウント戦略を AI に相談しながら策定）を実施。mai
 
 ## 次にやること（優先順）
 -1. **Amazon Ads の接続**（上記「運営者の手順」1〜4）。それまで `/ads` は「未接続」表示。
--1'. **ANP の実運用開始**: `/accounts/design/consult` で AI と壁打ち → 設計案生成 → 採用 → note で新アカウント作成 →
-   `bash scripts/anp/note-session-capture.sh <note_account_id>` → 翌朝から日次生成・公開。
+-1'. **ANP の実運用開始**: `/accounts/design/consult` で AI と壁打ち → 設計案生成 → 採用 → note で新アカウント作成（表示名/bio は
+   アカウント詳細に再掲）→ アカウント詳細「note アカウント連携」に Cookie 貼り付け → 翌朝から日次生成・公開。
 0. **翌朝の確認**: (a) 07:00 JST の A2P テーマ生成と 08:00 JST の ANP テーマ生成（`note.theme.auto`）が done か、(b) ANP 記事が
    ready→published（note 公開）→ promotion_posts(kind=anp_article) まで進んだか、(c) IG カルーセルが Zernio で複数枚投稿になっているか
    （`promotion_posts` の instagram 投稿の posted 結果と IG 上の見え方）、(d) daily-publish のログ（09:30 に走ったか）。

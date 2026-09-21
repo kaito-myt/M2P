@@ -19,6 +19,8 @@ metadata:
 
 **ロゴ (2026-09-21)**: 運営者支給のワードマーク（A2P と同系ネイビー×ティール）に差し替え。`apps/portal/public/tools/anp.png`＝`apps/anp/public/anp-logo.png`（ワードマーク）、`apps/anp/public/anp-mark.png`（正方形マーク）、`apps/anp/app/icon.png`（favicon、旧 favicon.ico 削除）。`sharp` でトリム/切り出し。
 
+**note 連携は画面から (F-ANP-20b, 2026-09-21)**: `/accounts/[id]`「note アカウント連携」に note ログイン中ブラウザの Cookie (`note_gql_auth_token`) を貼り付け → `GET note.com/api/v2/current_user`（未認証 401）で検証 → storageState(.note.com, origins 空) を `KDP_CRED_KEY` で暗号化保存 → handle=urlname, active 化。ANP サービスにも `KDP_CRED_KEY` 設定済。ローカルスクリプトは代替。**未検証**: Cookie のみで自動公開 (エディタ) が通るか。記事一覧 `/articles` は段階タブ（作成中/公開前/公開中/失敗・非公開、`lib/article-stage.ts`）。
+
 **残 (人手)**: note で新アカウント作成＋セッション取込（設計機能の出力に従う）、 note 本人情報登録(KYC)→有料記事化（judge は `price_jpy` に提案のみ保存、`paid` は常に false）、検証用下書き 5 件の削除 (n6845533ebcf7 / n9c510facf4dc / n1d09eea651e3 / ne071421d3e1d / n800cf6101fa9)、メンバーシップ計測の実データ検証、TikTok 連動 (Phase 4)。
 
 **罠**: `note.theme.generate` は `job_id` 必須。judge の `score_total` は breakdown 平均で再計算。本番 DB 変更は raw SQL 適用→`prisma migrate resolve --applied <name>` で履歴整合（2026-09-21 に 20260915/0918/0919/0921 分を resolve 済、以後 `migrate deploy` が通る可能性あり・要確認）。

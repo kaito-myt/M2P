@@ -153,6 +153,13 @@ export default async function AccountDesignDetailPage({
                 bash scripts/anp/note-session-capture.sh {account.id}
               </pre>
             </div>
+            <Link
+              href={`/accounts/${account.id}`}
+              className="inline-block w-fit rounded-card border border-border-warm bg-charcoal px-4 py-2 text-button-sm text-white no-underline"
+              data-testid="design-adopted-link-now"
+            >
+              {dm.adopted.linkNow}
+            </Link>
             <Link href={`/accounts/${account.id}`} className="text-caption text-charcoal underline">
               {dm.adopted.viewAccount}
             </Link>

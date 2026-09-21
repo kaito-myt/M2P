@@ -98,7 +98,7 @@ console.log(`storageState 取得: cookies=${state.cookies.length} origins=${stat
 // status='paused' (F-ANP-21: not_logged_in 検知で自動一時停止された状態) も、再取込成功時点で
 // 自動的に 'active' へ復旧させる(認証リレーの「復旧の自動反映」)。'archived' はそのまま変更しない。
 await c.query(
-  "UPDATE note_accounts SET session_state_enc=$1, status=(CASE WHEN status IN ('pending_session','paused') THEN 'active' ELSE status END), updated_at=NOW() WHERE id=$2",
+  "UPDATE note_accounts SET session_state_enc=$1, session_linked_at=NOW(), session_source='script', status=(CASE WHEN status IN ('pending_session','paused') THEN 'active' ELSE status END), updated_at=NOW() WHERE id=$2",
   [encrypt(json), noteAccountId],
 );
 

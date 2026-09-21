@@ -21,7 +21,7 @@ export const messages = {
     itemHome: 'ホーム',
     itemAccounts: 'アカウント',
     itemAccountDesign: 'アカウント設計',
-    itemArticles: '記事',
+    itemArticles: '記事一覧',
     itemSettings: '設定',
   },
   header: {
@@ -53,6 +53,44 @@ export const messages = {
       displayNameRequired: '表示名を入力してください',
       unknown: 'アカウントの作成に失敗しました',
       handleInvalid: 'ハンドルは半角英数字とアンダースコアのみ使用できます(空欄で未設定に戻せます)',
+      notFound: 'アカウントが見つかりません',
+    },
+    // F-ANP-01/03 → F-ANP-20: pending_session のアカウントで note 側に設定する内容を再掲する。
+    setupTitle: 'note.com で設定する内容 (AI 設計案より)',
+    setupDescription: 'note で新規アカウントを作成し、以下を設定してください。アイコン/ヘッダー画像は設計案ページからダウンロードできます。',
+    setupDesignLink: '設計案を開く (画像ダウンロード・発信の柱・初回テーマ)',
+    // F-ANP-20: ANP 画面からの note セッション連携 (Cookie 貼り付け)。
+    link: {
+      title: 'note アカウント連携',
+      description:
+        'note でログイン中のブラウザから Cookie を貼り付けると、このアカウントとして ANP が note を操作できるようになります' +
+        '（自動公開・売上取得に必要）。note のログインには画像認証があるためサーバー側では代行できません。',
+      statusLinked: (handle: string, at: string) => `連携済み: note.com/${handle}（${at}）`,
+      statusLinkedViaScript: 'ローカルスクリプトで取込済み',
+      statusNotLinked: '未連携',
+      statusExpired: 'セッション失効 — 再連携してください',
+      stepsTitle: '手順（Chrome）',
+      steps: [
+        'note.com で（このアカウントとして）ログインする。設計案の表示名・プロフィール文・アイコンも設定しておく。',
+        'note.com のページで F12 → 上部タブ「Application」（日本語なら「アプリケーション」）→ 左「Cookies」→「https://note.com」。',
+        '一覧から note_gql_auth_token を探し、Value をダブルクリックしてコピー（できれば _note_session_v5 も）。',
+        '下の欄に貼り付けて「連携する」。値だけでも、「名前=値; 名前=値」形式でも、表を丸ごとコピーした形でも構いません。',
+      ],
+      textareaLabel: 'Cookie（note_gql_auth_token の値、または Cookie 一式）',
+      placeholder: 'note_gql_auth_token=eyJ...; _note_session_v5=...',
+      submit: '連携する',
+      submitting: '確認中…',
+      success: (handle: string, nickname: string) => `連携しました: ${nickname}（note.com/${handle}）。稼働を開始します。`,
+      scriptAlternative: '別の方法: ローカル端末で次のコマンドを実行してもセッションを取り込めます',
+      errors: {
+        cookiesRequired: 'Cookie を貼り付けてください',
+        authCookieMissing: 'note_gql_auth_token が見つかりません。Cookie の Value をコピーしているか確認してください',
+        notLoggedIn: 'この Cookie では note にログインできませんでした（期限切れ／コピー漏れの可能性）。note に再ログインして貼り直してください',
+        verifyFailed: 'note への確認に失敗しました',
+        handleMismatch: (expected: string, actual: string) =>
+          `このアカウントのハンドル (${expected}) と、貼り付けた Cookie のユーザー (${actual}) が一致しません。別アカウントの Cookie ではありませんか？`,
+        linkFailed: '連携に失敗しました',
+      },
     },
     detailLink: '詳細を見る',
     handleLabel: 'note ハンドル',
@@ -65,12 +103,11 @@ export const messages = {
       // F-ANP-01/03: アカウント設計から作成した note_accounts の初期状態。
       pending_session: 'セッション取込待ち',
     },
-    pendingSessionNotice: (id: string) =>
-      `note.com で表示名・プロフィール・アイコン/ヘッダー画像を設定したうえで、` +
-      `\`bash scripts/anp/note-session-capture.sh ${id}\` を実行してログインセッションを取り込むと稼働開始します。`,
+    pendingSessionNotice: (_id: string) =>
+      `note.com でアカウントを作成・設定したら、アカウント詳細の「note アカウント連携」で Cookie を貼り付けて連携すると稼働開始します。`,
     // F-ANP-21: セッション失効検知 → 再取込導線 (docs/11 §3.3/§7)。
     reauthNeeded: 'セッション再取込が必要です',
-    reauthNeededDescription: 'note のログインセッションが失効しました。ローカル端末で次のコマンドを実行してください:',
+    reauthNeededDescription: 'note のログインセッションが失効しました。アカウント詳細の「note アカウント連携」で Cookie を貼り直してください（またはローカル端末で次のコマンド）:',
     reauthCommand: (id: string) => `bash scripts/anp/note-session-capture.sh ${id}`,
   },
   accountDetail: {
@@ -275,25 +312,35 @@ export const messages = {
       copyBio: 'プロフィール文 (コピー用)',
       downloadAvatar: 'アイコン画像をダウンロード',
       downloadHeader: 'ヘッダー画像をダウンロード',
-      sessionCommand: 'セッション取り込みコマンド',
+      sessionCommand: 'セッション取り込みコマンド (代替手段)',
+      linkNow: 'アカウント詳細で note を連携する',
       viewAccount: 'アカウント詳細を見る',
       checklist: [
         '1. note.com で新規アカウントを作成する (メール/パスワード または Google/X 連携)。',
         '2. 表示名・ハンドル(urlname)・プロフィール文を上記の内容で設定する。',
         '3. アイコン画像・ヘッダー画像をダウンロードして note のプロフィール設定にアップロードする。',
-        '4. 下記コマンドをローカル端末で実行し、ログイン済みセッションを取り込む。',
+        '4. アカウント詳細ページの「note アカウント連携」で、note にログイン中のブラウザの Cookie を貼り付けて連携する（または下記コマンドをローカル端末で実行）。',
       ],
     },
   },
   articles: {
-    pageTitle: '記事',
-    pageDescription: 'すべてのアカウントの note 記事を横断的に確認します。',
+    pageTitle: '記事一覧',
+    pageDescription: 'すべてのアカウントの note 記事を、作成中・公開前・公開中の段階ごとに一覧します。',
     empty: '条件に一致する記事がありません。',
+    stageTabsLabel: '段階で絞り込む',
+    stageAll: 'すべて',
+    stageLabel: {
+      in_progress: '作成中',
+      pre_publish: '公開前',
+      published: '公開中',
+      other: '失敗・非公開',
+    },
     filters: {
       account: 'アカウント',
       accountAll: 'すべて',
       status: 'ステータス',
       statusAll: 'すべて',
+      clearStatus: '解除',
       priceSuggestion: '有料提案',
       priceSuggestionAll: 'すべて',
       priceSuggestionOnly: '提案ありのみ',
@@ -301,10 +348,14 @@ export const messages = {
     },
     columnTitle: 'タイトル',
     columnAccount: 'アカウント',
+    columnStage: '段階',
     columnStatus: 'ステータス',
     columnPublishStatus: '公開状態',
     columnScore: 'スコア',
+    columnNote: 'note',
+    openNote: '記事を開く',
     columnCreatedAt: '作成日時',
+    columnUpdatedAt: '更新/公開日時',
     detail: {
       back: '← 記事一覧',
       leadLabel: 'リード文',

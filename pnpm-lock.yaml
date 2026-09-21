@@ -41,6 +41,9 @@ importers:
       '@a2p/contracts':
         specifier: workspace:*
         version: link:../../packages/contracts
+      '@a2p/crypto':
+        specifier: workspace:*
+        version: link:../../packages/crypto
       '@a2p/db':
         specifier: workspace:*
         version: link:../../packages/db
