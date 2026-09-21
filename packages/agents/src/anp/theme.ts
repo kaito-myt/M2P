@@ -29,6 +29,7 @@ import {
 import type { LoggingContext, WithTokenLoggingDeps } from '../lib/with-token-logging.js';
 import type { LoadModelAssignmentDeps } from '../lib/load-model-assignment.js';
 import { extractJson } from './lib/extract-json.js';
+import { editorialPolicyLines } from './account-context.js';
 
 const DEFAULT_MAX_OUTPUT_TOKENS = 8192;
 const MAX_PARSE_RETRIES = 2;
@@ -82,6 +83,7 @@ export async function generateNoteThemes(
     `note アカウントのニッチ: ${parsedInput.account.niche}`,
     `想定読者: ${parsedInput.account.target_reader ?? '(指定なし)'}`,
     `トーン: ${parsedInput.account.tone ?? '(指定なし)'}`,
+    ...editorialPolicyLines(parsedInput.account),
     `件数: ${parsedInput.count}`,
     parsedInput.exclude_titles_recent.length > 0
       ? `除外 (直近採用済タイトル):\n${parsedInput.exclude_titles_recent.map((t) => ` - ${t}`).join('\n')}`

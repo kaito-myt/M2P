@@ -35,7 +35,10 @@ export const messages = {
   accounts: {
     pageTitle: 'note アカウント',
     pageDescription: 'テーマ (ニッチ) ごとに note アカウントを台帳管理します。',
-    empty: 'まだ note アカウントがありません。下のフォームから作成してください。',
+    empty: 'まだ note アカウントがありません。「新規アカウントを作成」から始めてください。',
+    createNew: '新規アカウントを作成 (AI と相談しながら)',
+    createNewDescription: 'AI と壁打ちして設計案を作り、そのまま登録します。過去の相談・設計案もここから辿れます。',
+    history: '過去の設計案',
     form: {
       title: 'アカウントを作成',
       niche: 'ニッチ (例: 副業×AI)',
@@ -85,9 +88,9 @@ export const messages = {
       downloadAvatar: 'アイコンをダウンロード',
       downloadHeader: 'カバー画像をダウンロード',
       bioInstructionLabel: '自己紹介文への指示 (任意)',
-      bioInstructionPlaceholder: '例: もっとカジュアルに / 実績を1つ入れて / 絵文字なしで',
+      bioInstructionPlaceholder: '例: もっとカジュアルに / 実績を1つ入れて / 絵文字なしで（参考画像を貼り付けても OK）',
       visualsInstructionLabel: '画像への指示 (任意)',
-      visualsInstructionPlaceholder: '例: 青系の落ち着いた配色 / 顔出しなしの後ろ姿で / 本と観葉植物のある机',
+      visualsInstructionPlaceholder: '例: 青系の落ち着いた配色 / 顔出しなしの後ろ姿で / 本と観葉植物のある机（参考画像を Ctrl+V で貼ると雰囲気を寄せます）',
       lastFailed: '前回の生成は失敗しました。もう一度お試しください',
       progress: {
         queued: '順番待ち (worker が受け取るまで数秒)',
@@ -104,6 +107,36 @@ export const messages = {
         saveFailed: '保存に失敗しました',
         copyFailed: 'コピーできませんでした。テキストを選択してコピーしてください',
       },
+    },
+    // F-ANP-07: 記事の方針・トンマナ (手入力 + AI 生成)。
+    editorial: {
+      title: '記事の方針・トンマナ',
+      description:
+        'このアカウントの全記事 (テーマ企画・構成・執筆・校閲・品質判定) のプロンプトに毎回注入されます。「AI で生成」で叩き台を作り、手で直して保存してください。',
+      niche: 'ニッチ・発信テーマ',
+      targetReader: '想定読者',
+      tone: 'トーン (文体・語り口)',
+      policy: '記事の方針 (書くこと/書かないこと・記事の型・語尾/禁止表現・CTA など)',
+      policyPlaceholder: [
+        '例:',
+        '・扱うテーマ: 副業初心者の「最初の1万円」まで。投資・ギャンブル系は扱わない',
+        '・冒頭: 読者の悩みを1文で言い当ててから結論',
+        '・語尾: です・ます調。「〜すべき」は使わない',
+        '・各記事に体験談か具体的な数字を1つ以上',
+        '・末尾: 次に読む記事への導線とフォロー依頼を1文',
+      ].join(String.fromCharCode(10)),
+      instructionLabel: 'AI への指示 (任意・参考画像も貼り付け可)',
+      instructionPlaceholder: '例: もっとカジュアルに / 有料記事の切り方を厚めに / この画像の記事の雰囲気に寄せて',
+      generate: 'AI で生成',
+      regenerate: 'AI で再生成',
+      generating: '生成中…',
+      save: '保存',
+      saving: '保存中…',
+      saved: '記事の方針を保存しました',
+      unsaved: '未保存の変更があります',
+      charCount: (n: number, max: number) => `${n} / ${max} 字`,
+      progressStage: '記事の方針・トンマナを生成中',
+      errors: { saveFailed: '保存に失敗しました' },
     },
     // F-ANP-20: ANP 画面からの note セッション連携 (Cookie 貼り付け)。
     link: {
@@ -477,6 +510,38 @@ export const messages = {
     saved: '保存しました',
     errors: {
       saveFailed: '設定の保存に失敗しました',
+    },
+  },
+  // S-ANP-09 — 新規アカウント作成ウィザード (AI 相談 → 設計案 → 作成)
+  accountWizard: {
+    pageTitle: '新規 note アカウントを作成',
+    pageDescription: 'AI と相談してニッチ・読者・収益化を固め、設計案 (表示名/ID/自己紹介文/発信の柱…) を作り、そのままアカウントを登録します。',
+    stepsLabel: '手順',
+    steps: ['AI と相談', '設計案を確認', 'アカウント作成'],
+    step1Title: '1. AI と相談して方向性を決める',
+    step1Description: 'まず「どんなアカウントにしたいか」を一言で送ってください。AI がリサーチしながら壁打ちし、右側にブリーフ草案を組み立てます。固まったら「この内容で設計案を生成」。',
+    briefDirect: '相談せずにブリーフを直接入力して設計案を作る',
+    manualCreate: 'AI を使わず手入力でアカウントを登録する',
+    historyConsults: '過去の相談を見る',
+    historyDesigns: '過去の設計案を見る',
+    step2Title: '2. 設計案を確認・編集する',
+    step2Description: '表示名/ID を選び、必要なら各項目を直して「この設計でアカウントを作成」。「画像を生成」でアイコン/ヘッダー案も作れます。',
+    designRejected: 'この設計案は却下済みです。上の相談から別の設計案を作れます。',
+    step3Title: '3. アカウントを作成しました',
+    step3Description: (name: string) => `「${name}」を登録しました。続けてアカウント詳細で自己紹介文・アイコン・カバー画像を仕上げ、note のアカウント作成後に連携してください。`,
+    step3Link: 'アカウント詳細へ進む (プロフィール素材・note 連携)',
+  },
+  // F-ANP-06 — AI 指示への画像添付 (クリップボード貼り付け / ドロップ / ファイル選択)
+  uploads: {
+    attach: '画像を添付',
+    remove: '削除',
+    hint: (n: number, max: number) => `Ctrl+V で貼り付け・ドロップ可 (${n}/${max})`,
+    errors: {
+      noFile: '画像が選択されていません',
+      unsupportedType: 'PNG / JPEG / WebP / GIF のみ添付できます',
+      tooLarge: '画像は 8MB までです',
+      uploadFailed: '画像のアップロードに失敗しました',
+      tooMany: (max: number) => `添付できる画像は ${max} 枚までです`,
     },
   },
   // F-ANP-04 — note アカウント戦略の AI 相談 (チャット壁打ち + Web リサーチ → ブリーフ草案)

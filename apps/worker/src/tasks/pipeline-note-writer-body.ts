@@ -72,12 +72,13 @@ export interface PipelineNoteWriterBodyPrisma {
   noteAccount: {
     findUnique: (args: {
       where: { id: string };
-      select: { id: true; niche: true; target_reader: true; tone: true; monetization_policy_json: true };
+      select: { id: true; niche: true; target_reader: true; tone: true; monetization_policy_json: true; editorial_policy?: true };
     }) => Promise<{
       id: string;
       niche: string;
       target_reader: string | null;
       tone: string | null;
+      editorial_policy?: string | null;
       monetization_policy_json: unknown;
     } | null>;
   };
@@ -196,6 +197,7 @@ export async function runPipelineNoteWriterBody(
         target_reader: true,
         tone: true,
         monetization_policy_json: true,
+        editorial_policy: true,
       },
     });
     if (!account) {
@@ -233,7 +235,7 @@ export async function runPipelineNoteWriterBody(
     const input: NoteWriterInput = {
       note_article_id: noteArticleId,
       job_id: jobId,
-      account: { niche: account.niche, target_reader: account.target_reader, tone: account.tone },
+      account: { niche: account.niche, target_reader: account.target_reader, tone: account.tone, editorial_policy: account.editorial_policy ?? null },
       theme: {
         title: article.title,
         hook: theme?.hook ?? article.title,

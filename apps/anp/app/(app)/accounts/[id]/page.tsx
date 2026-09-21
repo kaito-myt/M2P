@@ -14,6 +14,7 @@ import { AccountSettingsForm } from './account-settings-form';
 import { ArticleReviewActions } from './article-review-actions';
 import { GenerateThemesButton } from './generate-themes-button';
 import { HandleForm } from './handle-form';
+import { EditorialPanel } from './editorial-panel';
 import { NoteLinkForm } from './note-link-form';
 import { ProfilePanel } from './profile-panel';
 import { PublishArticleButton } from './publish-article-button';
@@ -105,7 +106,7 @@ export default async function AccountDetailPage({
           {account.target_reader ? ` ／ 想定読者: ${account.target_reader}` : ''}
           {account.tone ? ` ／ トーン: ${account.tone}` : ''}
         </p>
-        <HandleForm noteAccountId={account.id} initialHandle={account.handle} />
+        <HandleForm noteAccountId={account.id} initialHandle={account.handle} initialDisplayName={account.display_name} />
         {needsReauth && (
           <div className="mt-2 rounded-card border border-destructive-bg bg-destructive-bg px-3 py-2">
             <p className="text-caption font-medium text-destructive">{messages.accounts.reauthNeeded}</p>
@@ -147,6 +148,7 @@ export default async function AccountDetailPage({
           </div>
         )}
         {profileState && <ProfilePanel noteAccountId={account.id} initial={profileState} />}
+        {profileState && <EditorialPanel noteAccountId={account.id} initial={profileState} />}
         <NoteLinkForm
           noteAccountId={account.id}
           handle={account.handle}

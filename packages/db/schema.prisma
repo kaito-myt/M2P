@@ -1476,6 +1476,9 @@ model NoteAccount {
   avatar_r2_key            String?
   header_r2_key            String?
   profile_generated_at     DateTime?
+  // [F-ANP-07] 記事の方針・トンマナ (書くこと/書かないこと・記事の型・語尾/禁止表現・CTA)。
+  // theme/outline/writer/editor/judge のプロンプトに毎回注入される。運営者編集 or AI 生成。
+  editorial_policy         String?  @db.Text
   status                   String   @default("active") // active | paused | archived | pending_session
   // [F-ANP-40] note.sales.fetch が `/<handle>/followers` から取得した最新フォロワー総数(累計)。
   // handle が null の間は取得できず既定 0 のまま。

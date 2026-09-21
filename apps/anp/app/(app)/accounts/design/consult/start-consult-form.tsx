@@ -8,7 +8,7 @@ import { messages } from '@/lib/messages';
 
 const cm = messages.accountConsult.start;
 
-export function StartConsultForm() {
+export function StartConsultForm({ hrefFor }: { hrefFor?: (consultationId: string) => string } = {}) {
   const router = useRouter();
   const [text, setText] = useState('');
   const [error, setError] = useState<string | null>(null);
@@ -23,7 +23,7 @@ export function StartConsultForm() {
         setError(result.error);
         return;
       }
-      router.push(`/accounts/design/consult/${result.data.id}`);
+      router.push(hrefFor ? hrefFor(result.data.id) : `/accounts/design/consult/${result.data.id}`);
     });
   };
 

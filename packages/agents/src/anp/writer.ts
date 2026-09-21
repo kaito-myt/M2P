@@ -23,6 +23,7 @@ import {
 import type { LoggingContext, WithTokenLoggingDeps } from '../lib/with-token-logging.js';
 import type { LoadModelAssignmentDeps } from '../lib/load-model-assignment.js';
 import { extractJson } from './lib/extract-json.js';
+import { editorialPolicyLines } from './account-context.js';
 
 const DEFAULT_MAX_OUTPUT_TOKENS = 8192;
 const MAX_PARSE_RETRIES = 2;
@@ -126,6 +127,7 @@ export async function generateNoteBody(
     `リード文 (既に確定・本文冒頭にはそのまま使わず自然につなげる): ${parsedInput.lead}`,
     `見出し構成 (順守):\n${parsedInput.headings.map((h, i) => `${i + 1}. ${h}`).join('\n')}`,
     `目標文字数: ${parsedInput.target_chars} 字`,
+    ...editorialPolicyLines(parsedInput.account),
   ];
   if (parsedInput.paid) {
     lines.push(

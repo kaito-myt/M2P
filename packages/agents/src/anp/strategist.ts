@@ -17,10 +17,12 @@ import {
   NOTE_BIO_MAX_CHARS,
   NoteAccountDesignBriefSchema,
   NoteAccountDesignSchema,
+  NoteAccountEditorialOutputSchema,
   NoteAccountProfileInputSchema,
   NoteAccountProfileOutputSchema,
   type NoteAccountDesign,
   type NoteAccountDesignBrief,
+  type NoteAccountEditorialOutput,
   type NoteAccountProfileInput,
   type NoteAccountProfileOutput,
 } from '@a2p/contracts/agents/anp';
@@ -226,12 +228,13 @@ export async function generateNoteAccountProfile(
 
   let lastError: AgentError | undefined;
   for (let attempt = 1; attempt <= MAX_PARSE_RETRIES; attempt++) {
+    const images = parsedInput.reference_images ?? [];
     const completion = await client.complete<string>({
       role: 'anp.strategist',
       genre: null,
       messages: [
         { role: 'system', content: systemPrompt },
-        { role: 'user', content: userMessage },
+        { role: 'user', content: userMessage, ...(images.length > 0 ? { images } : {}) },
       ],
       maxOutputTokens: 4096,
     });
@@ -285,6 +288,9 @@ export function buildProfileUserMessage(input: NoteAccountProfileInput): string 
     `【人物設定】${personaHint}`,
     input.existing_bio ? `【現在の自己紹介文 (これを改善する)】\n${input.existing_bio}` : '',
     input.instruction ? `【運営者からの追加指示 (必ず反映)】\n${input.instruction}` : '',
+    input.reference_images && input.reference_images.length > 0
+      ? `【添付された参考画像 ${input.reference_images.length} 枚】この画像の雰囲気・配色・構図・世界観を読み取り、avatar_prompt / header_prompt に具体的な言葉で反映してください (人物の顔は使わない)。bio の生成でも参考にしてよい。`
+      : '',
     '',
     '要件:',
     `- bio: note のプロフィール欄にそのまま貼れる自己紹介文。**${NOTE_BIO_MAX_CHARS} 字以内 (厳守)**。`,
@@ -300,6 +306,114 @@ export function buildProfileUserMessage(input: NoteAccountProfileInput): string 
     'の JSON のみを返してください。JSON 以外の前置き・説明・コードフェンスは出力しないこと。日本語で出力する。',
   ];
   return lines.filter((l) => l !== '').join('\n');
+}
+
+// ---------------------------------------------------------------------------
+// F-ANP-07 — 記事の方針・トンマナ (editorial_policy / tone / target_reader) の生成
+//
+// アカウント詳細の「記事の方針・トンマナ」→「AI で生成」から (worker `note.account.profile`
+// targets=['editorial'] 経由で) 呼ばれる。入力は `NoteAccountProfileInput` と同じ (現在の方針は
+// `existing_policy` として渡し「改善」させる)。role は anp.strategist を流用。
+// ---------------------------------------------------------------------------
+
+export interface NoteAccountEditorialInput extends NoteAccountProfileInput {
+  /** 現在の方針 (あれば改善対象として渡す)。 */
+  existing_policy?: string;
+}
+
+function hasEditorialPolicy(parsed: unknown): boolean {
+  if (typeof parsed !== 'object' || parsed === null) return false;
+  return typeof (parsed as Record<string, unknown>).editorial_policy === 'string';
+}
+
+export async function generateNoteAccountEditorial(
+  input: NoteAccountEditorialInput,
+  deps: PlanNoteAccountDesignDeps = {},
+): Promise<NoteAccountEditorialOutput> {
+  const { existing_policy: existingPolicy, ...rest } = input;
+  const parsedInput = NoteAccountProfileInputSchema.parse(rest);
+
+  const loadPrompt = deps.loadActivePrompt ?? defaultLoadActivePrompt;
+  const makeClient = deps.createAgentClient ?? defaultCreateAgentClient;
+  const prompt = await loadPrompt('anp.strategist', null, deps.promptLoaderDeps);
+  const systemPrompt = fillPlaceholders(prompt.template, {});
+  const ctx: LoggingContext = { role: 'anp.strategist' };
+  if (deps.jobId !== undefined) ctx.jobId = deps.jobId;
+  const factoryDeps: Parameters<typeof makeClient>[3] = {};
+  if (deps.loadAssignmentDeps) factoryDeps.loadAssignmentDeps = deps.loadAssignmentDeps;
+  if (deps.withTokenLoggingDeps) factoryDeps.withTokenLoggingDeps = deps.withTokenLoggingDeps;
+  if (deps.getApiKey) factoryDeps.getApiKey = deps.getApiKey;
+  const client: LLMClient = await makeClient('anp.strategist', null, ctx, factoryDeps);
+
+  const userMessage = buildEditorialUserMessage(parsedInput, existingPolicy);
+  const images = parsedInput.reference_images ?? [];
+
+  let lastError: AgentError | undefined;
+  for (let attempt = 1; attempt <= MAX_PARSE_RETRIES; attempt++) {
+    const completion = await client.complete<string>({
+      role: 'anp.strategist',
+      genre: null,
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: userMessage, ...(images.length > 0 ? { images } : {}) },
+      ],
+      maxOutputTokens: 4096,
+    });
+    const rawText = completion.text;
+    if (typeof rawText !== 'string' || rawText.trim().length === 0) {
+      lastError = new AgentError('anp.strategist.editorial.invalid_output: empty response', { details: { attempt } });
+      continue;
+    }
+    const parsedJson = extractLlmJson<unknown>(rawText, hasEditorialPolicy);
+    if (parsedJson === undefined) {
+      lastError = new AgentError('anp.strategist.editorial.invalid_output: failed to parse JSON', { details: { rawText, attempt } });
+      continue;
+    }
+    const validated = NoteAccountEditorialOutputSchema.safeParse(parsedJson);
+    if (!validated.success) {
+      lastError = new AgentError('anp.strategist.editorial.invalid_output: schema validation failed', {
+        details: { rawText, issues: validated.error.issues, attempt },
+        cause: validated.error,
+      });
+      continue;
+    }
+    return validated.data;
+  }
+  throw lastError ?? new AgentError('anp.strategist.editorial.invalid_output: unknown failure');
+}
+
+export function buildEditorialUserMessage(input: NoteAccountProfileInput, existingPolicy?: string): string {
+  const lines = [
+    'note アカウントの「記事の方針・トンマナ」を設計してください。これは以後の全記事 (テーマ企画・構成・執筆・校閲・',
+    '品質判定) のプロンプトに毎回注入される運営者設定です。誰が読んでも同じ文体・同じ判断ができる具体度で書いてください。',
+    '',
+    `【表示名】${input.display_name}`,
+    `【ニッチ・発信テーマ】${input.niche}`,
+    input.target_reader ? `【現在の想定読者】${input.target_reader}` : '',
+    input.tone ? `【現在のトーン】${input.tone}` : '',
+    input.concept ? `【コンセプト】${input.concept}` : '',
+    input.content_pillars && input.content_pillars.length > 0 ? `【発信の柱】${input.content_pillars.join(' / ')}` : '',
+    input.character_sheet ? `【キャラクター設定】` + String.fromCharCode(10) + input.character_sheet : '',
+    input.existing_bio ? `【自己紹介文】${input.existing_bio}` : '',
+    existingPolicy ? `【現在の方針 (これを改善する)】` + String.fromCharCode(10) + existingPolicy : '',
+    input.instruction ? `【運営者からの追加指示 (必ず反映)】` + String.fromCharCode(10) + input.instruction : '',
+    input.reference_images && input.reference_images.length > 0
+      ? `【添付された参考画像 ${input.reference_images.length} 枚】参考にしたい記事/アカウントのスクリーンショット等。文体・構成・見せ方の特徴を読み取って方針に反映すること。`
+      : '',
+    '',
+    '要件:',
+    '- target_reader: 想定読者を 1 文で具体的に (年代・状況・悩み)。300 字以内。',
+    '- tone: 文体・語り口を短く (例: 「です・ます調、親しみやすく断定的。絵文字なし」)。200 字以内。',
+    '- editorial_policy: 記事の方針・トンマナ。プレーンテキストの箇条書き (「・」始まり)、3000 字以内。次を含める:',
+    '  1) 書くこと/書かないこと (扱うテーマ範囲・NG テーマ)、2) 記事の型 (冒頭の入り方・見出しの付け方・',
+    '  1 記事の長さ・段落の長さ)、3) 語尾・人称・呼びかけ・禁止表現 (煽り・断定しすぎ 等)、4) 具体例/数字/体験談の',
+    '  入れ方、5) 有料記事の切り方と CTA の入れ方 (フォロー/スキ/次記事への導線)、6) 品質判定で減点すべき点。',
+    '- rationale: なぜこの方針か 2〜3 行 (任意)。',
+    '',
+    '出力形式: {"target_reader": "...", "tone": "...", "editorial_policy": "...", "rationale": "..."} の JSON のみ。',
+    'JSON 以外の前置き・説明・コードフェンスは出力しないこと。日本語で出力する。',
+  ];
+  return lines.filter((l) => l !== '').join(String.fromCharCode(10));
 }
 
 // ---------------------------------------------------------------------------

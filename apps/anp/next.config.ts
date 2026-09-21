@@ -10,6 +10,12 @@ const nextConfig: NextConfig = {
   // 内部 Job だけ queued で残って graphile に投入されない (2026-09-21 に本番で発生、docs/11 §7)。
   // prisma/pg 系も同様。
   serverExternalPackages: ['graphile-worker', 'pg', 'pg-native'],
+  // AI 指示への画像添付 (クリップボード貼り付け) を Server Action で受けるため上限を上げる (既定 1MB)。
+  experimental: {
+    serverActions: {
+      bodySizeLimit: '12mb',
+    },
+  },
   // `packages/*` は NodeNext 規約で `from './foo.js'` の拡張子付き import を使うため
   // webpack で `.js → .ts(x)` に解決させる（apps/web と同じ）。
   webpack: (config) => {

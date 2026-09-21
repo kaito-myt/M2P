@@ -233,6 +233,7 @@ export async function createDesignFromConsultation(
     const designId = await createDesignAndEnqueue(brief, { consultationId });
 
     revalidatePath('/accounts/design');
+    revalidatePath('/accounts/new');
     revalidatePath(`/accounts/design/consult/${consultationId}`);
     return { ok: true, data: { design_id: designId } };
   } catch (err) {

@@ -27,7 +27,14 @@ const cm = messages.accountConsult;
 /** 返答の目安所要時間 (秒)。リサーチ計画 + Tavily + 返答生成 (Opus) で 30〜60 秒。 */
 const CONSULT_ESTIMATE_SEC = 50;
 
-export function ConsultWorkspace({ initial }: { initial: ConsultationStateView }) {
+export interface ConsultWorkspaceProps {
+  initial: ConsultationStateView;
+  /** 設計案生成後の遷移先 (既定: /accounts/design/<id>)。新規アカウント作成ウィザードでは同ページ内に留める。 */
+  designHrefFor?: (designId: string) => string;
+}
+
+export function ConsultWorkspace({ initial, designHrefFor }: ConsultWorkspaceProps) {
+  const designHref = designHrefFor ?? ((id: string) => `/accounts/design/${id}`);
   const router = useRouter();
   const [state, setState] = useState<ConsultationStateView>(initial);
   const [input, setInput] = useState('');
@@ -113,8 +120,8 @@ export function ConsultWorkspace({ initial }: { initial: ConsultationStateView }
       setError(res.error);
       return;
     }
-    router.push(`/accounts/design/${res.data.design_id}`);
-  }, [creating, state.id, router]);
+    router.push(designHref(res.data.design_id));
+  }, [creating, state.id, router, designHref]);
 
   const handleArchive = useCallback(async () => {
     setError(null);
@@ -258,7 +265,7 @@ export function ConsultWorkspace({ initial }: { initial: ConsultationStateView }
                     {messages.accountDesign.statusLabel[d.status as keyof typeof messages.accountDesign.statusLabel] ??
                       d.status}
                   </span>
-                  <a href={`/accounts/design/${d.id}`} className="shrink-0 text-charcoal underline">
+                  <a href={designHref(d.id)} className="shrink-0 text-charcoal underline">
                     {cm.draft.viewDesign}
                   </a>
                 </li>

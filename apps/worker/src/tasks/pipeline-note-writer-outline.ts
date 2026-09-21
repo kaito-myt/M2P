@@ -81,12 +81,13 @@ export interface PipelineNoteWriterOutlinePrisma {
   noteAccount: {
     findUnique: (args: {
       where: { id: string };
-      select: { id: true; niche: true; target_reader: true; tone: true };
+      select: { id: true; niche: true; target_reader: true; tone: true; editorial_policy?: true };
     }) => Promise<{
       id: string;
       niche: string;
       target_reader: string | null;
       tone: string | null;
+      editorial_policy?: string | null;
     } | null>;
   };
   noteTheme: {
@@ -170,7 +171,7 @@ export async function runPipelineNoteWriterOutline(
 
     const account = await prisma.noteAccount.findUnique({
       where: { id: article.note_account_id },
-      select: { id: true, niche: true, target_reader: true, tone: true },
+      select: { id: true, niche: true, target_reader: true, tone: true, editorial_policy: true },
     });
     if (!account) {
       throw new NotFoundError(`NoteAccount not found: ${article.note_account_id}`, {
@@ -188,7 +189,7 @@ export async function runPipelineNoteWriterOutline(
     const input: NoteOutlineInput = {
       note_article_id: noteArticleId,
       job_id: jobId,
-      account: { niche: account.niche, target_reader: account.target_reader, tone: account.tone },
+      account: { niche: account.niche, target_reader: account.target_reader, tone: account.tone, editorial_policy: account.editorial_policy ?? null },
       theme: {
         title: article.title,
         hook: theme?.hook ?? article.title,

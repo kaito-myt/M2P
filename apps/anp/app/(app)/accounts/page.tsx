@@ -7,7 +7,6 @@ import { prisma } from '@a2p/db';
 
 import { messages } from '@/lib/messages';
 
-import { CreateAccountForm } from './create-account-form';
 
 export default async function AccountsPage() {
   const [accounts, pendingReauth] = await Promise.all([
@@ -76,9 +75,21 @@ export default async function AccountsPage() {
         )}
       </section>
 
-      <section className="mt-space-loose rounded-container border border-border-warm bg-cream-light p-space-relaxed">
-        <h2 className="text-card-title font-medium text-charcoal">{messages.accounts.form.title}</h2>
-        <CreateAccountForm />
+      <section className="mt-space-loose flex flex-wrap items-center justify-between gap-space-snug rounded-container border border-border-warm bg-cream-light p-space-relaxed">
+        <div className="min-w-0">
+          <h2 className="text-card-title font-medium text-charcoal">{messages.accounts.createNew}</h2>
+          <p className="mt-1 text-body text-muted">{messages.accounts.createNewDescription}</p>
+          <Link href="/accounts/design" className="mt-1 inline-block text-caption text-muted underline">
+            {messages.accounts.history}
+          </Link>
+        </div>
+        <Link
+          href="/accounts/new"
+          className="shrink-0 rounded-card border border-border-warm bg-charcoal px-4 py-2 text-button-sm text-white no-underline"
+          data-testid="accounts-create-new"
+        >
+          {messages.accounts.createNew}
+        </Link>
       </section>
     </div>
   );

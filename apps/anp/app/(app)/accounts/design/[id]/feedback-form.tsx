@@ -8,7 +8,7 @@ import { messages } from '@/lib/messages';
 
 const dm = messages.accountDesign.detail;
 
-export function FeedbackForm({ designId }: { designId: string }) {
+export function FeedbackForm({ designId, hrefFor }: { designId: string; hrefFor?: (designId: string) => string }) {
   const router = useRouter();
   const [feedback, setFeedback] = useState('');
   const [error, setError] = useState<string | null>(null);
@@ -23,7 +23,7 @@ export function FeedbackForm({ designId }: { designId: string }) {
         setError(result.error);
         return;
       }
-      router.push(`/accounts/design/${result.data.id}`);
+      router.push(hrefFor ? hrefFor(result.data.id) : `/accounts/design/${result.data.id}`);
     });
   };
 

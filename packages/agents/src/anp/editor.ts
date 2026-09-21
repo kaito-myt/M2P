@@ -25,6 +25,7 @@ import type { LoggingContext, WithTokenLoggingDeps } from '../lib/with-token-log
 import type { LoadModelAssignmentDeps } from '../lib/load-model-assignment.js';
 import { extractJson } from './lib/extract-json.js';
 import { PAYWALL_MARKER, splitPaywallMarker } from './writer.js';
+import { editorialPolicyLines } from './account-context.js';
 
 const DEFAULT_MAX_OUTPUT_TOKENS = 8192;
 const MAX_PARSE_RETRIES = 2;
@@ -98,6 +99,7 @@ export async function editNoteArticle(
     `記事タイトル: ${parsedInput.title}`,
     `現在のリード文: ${parsedInput.lead}`,
     `現在の本文 (Markdown):\n${bodyWithMarker}`,
+    ...editorialPolicyLines(parsedInput.account),
   ];
   if (hasMarker) {
     lines.push(

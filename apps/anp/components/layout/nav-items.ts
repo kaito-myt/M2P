@@ -26,7 +26,6 @@ export const navSections: readonly NavSection[] = [
     items: [
       { key: 'home', label: m.itemHome, href: '/', enabled: true },
       { key: 'accounts', label: m.itemAccounts, href: '/accounts', enabled: true },
-      { key: 'account-design', label: m.itemAccountDesign, href: '/accounts/design', enabled: true },
       { key: 'articles', label: m.itemArticles, href: '/articles', enabled: true },
       { key: 'settings', label: m.itemSettings, href: '/settings', enabled: true },
     ],

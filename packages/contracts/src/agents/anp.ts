@@ -19,6 +19,12 @@ export const NoteAccountContextSchema = z.object({
   niche: z.string().min(1).max(200),
   target_reader: z.string().max(300).nullable().optional(),
   tone: z.string().max(200).nullable().optional(),
+  /**
+   * F-ANP-07 (2026-09-21): 記事の方針・トンマナ (書くこと/書かないこと・構成の癖・語尾・NG 表現・CTA の
+   * 入れ方など)。アカウント詳細で運営者が編集 or AI 生成する。theme/outline/writer/editor/judge の
+   * ユーザーメッセージに「【記事の方針・トンマナ】」ブロックとして注入される。
+   */
+  editorial_policy: z.string().max(3000).nullable().optional(),
 });
 export type NoteAccountContext = z.infer<typeof NoteAccountContextSchema>;
 
@@ -472,7 +478,7 @@ export function briefDraftToDesignBrief(
 /** note の自己紹介 (プロフィール文) は 140 字上限。 */
 export const NOTE_BIO_MAX_CHARS = 140;
 
-export const NoteAccountProfileTargetSchema = z.enum(['bio', 'visuals']);
+export const NoteAccountProfileTargetSchema = z.enum(['bio', 'visuals', 'editorial']);
 export type NoteAccountProfileTarget = z.infer<typeof NoteAccountProfileTargetSchema>;
 
 /** 生成の入力 (worker が note_accounts + 採用済み設計案から組み立てる)。 */
@@ -490,6 +496,14 @@ export const NoteAccountProfileInputSchema = z.object({
   existing_bio: z.string().max(1000).optional(),
   /** 運営者からの追加指示 (例: もっとカジュアルに / 顔出しなし)。 */
   instruction: z.string().max(1000).optional(),
+  /**
+   * F-ANP-06: 添付された参考画像 (ビジョン入力)。`data` は base64 (プレフィックス無し) または URL、
+   * `mimeType` は image/*。worker が R2 から読んで縮小したものを渡す。
+   */
+  reference_images: z
+    .array(z.object({ data: z.string().min(1), mimeType: z.string().min(1) }))
+    .max(4)
+    .optional(),
 });
 export type NoteAccountProfileInput = z.infer<typeof NoteAccountProfileInputSchema>;
 
@@ -502,3 +516,16 @@ export const NoteAccountProfileOutputSchema = z.object({
   persona_type: z.enum(['person', 'brand']),
 });
 export type NoteAccountProfileOutput = z.infer<typeof NoteAccountProfileOutputSchema>;
+
+/**
+ * F-ANP-07 — 記事の方針・トンマナの AI 生成 (targets=['editorial'])。
+ * 想定読者・トーン・方針本文を `note_accounts` に保存し、記事パイプライン全体に効かせる。
+ */
+export const NoteAccountEditorialOutputSchema = z.object({
+  target_reader: z.string().min(1).max(300),
+  tone: z.string().min(1).max(200),
+  /** 箇条書き中心のプレーンテキスト。3000 字以内 (超過は UI で調整)。 */
+  editorial_policy: z.string().min(1).max(4000),
+  rationale: z.string().max(1000).optional(),
+});
+export type NoteAccountEditorialOutput = z.infer<typeof NoteAccountEditorialOutputSchema>;

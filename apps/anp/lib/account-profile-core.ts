@@ -32,6 +32,11 @@ export interface AccountProfileJobView {
 
 export interface AccountProfileState {
   bio: string | null;
+  /** F-ANP-07: 記事の方針・トンマナ (アカウント詳細の EditorialPanel が編集/AI 生成)。 */
+  niche: string;
+  target_reader: string | null;
+  tone: string | null;
+  editorial_policy: string | null;
   avatar_url: string | null;
   header_url: string | null;
   profile_generated_at: string | null;
@@ -58,7 +63,7 @@ async function signedUrlOrNull(key: string | null, filename: string): Promise<st
 export async function loadAccountProfileState(noteAccountId: string): Promise<AccountProfileState | null> {
   const account = await prisma.noteAccount.findUnique({
     where: { id: noteAccountId },
-    select: { bio: true, avatar_r2_key: true, header_r2_key: true, profile_generated_at: true },
+    select: { bio: true, avatar_r2_key: true, header_r2_key: true, profile_generated_at: true, niche: true, target_reader: true, tone: true, editorial_policy: true },
   });
   if (!account) return null;
 
@@ -98,6 +103,10 @@ export async function loadAccountProfileState(noteAccountId: string): Promise<Ac
 
   return {
     bio: account.bio,
+    niche: account.niche,
+    target_reader: account.target_reader,
+    tone: account.tone,
+    editorial_policy: account.editorial_policy,
     avatar_url: avatarUrl,
     header_url: headerUrl,
     profile_generated_at: account.profile_generated_at ? account.profile_generated_at.toISOString() : null,

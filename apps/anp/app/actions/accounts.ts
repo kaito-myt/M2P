@@ -40,6 +40,8 @@ const HANDLE_PATTERN = /^[A-Za-z0-9_]{1,32}$/;
 
 const UpdateAccountHandleSchema = z.object({
   note_account_id: z.string().min(1),
+  /** 表示名 (アカウント名)。運営者要望 2026-09-21「一度設定したらどこからも変えられない」→ ここで編集可能に。 */
+  display_name: z.string().trim().min(1, messages.accounts.errors.displayNameRequired).max(100).optional(),
   // 空文字は「クリア(未設定に戻す)」として扱う。
   handle: z
     .string()
@@ -63,13 +65,14 @@ export async function updateAccountHandle(input: unknown): Promise<ActionResult<
     const first = parsed.error.issues[0];
     return { ok: false, error: first?.message ?? messages.accounts.errors.unknown };
   }
-  const { note_account_id: accountId, handle } = parsed.data;
+  const { note_account_id: accountId, handle, display_name: displayName } = parsed.data;
 
   try {
     await prisma.noteAccount.update({
       where: { id: accountId },
-      data: { handle: handle.length > 0 ? handle : null },
+      data: { handle: handle.length > 0 ? handle : null, ...(displayName ? { display_name: displayName } : {}) },
     });
+    revalidatePath('/accounts');
     revalidatePath(`/accounts/${accountId}`);
     return { ok: true, data: undefined };
   } catch (err) {
@@ -296,6 +299,8 @@ const GenerateProfileSchema = z.object({
   note_account_id: z.string().min(1),
   targets: z.array(NoteAccountProfileTargetSchema).min(1),
   instruction: z.string().trim().max(1000).optional(),
+  /** F-ANP-06: 添付した参考画像の R2 キー (anp/uploads/...)。LLM のビジョン入力として渡す。 */
+  reference_image_keys: z.array(z.string().regex(/^anp\/uploads\/[A-Za-z0-9_.-]+$/)).max(4).optional(),
 });
 
 /**
@@ -308,8 +313,12 @@ export async function generateAccountProfile(input: unknown): Promise<ActionResu
 
   const parsed = GenerateProfileSchema.safeParse(input);
   if (!parsed.success) return { ok: false, error: messages.accounts.profile.errors.generateFailed };
-  const { note_account_id: noteAccountId, targets, instruction } = parsed.data;
+  const { note_account_id: noteAccountId, targets, instruction, reference_image_keys: referenceImageKeys } = parsed.data;
   const pm = messages.accounts.profile;
+  const extra = {
+    ...(instruction ? { instruction } : {}),
+    ...(referenceImageKeys && referenceImageKeys.length > 0 ? { reference_image_keys: referenceImageKeys } : {}),
+  };
 
   try {
     const account = await prisma.noteAccount.findUnique({ where: { id: noteAccountId }, select: { id: true } });
@@ -328,12 +337,12 @@ export async function generateAccountProfile(input: unknown): Promise<ActionResu
       data: {
         kind: NOTE_ACCOUNT_PROFILE_TASK_NAME,
         status: 'queued',
-        payload_json: { note_account_id: noteAccountId, targets, ...(instruction ? { instruction } : {}) },
+        payload_json: { note_account_id: noteAccountId, targets, ...extra },
       },
     });
     await enqueueJob(
       NOTE_ACCOUNT_PROFILE_TASK_NAME,
-      { note_account_id: noteAccountId, job_id: job.id, targets, ...(instruction ? { instruction } : {}) },
+      { note_account_id: noteAccountId, job_id: job.id, targets, ...extra },
       { maxAttempts: 2 },
     );
     revalidatePath(`/accounts/${noteAccountId}`);
@@ -379,4 +388,39 @@ export async function getAccountProfileState(input: unknown): Promise<ActionResu
   const state = await loadAccountProfileState(parsed.data.note_account_id);
   if (!state) return { ok: false, error: messages.accounts.errors.notFound };
   return { ok: true, data: state };
+}
+
+// ---------------------------------------------------------------------------
+// F-ANP-07: 記事の方針・トンマナ (手入力保存)
+// ---------------------------------------------------------------------------
+
+const UpdateEditorialSchema = z.object({
+  note_account_id: z.string().min(1),
+  niche: z.string().trim().min(1, messages.accounts.errors.nicheRequired).max(200),
+  target_reader: z.string().trim().max(300),
+  tone: z.string().trim().max(200),
+  editorial_policy: z.string().trim().max(3000),
+});
+
+export async function updateAccountEditorial(input: unknown): Promise<ActionResult<void>> {
+  const session = await auth();
+  if (!session?.user) return { ok: false, error: messages.common.unauthorized };
+  const parsed = UpdateEditorialSchema.safeParse(input);
+  if (!parsed.success) return { ok: false, error: parsed.error.issues[0]?.message ?? messages.accounts.editorial.errors.saveFailed };
+  const { note_account_id: noteAccountId, niche, target_reader, tone, editorial_policy } = parsed.data;
+  try {
+    await prisma.noteAccount.update({
+      where: { id: noteAccountId },
+      data: {
+        niche,
+        target_reader: target_reader.length > 0 ? target_reader : null,
+        tone: tone.length > 0 ? tone : null,
+        editorial_policy: editorial_policy.length > 0 ? editorial_policy : null,
+      },
+    });
+    revalidatePath(`/accounts/${noteAccountId}`);
+    return { ok: true, data: undefined };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : messages.accounts.editorial.errors.saveFailed };
+  }
 }

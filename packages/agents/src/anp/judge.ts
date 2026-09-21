@@ -20,6 +20,7 @@ import {
 import type { LoggingContext, WithTokenLoggingDeps } from '../lib/with-token-logging.js';
 import type { LoadModelAssignmentDeps } from '../lib/load-model-assignment.js';
 import { extractJson } from './lib/extract-json.js';
+import { editorialPolicyLines } from './account-context.js';
 
 const DEFAULT_MAX_OUTPUT_TOKENS = 4096;
 const MAX_PARSE_RETRIES = 2;
@@ -73,6 +74,7 @@ export async function judgeNoteArticle(
     `リード文: ${parsedInput.lead}`,
     `課金種別: ${parsedInput.paid ? `有料 (¥${parsedInput.price_jpy ?? '未設定'})` : '無料'}`,
     `想定読者: ${parsedInput.account.target_reader ?? '(指定なし)'}`,
+    ...editorialPolicyLines(parsedInput.account),
     `本文 (先頭 ${BODY_LIMIT} 字):\n${parsedInput.body_md.slice(0, BODY_LIMIT)}`,
     '',
     '上記の note 記事を、以下 4 軸で 0-100 点で採点してください。',

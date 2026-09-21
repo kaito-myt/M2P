@@ -10,6 +10,7 @@ import { Check, Copy, Download, Loader2, RefreshCw, Sparkles } from 'lucide-reac
 
 import { generateAccountProfile, getAccountProfileState, updateAccountBio } from '@/app/actions/accounts';
 import { GenerationProgress } from '@/components/generation-progress';
+import { ImageAttachTextarea, type ImageAttachment } from '@/components/image-attach-textarea';
 import type { AccountProfileState } from '@/lib/account-profile-core';
 import { messages } from '@/lib/messages';
 
@@ -45,6 +46,8 @@ export function ProfilePanel({ noteAccountId, initial }: { noteAccountId: string
   const [bio, setBio] = useState(initial.bio ?? '');
   const [bioInstruction, setBioInstruction] = useState('');
   const [visualsInstruction, setVisualsInstruction] = useState('');
+  const [bioImages, setBioImages] = useState<ImageAttachment[]>([]);
+  const [visualsImages, setVisualsImages] = useState<ImageAttachment[]>([]);
   const [busy, setBusy] = useState<'bio' | 'visuals' | 'save' | null>(null);
   const [copied, setCopied] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -72,10 +75,12 @@ export function ProfilePanel({ noteAccountId, initial }: { noteAccountId: string
     setError(null);
     setNotice(null);
     const instruction = (kind === 'bio' ? bioInstruction : visualsInstruction).trim();
+    const images = kind === 'bio' ? bioImages : visualsImages;
     const res = await generateAccountProfile({
       note_account_id: noteAccountId,
       targets,
       ...(instruction ? { instruction } : {}),
+      ...(images.length > 0 ? { reference_image_keys: images.map((i) => i.key) } : {}),
     });
     setBusy(null);
     if (!res.ok) {
@@ -167,18 +172,20 @@ export function ProfilePanel({ noteAccountId, initial }: { noteAccountId: string
             capPct={progress.cap}
           />
         )}
-        <label className="mt-2 flex flex-col gap-1 text-caption text-muted">
+        <div className="mt-2 flex flex-col gap-1 text-caption text-muted">
           {pm.bioInstructionLabel}
-          <input
+          <ImageAttachTextarea
             value={bioInstruction}
-            onChange={(e) => setBioInstruction(e.target.value)}
+            onChange={setBioInstruction}
+            attachments={bioImages}
+            onAttachmentsChange={setBioImages}
             maxLength={1000}
+            rows={2}
             placeholder={pm.bioInstructionPlaceholder}
             disabled={bioGenerating}
-            className="rounded-card border border-border-warm bg-white px-3 py-2 text-body text-charcoal"
             data-testid="profile-bio-instruction"
           />
-        </label>
+        </div>
         <div className="mt-2 flex flex-wrap items-center gap-2">
           <button
             type="button"
@@ -255,18 +262,20 @@ export function ProfilePanel({ noteAccountId, initial }: { noteAccountId: string
             capPct={progress.cap}
           />
         )}
-        <label className="mt-2 flex flex-col gap-1 text-caption text-muted">
+        <div className="mt-2 flex flex-col gap-1 text-caption text-muted">
           {pm.visualsInstructionLabel}
-          <input
+          <ImageAttachTextarea
             value={visualsInstruction}
-            onChange={(e) => setVisualsInstruction(e.target.value)}
+            onChange={setVisualsInstruction}
+            attachments={visualsImages}
+            onAttachmentsChange={setVisualsImages}
             maxLength={1000}
+            rows={2}
             placeholder={pm.visualsInstructionPlaceholder}
             disabled={visualsGenerating}
-            className="rounded-card border border-border-warm bg-white px-3 py-2 text-body text-charcoal"
             data-testid="profile-visuals-instruction"
           />
-        </label>
+        </div>
         <div className="mt-2 grid grid-cols-1 gap-space-snug sm:grid-cols-[160px_minmax(0,1fr)]">
           <figure className="flex flex-col gap-1">
             <figcaption className="text-caption text-muted">{pm.avatarLabel}</figcaption>

@@ -172,6 +172,42 @@ describe(NOTE_ACCOUNT_PROFILE_TASK_NAME, () => {
     expect(input).toMatchObject({ instruction: '青系で', existing_bio: '今の bio' });
   });
 
+  it('参考画像 (F-ANP-06) があれば設計案があっても LLM を呼び、縮小済み画像を渡す', async () => {
+    const { prisma } = buildPrisma({ withDesign: true });
+    const d = deps(prisma, {
+      loadReferenceImages: vi.fn(async (keys: string[]) => keys.map(() => ({ data: 'AAAA', mimeType: 'image/jpeg' }))),
+    });
+    await runNoteAccountProfile(
+      { note_account_id: 'acc-1', job_id: 'job-1', targets: ['visuals'], reference_image_keys: ['anp/uploads/a.png', 'anp/uploads/b.png'] },
+      d,
+    );
+    expect(d.loadReferenceImages).toHaveBeenCalledWith(['anp/uploads/a.png', 'anp/uploads/b.png']);
+    expect(d.generateProfile).toHaveBeenCalledTimes(1);
+    const input = (d.generateProfile as ReturnType<typeof vi.fn>).mock.calls[0]![0] as { reference_images?: unknown[] };
+    expect(input.reference_images).toHaveLength(2);
+  });
+
+  it('editorial (F-ANP-07): 方針生成を呼び target_reader/tone/editorial_policy を保存、画像/bio は触らない', async () => {
+    const { prisma, accountUpdates } = buildPrisma({ withDesign: true, bio: '今の bio' });
+    const generateEditorial = vi.fn(async () => ({
+      target_reader: '30代会社員',
+      tone: 'です・ます調',
+      editorial_policy: '・冒頭で悩みを言い当てる',
+      rationale: 'r',
+    }));
+    const d = deps(prisma, { generateEditorial });
+    await runNoteAccountProfile(
+      { note_account_id: 'acc-1', job_id: 'job-1', targets: ['editorial'], instruction: 'カジュアルに' },
+      d,
+    );
+    expect(generateEditorial).toHaveBeenCalledTimes(1);
+    const input = generateEditorial.mock.calls[0]![0] as Record<string, unknown>;
+    expect(input).toMatchObject({ instruction: 'カジュアルに', existing_bio: '今の bio', concept: '副業初心者に伴走する' });
+    expect(d.generateProfile).not.toHaveBeenCalled();
+    expect(d.generateImages).not.toHaveBeenCalled();
+    expect(accountUpdates[0]!.data).toMatchObject({ target_reader: '30代会社員', tone: 'です・ます調', editorial_policy: '・冒頭で悩みを言い当てる' });
+  });
+
   it('Job が done なら何もしない (冪等)', async () => {
     const { prisma } = buildPrisma({ jobStatus: 'done' });
     const d = deps(prisma);

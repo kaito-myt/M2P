@@ -85,11 +85,12 @@ export interface PipelineNoteEditorPrisma {
   noteAccount: {
     findUnique: (args: {
       where: { id: string };
-      select: { id: true; niche: true; tone: true; target_reader: true };
+      select: { id: true; niche: true; tone: true; target_reader: true; editorial_policy?: true };
     }) => Promise<{
       id: string;
       niche: string;
       tone: string | null;
+      editorial_policy?: string | null;
       target_reader: string | null;
     } | null>;
   };
@@ -181,7 +182,7 @@ export async function runPipelineNoteEditor(
 
     const account = await prisma.noteAccount.findUnique({
       where: { id: article.note_account_id },
-      select: { id: true, niche: true, tone: true, target_reader: true },
+      select: { id: true, niche: true, tone: true, target_reader: true, editorial_policy: true },
     });
     if (!account) {
       throw new NotFoundError(`NoteAccount not found: ${article.note_account_id}`, {
@@ -192,7 +193,7 @@ export async function runPipelineNoteEditor(
     const input: NoteEditorInput = {
       note_article_id: noteArticleId,
       job_id: jobId,
-      account: { niche: account.niche, tone: account.tone, target_reader: account.target_reader },
+      account: { niche: account.niche, tone: account.tone, target_reader: account.target_reader, editorial_policy: account.editorial_policy ?? null },
       title: article.title,
       lead: article.lead,
       body_md: article.body_md,

@@ -57,12 +57,13 @@ export interface NoteThemeGeneratePrisma {
   noteAccount: {
     findUnique: (args: {
       where: { id: string };
-      select: { id: true; niche: true; target_reader: true; tone: true };
+      select: { id: true; niche: true; target_reader: true; tone: true; editorial_policy?: true };
     }) => Promise<{
       id: string;
       niche: string;
       target_reader: string | null;
       tone: string | null;
+      editorial_policy?: string | null;
     } | null>;
   };
   noteTheme: {
@@ -138,7 +139,7 @@ export async function runNoteThemeGenerate(
   try {
     const account = await prisma.noteAccount.findUnique({
       where: { id: noteAccountId },
-      select: { id: true, niche: true, target_reader: true, tone: true },
+      select: { id: true, niche: true, target_reader: true, tone: true, editorial_policy: true },
     });
     if (!account) {
       throw new NotFoundError(`NoteAccount not found: ${noteAccountId}`, {
@@ -160,6 +161,7 @@ export async function runNoteThemeGenerate(
         niche: account.niche,
         target_reader: account.target_reader,
         tone: account.tone,
+        editorial_policy: account.editorial_policy ?? null,
       },
       count,
       exclude_titles_recent: recentAccepted.map((r) => r.title),

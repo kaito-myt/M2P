@@ -244,6 +244,16 @@ ANP の機能は A2P の対応機能を note 向けに写像したもの。**太
   - DB: `note_account_consultations` / `note_account_consultation_messages`、
     `note_account_designs.consultation_id`（§6）。
   - worker タスク: `note.account.consult`（§7 Phase 6）。
+  - **S-ANP-09 新規アカウント作成ウィザード（2026-09-21）**: 運営者要望「アカウント設計はタブで分けるのではなく、
+    新規アカウントを作成する際にこのページで AI と相談しながらアカウント作成を行えるようにしたい」→
+    `/accounts/new`（`app/(app)/accounts/new/page.tsx`）に 1) AI と相談（`StartConsultForm` → `ConsultWorkspace`）
+    2) 設計案の確認・編集（`DesignForm` / 生成中インジケータ / フィードバック再生成）3) 作成完了 → アカウント詳細へ、
+    をステッパー付きの 1 ページにまとめた。状態は URL `?consult=<id>&design=<id>` で持ち再読込で再開できる
+    （`StartConsultForm` / `ConsultWorkspace` / `BriefForm` / `FeedbackForm` に遷移先ビルダー `hrefFor` /
+    `designHrefFor` を追加、`adoptDesign` / `createDesignFromConsultation` が `/accounts/new` も revalidate）。
+    相談せずブリーフ直入力・AI を使わない手入力登録も同ページの折りたたみで可能。サイドメニューの「アカウント設計」
+    は削除し、`/accounts` の「新規アカウントを作成（AI と相談しながら）」ボタンを入口にした（旧 `/accounts/design*`
+    は履歴閲覧用に残置、`/accounts` と `/accounts/new` からリンク）。
   - UI (`apps/anp`): `/accounts/design/consult`（S-ANP-07: 最初のメッセージで相談開始＋例文チップ＋
     相談一覧）、`/accounts/design/consult/[id]`（S-ANP-08: 左=チャット、右=ブリーフ草案パネル）。
     `/accounts/design` 先頭に「AI に相談しながら決める」導線、`/accounts/design/[id]` に
@@ -334,6 +344,29 @@ ANP の機能は A2P の対応機能を note 向けに写像したもの。**太
     120 秒）に対して補間するが、次の段階の手前（cap）で止まり、実進捗を追い越さない。同コンポーネントを
     設計案生成（`/accounts/design/[id]`、目安 90 秒、4 秒ごと自動更新で提案済みに切替）と AI 相談の
     返答待ち（目安 50 秒）にも適用した。
+- **F-ANP-06 AI 指示への画像添付（実装済み 2026-09-21）**: 運営者要望「AI 指示文に画像の添付もできるようにして。
+  クリップボードから画像を貼り付けられるようにして。ChatGPT みたいに」。共通コンポーネント
+  `apps/anp/components/image-attach-textarea.tsx`（Ctrl+V 貼り付け / ドラッグ&ドロップ / 📎 ファイル選択、
+  最大 4 枚、PNG/JPEG/WebP/GIF 8MB まで）が貼った瞬間に Server Action `uploadInstructionImage`
+  （`app/actions/uploads.ts`、`experimental.serverActions.bodySizeLimit=12mb`）で R2 `anp/uploads/<id>.<ext>`
+  （`anpUpload`）へ保存し署名 URL でサムネイル表示。ジョブには `reference_image_keys` として R2 キーを載せ、
+  worker `note.account.profile` が `downloadBuffer` → `sharp` で長辺 1280px JPEG に縮小 → base64 で
+  `LLMMessageImage` として渡す（Anthropic/OpenAI/Google のビジョン入力、`ai-sdk-client` の image parts）。
+  参考画像があるときは設計案のプロンプトがあっても LLM を呼び直す（画像の雰囲気を avatar/header プロンプトへ反映）。
+  適用箇所: プロフィール素材（自己紹介文 / 画像 それぞれの指示欄）、記事の方針・トンマナ（F-ANP-07）。
+  AI 相談チャットへの添付は未対応（`note_account_consultation_messages` に添付列が無い。次の候補）。
+- **F-ANP-07 記事の方針・トンマナ（実装済み 2026-09-21）**: 運営者要望「アカウント詳細ページで記事の方針やトンマナを
+  設定できるようにして」「同じように AI 生成できるようにしてね」。`note_accounts.editorial_policy`（TEXT、migration
+  `20260921040000_anp_editorial_policy`）を追加し、`NoteAccountContextSchema.editorial_policy` 経由で
+  theme / outline / writer / editor / judge の全ユーザーメッセージに「【記事の方針・トンマナ（運営者設定・必ず守る）】」
+  ブロックとして注入（`packages/agents/src/anp/account-context.ts` `editorialPolicyLines`、未設定なら何も足さない）。
+  worker 側は 6 タスク（note.theme.generate / note.theme.auto / pipeline.note.writer.outline / .body / .editor /
+  .judge）が `editorial_policy` を select して渡す。UI = `/accounts/[id]` の `editorial-panel.tsx`
+  （ニッチ / 想定読者 / トーン / 方針本文 3000 字、手入力保存 = `updateAccountEditorial`、「AI で生成」=
+  `note.account.profile` targets=['editorial'] → `generateNoteAccountEditorial`（role anp.strategist、
+  出力 `NoteAccountEditorialOutputSchema` = target_reader / tone / editorial_policy / rationale）→ 3 列を保存、
+  進捗バー付き、指示欄は画像添付可）。表示名（アカウント名）も同ページのヘッダーフォームで変更できるようにした
+  （`updateAccountHandle` に `display_name` を追加）。
 - **F-ANP-20 note 公開オートメーション（Playwright, アシスト型）**: 下書き作成→本文/画像流し込み→価格/ライン設定→予約 or 即時公開。KDP アシスト（`scripts/kdp-publish.mjs --assist`）と同型で `scripts/note-publish.mjs` を用意。
   **アカウント別 `auto_publish_enabled` を実装済み(2026-09-21)**: `note.publish.dispatch` が
   `resolveAutoPublishEnabled` でアカウント単位に自動公開の有効/無効を上書きできる(未指定はグローバル
@@ -479,6 +512,7 @@ A2P の `books` 系を note 記事系に写像。**マルチアカウントを�
   運営者のブリーフ (`NoteAccountDesignBriefSchema`) から `anp.strategist` が設計案
   (`NoteAccountDesignSchema`) を生成し `design_json` に保持する。採用時に `note_accounts` を
   新規作成し `note_account_id` で紐付ける（詳細は §3.1/§7）。
+- **`note_accounts.editorial_policy?`（F-ANP-07, migration `20260921040000_anp_editorial_policy`）**: 記事の方針・トンマナ（全記事プロンプトに注入）。
 - **`note_accounts.bio? / avatar_r2_key? / header_r2_key? / profile_generated_at?`（F-ANP-05, migration `20260921030000_anp_account_profile`）**:
   アカウント詳細で生成/編集する note プロフィール素材。設計案採用時に設計案の値で初期化。
 - **`note_accounts.session_linked_at? / session_source?`（F-ANP-20b, migration `20260921020000_anp_session_link`）**:
@@ -720,7 +754,7 @@ web_search ループは 3〜7 分）。(3) 草案はサーバ側（AI）が毎�
 
 | タスク名 | ペイロード | 処理概要 | 完了後の遷移/状態 |
 |---|---|---|---|
-| `note.account.profile` | `{ note_account_id, job_id, targets: ('bio'\|'visuals')[], instruction? }` | `/accounts/[id]` の「自己紹介文を生成」「アイコンとカバーを生成」から enqueue（`maxAttempts=2`、同一アカウントの queued/running があれば SA 側で拒否）。`note_accounts` と採用済み設計案を読み、`generateNoteAccountProfile`（role=`anp.strategist`）で bio/画像プロンプト/persona_type を生成（visuals のみ＋設計案あり＋指示なしなら LLM 省略）。visuals なら gpt-image で生成し R2 `anp/accounts/<id>/avatar-<stamp>.png`・`header-<stamp>.jpg` へ upload。`NoteLock` は使わない | 成功: `bio`（targets に bio がある時）/`avatar_r2_key`/`header_r2_key`/`profile_generated_at` 更新、Job `result_json` に bio_alternatives・プロンプト・キー。失敗: Job `failed`（`note_accounts` は変更しない） |
+| `note.account.profile` | `{ note_account_id, job_id, targets: ('bio'\|'visuals'\|'editorial')[], instruction?, reference_image_keys? }` | `/accounts/[id]` の「自己紹介文を生成」「アイコンとカバーを生成」から enqueue（`maxAttempts=2`、同一アカウントの queued/running があれば SA 側で拒否）。`note_accounts` と採用済み設計案を読み、`generateNoteAccountProfile`（role=`anp.strategist`）で bio/画像プロンプト/persona_type を生成（visuals のみ＋設計案あり＋指示なしなら LLM 省略）。visuals なら gpt-image で生成し R2 `anp/accounts/<id>/avatar-<stamp>.png`・`header-<stamp>.jpg` へ upload。`NoteLock` は使わない | 成功: `bio`（targets に bio がある時）/`avatar_r2_key`/`header_r2_key`/`profile_generated_at` 更新、Job `result_json` に bio_alternatives・プロンプト・キー。失敗: Job `failed`（`note_accounts` は変更しない） |
 
 ### Phase 7 実装済みタスク — 残項目一括実装 (2026-09-21, 運営者指示「ANP の実装を仕上げちゃって」)
 

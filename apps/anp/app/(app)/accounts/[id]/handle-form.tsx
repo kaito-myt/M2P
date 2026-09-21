@@ -5,9 +5,18 @@ import { useState, useTransition } from 'react';
 import { updateAccountHandle } from '@/app/actions/accounts';
 import { messages } from '@/lib/messages';
 
-/** `note_accounts.handle` の編集フォーム (docs/11 §7 申し送り13)。 */
-export function HandleForm({ noteAccountId, initialHandle }: { noteAccountId: string; initialHandle: string | null }) {
+/** `note_accounts.display_name` / `handle` の編集フォーム (docs/11 §7 申し送り13、表示名は 2026-09-21 追加)。 */
+export function HandleForm({
+  noteAccountId,
+  initialHandle,
+  initialDisplayName,
+}: {
+  noteAccountId: string;
+  initialHandle: string | null;
+  initialDisplayName?: string;
+}) {
   const [value, setValue] = useState(initialHandle ?? '');
+  const [displayName, setDisplayName] = useState(initialDisplayName ?? '');
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
   const [isPending, startTransition] = useTransition();
@@ -17,7 +26,11 @@ export function HandleForm({ noteAccountId, initialHandle }: { noteAccountId: st
     setError(null);
     setSaved(false);
     startTransition(async () => {
-      const result = await updateAccountHandle({ note_account_id: noteAccountId, handle: value });
+      const result = await updateAccountHandle({
+        note_account_id: noteAccountId,
+        handle: value,
+        ...(initialDisplayName !== undefined ? { display_name: displayName } : {}),
+      });
       if (!result.ok) setError(result.error);
       else setSaved(true);
     });
@@ -25,6 +38,23 @@ export function HandleForm({ noteAccountId, initialHandle }: { noteAccountId: st
 
   return (
     <form onSubmit={submit} className="mt-1 flex flex-wrap items-center gap-2">
+      {initialDisplayName !== undefined && (
+        <>
+          <label className="text-caption text-muted" htmlFor="note-display-name">
+            {messages.accounts.form.displayName}
+          </label>
+          <input
+            id="note-display-name"
+            type="text"
+            value={displayName}
+            onChange={(e) => setDisplayName(e.target.value)}
+            maxLength={100}
+            disabled={isPending}
+            className="w-56 rounded-card border border-border-warm bg-white px-2 py-1 text-body text-charcoal disabled:opacity-50"
+            data-testid="note-display-name"
+          />
+        </>
+      )}
       <label className="text-caption text-muted" htmlFor="note-handle">
         {messages.accounts.handleLabel}
       </label>

@@ -3,8 +3,10 @@ import { z } from 'zod';
 
 import {
   generateNoteAccountDesignImages as defaultGenerateNoteAccountDesignImages,
+  generateNoteAccountEditorial as defaultGenerateNoteAccountEditorial,
   generateNoteAccountProfile as defaultGenerateNoteAccountProfile,
   type NoteAccountDesignImages,
+  type NoteAccountEditorialInput,
 } from '@a2p/agents/anp/strategist';
 import {
   generateImage as defaultGenerateImage,
@@ -14,6 +16,7 @@ import {
 import {
   NoteAccountDesignSchema,
   NoteAccountProfileTargetSchema,
+  type NoteAccountEditorialOutput,
   type NoteAccountProfileInput,
   type NoteAccountProfileOutput,
   type NoteAccountProfileTarget,
@@ -49,7 +52,7 @@ import { anpAccountAvatar, anpAccountHeader } from '@a2p/storage/keys';
  *   stage = prompt (LLM) → avatar → header → upload。done 時は result_json を最終結果で置き換える。
  */
 
-export type NoteAccountProfileStage = 'prompt' | 'avatar' | 'header' | 'upload';
+export type NoteAccountProfileStage = 'prompt' | 'avatar' | 'header' | 'upload' | 'editorial';
 
 export const NOTE_ACCOUNT_PROFILE_TASK_NAME = 'note.account.profile';
 
@@ -58,6 +61,8 @@ export const NoteAccountProfilePayloadSchema = z.object({
   job_id: z.string().min(1),
   targets: z.array(NoteAccountProfileTargetSchema).min(1),
   instruction: z.string().max(1000).optional(),
+  /** F-ANP-06: 添付した参考画像の R2 キー。LLM のビジョン入力として渡す (縮小して base64 化)。 */
+  reference_image_keys: z.array(z.string().min(1)).max(4).optional(),
 });
 export type NoteAccountProfilePayload = z.infer<typeof NoteAccountProfilePayloadSchema>;
 
@@ -84,6 +89,7 @@ export interface NoteAccountProfilePrisma {
         target_reader: true;
         tone: true;
         bio: true;
+        editorial_policy?: true;
         designs: { where: { status: string }; orderBy: { created_at: 'desc' }; take: number; select: { design_json: true } };
       };
     }) => Promise<{
@@ -94,11 +100,20 @@ export interface NoteAccountProfilePrisma {
       target_reader: string | null;
       tone: string | null;
       bio: string | null;
+      editorial_policy?: string | null;
       designs: Array<{ design_json: unknown }>;
     } | null>;
     update: (args: {
       where: { id: string };
-      data: { bio?: string; avatar_r2_key?: string; header_r2_key?: string; profile_generated_at?: Date };
+      data: {
+        bio?: string;
+        avatar_r2_key?: string;
+        header_r2_key?: string;
+        profile_generated_at?: Date;
+        target_reader?: string;
+        tone?: string;
+        editorial_policy?: string;
+      };
     }) => Promise<unknown>;
   };
 }
@@ -107,10 +122,19 @@ export interface UploadBufferFn {
   (key: string, buffer: Buffer, contentType: string): Promise<unknown>;
 }
 
+export interface ReferenceImage {
+  data: string;
+  mimeType: string;
+}
+
 export interface NoteAccountProfileDeps {
   prisma?: NoteAccountProfilePrisma;
   logger?: Logger;
+  /** R2 キー → ビジョン入力 (既定: downloadBuffer + sharp で長辺 1280px の JPEG に縮小)。 */
+  loadReferenceImages?: (keys: string[]) => Promise<ReferenceImage[]>;
   generateProfile?: (input: NoteAccountProfileInput) => Promise<NoteAccountProfileOutput>;
+  /** F-ANP-07: 記事の方針・トンマナの生成 (targets=['editorial'])。 */
+  generateEditorial?: (input: NoteAccountEditorialInput) => Promise<NoteAccountEditorialOutput>;
   generateImages?: (
     design: { avatar_prompt: string; header_prompt: string; persona_type: 'person' | 'brand' },
   ) => Promise<NoteAccountDesignImages>;
@@ -122,6 +146,24 @@ export interface NoteAccountProfileDeps {
 async function defaultUploadBuffer(key: string, buffer: Buffer, contentType: string): Promise<unknown> {
   const mod = await import('@a2p/storage/operations');
   return mod.uploadBuffer(key, buffer, contentType);
+}
+
+/** 参考画像を R2 から読み、LLM 向けに縮小 (長辺 1280px, JPEG q80) して base64 で返す。失敗した画像は飛ばす。 */
+export async function defaultLoadReferenceImages(keys: string[]): Promise<ReferenceImage[]> {
+  const { downloadBuffer } = await import('@a2p/storage/operations');
+  const sharp = (await import('sharp')).default;
+  const out: ReferenceImage[] = [];
+  for (const key of keys) {
+    try {
+      const buf = await downloadBuffer(key);
+      if (!buf) continue;
+      const resized = await sharp(buf).rotate().resize({ width: 1280, height: 1280, fit: 'inside', withoutEnlargement: true }).jpeg({ quality: 80 }).toBuffer();
+      out.push({ data: resized.toString('base64'), mimeType: 'image/jpeg' });
+    } catch {
+      // 読めない/壊れた画像は無視して続行
+    }
+  }
+  return out;
 }
 
 /** R2 キー用のスタンプ (`YYYYMMDDHHmmss`、`assertId` の英数字制約を満たす)。 */
@@ -139,15 +181,18 @@ export async function runNoteAccountProfile(
       details: { issues: parsed.error.issues },
     });
   }
-  const { note_account_id: accountId, job_id: jobId, targets, instruction } = parsed.data;
+  const { note_account_id: accountId, job_id: jobId, targets, instruction, reference_image_keys: referenceImageKeys } = parsed.data;
   const wants = (t: NoteAccountProfileTarget) => targets.includes(t);
 
   const log = deps.logger ?? createLogger(`worker.${NOTE_ACCOUNT_PROFILE_TASK_NAME}`);
   const prisma = deps.prisma ?? (defaultPrisma as unknown as NoteAccountProfilePrisma);
   const uploadBuffer = deps.uploadBuffer ?? defaultUploadBuffer;
+  const loadReferenceImages = deps.loadReferenceImages ?? defaultLoadReferenceImages;
   const now = deps.now ?? (() => new Date());
   const generateProfile =
     deps.generateProfile ?? ((input: NoteAccountProfileInput) => defaultGenerateNoteAccountProfile(input, { jobId }));
+  const generateEditorial =
+    deps.generateEditorial ?? ((input: NoteAccountEditorialInput) => defaultGenerateNoteAccountEditorial(input, { jobId }));
   const imageFn: GenerateImageFn =
     deps.generateImage ?? withImageLogging(defaultGenerateImage, { jobId, role: 'anp.strategist' });
   // 画像は avatar → header の順に直列で呼ばれるので、呼出回数で段階を判定して進捗を書く。
@@ -201,6 +246,7 @@ export async function runNoteAccountProfile(
         target_reader: true,
         tone: true,
         bio: true,
+        editorial_policy: true,
         designs: { where: { status: 'adopted' }, orderBy: { created_at: 'desc' }, take: 1, select: { design_json: true } },
       },
     });
@@ -213,10 +259,60 @@ export async function runNoteAccountProfile(
       : null;
     const design = designParsed?.success ? designParsed.data : null;
 
+    // 参考画像 (F-ANP-06) があれば LLM に渡す (= 追加指示と同じく LLM 経由にする)。
+    const referenceImages = referenceImageKeys && referenceImageKeys.length > 0 ? await loadReferenceImages(referenceImageKeys) : [];
+
+    // F-ANP-07: 記事の方針・トンマナ (editorial) は bio/visuals と独立して処理し、ここで完了する。
+    if (wants('editorial')) {
+      await report('editorial', 15);
+      const editorialInput: NoteAccountEditorialInput = {
+        display_name: account.display_name,
+        ...(account.handle ? { handle: account.handle } : {}),
+        niche: account.niche,
+        ...(account.target_reader ? { target_reader: account.target_reader } : {}),
+        ...(account.tone ? { tone: account.tone } : {}),
+        ...(design?.concept ? { concept: design.concept } : {}),
+        ...(design?.character_sheet ? { character_sheet: design.character_sheet } : {}),
+        ...(design ? { content_pillars: design.content_pillars.map((p) => p.name) } : {}),
+        ...(design ? { persona_type: design.persona_type } : {}),
+        ...(account.bio ? { existing_bio: account.bio } : {}),
+        ...(account.editorial_policy ? { existing_policy: account.editorial_policy } : {}),
+        ...(instruction ? { instruction } : {}),
+        ...(referenceImages.length > 0 ? { reference_images: referenceImages } : {}),
+      };
+      const editorial = await generateEditorial(editorialInput);
+      await prisma.noteAccount.update({
+        where: { id: accountId },
+        data: {
+          target_reader: editorial.target_reader,
+          tone: editorial.tone,
+          editorial_policy: editorial.editorial_policy,
+          profile_generated_at: now(),
+        },
+      });
+      await prisma.job.update({
+        where: { id: jobId },
+        data: {
+          status: 'done',
+          finished_at: now(),
+          error: null,
+          result_json: {
+            note_account_id: accountId,
+            targets,
+            used_llm: true,
+            reference_images: referenceImages.length,
+            editorial: { target_reader: editorial.target_reader, tone: editorial.tone, rationale: editorial.rationale ?? null },
+          },
+        },
+      });
+      log.info({ task: NOTE_ACCOUNT_PROFILE_TASK_NAME, jobId, accountId }, 'note.account.profile done (editorial)');
+      return;
+    }
+
     // 段階 4: プロンプト/bio の決定。
     let profile: NoteAccountProfileOutput;
     let usedLlm = false;
-    if (!wants('bio') && design && !instruction) {
+    if (!wants('bio') && design && !instruction && referenceImages.length === 0) {
       profile = {
         bio: account.bio ?? design.bio,
         bio_alternatives: [],
@@ -237,6 +333,7 @@ export async function runNoteAccountProfile(
         ...(design ? { persona_type: design.persona_type } : {}),
         ...(account.bio ? { existing_bio: account.bio } : {}),
         ...(instruction ? { instruction } : {}),
+        ...(referenceImages.length > 0 ? { reference_images: referenceImages } : {}),
       };
       await report('prompt', 10);
       profile = await generateProfile(input);
@@ -280,6 +377,7 @@ export async function runNoteAccountProfile(
           note_account_id: accountId,
           targets,
           used_llm: usedLlm,
+          reference_images: referenceImages.length,
           bio_alternatives: profile.bio_alternatives,
           avatar_prompt: profile.avatar_prompt,
           header_prompt: profile.header_prompt,

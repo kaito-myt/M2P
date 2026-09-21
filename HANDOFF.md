@@ -113,6 +113,21 @@ ANP のアカウント戦略を AI に相談しながら策定）を実施。mai
 - 対処: `R2_ACCOUNT_ID / R2_ACCESS_KEY_ID / R2_SECRET_ACCESS_KEY / R2_BUCKET_NAME` を ANP に設定＋署名 URL 失敗はページを落とさず
   画像非表示にするよう修正（account-profile-core / design 詳細 / 記事詳細）。
 
+### ANP — 9/21 夜の追加分（画像添付・記事の方針・作成ウィザード・表示名編集・Cookie 個別入力）
+- **AI 指示への画像添付（F-ANP-06）**: プロフィール素材／記事の方針の指示欄に Ctrl+V・ドロップ・📎 で画像を添付（R2 `anp/uploads/`、
+  worker が縮小して LLM のビジョン入力に）。AI 相談チャットへの添付は未対応（次の候補）。
+- **記事の方針・トンマナ（F-ANP-07）**: `/accounts/[id]` に「記事の方針・トンマナ」パネル（ニッチ／想定読者／トーン／方針本文、
+  手入力保存＋「AI で生成」）。`note_accounts.editorial_policy`（migration `20260921040000` 適用＋resolve 済）を theme/outline/
+  writer/editor/judge のプロンプトに毎回注入。表示名もヘッダーのフォームで変更可に。
+- **新規アカウント作成ウィザード（S-ANP-09）**: `/accounts/new` に AI 相談→設計案→作成を 1 ページ化（URL に状態を持つ）。
+  サイドメニューの「アカウント設計」は削除、`/accounts` のボタンが入口。旧 `/accounts/design*` は履歴用に残置。
+- **note 連携フォーム**: `note_gql_auth_token` と `_note_session_v5` を個別入力に（どちらか一方でも検証へ）。未ログインだと
+  `note_gql_auth_token` は出ないので note にログインしてから Cookie を見る。
+- **M2P 設定「API 管理」拡張（R2 / LINE / Amazon Ads を DB 管理）は着手中・未完**: storage に DB 由来設定プロバイダ
+  （`setR2ConfigProvider` / `getR2Runtime`、env フォールバック、60 秒キャッシュ）と `testR2Connection` を追加済み。
+  残: `packages/credentials`（api_credentials の多項目 JSON 保存＋各リゾルバ）、worker/web/anp 起動時のプロバイダ登録、
+  ads-spend-fetch / line-auth-relay の DB 優先化、ポータル UI の多項目フォーム。
+
 ### DB マイグレーション履歴の整合
 - 本番 `_prisma_migrations` に未記録だった 20260915/0918/0919 と今日の 3 本を `prisma migrate resolve --applied` で記録。
   `migrate status` ではまだ 8 月〜9/9 の数本（20260826120000_ad_spend 〜 20260909000000_bw_retag）が未記録のまま

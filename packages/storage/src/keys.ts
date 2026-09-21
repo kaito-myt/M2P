@@ -279,6 +279,15 @@ export function anpAccountHeader(noteAccountId: string, stamp: string): string {
 }
 
 /**
+ * `anp/uploads/{upload_id}.{ext}` — 運営者が AI 指示に添付した画像 (F-ANP-06: クリップボード貼り付け)。
+ * ANP の Server Action が保存し、worker が LLM に渡す (ビジョン入力)。ext は png|jpg|webp|gif。
+ */
+export function anpUpload(uploadId: string, ext: 'png' | 'jpg' | 'webp' | 'gif'): string {
+  assertId('uploadId', uploadId);
+  return `anp/uploads/${uploadId}.${ext}`;
+}
+
+/**
  * 論理削除用のキー変換 (docs/05 §8.1: `r2_key` を `_deleted/...` にリネーム)。
  * 既に `_deleted/` 配下にある場合はそのまま返す。
  */

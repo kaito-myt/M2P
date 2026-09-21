@@ -264,6 +264,7 @@ export async function adoptDesign(input: unknown): Promise<ActionResult<AdoptedA
     if (!result) return { ok: false, error: m.adoptFailed };
 
     revalidatePath('/accounts');
+    revalidatePath('/accounts/new');
     revalidatePath(`/accounts/design/${designId}`);
     return {
       ok: true,

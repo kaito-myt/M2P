@@ -1,5 +1,6 @@
 'use client';
 
+import { useRouter } from 'next/navigation';
 import { useRef, useState, useTransition } from 'react';
 
 import { createAccountDesign } from '@/app/actions/account-design';
@@ -7,7 +8,8 @@ import { messages } from '@/lib/messages';
 
 const m = messages.accountDesign.briefForm;
 
-export function BriefForm() {
+export function BriefForm({ hrefFor }: { hrefFor?: (designId: string) => string } = {}) {
+  const router = useRouter();
   const formRef = useRef<HTMLFormElement>(null);
   const [error, setError] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
@@ -33,6 +35,7 @@ export function BriefForm() {
             return;
           }
           formRef.current?.reset();
+          if (hrefFor) router.push(hrefFor(result.data.id));
         });
       }}
     >
