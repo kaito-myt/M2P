@@ -265,17 +265,20 @@ export function anpAccountDesignHeader(designId: string): string {
  * `note.account.profile` が生成・保存する。stamp (ISO 日時由来) で再生成ごとに別キーにし、
  * 署名 URL/ブラウザキャッシュの取り違えを避ける。
  */
-export function anpAccountAvatar(noteAccountId: string, stamp: string): string {
+export type AnpImageExt = 'png' | 'jpg' | 'webp';
+
+/** 生成画像は png、運営者アップロード (F-ANP-05b) は元の形式を保つため拡張子を指定できる。 */
+export function anpAccountAvatar(noteAccountId: string, stamp: string, ext: AnpImageExt = 'png'): string {
   assertId('noteAccountId', noteAccountId);
   assertId('stamp', stamp);
-  return `anp/accounts/${noteAccountId}/avatar-${stamp}.png`;
+  return `anp/accounts/${noteAccountId}/avatar-${stamp}.${ext}`;
 }
 
 /** `anp/accounts/{note_account_id}/header-{stamp}.jpg` — note アカウントのヘッダー(カバー)画像 (F-ANP-05)。 */
-export function anpAccountHeader(noteAccountId: string, stamp: string): string {
+export function anpAccountHeader(noteAccountId: string, stamp: string, ext: AnpImageExt = 'jpg'): string {
   assertId('noteAccountId', noteAccountId);
   assertId('stamp', stamp);
-  return `anp/accounts/${noteAccountId}/header-${stamp}.jpg`;
+  return `anp/accounts/${noteAccountId}/header-${stamp}.${ext}`;
 }
 
 /**

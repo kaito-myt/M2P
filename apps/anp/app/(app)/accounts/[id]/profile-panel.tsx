@@ -5,10 +5,11 @@
  * 生成は worker `note.account.profile` が非同期で行うので、生成中は 3 秒間隔で
  * `getAccountProfileState` をポーリングし、終わったら停止する。
  */
-import { useCallback, useEffect, useState } from 'react';
-import { Check, Copy, Download, Loader2, RefreshCw, Sparkles } from 'lucide-react';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { Check, Copy, Download, Loader2, RefreshCw, Sparkles, Upload } from 'lucide-react';
 
 import { generateAccountProfile, getAccountProfileState, updateAccountBio } from '@/app/actions/accounts';
+import { uploadAccountImage } from '@/app/actions/uploads';
 import { GenerationProgress } from '@/components/generation-progress';
 import { ImageAttachTextarea, type ImageAttachment } from '@/components/image-attach-textarea';
 import type { AccountProfileState } from '@/lib/account-profile-core';
@@ -48,7 +49,31 @@ export function ProfilePanel({ noteAccountId, initial }: { noteAccountId: string
   const [visualsInstruction, setVisualsInstruction] = useState('');
   const [bioImages, setBioImages] = useState<ImageAttachment[]>([]);
   const [visualsImages, setVisualsImages] = useState<ImageAttachment[]>([]);
-  const [busy, setBusy] = useState<'bio' | 'visuals' | 'save' | null>(null);
+  const [busy, setBusy] = useState<'bio' | 'visuals' | 'save' | 'upload-avatar' | 'upload-header' | null>(null);
+  const avatarInputRef = useRef<HTMLInputElement>(null);
+  const headerInputRef = useRef<HTMLInputElement>(null);
+
+  // F-ANP-05b: ツール外で作った画像のアップロード (元形式のまま保存、キーを差し替え)。
+  const upload = async (kind: 'avatar' | 'header', file: File | null) => {
+    if (!file) return;
+    setBusy(kind === 'avatar' ? 'upload-avatar' : 'upload-header');
+    setError(null);
+    setNotice(null);
+    const fd = new FormData();
+    fd.set('note_account_id', noteAccountId);
+    fd.set('kind', kind);
+    fd.set('file', file);
+    const res = await uploadAccountImage(fd);
+    setBusy(null);
+    if (!res.ok) {
+      setError(res.error);
+      return;
+    }
+    setState((prev) =>
+      kind === 'avatar' ? { ...prev, avatar_url: res.data.url, avatar_ext: res.data.ext } : { ...prev, header_url: res.data.url, header_ext: res.data.ext },
+    );
+    setNotice(pm.uploaded(kind));
+  };
   const [copied, setCopied] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -288,11 +313,32 @@ export function ProfilePanel({ noteAccountId, initial }: { noteAccountId: string
               )}
             </div>
             {state.avatar_url && (
-              <a href={state.avatar_url} download="avatar.png" className="flex items-center gap-1 text-caption text-charcoal underline">
+              <a href={state.avatar_url} download={`avatar.${state.avatar_ext}`} className="flex items-center gap-1 text-caption text-charcoal underline">
                 <Download className="h-3.5 w-3.5" aria-hidden="true" />
                 {pm.downloadAvatar}
               </a>
             )}
+            <input
+              ref={avatarInputRef}
+              type="file"
+              accept="image/png,image/jpeg,image/webp"
+              className="hidden"
+              onChange={(e) => {
+                void upload('avatar', e.target.files?.[0] ?? null);
+                e.target.value = '';
+              }}
+              data-testid="profile-upload-avatar-input"
+            />
+            <button
+              type="button"
+              onClick={() => avatarInputRef.current?.click()}
+              disabled={busy !== null || visualsGenerating}
+              className="flex items-center gap-1 text-caption text-charcoal underline disabled:opacity-50"
+              data-testid="profile-upload-avatar"
+            >
+              {busy === 'upload-avatar' ? <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" /> : <Upload className="h-3.5 w-3.5" aria-hidden="true" />}
+              {busy === 'upload-avatar' ? pm.uploading : state.avatar_url ? pm.replaceAvatar : pm.uploadAvatar}
+            </button>
           </figure>
           <figure className="flex min-w-0 flex-col gap-1">
             <figcaption className="text-caption text-muted">{pm.headerLabel}</figcaption>
@@ -305,13 +351,35 @@ export function ProfilePanel({ noteAccountId, initial }: { noteAccountId: string
               )}
             </div>
             {state.header_url && (
-              <a href={state.header_url} download="header.jpg" className="flex items-center gap-1 text-caption text-charcoal underline">
+              <a href={state.header_url} download={`header.${state.header_ext}`} className="flex items-center gap-1 text-caption text-charcoal underline">
                 <Download className="h-3.5 w-3.5" aria-hidden="true" />
                 {pm.downloadHeader}
               </a>
             )}
+            <input
+              ref={headerInputRef}
+              type="file"
+              accept="image/png,image/jpeg,image/webp"
+              className="hidden"
+              onChange={(e) => {
+                void upload('header', e.target.files?.[0] ?? null);
+                e.target.value = '';
+              }}
+              data-testid="profile-upload-header-input"
+            />
+            <button
+              type="button"
+              onClick={() => headerInputRef.current?.click()}
+              disabled={busy !== null || visualsGenerating}
+              className="flex items-center gap-1 text-caption text-charcoal underline disabled:opacity-50"
+              data-testid="profile-upload-header"
+            >
+              {busy === 'upload-header' ? <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" /> : <Upload className="h-3.5 w-3.5" aria-hidden="true" />}
+              {busy === 'upload-header' ? pm.uploading : state.header_url ? pm.replaceHeader : pm.uploadHeader}
+            </button>
           </figure>
         </div>
+        <p className="mt-1 text-caption text-muted">{pm.uploadHint}</p>
       </div>
 
       {(error || notice || lastFailed) && (

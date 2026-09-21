@@ -39,6 +39,9 @@ export interface AccountProfileState {
   editorial_policy: string | null;
   avatar_url: string | null;
   header_url: string | null;
+  /** DL ファイル名用の拡張子 (png/jpg/webp)。 */
+  avatar_ext: string;
+  header_ext: string;
   profile_generated_at: string | null;
   /** 直近の生成ジョブ (無ければ null)。 */
   job: AccountProfileJobView | null;
@@ -50,6 +53,12 @@ export interface AccountProfileState {
  * 署名 URL を作る。R2 未設定 (ConfigError) や一時的な失敗でページ全体を落とさず null にする
  * (2026-09-21 本番で ANP サービスに R2 env が無くアカウント詳細が 500 になった事故の再発防止)。
  */
+/** R2 キーの拡張子 (アップロード画像は元形式のまま保存されるため、DL ファイル名をキーに合わせる)。 */
+export function extOfKey(key: string | null, fallback: string): string {
+  const m = key ? /\.([a-z0-9]+)$/i.exec(key) : null;
+  return m ? m[1]!.toLowerCase() : fallback;
+}
+
 async function signedUrlOrNull(key: string | null, filename: string): Promise<string | null> {
   if (!key) return null;
   try {
@@ -74,8 +83,8 @@ export async function loadAccountProfileState(noteAccountId: string): Promise<Ac
   });
 
   const [avatarUrl, headerUrl] = await Promise.all([
-    signedUrlOrNull(account.avatar_r2_key, 'avatar.png'),
-    signedUrlOrNull(account.header_r2_key, 'header.jpg'),
+    signedUrlOrNull(account.avatar_r2_key, `avatar.${extOfKey(account.avatar_r2_key, 'png')}`),
+    signedUrlOrNull(account.header_r2_key, `header.${extOfKey(account.header_r2_key, 'jpg')}`),
   ]);
 
   let jobView: AccountProfileJobView | null = null;
@@ -109,6 +118,8 @@ export async function loadAccountProfileState(noteAccountId: string): Promise<Ac
     editorial_policy: account.editorial_policy,
     avatar_url: avatarUrl,
     header_url: headerUrl,
+    avatar_ext: extOfKey(account.avatar_r2_key, 'png'),
+    header_ext: extOfKey(account.header_r2_key, 'jpg'),
     profile_generated_at: account.profile_generated_at ? account.profile_generated_at.toISOString() : null,
     job: jobView,
     generating: jobView !== null && (jobView.status === 'queued' || jobView.status === 'running'),

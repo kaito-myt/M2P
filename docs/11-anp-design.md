@@ -367,6 +367,13 @@ ANP の機能は A2P の対応機能を note 向けに写像したもの。**太
   出力 `NoteAccountEditorialOutputSchema` = target_reader / tone / editorial_policy / rationale）→ 3 列を保存、
   進捗バー付き、指示欄は画像添付可）。表示名（アカウント名）も同ページのヘッダーフォームで変更できるようにした
   （`updateAccountHandle` に `display_name` を追加）。
+- **F-ANP-05b アイコン / カバー画像のアップロード（実装済み 2026-09-22）**: 運営者要望「アイコン画像とカバー画像はこのツール外で
+  作る場合もあると思うので、生成だけでなくアップロードもできるようにしておいて」。`/accounts/[id]` プロフィール素材の各画像の下に
+  「アイコンをアップロード / 差し替え」「カバー画像をアップロード / 差し替え」（PNG / JPEG / WebP、8MB まで）。Server Action
+  `uploadAccountImage(FormData{note_account_id, kind: avatar|header, file})`（`app/actions/uploads.ts`）が元の形式のまま R2
+  `anp/accounts/<id>/avatar-u<stamp>.<ext>` / `header-u<stamp>.<ext>`（`anpAccountAvatar/anpAccountHeader` に拡張子引数を追加）
+  へ保存し `avatar_r2_key` / `header_r2_key` を差し替える（旧キーは残す＝生成物と同じ扱い）。DL ファイル名はキーの拡張子に追従
+  （`extOfKey`）。生成中はアップロード不可。
 - **F-ANP-08 アカウント設定（実装済み 2026-09-21）**: 運営者要望「アカウント詳細ページで無料公開の割合の設定とか、
   各種設定できるようにしといてね」「On/Off は基本トグルで」「1 日のテーマ作成数は各アカウントで設定するようにしましょう」。
   `/accounts/[id]` の「アカウント設定」節（`account-settings-form.tsx`）に 2 パネル:

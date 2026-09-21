@@ -148,6 +148,9 @@ ANP のアカウント戦略を AI に相談しながら策定）を実施。mai
 - **分析**: `/analytics/sales`・`/analytics/cost`（`lib/analytics-core.ts`、Vitest 5 件）。サイドメニューに「分析」「システム」節。
 - migration `20260921050000_anp_promotion_policy_agent_roles`（`promotion_policy_json` 列＋`anp_agent_roles` 表）を本番適用＋resolve 済。
 
+### アイコン / カバー画像のアップロード（F-ANP-05b, 2026-09-22）
+- `/accounts/[id]` の画像の下に「アップロード / 差し替え」ボタン（PNG/JPEG/WebP ≤ 8MB、元形式のまま R2 保存、キー差し替え）。
+
 ### AI モデルの適材適所化（2026-09-21 深夜、本番 DB 適用済）
 - 運営者指示「使っている AI モデルがすべて Claude なので、適材適所で最適化」→ `scripts/models/model-mix-2026-09-21.cjs --apply` で
   17 役割を切替（docs/03 §A の表が正）。要点: **editor(実用書既定)/anp.editor → gpt-5**（最大のコスト源 ¥72k/月 → 約 1/4 見込み）、

@@ -8,8 +8,11 @@
  */
 import { randomUUID } from 'node:crypto';
 
+import { revalidatePath } from 'next/cache';
+
+import { prisma } from '@a2p/db';
 import { getSignedDownloadUrl, uploadBuffer } from '@a2p/storage/operations';
-import { anpUpload } from '@a2p/storage/keys';
+import { anpAccountAvatar, anpAccountHeader, anpUpload, type AnpImageExt } from '@a2p/storage/keys';
 
 import { auth } from '@/auth';
 import { messages } from '@/lib/messages';
@@ -73,4 +76,53 @@ export async function signUploadedImages(input: { keys: string[] }): Promise<Act
     }),
   );
   return { ok: true, data: out };
+}
+
+/**
+ * F-ANP-05b (2026-09-21): アイコン / カバー画像のアップロード。運営者要望「アイコン画像とカバー画像はこのツール外で
+ * 作る場合もあると思うので、生成だけでなくアップロードもできるようにしておいて」。
+ * 元の形式 (png/jpeg/webp) のまま R2 `anp/accounts/<id>/avatar-<stamp>.<ext>` / `header-<stamp>.<ext>` に保存し、
+ * `note_accounts.avatar_r2_key` / `header_r2_key` を差し替える (旧キーは残す = 生成物と同じ扱い)。
+ */
+const ACCOUNT_IMAGE_EXT: Record<string, AnpImageExt> = {
+  'image/png': 'png',
+  'image/jpeg': 'jpg',
+  'image/jpg': 'jpg',
+  'image/webp': 'webp',
+};
+
+export async function uploadAccountImage(formData: FormData): Promise<ActionResult<{ kind: 'avatar' | 'header'; url: string; ext: string }>> {
+  const session = await auth();
+  if (!session?.user) return { ok: false, error: messages.common.unauthorized };
+  const um = messages.uploads.errors;
+
+  const noteAccountId = formData.get('note_account_id');
+  const kindRaw = formData.get('kind');
+  const kind = kindRaw === 'avatar' || kindRaw === 'header' ? kindRaw : null;
+  if (typeof noteAccountId !== 'string' || noteAccountId.length === 0 || !kind) return { ok: false, error: messages.accounts.errors.unknown };
+  const file = formData.get('file');
+  if (!(file instanceof File)) return { ok: false, error: um.noFile };
+  const ext = ACCOUNT_IMAGE_EXT[file.type];
+  if (!ext) return { ok: false, error: um.unsupportedTypeStill };
+  if (file.size <= 0) return { ok: false, error: um.noFile };
+  if (file.size > MAX_BYTES) return { ok: false, error: um.tooLarge };
+
+  try {
+    const account = await prisma.noteAccount.findUnique({ where: { id: noteAccountId }, select: { id: true } });
+    if (!account) return { ok: false, error: messages.accounts.errors.notFound };
+    const buffer = Buffer.from(await file.arrayBuffer());
+    const stamp = `u${Date.now().toString(36)}`;
+    const key = kind === 'avatar' ? anpAccountAvatar(noteAccountId, stamp, ext) : anpAccountHeader(noteAccountId, stamp, ext);
+    const mime = file.type === 'image/jpg' ? 'image/jpeg' : file.type;
+    await uploadBuffer(key, buffer, mime);
+    await prisma.noteAccount.update({
+      where: { id: noteAccountId },
+      data: kind === 'avatar' ? { avatar_r2_key: key } : { header_r2_key: key },
+    });
+    const url = await getSignedDownloadUrl(key, PREVIEW_TTL_SEC, {}, `${kind}.${ext}`);
+    revalidatePath(`/accounts/${noteAccountId}`);
+    return { ok: true, data: { kind, url, ext } };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : um.uploadFailed };
+  }
 }
