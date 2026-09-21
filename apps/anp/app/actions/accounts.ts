@@ -179,11 +179,19 @@ export async function createAccount(
 // linkNoteAccountSession — F-ANP-20: ANP 画面からの note セッション連携 (Cookie 貼り付け)
 // ---------------------------------------------------------------------------
 
-const LinkSessionSchema = z.object({
-  note_account_id: z.string().min(1),
-  /** Cookie ヘッダ / DevTools テーブル / トークン単体 のいずれか (lib/note-session-link.ts `parseNoteCookies`)。 */
-  cookies_text: z.string().trim().min(1, messages.accounts.link.errors.cookiesRequired).max(20_000),
-});
+const LinkSessionSchema = z
+  .object({
+    note_account_id: z.string().min(1),
+    /** `note_gql_auth_token` の値 (ログイン後に発行される本命の Cookie)。 */
+    auth_token: z.string().trim().max(8_000).optional(),
+    /** `_note_session_v5` の値 (Web セッション)。 */
+    session_cookie: z.string().trim().max(8_000).optional(),
+    /** 旧形式: Cookie ヘッダ / DevTools テーブル貼り付け (`parseNoteCookies`)。 */
+    cookies_text: z.string().trim().max(20_000).optional(),
+  })
+  .refine((v) => (v.auth_token && v.auth_token.length > 0) || (v.session_cookie && v.session_cookie.length > 0) || (v.cookies_text && v.cookies_text.length > 0), {
+    message: messages.accounts.link.errors.cookiesRequired,
+  });
 
 export interface LinkedNoteSessionInfo {
   handle: string;
@@ -208,7 +216,7 @@ export async function linkNoteAccountSession(input: unknown): Promise<ActionResu
   if (!parsed.success) {
     return { ok: false, error: parsed.error.issues[0]?.message ?? messages.accounts.link.errors.linkFailed };
   }
-  const { note_account_id: noteAccountId, cookies_text: cookiesText } = parsed.data;
+  const { note_account_id: noteAccountId, auth_token: authToken, session_cookie: sessionCookie, cookies_text: cookiesText } = parsed.data;
   const lm = messages.accounts.link;
 
   try {
@@ -218,8 +226,20 @@ export async function linkNoteAccountSession(input: unknown): Promise<ActionResu
     });
     if (!account) return { ok: false, error: messages.accounts.errors.notFound };
 
-    const cookies = parseNoteCookies(cookiesText);
-    if (!cookies[NOTE_AUTH_COOKIE]) return { ok: false, error: lm.errors.authCookieMissing };
+    // 個別入力 (推奨) と旧形式の貼り付けをマージする。値に "name=" が混ざっていても parseNoteCookies で拾えるよう、
+    // 個別欄は「値だけ」が前提だが `name=value` 形式も許容する。
+    const cookies = parseNoteCookies(cookiesText ?? '');
+    const pick = (raw: string | undefined, name: string) => {
+      const v = (raw ?? '').trim().replace(/^cookie:\s*/i, '');
+      if (!v) return;
+      const m = v.match(/^([A-Za-z0-9_.-]+)=(.+)$/);
+      cookies[name] = (m && m[1] === name && m[2] ? m[2] : v).trim().replace(/;$/, '');
+    };
+    pick(authToken, NOTE_AUTH_COOKIE);
+    pick(sessionCookie, '_note_session_v5');
+    // note_gql_auth_token (ログイン後に発行) が本命だが、Web セッション _note_session_v5 だけでも
+    // API 検証が通ることがあるので、どちらか一方があれば検証に進む (通らなければ notLoggedIn を返す)。
+    if (!cookies[NOTE_AUTH_COOKIE] && !cookies._note_session_v5) return { ok: false, error: lm.errors.authCookieMissing };
 
     const verified = await verifyNoteSession(cookies);
     if (!verified.ok) {

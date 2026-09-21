@@ -13,7 +13,7 @@ import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { StorageError } from '@a2p/contracts/errors';
 import { createLogger } from '@a2p/contracts/logger';
 
-import { getR2Bucket, getR2Client } from './client.js';
+import { getR2Runtime } from './client.js';
 import { sha256Hex, sha256HexFromStream } from './hash.js';
 
 const log = createLogger('storage.r2');
@@ -43,11 +43,10 @@ export type OperationOptions =
   | { client?: undefined; bucket?: undefined }
   | { client: S3Client; bucket: string };
 
-function resolveClient(opts: OperationOptions): { client: S3Client; bucket: string } {
-  return {
-    client: opts.client ?? getR2Client(),
-    bucket: opts.bucket ?? getR2Bucket(),
-  };
+async function resolveClient(opts: OperationOptions): Promise<{ client: S3Client; bucket: string }> {
+  if (opts.client) return { client: opts.client, bucket: opts.bucket };
+  // DB (M2P ポータルの API 管理) → env の順で解決 (`getR2Runtime`、60 秒キャッシュ)。
+  return getR2Runtime();
 }
 
 /** `process.env.NODE_ENV !== 'test'` 限定のログ。テストで noisy にしないため。 */
@@ -66,7 +65,7 @@ export async function uploadBuffer(
   contentType: string,
   options: OperationOptions = {},
 ): Promise<UploadResult> {
-  const { client, bucket } = resolveClient(options);
+  const { client, bucket } = await resolveClient(options);
   const sha256 = sha256Hex(buffer);
   const input: PutObjectCommandInput = {
     Bucket: bucket,
@@ -102,7 +101,7 @@ export async function uploadStream(
   contentLength: number,
   options: OperationOptions = {},
 ): Promise<{ key: string; size: number; contentType: string }> {
-  const { client, bucket } = resolveClient(options);
+  const { client, bucket } = await resolveClient(options);
   const body =
     stream instanceof Readable
       ? stream
@@ -141,7 +140,7 @@ export async function getSignedDownloadUrl(
    */
   downloadFilename?: string,
 ): Promise<string> {
-  const { client, bucket } = resolveClient(options);
+  const { client, bucket } = await resolveClient(options);
   try {
     const commandInput: ConstructorParameters<typeof GetObjectCommand>[0] = {
       Bucket: bucket,
@@ -167,7 +166,7 @@ export async function getSignedDownloadUrl(
 
 /** R2 オブジェクトを削除する (物理削除)。論理削除はキー側で `_deleted/` 移動を行う。 */
 export async function deleteObject(key: string, options: OperationOptions = {}): Promise<void> {
-  const { client, bucket } = resolveClient(options);
+  const { client, bucket } = await resolveClient(options);
   try {
     await client.send(new DeleteObjectCommand({ Bucket: bucket, Key: key }));
   } catch (err) {
@@ -184,7 +183,7 @@ export async function getObjectMetadata(
   key: string,
   options: OperationOptions = {},
 ): Promise<ObjectMetadata | null> {
-  const { client, bucket } = resolveClient(options);
+  const { client, bucket } = await resolveClient(options);
   try {
     const res = await client.send(new HeadObjectCommand({ Bucket: bucket, Key: key }));
     const meta: ObjectMetadata = {
@@ -209,7 +208,7 @@ export async function downloadBuffer(
   key: string,
   options: OperationOptions = {},
 ): Promise<Buffer | null> {
-  const { client, bucket } = resolveClient(options);
+  const { client, bucket } = await resolveClient(options);
   try {
     const res = await client.send(new GetObjectCommand({ Bucket: bucket, Key: key }));
     if (!res.Body) return null;

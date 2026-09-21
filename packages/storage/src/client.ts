@@ -69,6 +69,76 @@ interface SingletonState {
 
 let cached: SingletonState | null = null;
 
+// ---------------------------------------------------------------------------
+// DB 由来の設定プロバイダ (M2P ポータルの API 管理, docs/10 §10.4b)
+//
+// `@a2p/credentials` が `setR2ConfigProvider()` で「api_credentials(provider='r2') を復号して返す」
+// 関数を登録する。operations.ts は `getR2Runtime()` (async) を使い、DB 設定 → env の順で解決する。
+// storage パッケージ自体は DB に依存しない (プロバイダは各アプリの起動時に登録する)。
+// ---------------------------------------------------------------------------
+
+export type R2ConfigProvider = () => Promise<R2Config | null>;
+
+let configProvider: R2ConfigProvider | null = null;
+
+interface RuntimeState extends SingletonState {
+  key: string;
+  expiresAt: number;
+}
+
+let runtime: RuntimeState | null = null;
+/** DB 設定の再確認間隔。M2P で差し替えても最長この時間で全プロセスに反映される。 */
+const RUNTIME_TTL_MS = 60_000;
+
+export function setR2ConfigProvider(provider: R2ConfigProvider | null): void {
+  configProvider = provider;
+  runtime = null;
+}
+
+function configKey(c: R2Config): string {
+  return `${c.accountId}|${c.accessKeyId}|${c.secretAccessKey.slice(-6)}|${c.bucket}`;
+}
+
+/**
+ * DB 設定 (登録済みプロバイダ) → env の順で R2 設定を解決し、S3Client と bucket を返す。
+ * 設定が変わらなければ S3Client を使い回す。プロバイダの失敗は env にフォールバックする。
+ */
+export async function getR2Runtime(): Promise<SingletonState> {
+  const now = Date.now();
+  if (runtime && now < runtime.expiresAt) return runtime;
+  let config: R2Config | null = null;
+  if (configProvider) {
+    try {
+      config = await configProvider();
+    } catch {
+      config = null;
+    }
+  }
+  if (!config) config = resolveR2Config();
+  const key = configKey(config);
+  if (runtime && runtime.key === key) {
+    runtime.expiresAt = now + RUNTIME_TTL_MS;
+    return runtime;
+  }
+  runtime = { client: createR2Client(config), bucket: config.bucket, key, expiresAt: now + RUNTIME_TTL_MS };
+  return runtime;
+}
+
+/** 接続テスト: HeadBucket が通れば ok。ポータルの「疎通テスト」から使う。 */
+export async function testR2Connection(config: R2Config): Promise<{ ok: boolean; message: string; latency_ms: number }> {
+  const started = Date.now();
+  const client = createR2Client(config);
+  try {
+    const { HeadBucketCommand } = await import('@aws-sdk/client-s3');
+    await client.send(new HeadBucketCommand({ Bucket: config.bucket }));
+    return { ok: true, message: `疎通 OK (bucket=${config.bucket})`, latency_ms: Date.now() - started };
+  } catch (err) {
+    return { ok: false, message: err instanceof Error ? err.message : String(err), latency_ms: Date.now() - started };
+  } finally {
+    client.destroy();
+  }
+}
+
 /** プロセス内シングルトン S3Client を返す。テスト時は `_resetR2ClientForTests()` で破棄。 */
 export function getR2Client(): S3Client {
   if (!cached) {
@@ -90,9 +160,12 @@ export function getR2Bucket(): string {
 /** テスト用途: 注入したクライアント/バケットでシングルトンを差し替える。 */
 export function _setR2ClientForTests(client: S3Client, bucket: string): void {
   cached = { client, bucket };
+  // operations.ts は getR2Runtime() を使うので、テスト差し替えはこちらにも効かせる (TTL 無期限)。
+  runtime = { client, bucket, key: '__test__', expiresAt: Number.POSITIVE_INFINITY };
 }
 
 /** テスト用途: シングルトンを破棄する。 */
 export function _resetR2ClientForTests(): void {
   cached = null;
+  runtime = null;
 }

@@ -26,7 +26,8 @@ export interface NoteLinkFormProps {
 
 export function NoteLinkForm(props: NoteLinkFormProps) {
   const router = useRouter();
-  const [text, setText] = useState('');
+  const [authToken, setAuthToken] = useState('');
+  const [sessionCookie, setSessionCookie] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
   const [showSteps, setShowSteps] = useState(!props.hasSession || props.needsReauth);
@@ -44,17 +45,24 @@ export function NoteLinkForm(props: NoteLinkFormProps) {
     return { text: lm.statusNotLinked, tone: 'text-muted' };
   })();
 
+  const canSubmit = authToken.trim().length > 0 || sessionCookie.trim().length > 0;
+
   const submit = () => {
-    if (isPending || text.trim().length === 0) return;
+    if (isPending || !canSubmit) return;
     setError(null);
     setSuccess(null);
     startTransition(async () => {
-      const res = await linkNoteAccountSession({ note_account_id: props.noteAccountId, cookies_text: text });
+      const res = await linkNoteAccountSession({
+        note_account_id: props.noteAccountId,
+        auth_token: authToken,
+        session_cookie: sessionCookie,
+      });
       if (!res.ok) {
         setError(res.error);
         return;
       }
-      setText('');
+      setAuthToken('');
+      setSessionCookie('');
       setSuccess(lm.success(res.data.handle, res.data.nickname));
       setShowSteps(false);
       router.refresh();
@@ -100,23 +108,37 @@ export function NoteLinkForm(props: NoteLinkFormProps) {
         }}
       >
         <label className="flex flex-col gap-1 text-caption text-muted">
-          {lm.textareaLabel}
-          <textarea
-            value={text}
-            onChange={(e) => setText(e.target.value)}
-            placeholder={lm.placeholder}
-            rows={3}
-            maxLength={20000}
+          {lm.authTokenLabel}
+          <input
+            value={authToken}
+            onChange={(e) => setAuthToken(e.target.value)}
+            placeholder={lm.authTokenPlaceholder}
+            maxLength={8000}
             disabled={isPending}
             spellCheck={false}
+            autoComplete="off"
             className="rounded-card border border-border-warm bg-white px-3 py-2 font-mono text-caption text-charcoal"
-            data-testid="note-link-input"
+            data-testid="note-link-auth-token"
+          />
+        </label>
+        <label className="flex flex-col gap-1 text-caption text-muted">
+          {lm.sessionCookieLabel}
+          <input
+            value={sessionCookie}
+            onChange={(e) => setSessionCookie(e.target.value)}
+            placeholder={lm.sessionCookiePlaceholder}
+            maxLength={8000}
+            disabled={isPending}
+            spellCheck={false}
+            autoComplete="off"
+            className="rounded-card border border-border-warm bg-white px-3 py-2 font-mono text-caption text-charcoal"
+            data-testid="note-link-session-cookie"
           />
         </label>
         <div className="flex flex-wrap items-center gap-3">
           <button
             type="submit"
-            disabled={isPending || text.trim().length === 0}
+            disabled={isPending || !canSubmit}
             className="rounded-card border border-border-warm bg-charcoal px-4 py-2 text-button-sm text-white disabled:opacity-50"
             data-testid="note-link-submit"
           >
