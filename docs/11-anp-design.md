@@ -325,6 +325,8 @@ ANP の機能は A2P の対応機能を note 向けに写像したもの。**太
     設計案のプロンプトを使う。同一アカウントの queued/running ジョブがある間は二重起動しない。
   - UI: 生成中は 3 秒ポーリング（`getAccountProfileState`）。画像は署名 URL（15 分）でプレビュー/DL。
     別案はクリックで編集欄に差し替え。
+  - 追加指示は自己紹介文用と画像用で別入力（運営者要望「それぞれで指示できるように」）。進捗バーも
+    自己紹介文の欄と画像の欄それぞれに出す（同時には一方しか生成しない）。
   - **進捗表示（運営者要望 2026-09-21「生成中の完了目安時間が分からないから進捗率を見えるように」）**:
     worker が段階ごとに `Job.result_json.progress = { stage: prompt|avatar|header|upload, pct, at }` を書き、
     共通コンポーネント `apps/anp/components/generation-progress.tsx` が「段階ラベル・%・経過・残り目安」を
@@ -849,6 +851,16 @@ Vercel AI SDK + Anthropic SDK / gpt-image / Cloudflare R2 / NextAuth(共有) / T
       **2026-09-21 解消済み**: `apps/anp/node_modules/@a2p/storage` のワークスペースリンクは
       別セッションで `pnpm install` 済みで生成されており、`pnpm --filter @anp/web run typecheck`
       は clean（このシンボリックリンクの存在で確認）。
+20. **[本番障害・解消済み 2026-09-21]** ANP の Server Action からの `enqueueJob`（`lib/graphile-client.ts` →
+    `makeWorkerUtils().addJob`）が本番で失敗し、内部 `jobs` 行だけ `queued` で残って graphile に投入されない
+    状態だった（`note.account.profile` / `note.account.design` / UI からの `pipeline.note.publish` が該当。
+    worker cron 起点のジョブは無事）。原因 = `apps/anp/next.config.ts` の `serverExternalPackages` に
+    `graphile-worker` が無く、webpack がバンドルしたため実行時に migrations SQL の動的読込/preset 解決が
+    壊れていた（apps/web には最初から入っていた）。対処 = `serverExternalPackages` に追加、
+    `enqueueJob` の失敗を `console.error` でサーバーログに出す。滞留分は
+    scratchpad `reenqueue.cjs`（内部 Job の payload に `job_id` を足して `addJob`）で再投入した。
+    **教訓**: ANP UI 起点のジョブは「内部 Job が queued のまま `graphile_worker._private_jobs` に無い」
+    で検知できる（HANDOFF の診断 SQL 参照）。
 19. **[Phase 7 実装メモ・要フォロー、2026-09-21]** 本タスク（運営者指示「ANP の実装を仕上げちゃって」）
     の成果物で以下が未適用のまま残っている:
     - **DB migration**: `packages/db/migrations/20260921010000_anp_account_settings_authrelay/migration.sql`

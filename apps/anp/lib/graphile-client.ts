@@ -34,7 +34,13 @@ export async function enqueueJob(
   payload: unknown = {},
   spec: TaskSpec = {},
 ): Promise<string> {
-  const utils = await getUtils();
-  const job = await utils.addJob(taskName, payload as Record<string, unknown>, spec);
-  return String(job.id);
+  try {
+    const utils = await getUtils();
+    const job = await utils.addJob(taskName, payload as Record<string, unknown>, spec);
+    return String(job.id);
+  } catch (err) {
+    // Server Action 側は error message を UI に返すだけなので、原因調査用にサーバーログへも出す。
+    console.error('[anp] enqueueJob failed', { taskName, payload, err });
+    throw err;
+  }
 }

@@ -90,6 +90,16 @@ ANP のアカウント戦略を AI に相談しながら策定）を実施。mai
   画像は人物型なら実写・顔なし・首から下ルール）。`note_accounts.bio/avatar_r2_key/header_r2_key/profile_generated_at`
   （migration `20260921030000_anp_account_profile` 適用＋resolve 済み）。設計案採用時は設計案の bio/画像を引き継ぐ。
 
+### ⚠️ 本番障害（9/21 17:09 発覚・解消）: ANP 画面からのジョブ投入が graphile に届いていなかった
+- 症状: 「自己紹介文を生成」等が 10 分以上進まない。内部 `jobs` は queued、`graphile_worker._private_jobs` に該当なし。
+  同日の `note.account.design`（15:33）と UI からの `pipeline.note.publish`（07:06）も同様に滞留していた。
+- 原因: `apps/anp/next.config.ts` の `serverExternalPackages` に `graphile-worker` が無く webpack にバンドルされ、
+  `makeWorkerUtils` が実行時に失敗（Server Action は error を返すだけでログに出なかった）。apps/web には元から入っていた。
+- 対処: `serverExternalPackages` に追加＋`enqueueJob` 失敗を console.error。滞留 4 件は scratchpad `reenqueue.cjs` で再投入し完了。
+- 診断 SQL: `select id,kind,created_at from jobs where status='queued' and created_at > now()-interval '1 day'` と
+  `select j.id,t.identifier from graphile_worker._private_jobs j join graphile_worker._private_tasks t on t.id=j.task_id order by j.id desc limit 10`
+  を突き合わせ、前者にあって後者に無ければ投入失敗。
+
 ### DB マイグレーション履歴の整合
 - 本番 `_prisma_migrations` に未記録だった 20260915/0918/0919 と今日の 3 本を `prisma migrate resolve --applied` で記録。
   `migrate status` ではまだ 8 月〜9/9 の数本（20260826120000_ad_spend 〜 20260909000000_bw_retag）が未記録のまま

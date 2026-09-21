@@ -84,8 +84,10 @@ export const messages = {
       noImage: '未生成',
       downloadAvatar: 'アイコンをダウンロード',
       downloadHeader: 'カバー画像をダウンロード',
-      instructionLabel: '生成への追加指示 (任意)',
-      instructionPlaceholder: '例: もっとカジュアルに / 顔出しなしの後ろ姿で / 青系の落ち着いた配色',
+      bioInstructionLabel: '自己紹介文への指示 (任意)',
+      bioInstructionPlaceholder: '例: もっとカジュアルに / 実績を1つ入れて / 絵文字なしで',
+      visualsInstructionLabel: '画像への指示 (任意)',
+      visualsInstructionPlaceholder: '例: 青系の落ち着いた配色 / 顔出しなしの後ろ姿で / 本と観葉植物のある机',
       lastFailed: '前回の生成は失敗しました。もう一度お試しください',
       progress: {
         queued: '順番待ち (worker が受け取るまで数秒)',

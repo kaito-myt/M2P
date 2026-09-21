@@ -43,7 +43,8 @@ function progressView(job: NonNullable<AccountProfileState['job']>): { label: st
 export function ProfilePanel({ noteAccountId, initial }: { noteAccountId: string; initial: AccountProfileState }) {
   const [state, setState] = useState<AccountProfileState>(initial);
   const [bio, setBio] = useState(initial.bio ?? '');
-  const [instruction, setInstruction] = useState('');
+  const [bioInstruction, setBioInstruction] = useState('');
+  const [visualsInstruction, setVisualsInstruction] = useState('');
   const [busy, setBusy] = useState<'bio' | 'visuals' | 'save' | null>(null);
   const [copied, setCopied] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -70,10 +71,11 @@ export function ProfilePanel({ noteAccountId, initial }: { noteAccountId: string
     setBusy(kind);
     setError(null);
     setNotice(null);
+    const instruction = (kind === 'bio' ? bioInstruction : visualsInstruction).trim();
     const res = await generateAccountProfile({
       note_account_id: noteAccountId,
       targets,
-      ...(instruction.trim() ? { instruction: instruction.trim() } : {}),
+      ...(instruction ? { instruction } : {}),
     });
     setBusy(null);
     if (!res.ok) {
@@ -123,7 +125,6 @@ export function ProfilePanel({ noteAccountId, initial }: { noteAccountId: string
 
   const generatingTargets = state.generating ? state.job?.targets ?? [] : [];
   const progress = state.generating && state.job ? progressView(state.job) : null;
-  const estimateSec = generatingTargets.includes('visuals') ? ESTIMATE_SEC.visuals : ESTIMATE_SEC.bio;
   const bioGenerating = generatingTargets.includes('bio');
   const visualsGenerating = generatingTargets.includes('visuals');
   const lastFailed = state.job?.status === 'failed';
@@ -134,17 +135,6 @@ export function ProfilePanel({ noteAccountId, initial }: { noteAccountId: string
     <section className="rounded-container border border-border-warm bg-cream-light p-space-relaxed" data-testid="profile-panel">
       <h2 className="text-card-title font-medium text-charcoal">{pm.title}</h2>
       <p className="mt-1 text-caption text-muted">{pm.description}</p>
-
-      {progress && state.job && (
-        <GenerationProgress
-          className="mt-space-snug rounded-card border border-border-warm bg-white px-3 py-2"
-          startedAt={state.job.created_at}
-          estimateSec={estimateSec}
-          pct={progress.pct}
-          stageLabel={progress.label}
-          capPct={progress.cap}
-        />
-      )}
 
       {/* --- 自己紹介文 --- */}
       <div className="mt-space-snug">
@@ -167,6 +157,28 @@ export function ProfilePanel({ noteAccountId, initial }: { noteAccountId: string
           className="mt-1 w-full rounded-card border border-border-warm bg-white px-3 py-2 text-body text-charcoal disabled:opacity-60"
           data-testid="profile-bio-input"
         />
+        {progress && state.job && bioGenerating && (
+          <GenerationProgress
+            className="mt-2 rounded-card border border-border-warm bg-white px-3 py-2"
+            startedAt={state.job.created_at}
+            estimateSec={ESTIMATE_SEC.bio}
+            pct={progress.pct}
+            stageLabel={progress.label}
+            capPct={progress.cap}
+          />
+        )}
+        <label className="mt-2 flex flex-col gap-1 text-caption text-muted">
+          {pm.bioInstructionLabel}
+          <input
+            value={bioInstruction}
+            onChange={(e) => setBioInstruction(e.target.value)}
+            maxLength={1000}
+            placeholder={pm.bioInstructionPlaceholder}
+            disabled={bioGenerating}
+            className="rounded-card border border-border-warm bg-white px-3 py-2 text-body text-charcoal"
+            data-testid="profile-bio-instruction"
+          />
+        </label>
         <div className="mt-2 flex flex-wrap items-center gap-2">
           <button
             type="button"
@@ -233,6 +245,28 @@ export function ProfilePanel({ noteAccountId, initial }: { noteAccountId: string
             {visualsGenerating ? pm.generatingVisuals : state.avatar_url ? pm.regenerateVisuals : pm.generateVisuals}
           </button>
         </div>
+        {progress && state.job && visualsGenerating && (
+          <GenerationProgress
+            className="mt-2 rounded-card border border-border-warm bg-white px-3 py-2"
+            startedAt={state.job.created_at}
+            estimateSec={ESTIMATE_SEC.visuals}
+            pct={progress.pct}
+            stageLabel={progress.label}
+            capPct={progress.cap}
+          />
+        )}
+        <label className="mt-2 flex flex-col gap-1 text-caption text-muted">
+          {pm.visualsInstructionLabel}
+          <input
+            value={visualsInstruction}
+            onChange={(e) => setVisualsInstruction(e.target.value)}
+            maxLength={1000}
+            placeholder={pm.visualsInstructionPlaceholder}
+            disabled={visualsGenerating}
+            className="rounded-card border border-border-warm bg-white px-3 py-2 text-body text-charcoal"
+            data-testid="profile-visuals-instruction"
+          />
+        </label>
         <div className="mt-2 grid grid-cols-1 gap-space-snug sm:grid-cols-[160px_minmax(0,1fr)]">
           <figure className="flex flex-col gap-1">
             <figcaption className="text-caption text-muted">{pm.avatarLabel}</figcaption>
@@ -270,19 +304,6 @@ export function ProfilePanel({ noteAccountId, initial }: { noteAccountId: string
           </figure>
         </div>
       </div>
-
-      {/* --- 追加指示 --- */}
-      <label className="mt-space-relaxed flex flex-col gap-1 text-caption text-muted">
-        {pm.instructionLabel}
-        <input
-          value={instruction}
-          onChange={(e) => setInstruction(e.target.value)}
-          maxLength={1000}
-          placeholder={pm.instructionPlaceholder}
-          className="rounded-card border border-border-warm bg-white px-3 py-2 text-body text-charcoal"
-          data-testid="profile-instruction"
-        />
-      </label>
 
       {(error || notice || lastFailed) && (
         <div className="mt-2 flex flex-col gap-1">
