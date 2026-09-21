@@ -100,6 +100,11 @@ ANP のアカウント戦略を AI に相談しながら策定）を実施。mai
   `select j.id,t.identifier from graphile_worker._private_jobs j join graphile_worker._private_tasks t on t.id=j.task_id order by j.id desc limit 10`
   を突き合わせ、前者にあって後者に無ければ投入失敗。
 
+### M2P ポータルに「設定」（AI モデル割当 / API キー）を追加（9/21 夕方）
+- `https://m2p.tools/settings` → `/settings/api-keys`（Anthropic / OpenAI / Google / Tavily の保存・疎通テスト・削除、暗号化保存）、
+  `/settings/models`（役割ごとの既定モデルをツール別グループで切替、カタログの現行・呼出可のみ選択可）。A2P/ANP と同じテーブルなので
+  即時共有。M2P-Portal サービスに `API_CRED_KEY` を設定済み。設計 = docs/10 §10.4b。
+
 ### DB マイグレーション履歴の整合
 - 本番 `_prisma_migrations` に未記録だった 20260915/0918/0919 と今日の 3 本を `prisma migrate resolve --applied` で記録。
   `migrate status` ではまだ 8 月〜9/9 の数本（20260826120000_ad_spend 〜 20260909000000_bw_retag）が未記録のまま

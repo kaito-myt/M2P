@@ -16,12 +16,12 @@ interface NavItem {
 
 /**
  * ポータル共通メニュー。将来ここに「経営ダッシュボード（全体売上/コスト）」等を増やす。
- * 現状は ツール(ハブ) がライブ、経営ダッシュボードは雛形、設定は準備中。
+ * 現状は ツール(ハブ) と 設定 (AI モデル割当 / API キー) がライブ、経営ダッシュボードは雛形。
  */
 const ITEMS: NavItem[] = [
   { href: '/', label: 'ツール', icon: LayoutGrid },
   { href: '/dashboard', label: '経営ダッシュボード', icon: LineChart, soon: true },
-  { href: '/settings', label: '設定', icon: Settings, disabled: true },
+  { href: '/settings', label: '設定', icon: Settings },
 ];
 
 function isActive(pathname: string, href: string): boolean {

@@ -123,6 +123,9 @@ importers:
       '@a2p/auth':
         specifier: workspace:*
         version: link:../../packages/auth
+      '@a2p/crypto':
+        specifier: workspace:*
+        version: link:../../packages/crypto
       '@a2p/db':
         specifier: workspace:*
         version: link:../../packages/db

@@ -92,6 +92,29 @@ Auth.js v5（JWT セッション）を全アプリで共有する。SSO の成�
   - A2P: `NEXT_PUBLIC_TOOL_A2P_URL`（未設定時 `http://localhost:3001`）。
 - `status: 'coming_soon'`（or URL 未設定）は「準備中」バッジでカード無効表示。
 
+## 10.4b 設定（AI モデル割当 / API キー）— 2026-09-21 追加
+
+運営者要望「M2P の設定の方で AI モデル設定ができるようにして。各サービサーの API キー情報を管理できるようにして」
+への対応。A2P / ANP / worker は同じ DB（`api_credentials` / `model_assignments` / `model_catalog` / `prompts`）を
+共有しているため、ポータルで一元管理すると全ツールに反映される。
+
+- 画面: `/settings`（ハブ: 設定済みキー数・役割数・呼出不可モデル件数）、`/settings/api-keys`、`/settings/models`。
+  サイドメニュー「設定」を有効化（`components/nav-links.tsx`）。
+- **API キー** (`app/(app)/settings/api-keys`): Anthropic / OpenAI / Google / Tavily の 4 サービサー。
+  `@a2p/crypto.encryptApiKey`（`API_CRED_KEY`、A2P と同じ鍵 → **M2P-Portal サービスにも同じ `API_CRED_KEY` を設定**）で
+  暗号化して `api_credentials` に upsert、`key_mask` だけ表示。疎通テストは各社の models 一覧 API（Tavily は最小検索）を
+  fetch で叩く（apps/web と同じエンドポイント）。削除は `delete`。全て `audit_log`（`api_credential.set/revoke`、
+  `after_json.source='portal'`）に記録。各プロセスは `@a2p/agents/lib/get-api-key` の 60 秒 LRU 経由で読むため
+  保存後 1 分以内に反映（DB のキーが env より優先）。
+- **AI モデル設定** (`app/(app)/settings/models`): 役割 = `prompts(active)` と `model_assignments(active)` に登場する
+  role の和集合を、ツール別グループ（A2P 書籍 / A2P 販促 / 組織 / ANP / その他、`lib/settings-core.ts`
+  `roleGroup`）と日本語ラベル（`ROLE_LABEL`）で表示。行ごとに provider/model（`model_catalog` の `is_current=true`
+  かつ `available!==false`）を選んで保存 → `genre=null` の active 行を archived にして新規 active を作る
+  （A2P `upsertModelAssignmentCore` と同じ手順、`audit_log` `model_assignment.upsert`）。ジャンル別の上書きは
+  件数だけ表示し A2P の設定画面へリンク。呼出不可（`available=false`）のモデルに割り当たっている役割は警告表示。
+- Server Action は `app/actions/settings.ts`。純関数（グループ分け・行組立・テスト用リクエスト）は
+  `lib/settings-core.ts`（Vitest `lib/__tests__/settings-core.test.ts`）。
+
 ## 10.5 デプロイ / 環境変数（Railway）
 
 - ポータルは**新しい Web サービス**として追加（web/worker と別サービス）。
@@ -99,12 +122,14 @@ Auth.js v5（JWT セッション）を全アプリで共有する。SSO の成�
   - `AUTH_SECRET`（=`NEXTAUTH_SECRET`）: 全アプリ同一。
   - `AUTH_COOKIE_DOMAIN`: 例 `.example.com`。portal と各ツールを同一親ドメインのサブドメインに
     配置（例 `app.example.com`=portal, `a2p.example.com`=A2P）。
-- ポータル側のみ: `NEXT_PUBLIC_TOOL_A2P_URL`=A2P の本番 URL。
+- ポータル側のみ: `NEXT_PUBLIC_TOOL_A2P_URL`=A2P の本番 URL、`NEXT_PUBLIC_TOOL_ANP_URL`=ANP の本番 URL。
+- ポータルの設定画面（§10.4b）には `API_CRED_KEY`（A2P と同値）が必要（2026-09-21 に M2P-Portal へ設定済み）。
 - DNS（サブドメイン割当）と各 Railway サービスのカスタムドメイン設定は運営者作業。
 
 ## 10.6 現状と残タスク
 
 - 実装済み（2026-08-20）: `packages/auth`、`apps/portal`（login/ツール選択/SSO 配線）、A2P の共通認証化。
   全て typecheck / build 通過。
-- 残: (1) Railway に portal サービス追加＋独自ドメイン、(2) 全アプリへ `AUTH_SECRET`/`AUTH_COOKIE_DOMAIN`
-  設定、(3) 2つ目以降のツール追加時に `tools.ts` へ登録。
+- 2026-08-22: Railway `M2P-Portal` サービスとして `https://m2p.tools` に本番デプロイ済み（ANP も `tools.ts` に登録済み）。
+- 2026-09-21: 設定（AI モデル割当 / API キー）を実装（§10.4b）。
+- 残: 経営ダッシュボードの実データ接続（全ツール横断の売上・コスト集計コネクタ）。
