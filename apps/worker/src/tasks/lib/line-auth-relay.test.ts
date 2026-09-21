@@ -1,5 +1,15 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
+// DB (M2P API 管理) は引かず env のみで解決する (本テストの関心は push/待受のロジック)。
+vi.mock('@a2p/credentials', () => ({
+  peekLineCredentials: () => null,
+  resolveLineCredentials: async () => {
+    const token = process.env.LINE_CHANNEL_ACCESS_TOKEN;
+    const to = process.env.LINE_ALLOWED_USER_ID;
+    return token && to ? { channelAccessToken: token, channelSecret: null, allowedUserId: to } : null;
+  },
+}));
+
 import {
   isLineRelayConfigured,
   pushLine,

@@ -3,7 +3,7 @@ import type { NextConfig } from 'next';
 const nextConfig: NextConfig = {
   reactStrictMode: true,
   // workspace パッケージは Next.js でトランスパイルが必要
-  transpilePackages: ['@a2p/contracts', '@a2p/crypto', '@a2p/db', '@a2p/ui'],
+  transpilePackages: ['@a2p/contracts', '@a2p/credentials', '@a2p/crypto', '@a2p/db', '@a2p/storage', '@a2p/ui'],
   // graphile-worker は内部で動的 require / cosmiconfig による preset 解決を行うため
   // Next.js webpack でバンドルされると plugin が undefined になり
   // `Expected plugin, but found 'undefined'` で失敗する。

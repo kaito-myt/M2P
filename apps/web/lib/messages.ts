@@ -2364,9 +2364,9 @@ export const messages = {
       setupGuide:
         'Amazon Ads API の接続には LwA(Login with Amazon) の認可が必要です。運営者のPCで ' +
         'node scripts/ads/amazon-ads-oauth.mjs --client-id=<CLIENT_ID> --client-secret=<CLIENT_SECRET> ' +
-        'を実行し、表示された 5 つの env（AMAZON_ADS_CLIENT_ID / AMAZON_ADS_CLIENT_SECRET / ' +
-        'AMAZON_ADS_REFRESH_TOKEN / AMAZON_ADS_PROFILE_ID / AMAZON_ADS_REGION）を Railway の ' +
-        'A2P-Worker サービスに設定してください（詳細は scripts/ads/README.md）。',
+        'を実行し、表示された 5 つの値（Client ID / Client Secret / Refresh Token / Profile ID / Region）を ' +
+        'M2P の「設定 › API 管理 › Amazon Advertising API」に保存してください（Railway の A2P-Worker に env ' +
+        'AMAZON_ADS_* として設定しても動きます。詳細は scripts/ads/README.md）。',
     },
     kpi: {
       spendLabel: '広告費',

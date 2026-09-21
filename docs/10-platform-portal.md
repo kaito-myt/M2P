@@ -118,6 +118,43 @@ ANP `/settings` の「AI モデル設定」で各ツールが扱う。ハブ画�
 - Server Action は `app/actions/settings.ts`。純関数（provider メタ・テスト用リクエスト・env 判定）は
   `lib/settings-core.ts`（Vitest `lib/__tests__/settings-core.test.ts`）。
 
+### 10.4b-2 サービス連携（R2 / LINE / Amazon Ads）の接続情報 — 2026-09-21 追加
+
+運営者要望「R2 の API 情報も M2P で管理できるようにしましょうか。モデル管理じゃなくて API 管理として、API 関連は
+全部そこで管理できるようにしましょう」への対応。画面名を「API 管理」に改め、同じ `/settings/api-keys` の下段に
+**サービス連携** セクションを追加した。
+
+- **共通パッケージ `packages/credentials`（`@a2p/credentials`）**:
+  - `spec.ts`（DB 非依存の正本）: `SERVICE_PROVIDERS = ['r2','line','amazon_ads']`、各プロバイダの項目仕様
+    `SERVICE_PROVIDER_META[p].fields = { key, env, label, secret, required, hint?, options? }`
+    （r2: account_id / access_key_id / secret_access_key / bucket、line: channel_access_token / channel_secret(任意) /
+    allowed_user_id、amazon_ads: client_id / client_secret / refresh_token / profile_id / region）、
+    入力スキーマ `serviceFieldsSchema(p)`、env からの組立 `serviceFieldsFromEnv(p)`、マスク
+    `maskServiceFields` / 要約 `summarizeServiceFields`、既存値マージ `mergeServiceFields`（秘密項目の空欄＝変更なし）。
+  - `store.ts`: **同じ `api_credentials` テーブル**に `provider='r2'|'line'|'amazon_ads'`、`key_enc` = 項目 JSON を
+    `encryptApiKey`（`API_CRED_KEY`）で暗号化、`key_mask` = 要約文字列。`resolveServiceCredentials(p)`（DB 優先 →
+    env フォールバック、復号失敗は throw、DB 障害は env へ、60 秒 TTL キャッシュ）と型付き
+    `resolveR2Credentials` / `resolveLineCredentials` / `resolveAmazonAdsCredentials`、同期参照 `peekLineCredentials`
+    （worker の `isLineRelayConfigured()` 用）、`invalidateServiceCredentialCache`。
+  - `test.ts`: 疎通テスト `testServiceCredentials(p, fields)` — r2: HeadBucket（`@a2p/storage.testR2Connection`）、
+    line: `GET /v2/bot/info`（bot 名を表示）、amazon_ads: LwA refresh → `/v2/profiles` で profile_id の存在確認。
+  - `register.ts`: `installServiceCredentialProviders()` が `@a2p/storage.setR2ConfigProvider` に DB リゾルバを登録
+    （storage は DB 非依存のまま）。`primeServiceCredentials({ refreshMs })` は起動時に全件解決してキャッシュを温め、
+    以後周期的に再解決（worker は 65 秒）。
+- **各プロセスの配線**: worker `src/index.ts` main（install ＋ prime）、web / anp / portal は `instrumentation.ts`
+  `register()`（nodejs ランタイムのみ）。`@a2p/storage/operations` は `getR2Runtime()`（async、DB → env、設定不変なら
+  S3Client 再利用）を使う。LINE: worker `tasks/lib/line-auth-relay.ts` の `pushLine` は `resolveLineCredentials` →
+  env、`isLineRelayConfigured` は `peekLineCredentials` → env。web `/api/line/webhook` は `resolveLineCredentials` →
+  env（channel secret が DB に無ければ env で補う）。Amazon Ads: worker `ads-spend-fetch.ts` は
+  `resolveAmazonAdsCredentials` → `adsCredsFromEnv`。
+- **env の扱い**: `R2_*` は `packages/contracts/env.ts` で optional 化（DB 設定が優先、env はフォールバック）。
+  LINE_* / AMAZON_ADS_* は従来どおり任意。ポータルに「環境変数にて設定済み」を出すため、M2P-Portal にも
+  worker と同じ R2_* / LINE_* / AMAZON_ADS_* を設定した（2026-09-21）。
+- **UI** (`service-credentials-panel.tsx`): プロバイダごとに多項目フォーム（非秘密項目は現在値を表示、秘密項目は
+  パスワード入力でマスクをプレースホルダ表示・空欄なら変更なし、region は選択式）、保存 / 環境変数の設定を DB に
+  取り込む / 疎通テスト / 削除。Server Action は `setServiceCredentials` / `revokeServiceCredentials` /
+  `testServiceCredentials` / `importServiceCredentialsFromEnv`（`audit_log` に `api_credential.set/revoke`）。
+
 ## 10.5 デプロイ / 環境変数（Railway）
 
 - ポータルは**新しい Web サービス**として追加（web/worker と別サービス）。
@@ -134,5 +171,6 @@ ANP `/settings` の「AI モデル設定」で各ツールが扱う。ハブ画�
 - 実装済み（2026-08-20）: `packages/auth`、`apps/portal`（login/ツール選択/SSO 配線）、A2P の共通認証化。
   全て typecheck / build 通過。
 - 2026-08-22: Railway `M2P-Portal` サービスとして `https://m2p.tools` に本番デプロイ済み（ANP も `tools.ts` に登録済み）。
-- 2026-09-21: 設定（API キーの一元管理）を実装（§10.4b）。AI モデル割当は各ツール側。
+- 2026-09-21: 設定（API キーの一元管理）を実装（§10.4b）。AI モデル割当は各ツール側。同日、サービス連携
+  （R2 / LINE / Amazon Ads）も「API 管理」として一元化（§10.4b-2、`@a2p/credentials`）。
 - 残: 経営ダッシュボードの実データ接続（全ツール横断の売上・コスト集計コネクタ）。

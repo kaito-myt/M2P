@@ -13,6 +13,7 @@
  * 本ファイルは route binding + DB 配線のみ。
  */
 import { NextResponse } from 'next/server';
+import { resolveLineCredentials } from '@a2p/credentials';
 import { prisma } from '@a2p/db';
 
 import { verifyLineSignature, replyLine } from '@/lib/line-client';
@@ -22,9 +23,11 @@ export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
 export async function POST(request: Request): Promise<NextResponse> {
-  const channelSecret = process.env.LINE_CHANNEL_SECRET;
-  const accessToken = process.env.LINE_CHANNEL_ACCESS_TOKEN;
-  const allowedUserId = process.env.LINE_ALLOWED_USER_ID;
+  // 接続情報は M2P ポータルの API 管理 (DB) → env の順。DB 側に channel secret が無ければ env で補う。
+  const creds = await resolveLineCredentials().catch(() => null);
+  const channelSecret = creds?.channelSecret ?? process.env.LINE_CHANNEL_SECRET;
+  const accessToken = creds?.channelAccessToken ?? process.env.LINE_CHANNEL_ACCESS_TOKEN;
+  const allowedUserId = creds?.allowedUserId ?? process.env.LINE_ALLOWED_USER_ID;
 
   if (!channelSecret || !accessToken || !allowedUserId) {
     return NextResponse.json({ error: 'line relay not configured' }, { status: 503 });

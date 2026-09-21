@@ -181,6 +181,19 @@ describe('parseEnv (success cases)', () => {
     expect(() => parseEnv(src, { onError: 'throw' })).toThrow(EnvValidationError);
   });
 
+  it('R2_* は省略可能 (M2P API 管理の DB 設定が優先、env はフォールバック)', () => {
+    const src = validEnv();
+    delete src.R2_ACCOUNT_ID;
+    delete src.R2_ACCESS_KEY_ID;
+    delete src.R2_SECRET_ACCESS_KEY;
+    delete src.R2_BUCKET_NAME;
+    delete src.R2_PUBLIC_URL_BASE;
+
+    const env = parseEnv(src, { onError: 'throw' });
+    expect(env.R2_ACCOUNT_ID).toBeUndefined();
+    expect(env.R2_BUCKET_NAME).toBeUndefined();
+  });
+
   it('AMAZON_EMAIL / AMAZON_PASSWORD は省略可能 (自動再ログイン任意機能)', () => {
     const src = validEnv();
     delete src.AMAZON_EMAIL;
@@ -216,8 +229,8 @@ describe('parseEnv (failure cases)', () => {
   it('必須項目が欠けると process.exit(1) を呼ぶ (既定挙動)', () => {
     const src = validEnv();
     delete src.DATABASE_URL;
-    // T-02-13 以降 ANTHROPIC_API_KEY は optional 化されたので、必須継続の R2_ACCOUNT_ID を使う
-    delete src.R2_ACCOUNT_ID;
+    // T-02-13 以降 ANTHROPIC_API_KEY、2026-09-21 以降 R2_* も optional 化されたので、必須継続の AUTH_USERNAME を使う
+    delete src.AUTH_USERNAME;
 
     const writes: string[] = [];
     const stderr = { write: vi.fn((chunk: string) => { writes.push(chunk); return true; }) };
@@ -230,7 +243,7 @@ describe('parseEnv (failure cases)', () => {
     expect(writes.length).toBeGreaterThan(0);
     const combined = writes.join('');
     expect(combined).toContain('DATABASE_URL');
-    expect(combined).toContain('R2_ACCOUNT_ID');
+    expect(combined).toContain('AUTH_USERNAME');
   });
 
   it('onError: throw 指定時は EnvValidationError を投げる', () => {

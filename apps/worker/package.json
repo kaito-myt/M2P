@@ -14,6 +14,7 @@
   "dependencies": {
     "@a2p/agents": "workspace:*",
     "@a2p/contracts": "workspace:*",
+    "@a2p/credentials": "workspace:*",
     "@a2p/crypto": "workspace:*",
     "@a2p/db": "workspace:*",
     "@a2p/notify": "workspace:*",

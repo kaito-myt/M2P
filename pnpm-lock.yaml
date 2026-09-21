@@ -41,6 +41,9 @@ importers:
       '@a2p/contracts':
         specifier: workspace:*
         version: link:../../packages/contracts
+      '@a2p/credentials':
+        specifier: workspace:*
+        version: link:../../packages/credentials
       '@a2p/crypto':
         specifier: workspace:*
         version: link:../../packages/crypto
@@ -123,12 +126,21 @@ importers:
       '@a2p/auth':
         specifier: workspace:*
         version: link:../../packages/auth
+      '@a2p/contracts':
+        specifier: workspace:*
+        version: link:../../packages/contracts
+      '@a2p/credentials':
+        specifier: workspace:*
+        version: link:../../packages/credentials
       '@a2p/crypto':
         specifier: workspace:*
         version: link:../../packages/crypto
       '@a2p/db':
         specifier: workspace:*
         version: link:../../packages/db
+      '@a2p/storage':
+        specifier: workspace:*
+        version: link:../../packages/storage
       '@a2p/ui':
         specifier: workspace:*
         version: link:../../packages/ui
@@ -205,6 +217,9 @@ importers:
       '@a2p/contracts':
         specifier: workspace:*
         version: link:../../packages/contracts
+      '@a2p/credentials':
+        specifier: workspace:*
+        version: link:../../packages/credentials
       '@a2p/crypto':
         specifier: workspace:*
         version: link:../../packages/crypto
@@ -326,6 +341,9 @@ importers:
       '@a2p/contracts':
         specifier: workspace:*
         version: link:../../packages/contracts
+      '@a2p/credentials':
+        specifier: workspace:*
+        version: link:../../packages/credentials
       '@a2p/crypto':
         specifier: workspace:*
         version: link:../../packages/crypto
@@ -498,6 +516,34 @@ importers:
       pino-pretty:
         specifier: ^11.3.0
         version: 11.3.0
+      typescript:
+        specifier: ^5.6.3
+        version: 5.9.3
+      vitest:
+        specifier: ^2.1.5
+        version: 2.1.9(@types/node@22.19.19)
+
+  packages/credentials:
+    dependencies:
+      '@a2p/contracts':
+        specifier: workspace:*
+        version: link:../contracts
+      '@a2p/crypto':
+        specifier: workspace:*
+        version: link:../crypto
+      '@a2p/db':
+        specifier: workspace:*
+        version: link:../db
+      '@a2p/storage':
+        specifier: workspace:*
+        version: link:../storage
+      zod:
+        specifier: ^3.23.8
+        version: 3.25.76
+    devDependencies:
+      '@types/node':
+        specifier: ^22.9.0
+        version: 22.19.19
       typescript:
         specifier: ^5.6.3
         version: 5.9.3

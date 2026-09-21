@@ -2,6 +2,7 @@ import { Agent, setGlobalDispatcher } from 'undici';
 
 import { parseEnv } from '@a2p/contracts/env';
 import { createLogger } from '@a2p/contracts/logger';
+import { installServiceCredentialProviders, primeServiceCredentials } from '@a2p/credentials';
 
 import { installGracefulShutdown, startRunner } from './runner.js';
 
@@ -46,6 +47,15 @@ export async function main(): Promise<void> {
     },
     'worker boot',
   );
+
+  // M2P ポータルの「API 管理」(docs/10 §10.4b): R2 / LINE / Amazon Ads の接続情報を DB 優先で解決する。
+  // R2 は storage パッケージへプロバイダ登録、LINE は同期判定 (isLineRelayConfigured) のためキャッシュを温めて
+  // 以後 65 秒ごとに再解決する (ポータルで差し替えると最長 ~1 分で反映)。
+  installServiceCredentialProviders();
+  await primeServiceCredentials({
+    refreshMs: 65_000,
+    onError: (provider, err) => log.warn({ provider, err }, 'service credentials resolve failed (env fallback)'),
+  });
 
   const runner = await startRunner({
     connectionString: env.DATABASE_URL,

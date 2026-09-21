@@ -262,11 +262,11 @@ LTS / latest stable を基本とし、Phase 0-1 では新規プロジェクト�
 | `OPENAI_API_KEY` | OpenAI API キー（gpt-image-1 + LLM、**フォールバック専用**）。`getApiKey('openai')` 経由 | 任意 (DB 未設定時は必須) | `sk-...` |
 | `GOOGLE_GENERATIVE_AI_API_KEY` | Gemini API キー（**フォールバック専用**）。`getApiKey('google')` 経由 | 任意 (DB 未設定時は必須) | `AI...` |
 | `TAVILY_API_KEY` | Web 検索フォールバック（**フォールバック専用**、Anthropic 以外モデルへ Marketer 切替時に使用） | 任意（Phase 2+） | `tvly-...` |
-| `R2_ACCOUNT_ID` | Cloudflare R2 アカウント ID | 必須 | hex 文字列 |
-| `R2_ACCESS_KEY_ID` | R2 アクセスキー | 必須 | — |
-| `R2_SECRET_ACCESS_KEY` | R2 シークレット | 必須 | — |
-| `R2_BUCKET_NAME` | バケット名 | 必須 | `a2p-artifacts` |
-| `R2_PUBLIC_URL_BASE` | 署名付き URL のベース | 必須 | `https://<account>.r2.cloudflarestorage.com/<bucket>` |
+| `R2_ACCOUNT_ID` | Cloudflare R2 アカウント ID。2026-09-21 から M2P「API 管理」(`api_credentials.provider='r2'`) が優先、env は**フォールバック** | 任意 (DB 未設定時は必須) | hex 文字列 |
+| `R2_ACCESS_KEY_ID` | R2 アクセスキー（同上） | 任意 (DB 未設定時は必須) | — |
+| `R2_SECRET_ACCESS_KEY` | R2 シークレット（同上） | 任意 (DB 未設定時は必須) | — |
+| `R2_BUCKET_NAME` | バケット名（同上） | 任意 (DB 未設定時は必須) | `a2p-artifacts` |
+| `R2_PUBLIC_URL_BASE` | 署名付き URL のベース（現状未使用） | 任意 | `https://<account>.r2.cloudflarestorage.com/<bucket>` |
 | `RESEND_API_KEY` | メール送信 API キー | 必須 | `re_...` |
 | `MAIL_FROM` | 送信元アドレス | 必須 | `a2p@example.com` |
 | `MAIL_TO` | 通知送信先（運営者本人） | 必須 | `operator@example.com` |
@@ -284,6 +284,9 @@ LTS / latest stable を基本とし、Phase 0-1 では新規プロジェクト�
 | `LINE_ALLOWED_USER_ID` | LINE 双方向認証リレー: 認証コード返信を受け付ける運営者本人の LINE userId（なりすまし防止） | 任意 | `U...` |
 | `AMAZON_EMAIL` | `sales.fetch` セッション切れ時の自動再ログイン用 Amazon アカウントのメールアドレス（LINE 双方向認証リレーと併用） | 任意（未設定なら自動再ログインは行わず従来通り手動キャプチャにフォールバック） | `operator@example.com` |
 | `AMAZON_PASSWORD` | 同上のパスワード | 任意 | — |
+| `AMAZON_ADS_CLIENT_ID` / `_CLIENT_SECRET` / `_REFRESH_TOKEN` / `_PROFILE_ID` / `_REGION` | Amazon Advertising API (F-090)。2026-09-21 から M2P「API 管理」(`api_credentials.provider='amazon_ads'`) が優先、env はフォールバック | 任意 | `scripts/ads/amazon-ads-oauth.mjs` で取得 |
+
+> **LINE_* も同様に M2P「API 管理」(`api_credentials.provider='line'`) が優先、env はフォールバック**（2026-09-21、docs/10 §10.4b-2）。
 
 ---
 

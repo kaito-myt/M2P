@@ -10,6 +10,8 @@
  */
 import { z } from 'zod';
 
+import { serviceProviderSchema as serviceProviderSchemaRef } from '@a2p/credentials/spec';
+
 // ---------------------------------------------------------------------------
 // API キー (サービサー)
 // ---------------------------------------------------------------------------
@@ -108,3 +110,25 @@ export function envKeyFor(provider: ApiProvider, env: Record<string, string | un
   const v = env[API_PROVIDER_ENV[provider]];
   return typeof v === 'string' && v.trim().length > 0 ? v.trim() : null;
 }
+
+// ---------------------------------------------------------------------------
+// サービス連携 (R2 / LINE / Amazon Ads) — 多項目の接続情報。仕様は @a2p/credentials/spec が正本
+// (worker / web / anp のリゾルバと同じ定義を使う)。ここでは UI 向けの再 export と入力スキーマのみ。
+// ---------------------------------------------------------------------------
+
+export {
+  SERVICE_PROVIDERS,
+  SERVICE_PROVIDER_META,
+  serviceProviderSchema,
+  type ServiceFieldSpec,
+  type ServiceFields,
+  type ServiceProvider,
+  type ServiceProviderMeta,
+} from '@a2p/credentials/spec';
+
+export const serviceProviderOnlyInput = z.object({ provider: serviceProviderSchemaRef });
+export const setServiceCredentialsInput = z.object({
+  provider: serviceProviderSchemaRef,
+  /** 項目キー → 値。秘密項目の空文字は「変更しない」(既存値を保持)。 */
+  fields: z.record(z.string(), z.string().max(4096)),
+});

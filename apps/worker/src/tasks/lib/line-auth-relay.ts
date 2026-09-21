@@ -16,6 +16,7 @@
  * 仕様根拠: docs/05-program-design.md "LINE 双方向認証リレー" / sales.fetch 自動再ログイン追記。
  */
 import { createLogger } from '@a2p/contracts/logger';
+import { peekLineCredentials, resolveLineCredentials } from '@a2p/credentials';
 
 const log = createLogger('worker.line-auth-relay');
 
@@ -50,20 +51,28 @@ export interface RequestOtpOptions {
   maxRounds?: number;
 }
 
-/** LINE 中継が設定済みか (env 未設定なら push はできても意味がない)。 */
+/**
+ * LINE 中継が設定済みか (同期判定)。M2P ポータルの API 管理 (DB) → env の順。
+ * DB 側は worker 起動時の `primeServiceCredentials` が温めたキャッシュを参照する (65 秒ごとに再解決)。
+ */
 export function isLineRelayConfigured(): boolean {
+  if (peekLineCredentials() !== null) return true;
   return Boolean(process.env.LINE_CHANNEL_ACCESS_TOKEN && process.env.LINE_ALLOWED_USER_ID);
 }
 
 /**
- * LINE Messaging API push でテキストを送る。
+ * LINE Messaging API push でテキストを送る。接続情報は DB (M2P API 管理) → env の順で解決。
  * 失敗しても呼び出し側の処理を止めたくないため、例外は投げず false を返す。
  */
 export async function pushLine(text: string): Promise<boolean> {
-  const token = process.env.LINE_CHANNEL_ACCESS_TOKEN;
-  const to = process.env.LINE_ALLOWED_USER_ID;
+  const creds = await resolveLineCredentials().catch((err: unknown) => {
+    log.warn({ err }, 'LINE credentials resolve failed — falling back to env');
+    return null;
+  });
+  const token = creds?.channelAccessToken ?? process.env.LINE_CHANNEL_ACCESS_TOKEN;
+  const to = creds?.allowedUserId ?? process.env.LINE_ALLOWED_USER_ID;
   if (!token || !to) {
-    log.warn('LINE relay not configured (LINE_CHANNEL_ACCESS_TOKEN / LINE_ALLOWED_USER_ID) — push skipped');
+    log.warn('LINE relay not configured (M2P API 管理 / LINE_CHANNEL_ACCESS_TOKEN / LINE_ALLOWED_USER_ID) — push skipped');
     return false;
   }
   try {

@@ -59,11 +59,13 @@ export const EnvSchema = z.object({
   TAVILY_API_KEY: emptyToUndef(z.string().min(1).optional()),
 
   // --- 12-16. R2 (オブジェクトストレージ) ---------------------------------
-  R2_ACCOUNT_ID: z.string().min(1),
-  R2_ACCESS_KEY_ID: z.string().min(1),
-  R2_SECRET_ACCESS_KEY: z.string().min(1),
-  R2_BUCKET_NAME: z.string().min(1),
-  R2_PUBLIC_URL_BASE: z.string().url(),
+  // 2026-09-21: M2P ポータルの API 管理 (`api_credentials.provider='r2'`, @a2p/credentials) が優先、
+  // env はフォールバック (LLM キーと同じ扱い)。どちらも無ければ storage 利用時に ConfigError。
+  R2_ACCOUNT_ID: emptyToUndef(z.string().min(1).optional()),
+  R2_ACCESS_KEY_ID: emptyToUndef(z.string().min(1).optional()),
+  R2_SECRET_ACCESS_KEY: emptyToUndef(z.string().min(1).optional()),
+  R2_BUCKET_NAME: emptyToUndef(z.string().min(1).optional()),
+  R2_PUBLIC_URL_BASE: emptyToUndef(z.string().url().optional()),
 
   // --- 17-19. メール (Resend) ---------------------------------------------
   RESEND_API_KEY: z.string().min(1),

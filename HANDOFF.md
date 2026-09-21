@@ -123,10 +123,17 @@ ANP のアカウント戦略を AI に相談しながら策定）を実施。mai
   サイドメニューの「アカウント設計」は削除、`/accounts` のボタンが入口。旧 `/accounts/design*` は履歴用に残置。
 - **note 連携フォーム**: `note_gql_auth_token` と `_note_session_v5` を個別入力に（どちらか一方でも検証へ）。未ログインだと
   `note_gql_auth_token` は出ないので note にログインしてから Cookie を見る。
-- **M2P 設定「API 管理」拡張（R2 / LINE / Amazon Ads を DB 管理）は着手中・未完**: storage に DB 由来設定プロバイダ
-  （`setR2ConfigProvider` / `getR2Runtime`、env フォールバック、60 秒キャッシュ）と `testR2Connection` を追加済み。
-  残: `packages/credentials`（api_credentials の多項目 JSON 保存＋各リゾルバ）、worker/web/anp 起動時のプロバイダ登録、
-  ads-spend-fetch / line-auth-relay の DB 優先化、ポータル UI の多項目フォーム。
+- **M2P 設定「API 管理」拡張（R2 / LINE / Amazon Ads を DB 管理）— 実装・デプロイ済**（docs/10 §10.4b-2）:
+  新パッケージ `packages/credentials`（`@a2p/credentials`: 仕様 `spec.ts` / 保存・リゾルバ `store.ts` / 疎通テスト `test.ts` /
+  起動時登録 `register.ts`、Vitest 24 件）。同じ `api_credentials` に provider `r2` / `line` / `amazon_ads` の多項目 JSON を
+  暗号化保存。worker は `index.ts` で `installServiceCredentialProviders()`＋`primeServiceCredentials({refreshMs:65s})`、
+  web / anp / portal は `instrumentation.ts`。R2 は `@a2p/storage.getR2Runtime`（DB → env）、LINE は `pushLine` /
+  `isLineRelayConfigured` / web webhook、Ads は `ads-spend-fetch` が DB → env。`R2_*` env は optional 化
+  （`packages/contracts/env.ts`）。ポータル `/settings/api-keys` は「API 管理」に改名し下段に「サービス連携」多項目フォーム。
+  M2P-Portal に R2_* / LINE_* を env としてもコピー済（「環境変数にて設定済み」→「DB に取り込む」が使える）。
+  **運用**: ポータルで「環境変数の設定を DB に取り込む」→ 疎通テスト OK を確認してから、任意で worker/web/anp の
+  R2_* / LINE_* env を削除できる（削除しなくても DB 優先で動く）。Amazon Ads はオンボーディング完了後にポータルの
+  フォームへ 5 項目を貼るだけでよい（Railway env は不要になった）。
 
 ### DB マイグレーション履歴の整合
 - 本番 `_prisma_migrations` に未記録だった 20260915/0918/0919 と今日の 3 本を `prisma migrate resolve --applied` で記録。

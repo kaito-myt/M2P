@@ -12,6 +12,18 @@
  */
 import { revalidatePath } from 'next/cache';
 
+import {
+  decodeServiceCredentials,
+  encodeServiceCredentials,
+  invalidateServiceCredentialCache,
+  maskServiceFields,
+  mergeServiceFields,
+  serviceFieldsFromEnv,
+  serviceFieldsSchema,
+  testServiceCredentials as runServiceTest,
+  type ServiceFields,
+  type ServiceTestResult,
+} from '@a2p/credentials';
 import { Prisma, prisma } from '@a2p/db';
 import { decryptApiKey, encryptApiKey, maskApiKey } from '@a2p/crypto';
 
@@ -20,9 +32,12 @@ import {
   envKeyFor,
   providerOnlyInput,
   providerTestRequest,
+  serviceProviderOnlyInput,
   setApiKeyInput,
+  setServiceCredentialsInput,
   type ApiKeyTestResult,
   type ApiProvider,
+  type ServiceProvider,
 } from '@/lib/settings-core';
 
 export type ActionResult<T> = { ok: true; data: T } | { ok: false; error: string };
@@ -165,4 +180,116 @@ export async function importApiKeyFromEnv(input: unknown): Promise<ActionResult<
   const fromEnv = envKeyFor(provider);
   if (!fromEnv) return { ok: false, error: 'このサービサーのキーは環境変数に設定されていません' };
   return setApiKey({ provider, key: fromEnv });
+}
+
+// ---------------------------------------------------------------------------
+// サービス連携 (R2 / LINE / Amazon Ads) — 多項目を JSON で暗号化して同じ api_credentials に保存
+// ---------------------------------------------------------------------------
+
+export interface ServiceCredentialSaved {
+  provider: ServiceProvider;
+  key_mask: string;
+  /** 秘密項目をマスクした現在値 (フォーム再表示用)。 */
+  masked_fields: ServiceFields;
+}
+
+async function loadServiceFields(provider: ServiceProvider): Promise<ServiceFields | null> {
+  const row = await prisma.apiCredential.findUnique({ where: { provider }, select: { key_enc: true } });
+  return row ? decodeServiceCredentials(row.key_enc) : null;
+}
+
+export async function setServiceCredentials(input: unknown): Promise<ActionResult<ServiceCredentialSaved>> {
+  const userId = await requireUserId();
+  if (!userId) return { ok: false, error: 'ログインが必要です' };
+  const parsed = setServiceCredentialsInput.safeParse(input);
+  if (!parsed.success) return { ok: false, error: '入力形式が不正です' };
+  const { provider, fields } = parsed.data;
+  try {
+    const existing = await loadServiceFields(provider).catch(() => null);
+    const merged = mergeServiceFields(provider, existing, fields);
+    const validated = serviceFieldsSchema(provider).safeParse(merged);
+    if (!validated.success) {
+      const missing = validated.error.issues.map((i) => String(i.path[0] ?? '')).filter(Boolean);
+      return { ok: false, error: `必須項目が不足または不正です: ${missing.join(', ')}` };
+    }
+    const { key_enc, key_mask } = encodeServiceCredentials(provider, validated.data);
+    const before = await prisma.apiCredential.findUnique({ where: { provider }, select: { key_mask: true } });
+    await prisma.$transaction([
+      prisma.apiCredential.upsert({
+        where: { provider },
+        create: { provider, key_enc, key_mask, set_by: userId, set_at: new Date(), last_tested_at: null, last_test_result_json: Prisma.JsonNull },
+        update: { key_enc, key_mask, set_by: userId, set_at: new Date(), last_tested_at: null, last_test_result_json: Prisma.JsonNull },
+      }),
+      prisma.auditLog.create({
+        data: {
+          actor_id: userId,
+          action: 'api_credential.set',
+          target_kind: 'api_credential',
+          target_id: provider,
+          before_json: before ? { key_mask: before.key_mask } : Prisma.JsonNull,
+          after_json: { key_mask, source: 'portal', fields: Object.keys(validated.data) },
+        },
+      }),
+    ]);
+    invalidateServiceCredentialCache(provider);
+    revalidatePath('/settings/api-keys');
+    return { ok: true, data: { provider, key_mask, masked_fields: maskServiceFields(provider, validated.data) } };
+  } catch (err) {
+    return { ok: false, error: errorMessage(err, '接続情報の保存に失敗しました') };
+  }
+}
+
+export async function revokeServiceCredentials(input: unknown): Promise<ActionResult<void>> {
+  const userId = await requireUserId();
+  if (!userId) return { ok: false, error: 'ログインが必要です' };
+  const parsed = serviceProviderOnlyInput.safeParse(input);
+  if (!parsed.success) return { ok: false, error: 'provider が不正です' };
+  const { provider } = parsed.data;
+  try {
+    const before = await prisma.apiCredential.findUnique({ where: { provider }, select: { key_mask: true } });
+    if (!before) return { ok: false, error: 'このサービスの接続情報は登録されていません' };
+    await prisma.$transaction([
+      prisma.apiCredential.delete({ where: { provider } }),
+      prisma.auditLog.create({
+        data: { actor_id: userId, action: 'api_credential.revoke', target_kind: 'api_credential', target_id: provider, before_json: { key_mask: before.key_mask }, after_json: Prisma.JsonNull },
+      }),
+    ]);
+    invalidateServiceCredentialCache(provider);
+    revalidatePath('/settings/api-keys');
+    return { ok: true, data: undefined };
+  } catch (err) {
+    return { ok: false, error: errorMessage(err, '接続情報の削除に失敗しました') };
+  }
+}
+
+export async function testServiceCredentials(input: unknown): Promise<ActionResult<ServiceTestResult>> {
+  const userId = await requireUserId();
+  if (!userId) return { ok: false, error: 'ログインが必要です' };
+  const parsed = serviceProviderOnlyInput.safeParse(input);
+  if (!parsed.success) return { ok: false, error: 'provider が不正です' };
+  const { provider } = parsed.data;
+  try {
+    const fields = await loadServiceFields(provider);
+    if (!fields) return { ok: false, error: 'このサービスの接続情報は登録されていません' };
+    const result = await runServiceTest(provider, fields);
+    await prisma.apiCredential.update({
+      where: { provider },
+      data: { last_tested_at: new Date(), last_test_result_json: result as unknown as Prisma.InputJsonValue },
+    });
+    revalidatePath('/settings/api-keys');
+    return { ok: true, data: result };
+  } catch (err) {
+    return { ok: false, error: errorMessage(err, '疎通テストに失敗しました') };
+  }
+}
+
+/** 環境変数に揃っている接続情報を DB に取り込む (M2P への一元化)。 */
+export async function importServiceCredentialsFromEnv(input: unknown): Promise<ActionResult<ServiceCredentialSaved>> {
+  const userId = await requireUserId();
+  if (!userId) return { ok: false, error: 'ログインが必要です' };
+  const parsed = serviceProviderOnlyInput.safeParse(input);
+  if (!parsed.success) return { ok: false, error: 'provider が不正です' };
+  const fields = serviceFieldsFromEnv(parsed.data.provider);
+  if (!fields) return { ok: false, error: 'このサービスの接続情報は環境変数に揃っていません' };
+  return setServiceCredentials({ provider: parsed.data.provider, fields });
 }

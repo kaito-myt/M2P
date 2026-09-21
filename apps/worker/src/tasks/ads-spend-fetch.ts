@@ -24,6 +24,7 @@
 import type { JobHelpers, Task } from 'graphile-worker';
 
 import { createLogger, type Logger } from '@a2p/contracts/logger';
+import { resolveAmazonAdsCredentials } from '@a2p/credentials';
 import { prisma as defaultPrisma } from '@a2p/db';
 
 import {
@@ -127,7 +128,14 @@ export async function runAdsSpendFetch(deps: AdsSpendFetchDeps = {}): Promise<Ad
   const log = deps.logger ?? createLogger(`worker.${ADS_SPEND_FETCH_TASK_NAME}`);
   const prisma = deps.prisma ?? (defaultPrisma as unknown as AdsSpendFetchPrisma);
   const env = deps.env ?? (process.env as Record<string, string | undefined>);
-  const creds = deps.creds !== undefined ? deps.creds : adsCredsFromEnv(env);
+  // 接続情報は M2P ポータルの API 管理 (DB) → env の順。DB 解決に失敗したら env のみで続行。
+  const creds =
+    deps.creds !== undefined
+      ? deps.creds
+      : ((await resolveAmazonAdsCredentials({ env }).catch((err: unknown) => {
+          log.warn({ err }, 'Amazon Ads credentials resolve failed — falling back to env');
+          return null;
+        })) ?? adsCredsFromEnv(env));
   if (!creds) {
     log.info({ task: ADS_SPEND_FETCH_TASK_NAME }, 'Amazon Ads creds not configured — skip');
     return { ok: true, skipped: true, reason: 'not_connected' };

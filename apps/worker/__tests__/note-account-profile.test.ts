@@ -189,7 +189,7 @@ describe(NOTE_ACCOUNT_PROFILE_TASK_NAME, () => {
 
   it('editorial (F-ANP-07): 方針生成を呼び target_reader/tone/editorial_policy を保存、画像/bio は触らない', async () => {
     const { prisma, accountUpdates } = buildPrisma({ withDesign: true, bio: '今の bio' });
-    const generateEditorial = vi.fn(async () => ({
+    const generateEditorial = vi.fn(async (_input: unknown) => ({
       target_reader: '30代会社員',
       tone: 'です・ます調',
       editorial_policy: '・冒頭で悩みを言い当てる',

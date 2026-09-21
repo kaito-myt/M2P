@@ -278,6 +278,7 @@ A2P/
 | `packages/output` | Markdown → docx/pdf 変換、画像 sharp 後処理 | `docx`, `@react-pdf/renderer`, `sharp` |
 | `packages/notify` | Resend 経由のメール送信 + react-email テンプレ 5 種 | `resend`, `react-email` |
 | `packages/crypto` | AES-256-GCM による KDP 認証情報暗号化 | `node:crypto` |
+| `packages/credentials` | M2P「API 管理」のサービス連携 (R2 / LINE / Amazon Ads) 接続情報。`api_credentials` に多項目 JSON を暗号化保存、DB 優先 → env フォールバックのリゾルバ、疎通テスト、storage へのプロバイダ登録 (docs/10 §10.4b-2) | `packages/{db,contracts,crypto,storage}` |
 | `packages/kdp` | Phase 3 Playwright 実装 | `playwright-extra` |
 
 ---
@@ -3414,8 +3415,10 @@ export const logger = pino({
   ツールは fulfilled 行をポーリングして Amazon の入力欄に自動入力し、消費後 `status='consumed'` に更新
   する (消費側のロジックはローカルツール側の責務、本 Web 側は書き込みのみ)。認証は LINE 署名
   (`x-line-signature`, HMAC-SHA256 timing-safe 比較) であり NextAuth セッションを使わない
-  (`middleware.ts` の matcher で `/api/line` を除外)。env: `LINE_CHANNEL_SECRET` /
-  `LINE_CHANNEL_ACCESS_TOKEN` / `LINE_ALLOWED_USER_ID` (全て任意、未設定なら webhook は 503)。
+  (`middleware.ts` の matcher で `/api/line` を除外)。接続情報は **M2P「API 管理」(`api_credentials.provider='line'`、
+  `@a2p/credentials.resolveLineCredentials`) → env** の順 (2026-09-21): `LINE_CHANNEL_SECRET` /
+  `LINE_CHANNEL_ACCESS_TOKEN` / `LINE_ALLOWED_USER_ID` (全て任意、どちらにも無ければ webhook は 503)。worker 側の送信
+  (`tasks/lib/line-auth-relay.ts` `pushLine` / `isLineRelayConfigured`) も同じ順で解決する。
   **待機ループは DB 経由でしか抜けない (2026-09-09 実測)**: `scripts/kdp-publish.mjs` の `awaitOtpOnce` は
   `kdp_auth_requests` の `status='fulfilled'` 行だけを 2 秒間隔でポーリングしており、**ブラウザ側で運営者が
   手動サインインを完了しても検知しない**。headful Chrome に直接 6 桁を入力して先へ進んだ場合でも、
@@ -3548,8 +3551,9 @@ gpt-image-2 単価行を seed 済 (`apply-openai-catalog.ts`)。本ドキュメ�
 - **`ads.spend.fetch`**（F-090, 2026-08-26 実装／2026-09-21 拡張。日次cron `0 19 * * *`=JST04:00・常時ON。
   タスク名は拡張後も不変）: Amazon Advertising API から広告費・パフォーマンスを取得する。
   `apps/worker/src/tasks/ads-spend-fetch.ts` + `apps/worker/src/tasks/ads-spend/{amazon-ads-client,ads-report-transform}.ts`。
-  - **認証**: LwA `refresh_token` → `access_token`。`adsCredsFromEnv`(env `AMAZON_ADS_CLIENT_ID` /
-    `_CLIENT_SECRET` / `_REFRESH_TOKEN` / `_PROFILE_ID` / `_REGION`(既定 `fe`))が不足していれば
+  - **認証**: LwA `refresh_token` → `access_token`。接続情報は **M2P「API 管理」(`api_credentials.provider='amazon_ads'`、
+    `@a2p/credentials.resolveAmazonAdsCredentials`) → env** の順 (2026-09-21)。env 側は `adsCredsFromEnv`(`AMAZON_ADS_CLIENT_ID` /
+    `_CLIENT_SECRET` / `_REFRESH_TOKEN` / `_PROFILE_ID` / `_REGION`(既定 `fe`))。どちらも不足していれば
     `{ok:true, skipped:true, reason:'not_connected'}` で no-op スキップ(未接続扱い)。
   - **Amazon Ads API の事実 (2026-09-21 時点, 要実データ最終検証)**:
     - LwA 認可 URL: NA `https://www.amazon.com/ap/oa` / EU `https://eu.account.amazon.com/ap/oa` /
