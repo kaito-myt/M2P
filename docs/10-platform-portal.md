@@ -92,27 +92,30 @@ Auth.js v5（JWT セッション）を全アプリで共有する。SSO の成�
   - A2P: `NEXT_PUBLIC_TOOL_A2P_URL`（未設定時 `http://localhost:3001`）。
 - `status: 'coming_soon'`（or URL 未設定）は「準備中」バッジでカード無効表示。
 
-## 10.4b 設定（AI モデル割当 / API キー）— 2026-09-21 追加
+## 10.4b 設定（API キーの一元管理）— 2026-09-21 追加
 
-運営者要望「M2P の設定の方で AI モデル設定ができるようにして。各サービサーの API キー情報を管理できるようにして」
-への対応。A2P / ANP / worker は同じ DB（`api_credentials` / `model_assignments` / `model_catalog` / `prompts`）を
-共有しているため、ポータルで一元管理すると全ツールに反映される。
+運営者要望「各サービサーの API キー情報を管理できるようにして」「API 管理は全部 M2P 側に集約しよう」への対応。
+A2P / ANP / worker は同じ DB（`api_credentials`）を共有し、各プロセスは `@a2p/agents/lib/get-api-key`
+（DB 優先 → env フォールバック、60 秒 LRU）で読むため、ポータルで保存すれば 1 分以内に全ツールへ反映される。
+**AI モデルの割当はポータルに持たせない**（運営者判断: 役割がツールごとに異なる。A2P `/settings/models`、
+ANP `/settings` の「AI モデル設定」で各ツールが扱う。ハブ画面から各ツールへのリンクのみ）。
 
-- 画面: `/settings`（ハブ: 設定済みキー数・役割数・呼出不可モデル件数）、`/settings/api-keys`、`/settings/models`。
+- 画面: `/settings`（ハブ: 設定済みキー数・環境変数のみのキー・各ツールのモデル設定へのリンク）、`/settings/api-keys`。
   サイドメニュー「設定」を有効化（`components/nav-links.tsx`）。
 - **API キー** (`app/(app)/settings/api-keys`): Anthropic / OpenAI / Google / Tavily の 4 サービサー。
-  `@a2p/crypto.encryptApiKey`（`API_CRED_KEY`、A2P と同じ鍵 → **M2P-Portal サービスにも同じ `API_CRED_KEY` を設定**）で
+  `@a2p/crypto.encryptApiKey`（`API_CRED_KEY`、A2P と同じ鍵 → **M2P-Portal サービスにも同じ `API_CRED_KEY` を設定済み**）で
   暗号化して `api_credentials` に upsert、`key_mask` だけ表示。疎通テストは各社の models 一覧 API（Tavily は最小検索）を
   fetch で叩く（apps/web と同じエンドポイント）。削除は `delete`。全て `audit_log`（`api_credential.set/revoke`、
-  `after_json.source='portal'`）に記録。各プロセスは `@a2p/agents/lib/get-api-key` の 60 秒 LRU 経由で読むため
-  保存後 1 分以内に反映（DB のキーが env より優先）。
-- **AI モデル設定** (`app/(app)/settings/models`): 役割 = `prompts(active)` と `model_assignments(active)` に登場する
-  role の和集合を、ツール別グループ（A2P 書籍 / A2P 販促 / 組織 / ANP / その他、`lib/settings-core.ts`
-  `roleGroup`）と日本語ラベル（`ROLE_LABEL`）で表示。行ごとに provider/model（`model_catalog` の `is_current=true`
-  かつ `available!==false`）を選んで保存 → `genre=null` の active 行を archived にして新規 active を作る
-  （A2P `upsertModelAssignmentCore` と同じ手順、`audit_log` `model_assignment.upsert`）。ジャンル別の上書きは
-  件数だけ表示し A2P の設定画面へリンク。呼出不可（`available=false`）のモデルに割り当たっている役割は警告表示。
-- Server Action は `app/actions/settings.ts`。純関数（グループ分け・行組立・テスト用リクエスト）は
+  `after_json.source='portal'`）に記録。
+- **環境変数にて設定済み**: ポータル自身の env（`ANTHROPIC_API_KEY` / `OPENAI_API_KEY` /
+  `GOOGLE_GENERATIVE_AI_API_KEY` / `TAVILY_API_KEY`、`lib/settings-core.ts` `API_PROVIDER_ENV`）に値があり DB 未登録の
+  サービサーは「環境変数にて設定済み」と表示し、「環境変数のキーを DB に取り込む」（`importApiKeyFromEnv`）で
+  `api_credentials` へ移せる（取り込み後は DB が優先されるので worker/web の env は削除してよい）。表示のために
+  worker と同じ 3 つの env を M2P-Portal にも設定した（2026-09-21）。
+- **A2P 側**: `/settings` の API キーフォーム（`api-credentials-list.tsx`）は画面から外し、状態表示＋
+  「M2P で API キーを管理する」リンク（`api-credentials-portal-notice.tsx`、`NEXT_PUBLIC_PORTAL_URL`）に置き換えた。
+  Server Action 本体は残置。
+- Server Action は `app/actions/settings.ts`。純関数（provider メタ・テスト用リクエスト・env 判定）は
   `lib/settings-core.ts`（Vitest `lib/__tests__/settings-core.test.ts`）。
 
 ## 10.5 デプロイ / 環境変数（Railway）
@@ -131,5 +134,5 @@ Auth.js v5（JWT セッション）を全アプリで共有する。SSO の成�
 - 実装済み（2026-08-20）: `packages/auth`、`apps/portal`（login/ツール選択/SSO 配線）、A2P の共通認証化。
   全て typecheck / build 通過。
 - 2026-08-22: Railway `M2P-Portal` サービスとして `https://m2p.tools` に本番デプロイ済み（ANP も `tools.ts` に登録済み）。
-- 2026-09-21: 設定（AI モデル割当 / API キー）を実装（§10.4b）。
+- 2026-09-21: 設定（API キーの一元管理）を実装（§10.4b）。AI モデル割当は各ツール側。
 - 残: 経営ダッシュボードの実データ接続（全ツール横断の売上・コスト集計コネクタ）。

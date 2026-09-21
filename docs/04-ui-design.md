@@ -940,7 +940,10 @@ CostMeter / AlertBadge / CommentBadge の 3 つは **どの画面でも常に視
   4. 売上自動取得設定（F-038 ON/OFF、実行スケジュール = JST 指定 → UTC cron 保存）
   5. KDP 自動入稿設定（F-041 Phase3、**実機能トグル**）: 自動入稿 ON/OFF（`kdp_auto_submit_enabled`、cron は起動時条件付き登録のため切替はワーカー再起動で反映）+ ドライラン（`kdp_submit_dry_run`）+ タイムアウト 既定 10 分（`kdp_submit_timeout_minutes`）+ リトライ回数 既定 2（`kdp_submit_retry_count`）。日次作成上限で停止中は解除予定時刻（`kdp_creation_paused_until`）を表示。
   6. データ管理（ジョブログ保管期間 既定 90 日、R2 アーカイブ閾値）
-  7. **AI プロバイダ API キー (F-051 / F-052)** — Anthropic / OpenAI / Google Gemini / Tavily の 4 行表。各行に：
+  7. **AI プロバイダ API キー (F-051 / F-052)** — **2026-09-21 変更: 登録・疎通テスト・削除は M2P ポータル
+     `/settings/api-keys`（docs/10 §10.4b）に集約。A2P 側は状態表示（M2P で設定済み(DB) / 環境変数にて設定済み / 未設定 +
+     マスク）と「M2P で API キーを管理する」リンク（`api-credentials-portal-notice.tsx`）のみ。** 以下は旧仕様（Server Action
+     は残置、UI は撤去）。Anthropic / OpenAI / Google Gemini / Tavily の 4 行表。各行に：
      - プロバイダ名 + 公式 SDK バージョン
      - 現在の状態バッジ（DB 設定済 ✅ `sk-ant-…••••` / env フォールバック使用中 ⚠️ / 未設定 ❌）
      - `[ 設定 / 更新 ]` ボタン → モーダルで `<input type="password">` + prefix プレースホルダ表示

@@ -6,7 +6,7 @@ import Link from 'next/link';
 
 import { prisma } from '@a2p/db';
 
-import { API_PROVIDERS, API_PROVIDER_META, type ApiKeyTestResult } from '@/lib/settings-core';
+import { API_PROVIDERS, API_PROVIDER_META, envKeyFor, type ApiKeyTestResult } from '@/lib/settings-core';
 
 import { ApiKeysPanel, type ApiKeyRowView } from './api-keys-panel';
 
@@ -30,6 +30,8 @@ export default async function ApiKeysPage() {
       set_at: row?.set_at ? row.set_at.toISOString() : null,
       last_tested_at: row?.last_tested_at ? row.last_tested_at.toISOString() : null,
       last_test: test && typeof test.ok === 'boolean' ? test : null,
+      // ポータルの環境変数に同名キーがあれば「環境変数にて設定済み」(DB 未登録なら取り込み可)。
+      env_configured: envKeyFor(p) !== null,
     };
   });
 
@@ -41,8 +43,9 @@ export default async function ApiKeysPage() {
       <section className="fade-up mt-3">
         <h1 className="text-3xl font-bold tracking-tight text-white">API キー</h1>
         <p className="mt-3 max-w-2xl text-[14.5px] leading-relaxed text-white/55">
-          キーは AES-256-GCM で暗号化して保存し、画面には末尾のマスクだけを表示します。保存後 1 分以内に A2P / ANP / worker の
-          すべてが新しいキーを使い始めます。環境変数 (`ANTHROPIC_API_KEY` 等) より DB のキーが優先されます。
+          API キーは M2P で一元管理します。AES-256-GCM で暗号化して保存し、画面には末尾のマスクだけを表示します。保存後 1 分以内に
+          A2P / ANP / worker のすべてが新しいキーを使い始めます。環境変数で設定済みのものは「環境変数にて設定済み」と表示され、
+          「DB に取り込む」でここに移せます (取り込み後は DB のキーが優先)。
         </p>
       </section>
       <ApiKeysPanel rows={views} />

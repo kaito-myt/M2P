@@ -435,8 +435,29 @@ export const messages = {
     },
   },
   settings: {
-    pageTitle: 'パイプライン設定',
-    pageDescription: 'note 公開の自動運用を設定します。',
+    pageTitle: '設定',
+    pageDescription: 'note 公開の自動運用と、ANP の各役割が使う AI モデルを設定します。API キーは M2P ポータルの設定で管理します。',
+    models: {
+      title: 'AI モデル設定 (ANP の役割)',
+      description:
+        '役割ごとに使う LLM を選びます (全ジャンル共通の既定)。保存すると次の呼出から反映され、旧設定は履歴として残ります。モデル一覧と料金はカタログ (A2P と共有) から取ります。',
+      columnRole: '役割',
+      columnCurrent: '現在',
+      columnChange: '変更',
+      columnPrice: '料金 (入力/出力 $/1M tok)',
+      save: '保存',
+      saved: '保存しました',
+      unassigned: '未割当 (呼出時にエラー)',
+      unavailableNotice: '呼び出し不可と判定',
+      unverifiedSuffix: ' (未検証)',
+      errors: {
+        invalid: '入力が不正です',
+        notInCatalog: 'そのモデルは現行カタログにありません',
+        unavailable: 'そのモデルは呼び出せない (廃止/権限なし) と判定されています',
+        noChange: '変更がありません (同じモデルが既に割り当てられています)',
+        saveFailed: 'モデル割当の保存に失敗しました',
+      },
+    },
     autoPublishEnabled: 'note 自動公開を有効化する',
     autoPublishEnabledDescription:
       'ONにすると、公開準備完了(ready)の記事をアカウントごとに1件ずつ30分毎に自動で note へ送信します。',

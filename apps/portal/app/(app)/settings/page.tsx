@@ -1,5 +1,5 @@
 /**
- * 設定 (ハブ) — プラットフォーム共通の AI モデル割当と API キー管理への入口 (docs/10 §設定)。
+ * 設定 (ハブ) — プラットフォーム共通の API キー管理への入口と、各ツールのモデル設定への案内 (docs/10 §10.4b)。
  * 各ツール (A2P / ANP) は同じ DB を共有するため、ここでの変更は全ツールに反映される。
  */
 import type { Metadata } from 'next';
@@ -8,19 +8,18 @@ import { Cpu, KeyRound, Settings } from 'lucide-react';
 
 import { prisma } from '@a2p/db';
 
-import { API_PROVIDERS, API_PROVIDER_META } from '@/lib/settings-core';
+import { API_PROVIDERS, API_PROVIDER_META, envKeyFor } from '@/lib/settings-core';
+import { getTools } from '@/lib/tools';
 
 export const metadata: Metadata = { title: '設定 | M2P' };
 export const dynamic = 'force-dynamic';
 
 export default async function SettingsHubPage() {
-  const [credentials, activeAssignments, unavailable] = await Promise.all([
-    prisma.apiCredential.findMany({ select: { provider: true, last_test_result_json: true } }),
-    prisma.modelAssignment.count({ where: { status: 'active', genre: null } }),
-    prisma.modelCatalog.count({ where: { is_current: true, available: false } }),
-  ]);
+  const credentials = await prisma.apiCredential.findMany({ select: { provider: true } });
   const configured = new Set(credentials.map((c) => c.provider));
-  const missing = API_PROVIDERS.filter((p) => !configured.has(p));
+  const envOnly = API_PROVIDERS.filter((p) => !configured.has(p) && envKeyFor(p) !== null);
+  const missing = API_PROVIDERS.filter((p) => !configured.has(p) && envKeyFor(p) === null);
+  const tools = getTools();
 
   return (
     <div className="mx-auto max-w-5xl">
@@ -31,8 +30,8 @@ export default async function SettingsHubPage() {
         </div>
         <h1 className="text-3xl font-bold tracking-tight text-white sm:text-4xl">設定</h1>
         <p className="mt-4 max-w-2xl text-[15px] leading-relaxed text-white/55">
-          A2P・ANP が共通で使う <strong className="text-white/80">AI モデルの割当</strong>と
-          <strong className="text-white/80">各サービサーの API キー</strong>をここで一元管理します。変更は全ツールに即時反映されます。
+          A2P・ANP が共通で使う<strong className="text-white/80">各サービサーの API キー</strong>を M2P で一元管理します。
+          変更は全ツールに 1 分以内に反映されます。AI モデルの割当は役割がツールごとに異なるため、各ツールの設定で行います。
         </p>
       </section>
 
@@ -50,6 +49,11 @@ export default async function SettingsHubPage() {
           <p className="mt-1.5 text-[13.5px] leading-relaxed text-white/55">
             Anthropic / OpenAI / Google / Tavily のキーを暗号化して保存し、疎通テストします。
           </p>
+          {envOnly.length > 0 && (
+            <p className="mt-3 text-[12.5px] text-sky-300/90">
+              環境変数にて設定済み (DB 未取込): {envOnly.map((p) => API_PROVIDER_META[p].label).join(' / ')}
+            </p>
+          )}
           {missing.length > 0 && (
             <p className="mt-3 text-[12.5px] text-amber-300/90">
               未設定: {missing.map((p) => API_PROVIDER_META[p].label).join(' / ')}
@@ -57,23 +61,28 @@ export default async function SettingsHubPage() {
           )}
         </Link>
 
-        <Link href="/settings/models" className="glass tool-card is-live block rounded-[18px] p-6 no-underline" style={{ ['--accent' as string]: '#a78bfa' }}>
-          <div className="flex items-start justify-between gap-3">
-            <span className="grid h-12 w-12 shrink-0 place-items-center rounded-2xl text-white" style={{ background: 'linear-gradient(140deg, #a78bfa, #a78bfa99)' }}>
-              <Cpu className="h-5 w-5" />
-            </span>
-            <span className="rounded-full border border-white/10 bg-white/[0.04] px-2 py-0.5 text-[11px] text-white/55">
-              {activeAssignments} 役割
-            </span>
-          </div>
-          <h2 className="mt-5 text-[17px] font-semibold text-white">AI モデル設定</h2>
+        <div className="glass block rounded-[18px] p-6">
+          <span className="grid h-12 w-12 shrink-0 place-items-center rounded-2xl text-white" style={{ background: 'linear-gradient(140deg, #a78bfa, #a78bfa99)' }}>
+            <Cpu className="h-5 w-5" />
+          </span>
+          <h2 className="mt-5 text-[17px] font-semibold text-white">AI モデル設定 (各ツール側)</h2>
           <p className="mt-1.5 text-[13.5px] leading-relaxed text-white/55">
-            役割 (マーケター・ライター・判定・note 記事…) ごとに使うモデルを切り替えます。
+            役割 (マーケター・ライター・判定・note 記事…) はツールごとに異なるため、モデルの割当は各ツールの設定で行います。
           </p>
-          {unavailable > 0 && (
-            <p className="mt-3 text-[12.5px] text-amber-300/90">カタログに呼び出し不可のモデルが {unavailable} 件あります</p>
-          )}
-        </Link>
+          <ul className="mt-3 flex flex-col gap-1.5 text-[13px]">
+            {tools.map((t) =>
+              t.url ? (
+                <li key={t.id}>
+                  <a href={`${t.url}${t.id === 'a2p' ? '/settings/models' : '/settings'}`} target="_blank" rel="noopener noreferrer" className="text-emerald-300 underline">
+                    {t.name} のモデル設定を開く
+                  </a>
+                </li>
+              ) : (
+                <li key={t.id} className="text-white/40">{t.name}: 準備中</li>
+              ),
+            )}
+          </ul>
+        </div>
       </section>
     </div>
   );

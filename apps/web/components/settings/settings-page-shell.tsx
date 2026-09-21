@@ -15,7 +15,7 @@ import { SalesAutoFetchSettings } from './sales-auto-fetch-settings';
 import { PromotionAutomationSettings } from './promotion-automation-settings';
 import { DataRetentionForm } from './data-retention-form';
 import { KdpSubmissionSettingsForm } from './kdp-submission-settings-form';
-import { ApiCredentialsList } from './api-credentials-list';
+import { ApiCredentialsPortalNotice } from './api-credentials-portal-notice';
 
 interface SettingsPageShellProps {
   data: SettingsPageData;
@@ -73,7 +73,8 @@ export function SettingsPageShell({ data }: SettingsPageShellProps) {
         }}
       />
 
-      <ApiCredentialsList credentials={data.apiCredentials} />
+      {/* API キーの設定/テスト/削除は M2P ポータルに集約 (2026-09-21)。A2P は状態表示のみ。 */}
+      <ApiCredentialsPortalNotice credentials={data.apiCredentials} />
     </div>
   );
 }

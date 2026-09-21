@@ -6,9 +6,9 @@
  * - API キー: `api_credentials` に AES-256-GCM (API_CRED_KEY) で暗号化保存 / 疎通テスト / 失効。
  *   A2P `apps/web/app/actions/api-credentials.ts` と同じ保存形式・同じテーブルなので、ポータルで
  *   設定したキーは A2P / ANP / worker がそのまま使う (各プロセスの 60 秒キャッシュ経由)。
- * - モデル割当: `model_assignments` の genre=null (全ジャンル既定) の active 行を差し替える
- *   (旧 active は archived、`model_catalog` に存在する現行モデルのみ許可、audit_log に記録)。
- *   ジャンル別の上書きは A2P 側の設定画面で扱う。
+ * - 環境変数で設定済みのキーは「DB に取り込む」で `api_credentials` へ移し、M2P で一元管理する
+ *   (取り込み後は DB が優先されるので env は削除してよい)。
+ * AI モデル割当は役割がツールごとに異なるため各ツール側 (A2P `/settings/models`, ANP `/settings`) で扱う。
  */
 import { revalidatePath } from 'next/cache';
 
@@ -17,10 +17,10 @@ import { decryptApiKey, encryptApiKey, maskApiKey } from '@a2p/crypto';
 
 import { auth } from '@/auth';
 import {
+  envKeyFor,
   providerOnlyInput,
   providerTestRequest,
   setApiKeyInput,
-  setModelAssignmentInput,
   type ApiKeyTestResult,
   type ApiProvider,
 } from '@/lib/settings-core';
@@ -154,52 +154,15 @@ export async function testApiKey(input: unknown): Promise<ActionResult<ApiKeyTes
   }
 }
 
-// ---------------------------------------------------------------------------
-// モデル割当 (genre=null の既定)
-// ---------------------------------------------------------------------------
 
-export async function setModelAssignment(input: unknown): Promise<ActionResult<{ id: string }>> {
+/** 環境変数に設定されているキーを DB に取り込む (M2P への一元化)。 */
+export async function importApiKeyFromEnv(input: unknown): Promise<ActionResult<{ provider: ApiProvider; key_mask: string }>> {
   const userId = await requireUserId();
   if (!userId) return { ok: false, error: 'ログインが必要です' };
-  const parsed = setModelAssignmentInput.safeParse(input);
-  if (!parsed.success) return { ok: false, error: '入力が不正です' };
-  const { role, provider, model } = parsed.data;
-
-  try {
-    const catalogRow = await prisma.modelCatalog.findFirst({
-      where: { provider, model, is_current: true },
-      select: { id: true, available: true },
-    });
-    if (!catalogRow) return { ok: false, error: 'そのモデルは現行カタログにありません' };
-    if (catalogRow.available === false) return { ok: false, error: 'そのモデルは呼び出せない (廃止/権限なし) と判定されています' };
-
-    const created = await prisma.$transaction(async (tx) => {
-      const before = await tx.modelAssignment.findFirst({ where: { role, genre: null, status: 'active' } });
-      if (before && before.provider === provider && before.model === model) {
-        throw new Error('変更がありません (同じモデルが既に割り当てられています)');
-      }
-      const now = new Date();
-      if (before) {
-        await tx.modelAssignment.update({ where: { id: before.id }, data: { status: 'archived', archived_at: now } });
-      }
-      const row = await tx.modelAssignment.create({
-        data: { role, genre: null, provider, model, status: 'active', activated_at: now, created_by: userId },
-      });
-      await tx.auditLog.create({
-        data: {
-          actor_id: userId,
-          action: 'model_assignment.upsert',
-          target_kind: 'model_assignment',
-          target_id: `${role}:default`,
-          before_json: before ? { provider: before.provider, model: before.model } : Prisma.JsonNull,
-          after_json: { provider, model, source: 'portal' },
-        },
-      });
-      return row;
-    });
-    revalidatePath('/settings/models');
-    return { ok: true, data: { id: created.id } };
-  } catch (err) {
-    return { ok: false, error: errorMessage(err, 'モデル割当の保存に失敗しました') };
-  }
+  const parsed = providerOnlyInput.safeParse(input);
+  if (!parsed.success) return { ok: false, error: 'provider が不正です' };
+  const { provider } = parsed.data;
+  const fromEnv = envKeyFor(provider);
+  if (!fromEnv) return { ok: false, error: 'このサービサーのキーは環境変数に設定されていません' };
+  return setApiKey({ provider, key: fromEnv });
 }

@@ -6,7 +6,7 @@
 import { useState, useTransition } from 'react';
 import { CheckCircle2, ExternalLink, KeyRound, Loader2, ShieldAlert, Trash2 } from 'lucide-react';
 
-import { revokeApiKey, setApiKey, testApiKey } from '@/app/actions/settings';
+import { importApiKeyFromEnv, revokeApiKey, setApiKey, testApiKey } from '@/app/actions/settings';
 import type { ApiKeyTestResult, ApiProvider, ApiProviderMeta } from '@/lib/settings-core';
 
 export interface ApiKeyRowView {
@@ -17,6 +17,8 @@ export interface ApiKeyRowView {
   set_at: string | null;
   last_tested_at: string | null;
   last_test: ApiKeyTestResult | null;
+  /** ポータルの環境変数 (ANTHROPIC_API_KEY 等) に値があるか。 */
+  env_configured: boolean;
 }
 
 function fmt(iso: string | null): string {
@@ -37,10 +39,10 @@ function ApiKeyCard({ row }: { row: ApiKeyRowView }) {
   const [state, setState] = useState<ApiKeyRowView>(row);
   const [input, setInput] = useState('');
   const [message, setMessage] = useState<{ tone: 'ok' | 'err'; text: string } | null>(null);
-  const [busy, setBusy] = useState<'save' | 'test' | 'revoke' | null>(null);
+  const [busy, setBusy] = useState<'save' | 'test' | 'revoke' | 'import' | null>(null);
   const [, startTransition] = useTransition();
 
-  const run = (kind: 'save' | 'test' | 'revoke') => {
+  const run = (kind: 'save' | 'test' | 'revoke' | 'import') => {
     setBusy(kind);
     setMessage(null);
     startTransition(async () => {
@@ -50,6 +52,12 @@ function ApiKeyCard({ row }: { row: ApiKeyRowView }) {
           setState((s) => ({ ...s, configured: true, key_mask: res.data.key_mask, set_at: new Date().toISOString(), last_tested_at: null, last_test: null }));
           setInput('');
           setMessage({ tone: 'ok', text: '保存しました。「疎通テスト」で確認できます。' });
+        } else setMessage({ tone: 'err', text: res.error });
+      } else if (kind === 'import') {
+        const res = await importApiKeyFromEnv({ provider: state.provider });
+        if (res.ok) {
+          setState((s) => ({ ...s, configured: true, key_mask: res.data.key_mask, set_at: new Date().toISOString(), last_tested_at: null, last_test: null }));
+          setMessage({ tone: 'ok', text: '環境変数のキーを DB に取り込みました。以後は M2P のキーが優先されます。' });
         } else setMessage({ tone: 'err', text: res.error });
       } else if (kind === 'test') {
         const res = await testApiKey({ provider: state.provider });
@@ -86,6 +94,10 @@ function ApiKeyCard({ row }: { row: ApiKeyRowView }) {
     ) : (
       <span className="rounded-full border border-white/10 bg-white/[0.04] px-2 py-0.5 text-[11px] text-white/55">設定済み (未テスト)</span>
     )
+  ) : state.env_configured ? (
+    <span className="inline-flex items-center gap-1 rounded-full border border-sky-400/30 bg-sky-400/10 px-2 py-0.5 text-[11px] text-sky-300">
+      <CheckCircle2 className="h-3 w-3" /> 環境変数にて設定済み
+    </span>
   ) : (
     <span className="rounded-full border border-white/10 bg-white/[0.04] px-2 py-0.5 text-[11px] text-white/45">未設定</span>
   );
@@ -107,7 +119,10 @@ function ApiKeyCard({ row }: { row: ApiKeyRowView }) {
 
       <dl className="mt-4 grid grid-cols-2 gap-x-4 gap-y-1 text-[12.5px]">
         <dt className="text-white/40">現在のキー</dt>
-        <dd className="font-mono text-white/80">{state.key_mask ?? '—'}</dd>
+        <dd className="font-mono text-white/80">
+          {state.key_mask ?? (state.env_configured ? <span className="font-sans text-white/60">環境変数 (DB 未登録)</span> : '—')}
+          {state.key_mask && state.env_configured && <span className="ml-2 font-sans text-[11px] text-white/40">環境変数にも設定あり (DB 優先)</span>}
+        </dd>
         <dt className="text-white/40">設定日時</dt>
         <dd className="text-white/70">{fmt(state.set_at)}</dd>
         <dt className="text-white/40">最終テスト</dt>
@@ -140,6 +155,11 @@ function ApiKeyCard({ row }: { row: ApiKeyRowView }) {
           <button type="submit" disabled={busy !== null || input.trim().length < 8} className="btn-primary rounded-xl px-4 py-2 text-[13px]">
             {busy === 'save' ? <Loader2 className="inline h-4 w-4 animate-spin" /> : state.configured ? '置き換えて保存' : '保存'}
           </button>
+          {state.env_configured && !state.configured && (
+            <button type="button" onClick={() => run('import')} disabled={busy !== null} className="btn-ghost rounded-xl px-4 py-2 text-[13px] text-sky-200 disabled:opacity-40">
+              {busy === 'import' ? <Loader2 className="inline h-4 w-4 animate-spin" /> : '環境変数のキーを DB に取り込む'}
+            </button>
+          )}
           <button type="button" onClick={() => run('test')} disabled={busy !== null || !state.configured} className="btn-ghost rounded-xl px-4 py-2 text-[13px] disabled:opacity-40">
             {busy === 'test' ? <Loader2 className="inline h-4 w-4 animate-spin" /> : '疎通テスト'}
           </button>

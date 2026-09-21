@@ -451,6 +451,15 @@ graphile-worker を流用。ANP のタスクは `pipeline.note.*`（marketer/out
 
 ---
 
+**AI モデル設定 UI（2026-09-21 追加、運営者判断「モデル割当はツールごとに置く（M2P には持たせない）」）**:
+`/settings` の「AI モデル設定 (ANP の役割)」節で `anp.*` 役割の既定モデル（genre=null）を切り替える。
+役割 = `prompts(active)` ∪ `model_assignments(active)` のうち `anp.` 接頭辞のもの（`lib/model-settings-core.ts`
+`buildAnpRoleRows`、ラベル/説明は `ANP_ROLE_META`）。選択肢は `model_catalog` の `is_current=true` かつ
+`available!==false`（料金表示付き）。保存 = Server Action `setAnpModelAssignment`（`app/actions/model-settings.ts`、
+`anp.*` 以外は拒否）が旧 active を archived にして新規 active を作り `audit_log`（`model_assignment.upsert`、
+`source='anp'`）に記録。呼出不可（`available=false`）のモデルに割り当たっている役割は警告表示。API キーは
+M2P ポータル（docs/10 §10.4b）で一元管理する。
+
 ## 6. DB スキーマ（新規モデル・A2P 命名規約準拠）
 
 A2P の `books` 系を note 記事系に写像。**マルチアカウントを主キー動線に組み込む**。

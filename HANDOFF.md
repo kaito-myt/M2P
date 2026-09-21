@@ -100,10 +100,13 @@ ANP のアカウント戦略を AI に相談しながら策定）を実施。mai
   `select j.id,t.identifier from graphile_worker._private_jobs j join graphile_worker._private_tasks t on t.id=j.task_id order by j.id desc limit 10`
   を突き合わせ、前者にあって後者に無ければ投入失敗。
 
-### M2P ポータルに「設定」（AI モデル割当 / API キー）を追加（9/21 夕方）
-- `https://m2p.tools/settings` → `/settings/api-keys`（Anthropic / OpenAI / Google / Tavily の保存・疎通テスト・削除、暗号化保存）、
-  `/settings/models`（役割ごとの既定モデルをツール別グループで切替、カタログの現行・呼出可のみ選択可）。A2P/ANP と同じテーブルなので
-  即時共有。M2P-Portal サービスに `API_CRED_KEY` を設定済み。設計 = docs/10 §10.4b。
+### M2P ポータルに「設定 › API キー」を追加、モデル設定は各ツール側へ（9/21 夕方）
+- `https://m2p.tools/settings/api-keys`: Anthropic / OpenAI / Google / Tavily の保存（暗号化）・疎通テスト・削除。A2P/ANP/worker と同じ
+  `api_credentials` なので 1 分以内に全ツール反映。**環境変数で設定済みのものは「環境変数にて設定済み」表示＋「DB に取り込む」ボタン**
+  （運営者判断: 表示だけで可。取り込むかは任意。現状 Anthropic/OpenAI/Google は env、Tavily は DB）。M2P-Portal に `API_CRED_KEY` と
+  表示用の 3 つの `*_API_KEY` を設定済み。A2P の `/settings` の API キーフォームは撤去し M2P へのリンクに置換。
+- **AI モデル設定は M2P に持たせない**（運営者判断: 役割がツールごとに異なる）。A2P は従来の `/settings/models`、ANP は `/settings` に
+  「AI モデル設定 (ANP の役割)」節を新設（anp.* の 8 役割、カタログの現行・呼出可のみ）。設計 = docs/10 §10.4b / docs/11 §5.4。
 
 ### DB マイグレーション履歴の整合
 - 本番 `_prisma_migrations` に未記録だった 20260915/0918/0919 と今日の 3 本を `prisma migrate resolve --applied` で記録。
