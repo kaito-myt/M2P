@@ -37,7 +37,7 @@ ANP のアカウント戦略を AI に相談しながら策定）を実施。mai
 - **9/21 深夜の進捗**: LwA セキュリティプロファイル「A2P Ads」（Client ID `…9710cb2a`、返信 URL `http://localhost:8787/callback` 登録済）を
   作成し認可 URL を開いたが **`An unknown scope was requested`**。原因 = 承認メールのオンボーディングリンクで LwA アプリに ads_api スコープを
   割り当てる手順が未完了で、かつリンクが無効化済み（Advanced Tools Center「My Apps」が「request might still be pending」表示）。
-  **→ 運営者が Ads API サポートにリンクのリセットを依頼中**。リセット後: シークレットウィンドウでリンクを開く → My Apps で「A2P Ads」に
+  **→ 運営者が 9/21 01:30 頃 `ads-api-onboarding@amazon.com` にリンクのリセットを依頼済み（返信待ち、通常 1〜3 営業日）**。リセット後: シークレットウィンドウでリンクを開く → My Apps で「A2P Ads」に
   スコープ割当 → `node scripts/ads/amazon-ads-oauth.mjs --client-id=… --client-secret=… --railway-set` を再実行。
   ⚠️ クライアントシークレットが会話ログに載ったため、接続完了後に LwA 側で**シークレットを再生成**し env を更新すること。
 
