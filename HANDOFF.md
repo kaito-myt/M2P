@@ -34,6 +34,12 @@ ANP のアカウント戦略を AI に相談しながら策定）を実施。mai
   3. 表示された 5 つの env（`AMAZON_ADS_CLIENT_ID / _CLIENT_SECRET / _REFRESH_TOKEN / _PROFILE_ID / _REGION`）を Railway の
      `A2P-Worker` に設定して再デプロイ（`--railway-set` オプションでも可）。翌 04:00 JST か `/ads` の「今すぐ取得」で取り込まれる。
   4. 初回実行後、SB/SD レポートが 403 か成功か、レポート列名が想定どおりかを確認（未検証のまま実装、docs/05 に明記）。
+- **9/21 深夜の進捗**: LwA セキュリティプロファイル「A2P Ads」（Client ID `…9710cb2a`、返信 URL `http://localhost:8787/callback` 登録済）を
+  作成し認可 URL を開いたが **`An unknown scope was requested`**。原因 = 承認メールのオンボーディングリンクで LwA アプリに ads_api スコープを
+  割り当てる手順が未完了で、かつリンクが無効化済み（Advanced Tools Center「My Apps」が「request might still be pending」表示）。
+  **→ 運営者が Ads API サポートにリンクのリセットを依頼中**。リセット後: シークレットウィンドウでリンクを開く → My Apps で「A2P Ads」に
+  スコープ割当 → `node scripts/ads/amazon-ads-oauth.mjs --client-id=… --client-secret=… --railway-set` を再実行。
+  ⚠️ クライアントシークレットが会話ログに載ったため、接続完了後に LwA 側で**シークレットを再生成**し env を更新すること。
 
 ### ANP — 仕上げ一括（F-ANP-17/21、記事一覧/詳細、ホーム KPI、TikTok、サイドバー、ロゴ）
 - **サイドバー・シェル**（A2P と同構造）: `apps/anp/app/(app)/layout.tsx` + `components/layout/{header,sidebar,sidebar-nav,mobile-nav,

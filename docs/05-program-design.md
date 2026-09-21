@@ -3593,6 +3593,17 @@ gpt-image-2 単価行を seed 済 (`apply-openai-catalog.ts`)。本ドキュメ�
     表示 → Railway `A2P-Worker` に設定すべき 5 env(`AMAZON_ADS_CLIENT_ID`/`_CLIENT_SECRET`/
     `_REFRESH_TOKEN`/`_PROFILE_ID`/`_REGION`)を表示(`--railway-set` で `railway variables --set` 自動実行)。
     ローカルでコールバックを受け取れない場合は `--redirect-url`/`--code` で手動投入可。
+  - **オンボーディングの実態 (2026-09-21 実測)**: API 利用承認メール(9/11)だけでは LwA クライアントに
+    広告スコープは付かない。承認メール記載の**オンボーディングリンク**(承認トークン付き・一度きり)を
+    「個人用 Amazon アカウントを全てログアウトした状態(=シークレットウィンドウ)」で開き、申請に使った
+    アカウントでログイン → Advanced Tools Center「My Apps」で対象 LwA アプリに ads_api スコープを
+    割り当てて初めて `advertising::campaign_management` が有効になる。**未割当のまま認可 URL を開くと
+    LwA が `400 Bad Request / An unknown scope was requested (lwa-invalid-parameter-bad-scope)` を返す**
+    (=スクリプト側の問題ではない)。リンクをログイン中の通常ウィンドウで一度でも開くと無効化され、
+    My Apps は「no LWA apps actively using the Ads API / request might still be pending」表示になる →
+    Advanced Tools Center の Support (Ads API サポート) にリンクのリセットを依頼する必要がある
+    (2026-09-21 にこの状態に該当し、リセット依頼中)。LwA 側の「許可された返信 URL」は
+    `http://localhost:8787/callback` で受理された(http+localhost は開発用途として許可)。
   - **UI**: `/ads`(S-030。docs/04 §S-030)。接続状態バナー(未接続時は上記スクリプトの実行案内)、
     当月 KPI(広告費/売上/ROAS/ACOS/インプレッション/クリック/CTR/CPC/注文数、前月比)、日次トレンド、
     キャンペーン別(ROAS降順)、書籍別(`ad_product_stats.asin`を`books.asin`で結合。未登録は
