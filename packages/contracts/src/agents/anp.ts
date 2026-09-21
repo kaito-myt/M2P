@@ -626,11 +626,112 @@ export type NoteAccountProfileOutput = z.infer<typeof NoteAccountProfileOutputSc
  * F-ANP-07 — 記事の方針・トンマナの AI 生成 (targets=['editorial'])。
  * 想定読者・トーン・方針本文を `note_accounts` に保存し、記事パイプライン全体に効かせる。
  */
+/**
+ * F-ANP-07b (2026-09-22): 記事の方針を 5 区分に分けて扱う (運営者要望「『主なテーマ』『記事のフォーマット』
+ * 『文末表現/禁止事項』『CTA』『その他』にテキストボックス自体分けた方が読みやすい」)。
+ * DB (`note_accounts.editorial_policy`) とプロンプト注入は従来どおり 1 本のテキストで、
+ * `composeEditorialPolicy` が「【見出し】」付きで連結し、`parseEditorialPolicy` が UI 用に分割する。
+ */
+export const EDITORIAL_SECTION_KEYS = ['themes', 'format', 'style_rules', 'cta', 'quality', 'other'] as const;
+export type EditorialSectionKey = (typeof EDITORIAL_SECTION_KEYS)[number];
+
+export const EDITORIAL_SECTION_HEADINGS: Record<EditorialSectionKey, string> = {
+  themes: '主なテーマ',
+  format: '記事のフォーマット',
+  style_rules: '文末表現・禁止事項',
+  cta: 'CTA',
+  quality: '品質判定項目',
+  other: 'その他',
+};
+
+export const NoteEditorialSectionsSchema = z.object({
+  themes: z.string().max(1500).default(''),
+  format: z.string().max(1500).default(''),
+  style_rules: z.string().max(1500).default(''),
+  cta: z.string().max(800).default(''),
+  /** 品質判定 (anp.judge) が減点基準として使う項目 (運営者要望 2026-09-22「品質判定項目も設けましょうか」)。 */
+  quality: z.string().max(1500).default(''),
+  other: z.string().max(2000).default(''),
+});
+export type NoteEditorialSections = z.infer<typeof NoteEditorialSectionsSchema>;
+
+export function emptyEditorialSections(): NoteEditorialSections {
+  return { themes: '', format: '', style_rules: '', cta: '', quality: '', other: '' };
+}
+
+/** 5 区分 → 1 本のテキスト (空の区分は出さない)。全て空なら ''。 */
+export function composeEditorialPolicy(sections: Partial<NoteEditorialSections>): string {
+  const parts: string[] = [];
+  for (const key of EDITORIAL_SECTION_KEYS) {
+    const body = (sections[key] ?? '').trim();
+    if (body.length === 0) continue;
+    parts.push(`【${EDITORIAL_SECTION_HEADINGS[key]}】`, body);
+  }
+  return parts.join('\n');
+}
+
+const HEADING_TO_KEY: Record<string, EditorialSectionKey> = Object.fromEntries(
+  (Object.entries(EDITORIAL_SECTION_HEADINGS) as Array<[EditorialSectionKey, string]>).map(([k, h]) => [h, k]),
+) as Record<string, EditorialSectionKey>;
+
+/** 見出しの無い旧テキスト (箇条書きの「・【ラベル】…」) を、ラベルのキーワードで区分に振り分ける。 */
+export function classifyEditorialLine(line: string): EditorialSectionKey {
+  const m = /^[・\-*]?\s*[【\[]([^】\]]+)[】\]]/.exec(line.trim());
+  const label = m ? m[1]! : line.slice(0, 24);
+  if (/品質|減点|判定|チェック|審査/.test(label)) return 'quality';
+  if (/CTA|導線|フォロー|次に読む/i.test(label)) return 'cta';
+  if (/語尾|人称|禁止|表現|文末|口調|呼びかけ|NG/.test(label)) return 'style_rules';
+  if (/型|構成|フォーマット|長さ|見出し|冒頭|段落|有料記事の設計|設計/.test(label)) return 'format';
+  if (/テーマ|書くこと|書かない|扱う|範囲|柱|ジャンル/.test(label)) return 'themes';
+  return 'other';
+}
+
+/**
+ * 1 本のテキスト → 5 区分。「【主なテーマ】」等の見出しがあればそれで分割、無ければ行単位でキーワード分類する
+ * (旧形式の AI 生成テキストもそれなりに収まる)。
+ */
+export function parseEditorialPolicy(text: string | null | undefined): NoteEditorialSections {
+  const out = emptyEditorialSections();
+  const src = (text ?? '').replace(/\r\n?/g, '\n').trim();
+  if (src.length === 0) return out;
+  const lines = src.split('\n');
+  const hasHeadings = lines.some((l) => HEADING_TO_KEY[l.trim().replace(/^【|】$/g, '')] !== undefined && /^【.+】$/.test(l.trim()));
+  if (hasHeadings) {
+    let current: EditorialSectionKey = 'other';
+    const buckets: Record<EditorialSectionKey, string[]> = { themes: [], format: [], style_rules: [], cta: [], quality: [], other: [] };
+    for (const raw of lines) {
+      const t = raw.trim();
+      const heading = /^【(.+)】$/.exec(t);
+      if (heading && HEADING_TO_KEY[heading[1]!] !== undefined) {
+        current = HEADING_TO_KEY[heading[1]!]!;
+        continue;
+      }
+      buckets[current].push(raw);
+    }
+    for (const key of EDITORIAL_SECTION_KEYS) out[key] = buckets[key].join('\n').trim();
+    return out;
+  }
+  // 旧形式: 「・【ラベル】本文」の箇条書き、または見出し無しの自由文。行を継続行ごとに束ねてから分類する。
+  const chunks: string[] = [];
+  for (const raw of lines) {
+    const t = raw.trimEnd();
+    if (t.trim().length === 0) continue;
+    if (/^[・\-*]/.test(t.trim()) || chunks.length === 0) chunks.push(t);
+    else chunks[chunks.length - 1] = `${chunks[chunks.length - 1]}\n${t}`;
+  }
+  const buckets: Record<EditorialSectionKey, string[]> = { themes: [], format: [], style_rules: [], cta: [], quality: [], other: [] };
+  for (const c of chunks) buckets[classifyEditorialLine(c)].push(c);
+  for (const key of EDITORIAL_SECTION_KEYS) out[key] = buckets[key].join('\n').trim();
+  return out;
+}
+
 export const NoteAccountEditorialOutputSchema = z.object({
   target_reader: z.string().min(1).max(300),
   tone: z.string().min(1).max(200),
-  /** 箇条書き中心のプレーンテキスト。3000 字以内 (超過は UI で調整)。 */
-  editorial_policy: z.string().min(1).max(4000),
+  /** F-ANP-07b: 5 区分。worker が `composeEditorialPolicy` で 1 本のテキストにして保存する。 */
+  sections: NoteEditorialSectionsSchema,
+  /** 旧出力との互換 (sections が無い応答用)。 */
+  editorial_policy: z.string().max(4000).optional(),
   rationale: z.string().max(1000).optional(),
 });
 export type NoteAccountEditorialOutput = z.infer<typeof NoteAccountEditorialOutputSchema>;

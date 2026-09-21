@@ -1,12 +1,26 @@
 'use client';
 
 /**
- * EditorialPanel — F-ANP-07: 記事の方針・トンマナ (ニッチ / 想定読者 / トーン / 方針本文) の編集と AI 生成。
+ * EditorialPanel — F-ANP-07/07b: 記事の方針・トンマナ (ニッチ / 想定読者 / トーン / 方針) の編集と AI 生成。
  * 生成は worker `note.account.profile` (targets=['editorial']) が非同期で行い、完了までポーリングする。
  * AI への指示には参考画像 (記事のスクショ等) を貼り付けられる (ImageAttachTextarea)。
+ *
+ * 2026-09-22 運営者要望「想定読者とトーンが見切れていて読みづらいので横幅いっぱいで OK」「記事の方針も長い文章と
+ * なっているけど『主なテーマ』『記事のフォーマット』『文末表現/禁止事項』『CTA』『その他』にテキストボックス自体
+ * 分けた方が読みやすい」「品質判定項目も設けましょうか」→ 各項目を 1 行 1 項目・横幅いっぱいに、方針は 6 区分の
+ * テキストボックスに分割 (保存時に `composeEditorialPolicy` で 1 本のテキストへ連結、DB/プロンプト注入は従来どおり)。
  */
 import { useCallback, useEffect, useState } from 'react';
 import { Loader2, Sparkles } from 'lucide-react';
+
+import {
+  EDITORIAL_SECTION_HEADINGS,
+  EDITORIAL_SECTION_KEYS,
+  composeEditorialPolicy,
+  parseEditorialPolicy,
+  type EditorialSectionKey,
+  type NoteEditorialSections,
+} from '@a2p/contracts/agents/anp';
 
 import { generateAccountProfile, getAccountProfileState, updateAccountEditorial } from '@/app/actions/accounts';
 import { GenerationProgress } from '@/components/generation-progress';
@@ -19,12 +33,14 @@ const ESTIMATE_SEC = 45;
 const POLICY_MAX = 3000;
 const em = messages.accounts.editorial;
 
+const SECTION_ROWS: Record<EditorialSectionKey, number> = { themes: 4, format: 6, style_rules: 5, cta: 3, quality: 6, other: 4 };
+
 export function EditorialPanel({ noteAccountId, initial }: { noteAccountId: string; initial: AccountProfileState }) {
   const [state, setState] = useState<AccountProfileState>(initial);
   const [niche, setNiche] = useState(initial.niche);
   const [targetReader, setTargetReader] = useState(initial.target_reader ?? '');
   const [tone, setTone] = useState(initial.tone ?? '');
-  const [policy, setPolicy] = useState(initial.editorial_policy ?? '');
+  const [sections, setSections] = useState<NoteEditorialSections>(() => parseEditorialPolicy(initial.editorial_policy));
   const [instruction, setInstruction] = useState('');
   const [images, setImages] = useState<ImageAttachment[]>([]);
   const [busy, setBusy] = useState<'generate' | 'save' | null>(null);
@@ -43,7 +59,7 @@ export function EditorialPanel({ noteAccountId, initial }: { noteAccountId: stri
         setNiche(res.data.niche);
         setTargetReader(res.data.target_reader ?? '');
         setTone(res.data.tone ?? '');
-        setPolicy(res.data.editorial_policy ?? '');
+        setSections(parseEditorialPolicy(res.data.editorial_policy));
       }
       return res.data;
     });
@@ -78,6 +94,8 @@ export function EditorialPanel({ noteAccountId, initial }: { noteAccountId: stri
     void load();
   };
 
+  const policy = composeEditorialPolicy(sections);
+
   const save = async () => {
     setBusy('save');
     setError(null);
@@ -96,6 +114,7 @@ export function EditorialPanel({ noteAccountId, initial }: { noteAccountId: stri
     niche !== state.niche || targetReader !== (state.target_reader ?? '') || tone !== (state.tone ?? '') || policy !== (state.editorial_policy ?? '');
   const policyLen = Array.from(policy).length;
   const progress = generating && state.job ? state.job : null;
+  const fieldClass = 'w-full rounded-card border border-border-warm bg-white px-3 py-2 text-body text-charcoal disabled:opacity-60';
 
   return (
     <section className="rounded-container border border-border-warm bg-cream-light p-space-relaxed" data-testid="editorial-panel">
@@ -113,38 +132,44 @@ export function EditorialPanel({ noteAccountId, initial }: { noteAccountId: stri
         />
       )}
 
-      <div className="mt-space-snug grid grid-cols-1 gap-space-snug sm:grid-cols-3">
+      {/* 基本項目: 1 行 1 項目・横幅いっぱい */}
+      <div className="mt-space-snug flex flex-col gap-space-snug">
         <label className="flex flex-col gap-1 text-caption text-muted">
           {em.niche}
-          <input value={niche} onChange={(e) => setNiche(e.target.value)} maxLength={200} disabled={generating} className="rounded-card border border-border-warm bg-white px-3 py-2 text-body text-charcoal" data-testid="editorial-niche" />
+          <input value={niche} onChange={(e) => setNiche(e.target.value)} maxLength={200} disabled={generating} className={fieldClass} data-testid="editorial-niche" />
         </label>
         <label className="flex flex-col gap-1 text-caption text-muted">
           {em.targetReader}
-          <input value={targetReader} onChange={(e) => setTargetReader(e.target.value)} maxLength={300} disabled={generating} className="rounded-card border border-border-warm bg-white px-3 py-2 text-body text-charcoal" data-testid="editorial-target-reader" />
+          <textarea value={targetReader} onChange={(e) => setTargetReader(e.target.value)} maxLength={300} rows={2} disabled={generating} className={fieldClass} data-testid="editorial-target-reader" />
         </label>
         <label className="flex flex-col gap-1 text-caption text-muted">
           {em.tone}
-          <input value={tone} onChange={(e) => setTone(e.target.value)} maxLength={200} disabled={generating} className="rounded-card border border-border-warm bg-white px-3 py-2 text-body text-charcoal" data-testid="editorial-tone" />
+          <textarea value={tone} onChange={(e) => setTone(e.target.value)} maxLength={200} rows={2} disabled={generating} className={fieldClass} data-testid="editorial-tone" />
         </label>
       </div>
-      <div className="mt-space-snug">
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <label htmlFor="editorial-policy" className="text-caption text-muted">
-            {em.policy}
+
+      {/* 記事の方針: 6 区分 */}
+      <div className="mt-space-relaxed flex flex-wrap items-center justify-between gap-2">
+        <h3 className="text-body font-medium text-charcoal">{em.policy}</h3>
+        <span className={`text-caption tabular-nums ${policyLen > POLICY_MAX ? 'text-red-600' : 'text-muted'}`}>{em.charCount(policyLen, POLICY_MAX)}</span>
+      </div>
+      <p className="mt-0.5 text-caption text-muted">{em.sectionsHint}</p>
+      <div className="mt-space-snug flex flex-col gap-space-snug">
+        {EDITORIAL_SECTION_KEYS.map((key) => (
+          <label key={key} className="flex flex-col gap-1 text-caption text-muted">
+            <span className="text-charcoal-82">{EDITORIAL_SECTION_HEADINGS[key]}</span>
+            <textarea
+              value={sections[key]}
+              onChange={(e) => setSections((prev) => ({ ...prev, [key]: e.target.value }))}
+              rows={SECTION_ROWS[key]}
+              maxLength={2000}
+              placeholder={em.sectionPlaceholder[key]}
+              disabled={generating}
+              className={fieldClass}
+              data-testid={`editorial-section-${key}`}
+            />
           </label>
-          <span className={`text-caption tabular-nums ${policyLen > POLICY_MAX ? 'text-red-600' : 'text-muted'}`}>{em.charCount(policyLen, POLICY_MAX)}</span>
-        </div>
-        <textarea
-          id="editorial-policy"
-          value={policy}
-          onChange={(e) => setPolicy(e.target.value)}
-          rows={10}
-          maxLength={4000}
-          placeholder={em.policyPlaceholder}
-          disabled={generating}
-          className="mt-1 w-full rounded-card border border-border-warm bg-white px-3 py-2 text-body text-charcoal disabled:opacity-60"
-          data-testid="editorial-policy"
-        />
+        ))}
       </div>
 
       <div className="mt-space-snug flex flex-col gap-1 text-caption text-muted">

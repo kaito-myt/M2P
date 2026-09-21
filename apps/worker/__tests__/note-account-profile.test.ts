@@ -193,7 +193,7 @@ describe(NOTE_ACCOUNT_PROFILE_TASK_NAME, () => {
     const generateEditorial = vi.fn(async (_input: unknown) => ({
       target_reader: '30代会社員',
       tone: 'です・ます調',
-      editorial_policy: '・冒頭で悩みを言い当てる',
+      sections: { themes: '・副業の最初の1万円まで', format: '・冒頭で悩みを言い当てる', style_rules: '', cta: '・末尾にフォロー依頼', quality: '1) 出典なしの数字は減点', other: '' },
       rationale: 'r',
     }));
     const d = deps(prisma, { generateEditorial });
@@ -206,7 +206,10 @@ describe(NOTE_ACCOUNT_PROFILE_TASK_NAME, () => {
     expect(input).toMatchObject({ instruction: 'カジュアルに', existing_bio: '今の bio', concept: '副業初心者に伴走する' });
     expect(d.generateProfile).not.toHaveBeenCalled();
     expect(d.generateImages).not.toHaveBeenCalled();
-    expect(accountUpdates[0]!.data).toMatchObject({ target_reader: '30代会社員', tone: 'です・ます調', editorial_policy: '・冒頭で悩みを言い当てる' });
+    expect(accountUpdates[0]!.data).toMatchObject({ target_reader: '30代会社員', tone: 'です・ます調' });
+    expect((accountUpdates[0]!.data as { editorial_policy: string }).editorial_policy).toBe(
+      ['【主なテーマ】', '・副業の最初の1万円まで', '【記事のフォーマット】', '・冒頭で悩みを言い当てる', '【CTA】', '・末尾にフォロー依頼', '【品質判定項目】', '1) 出典なしの数字は減点'].join(String.fromCharCode(10)),
+    );
   });
 
   it('promotion (F-ANP-32): 媒体別の販促施策を生成し promotion_policy_json の当該媒体だけ更新する', async () => {

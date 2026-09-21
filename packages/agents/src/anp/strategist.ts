@@ -18,6 +18,7 @@ import {
   NoteAccountDesignBriefSchema,
   NoteAccountDesignSchema,
   NoteAccountEditorialOutputSchema,
+  parseEditorialPolicy,
   NotePromotionPolicyInputSchema,
   NotePromotionPolicyOutputSchema,
   type NotePromotionPolicyInput,
@@ -327,7 +328,18 @@ export interface NoteAccountEditorialInput extends NoteAccountProfileInput {
 
 function hasEditorialPolicy(parsed: unknown): boolean {
   if (typeof parsed !== 'object' || parsed === null) return false;
-  return typeof (parsed as Record<string, unknown>).editorial_policy === 'string';
+  const o = parsed as Record<string, unknown>;
+  return (typeof o.sections === 'object' && o.sections !== null) || typeof o.editorial_policy === 'string';
+}
+
+/** 旧形式 (editorial_policy 文字列のみ) の応答を 5 区分へ正規化する。 */
+function normalizeEditorialOutput(parsed: unknown): unknown {
+  if (typeof parsed !== 'object' || parsed === null) return parsed;
+  const o = parsed as Record<string, unknown>;
+  if ((typeof o.sections !== 'object' || o.sections === null) && typeof o.editorial_policy === 'string') {
+    return { ...o, sections: parseEditorialPolicy(o.editorial_policy) };
+  }
+  return parsed;
 }
 
 export async function generateNoteAccountEditorial(
@@ -373,7 +385,7 @@ export async function generateNoteAccountEditorial(
       lastError = new AgentError('anp.strategist.editorial.invalid_output: failed to parse JSON', { details: { rawText, attempt } });
       continue;
     }
-    const validated = NoteAccountEditorialOutputSchema.safeParse(parsedJson);
+    const validated = NoteAccountEditorialOutputSchema.safeParse(normalizeEditorialOutput(parsedJson));
     if (!validated.success) {
       lastError = new AgentError('anp.strategist.editorial.invalid_output: schema validation failed', {
         details: { rawText, issues: validated.error.issues, attempt },
@@ -399,7 +411,7 @@ export function buildEditorialUserMessage(input: NoteAccountProfileInput, existi
     input.content_pillars && input.content_pillars.length > 0 ? `【発信の柱】${input.content_pillars.join(' / ')}` : '',
     input.character_sheet ? `【キャラクター設定】` + String.fromCharCode(10) + input.character_sheet : '',
     input.existing_bio ? `【自己紹介文】${input.existing_bio}` : '',
-    existingPolicy ? `【現在の方針 (これを改善する)】` + String.fromCharCode(10) + existingPolicy : '',
+    existingPolicy ? `【現在の方針 (これを改善する。見出し【主なテーマ】等の区分はそのまま使う)】` + String.fromCharCode(10) + existingPolicy : '',
     input.instruction ? `【運営者からの追加指示 (必ず反映)】` + String.fromCharCode(10) + input.instruction : '',
     input.reference_images && input.reference_images.length > 0
       ? `【添付された参考画像 ${input.reference_images.length} 枚】参考にしたい記事/アカウントのスクリーンショット等。文体・構成・見せ方の特徴を読み取って方針に反映すること。`
@@ -408,13 +420,16 @@ export function buildEditorialUserMessage(input: NoteAccountProfileInput, existi
     '要件:',
     '- target_reader: 想定読者を 1 文で具体的に (年代・状況・悩み)。300 字以内。',
     '- tone: 文体・語り口を短く (例: 「です・ます調、親しみやすく断定的。絵文字なし」)。200 字以内。',
-    '- editorial_policy: 記事の方針・トンマナ。プレーンテキストの箇条書き (「・」始まり)、3000 字以内。次を含める:',
-    '  1) 書くこと/書かないこと (扱うテーマ範囲・NG テーマ)、2) 記事の型 (冒頭の入り方・見出しの付け方・',
-    '  1 記事の長さ・段落の長さ)、3) 語尾・人称・呼びかけ・禁止表現 (煽り・断定しすぎ 等)、4) 具体例/数字/体験談の',
-    '  入れ方、5) 有料記事の切り方と CTA の入れ方 (フォロー/スキ/次記事への導線)、6) 品質判定で減点すべき点。',
+    '- sections: 記事の方針・トンマナを 5 区分に分けたオブジェクト。各区分はプレーンテキストの箇条書き (「・」始まり) で、',
+    '  themes (主なテーマ: 書くこと/書かないこと・扱う範囲・NG テーマ、1500 字以内)、',
+    '  format (記事のフォーマット: 冒頭の入り方・見出しの付け方・1 記事の長さ・段落の長さ・具体例/数字/体験談の入れ方・',
+    '  有料記事の切り方、1500 字以内)、style_rules (文末表現・禁止事項: 語尾・人称・呼びかけ・禁止表現 (煽り・断定しすぎ 等)、',
+    '  1500 字以内)、cta (CTA: フォロー/スキ/次記事への導線の入れ方と決まり文句、800 字以内)、',
+    '  quality (品質判定項目: 公開前チェックで減点/差し戻しにする具体条件を番号付きで、1500 字以内)、',
+    '  other (その他: 引用/出典の扱い・画像・免責など上記に入らないもの、2000 字以内)。',
     '- rationale: なぜこの方針か 2〜3 行 (任意)。',
     '',
-    '出力形式: {"target_reader": "...", "tone": "...", "editorial_policy": "...", "rationale": "..."} の JSON のみ。',
+    '出力形式: {"target_reader": "...", "tone": "...", "sections": {"themes": "...", "format": "...", "style_rules": "...", "cta": "...", "quality": "...", "other": "..."}, "rationale": "..."} の JSON のみ。',
     'JSON 以外の前置き・説明・コードフェンスは出力しないこと。日本語で出力する。',
   ];
   return lines.filter((l) => l !== '').join(String.fromCharCode(10));

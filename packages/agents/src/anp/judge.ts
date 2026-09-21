@@ -75,6 +75,9 @@ export async function judgeNoteArticle(
     `課金種別: ${parsedInput.paid ? `有料 (¥${parsedInput.price_jpy ?? '未設定'})` : '無料'}`,
     `想定読者: ${parsedInput.account.target_reader ?? '(指定なし)'}`,
     ...editorialPolicyLines(parsedInput.account),
+    ...(parsedInput.account.editorial_policy?.includes('【品質判定項目】')
+      ? ['', '※ 上の【品質判定項目】は運営者が定めた減点/差し戻し基準です。該当する項目があれば該当軸を減点し、feedback に項目番号と理由を書くこと。']
+      : []),
     `本文 (先頭 ${BODY_LIMIT} 字):\n${parsedInput.body_md.slice(0, BODY_LIMIT)}`,
     '',
     '上記の note 記事を、以下 4 軸で 0-100 点で採点してください。',

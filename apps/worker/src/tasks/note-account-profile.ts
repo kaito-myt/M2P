@@ -22,6 +22,7 @@ import {
   type NoteAccountProfileOutput,
   type NoteAccountProfileTarget,
   NOTE_PROMOTION_CHANNELS,
+  composeEditorialPolicy,
   parseNotePromotionPolicy,
   type NotePromotionPolicyInput,
   type NotePromotionPolicyOutput,
@@ -357,7 +358,8 @@ export async function runNoteAccountProfile(
         data: {
           target_reader: editorial.target_reader,
           tone: editorial.tone,
-          editorial_policy: editorial.editorial_policy,
+          // F-ANP-07b: 5+1 区分を「【見出し】」付きの 1 本のテキストに連結して保存 (旧応答なら editorial_policy をそのまま)。
+          editorial_policy: composeEditorialPolicy(editorial.sections) || editorial.editorial_policy || '',
           profile_generated_at: now(),
         },
       });

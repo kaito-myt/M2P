@@ -374,6 +374,17 @@ ANP の機能は A2P の対応機能を note 向けに写像したもの。**太
   `anp/accounts/<id>/avatar-u<stamp>.<ext>` / `header-u<stamp>.<ext>`（`anpAccountAvatar/anpAccountHeader` に拡張子引数を追加）
   へ保存し `avatar_r2_key` / `header_r2_key` を差し替える（旧キーは残す＝生成物と同じ扱い）。DL ファイル名はキーの拡張子に追従
   （`extOfKey`）。生成中はアップロード不可。
+- **F-ANP-07b 記事の方針の区分化（実装済み 2026-09-22）**: 運営者要望「想定読者とトーンが見切れていて読みづらいので横幅
+  いっぱいで OK」「記事の方針も長い文章となっているけど『主なテーマ』『記事のフォーマット』『文末表現/禁止事項』『CTA』
+  『その他』にテキストボックス自体分けた方が読みやすい」「品質判定項目も設けましょうか」。`editorial-panel.tsx` は基本項目を
+  1 行 1 項目・横幅いっぱいにし、方針を **6 区分**（主なテーマ / 記事のフォーマット / 文末表現・禁止事項 / CTA / 品質判定項目 /
+  その他）のテキストボックスに分割。DB とプロンプト注入は従来どおり `note_accounts.editorial_policy` の 1 本のテキストで、
+  `composeEditorialPolicy(sections)`（`packages/contracts/src/agents/anp.ts`）が「【見出し】」付きで連結し、
+  `parseEditorialPolicy(text)` が UI 用に分割する（見出しの無い旧テキストは「・【ラベル】…」のラベル語で
+  `classifyEditorialLine` が振り分け）。AI 生成（`NoteAccountEditorialOutputSchema`）は `sections` オブジェクトで返し、worker
+  が連結して保存（旧形式 `editorial_policy` 文字列の応答も `parseEditorialPolicy` で正規化）。`anp.judge` は
+  【品質判定項目】がある場合「運営者の減点/差し戻し基準。該当すれば該当軸を減点し feedback に項目番号と理由」を明示注入。
+  Vitest `packages/contracts/__tests__/anp-editorial.test.ts`。
 - **F-ANP-08 アカウント設定（実装済み 2026-09-21）**: 運営者要望「アカウント詳細ページで無料公開の割合の設定とか、
   各種設定できるようにしといてね」「On/Off は基本トグルで」「1 日のテーマ作成数は各アカウントで設定するようにしましょう」。
   `/accounts/[id]` の「アカウント設定」節（`account-settings-form.tsx`）に 2 パネル:
