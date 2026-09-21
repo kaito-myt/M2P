@@ -95,7 +95,12 @@ export default async function ArticleDetailPage({
   ]);
   const globalDryRunEnabled = appSettings?.anp_publish_dry_run ?? true;
 
-  const eyecatchUrl = article.eyecatch_r2_key ? await getSignedDownloadUrl(article.eyecatch_r2_key, 900) : null;
+  const eyecatchUrl = article.eyecatch_r2_key
+    ? await getSignedDownloadUrl(article.eyecatch_r2_key, 900).catch((err: unknown) => {
+        console.error('[anp] signed url failed', { key: article.eyecatch_r2_key, err: err instanceof Error ? err.message : String(err) });
+        return null;
+      })
+    : null;
 
   const judgeJob = jobs.find((j) => j.kind === 'pipeline.note.judge' && j.result_json);
   const judgeResult = (judgeJob?.result_json ?? null) as JudgeResultJson | null;

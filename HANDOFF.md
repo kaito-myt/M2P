@@ -108,6 +108,11 @@ ANP のアカウント戦略を AI に相談しながら策定）を実施。mai
 - **AI モデル設定は M2P に持たせない**（運営者判断: 役割がツールごとに異なる）。A2P は従来の `/settings/models`、ANP は `/settings` に
   「AI モデル設定 (ANP の役割)」節を新設（anp.* の 8 役割、カタログの現行・呼出可のみ）。設計 = docs/10 §10.4b / docs/11 §5.4。
 
+### 本番障害（9/21 18:10 発覚・解消）: ANP アカウント詳細が 500
+- 原因: プロフィール画像の署名 URL 生成に R2 が必要だが、ANP サービスに `R2_*` env が無かった（worker/A2P にはある）。
+- 対処: `R2_ACCOUNT_ID / R2_ACCESS_KEY_ID / R2_SECRET_ACCESS_KEY / R2_BUCKET_NAME` を ANP に設定＋署名 URL 失敗はページを落とさず
+  画像非表示にするよう修正（account-profile-core / design 詳細 / 記事詳細）。
+
 ### DB マイグレーション履歴の整合
 - 本番 `_prisma_migrations` に未記録だった 20260915/0918/0919 と今日の 3 本を `prisma migrate resolve --applied` で記録。
   `migrate status` ではまだ 8 月〜9/9 の数本（20260826120000_ad_spend 〜 20260909000000_bw_retag）が未記録のまま

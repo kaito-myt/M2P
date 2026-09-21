@@ -41,6 +41,20 @@ export interface AccountProfileState {
   generating: boolean;
 }
 
+/**
+ * 署名 URL を作る。R2 未設定 (ConfigError) や一時的な失敗でページ全体を落とさず null にする
+ * (2026-09-21 本番で ANP サービスに R2 env が無くアカウント詳細が 500 になった事故の再発防止)。
+ */
+async function signedUrlOrNull(key: string | null, filename: string): Promise<string | null> {
+  if (!key) return null;
+  try {
+    return await getSignedDownloadUrl(key, SIGNED_URL_TTL_SEC, {}, filename);
+  } catch (err) {
+    console.error('[anp] signed url failed', { key, err: err instanceof Error ? err.message : String(err) });
+    return null;
+  }
+}
+
 export async function loadAccountProfileState(noteAccountId: string): Promise<AccountProfileState | null> {
   const account = await prisma.noteAccount.findUnique({
     where: { id: noteAccountId },
@@ -55,8 +69,8 @@ export async function loadAccountProfileState(noteAccountId: string): Promise<Ac
   });
 
   const [avatarUrl, headerUrl] = await Promise.all([
-    account.avatar_r2_key ? getSignedDownloadUrl(account.avatar_r2_key, SIGNED_URL_TTL_SEC, {}, 'avatar.png') : null,
-    account.header_r2_key ? getSignedDownloadUrl(account.header_r2_key, SIGNED_URL_TTL_SEC, {}, 'header.jpg') : null,
+    signedUrlOrNull(account.avatar_r2_key, 'avatar.png'),
+    signedUrlOrNull(account.header_r2_key, 'header.jpg'),
   ]);
 
   let jobView: AccountProfileJobView | null = null;

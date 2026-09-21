@@ -50,10 +50,17 @@ export default async function AccountDesignDetailPage({
       })
     : null;
 
-  const [avatarUrl, headerUrl] = await Promise.all([
-    row.avatar_r2_key ? getSignedDownloadUrl(row.avatar_r2_key, 900, {}, 'avatar.png') : null,
-    row.header_r2_key ? getSignedDownloadUrl(row.header_r2_key, 900, {}, 'header.jpg') : null,
-  ]);
+  // R2 未設定/一時失敗でページを落とさない (画像だけ非表示にする)。
+  const signed = async (key: string | null, name: string) => {
+    if (!key) return null;
+    try {
+      return await getSignedDownloadUrl(key, 900, {}, name);
+    } catch (err) {
+      console.error('[anp] signed url failed', { key, err: err instanceof Error ? err.message : String(err) });
+      return null;
+    }
+  };
+  const [avatarUrl, headerUrl] = await Promise.all([signed(row.avatar_r2_key, 'avatar.png'), signed(row.header_r2_key, 'header.jpg')]);
 
   const dm = messages.accountDesign;
   const statusLabel = dm.statusLabel[row.status as keyof typeof dm.statusLabel] ?? row.status;
