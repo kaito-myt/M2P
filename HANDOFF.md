@@ -84,6 +84,12 @@ ANP のアカウント戦略を AI に相談しながら策定）を実施。mai
 - 「メニューに記事一覧を追加して。作成中、公開前、公開中の記事が全部一覧化して」: サイドバー「記事一覧」＝`/articles` を
   段階タブ（すべて/作成中/公開前/公開中/失敗・非公開、件数付き）に再構成（`lib/article-stage.ts`）。
 
+### ANP — プロフィール素材（自己紹介文・アイコン・カバー）をアカウント詳細で生成（F-ANP-05, 9/21 夕方）
+- `/accounts/[id]`「note プロフィール素材」: 自己紹介文（生成/再生成・別案・手直し保存・コピー・140 字カウンタ）、
+  アイコン/カバー画像（生成/再生成・プレビュー・DL）、追加指示欄。worker `note.account.profile`（role anp.strategist 流用、
+  画像は人物型なら実写・顔なし・首から下ルール）。`note_accounts.bio/avatar_r2_key/header_r2_key/profile_generated_at`
+  （migration `20260921030000_anp_account_profile` 適用＋resolve 済み）。設計案採用時は設計案の bio/画像を引き継ぐ。
+
 ### DB マイグレーション履歴の整合
 - 本番 `_prisma_migrations` に未記録だった 20260915/0918/0919 と今日の 3 本を `prisma migrate resolve --applied` で記録。
   `migrate status` ではまだ 8 月〜9/9 の数本（20260826120000_ad_spend 〜 20260909000000_bw_retag）が未記録のまま

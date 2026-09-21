@@ -1469,6 +1469,13 @@ model NoteAccount {
   // 'script' = scripts/anp/note-session-capture.mjs)。null = 未連携。
   session_linked_at        DateTime?
   session_source           String?
+  // [F-ANP-01/03 → F-ANP-05] note プロフィール素材 (アカウント詳細で生成/編集/DL する)。
+  // bio = 自己紹介文 (note は 140 字上限)、avatar/header = R2 キー (`anp/accounts/<id>/...`)。
+  // 設計案 (NoteAccountDesign) を採用したときは設計案の bio/画像キーをコピーして初期化する。
+  bio                      String?  @db.Text
+  avatar_r2_key            String?
+  header_r2_key            String?
+  profile_generated_at     DateTime?
   status                   String   @default("active") // active | paused | archived | pending_session
   // [F-ANP-40] note.sales.fetch が `/<handle>/followers` から取得した最新フォロワー総数(累計)。
   // handle が null の間は取得できず既定 0 のまま。

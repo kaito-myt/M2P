@@ -1,0 +1,292 @@
+import type { JobHelpers, Task } from 'graphile-worker';
+import { z } from 'zod';
+
+import {
+  generateNoteAccountDesignImages as defaultGenerateNoteAccountDesignImages,
+  generateNoteAccountProfile as defaultGenerateNoteAccountProfile,
+  type NoteAccountDesignImages,
+} from '@a2p/agents/anp/strategist';
+import {
+  generateImage as defaultGenerateImage,
+  withImageLogging,
+  type GenerateImageFn,
+} from '@a2p/agents';
+import {
+  NoteAccountDesignSchema,
+  NoteAccountProfileTargetSchema,
+  type NoteAccountProfileInput,
+  type NoteAccountProfileOutput,
+  type NoteAccountProfileTarget,
+} from '@a2p/contracts/agents/anp';
+import { NotFoundError, ValidationError } from '@a2p/contracts/errors';
+import { createLogger, type Logger } from '@a2p/contracts/logger';
+import { prisma as defaultPrisma } from '@a2p/db';
+import { anpAccountAvatar, anpAccountHeader } from '@a2p/storage/keys';
+
+/**
+ * `note.account.profile` タスク (docs/11-anp-design.md §3.1/§7, F-ANP-05).
+ *
+ * 運営者要望 (2026-09-21)「アカウント詳細ページで、アイコン、カバー画像を生成して DL できるように
+ * して。自己紹介文も生成してコピーできるようにして」への対応。`/accounts/[id]` の
+ * 「自己紹介文を生成」「アイコン/カバーを生成」から enqueue される。
+ *
+ * フロー:
+ *   1. payload zod parse ({ note_account_id, job_id, targets: ('bio'|'visuals')[], instruction? })
+ *   2. 内部 `Job` を findUnique。既に done ならスキップ。CAS で queued/failed → running。
+ *   3. `note_accounts` (+ 採用済み設計案があればその design_json) を読む。
+ *   4. LLM (`generateNoteAccountProfile`, role=anp.strategist) で bio / avatar_prompt / header_prompt /
+ *      persona_type を生成。**targets が visuals のみ、かつ採用済み設計案に画像プロンプトがあり、
+ *      追加指示も無い場合は LLM を呼ばず設計案のプロンプトを使う** (コスト節約)。
+ *   5. targets に 'bio' があれば `note_accounts.bio` を更新。
+ *   6. targets に 'visuals' があれば gpt-image でアイコン/ヘッダーを生成し R2
+ *      `anp/accounts/<id>/avatar-<stamp>.png` / `header-<stamp>.jpg` に保存、キーを更新。
+ *   7. Job を done (result_json: bio_alternatives / prompts / keys)。
+ *
+ * 失敗時: Job を failed にして rethrow (`note_accounts` は変更しない = 再試行可能)。
+ */
+
+export const NOTE_ACCOUNT_PROFILE_TASK_NAME = 'note.account.profile';
+
+export const NoteAccountProfilePayloadSchema = z.object({
+  note_account_id: z.string().min(1),
+  job_id: z.string().min(1),
+  targets: z.array(NoteAccountProfileTargetSchema).min(1),
+  instruction: z.string().max(1000).optional(),
+});
+export type NoteAccountProfilePayload = z.infer<typeof NoteAccountProfilePayloadSchema>;
+
+export interface NoteAccountProfilePrisma {
+  job: {
+    findUnique: (args: { where: { id: string }; select: { status: true } }) => Promise<{ status: string } | null>;
+    updateMany: (args: {
+      where: { id: string; status: { in: string[] } };
+      data: { status: string; started_at?: Date; finished_at?: Date | null; error?: string | null };
+    }) => Promise<{ count: number }>;
+    update: (args: {
+      where: { id: string };
+      data: { status?: string; finished_at?: Date; error?: string | null; result_json?: unknown };
+    }) => Promise<unknown>;
+  };
+  noteAccount: {
+    findUnique: (args: {
+      where: { id: string };
+      select: {
+        id: true;
+        display_name: true;
+        handle: true;
+        niche: true;
+        target_reader: true;
+        tone: true;
+        bio: true;
+        designs: { where: { status: string }; orderBy: { created_at: 'desc' }; take: number; select: { design_json: true } };
+      };
+    }) => Promise<{
+      id: string;
+      display_name: string;
+      handle: string | null;
+      niche: string;
+      target_reader: string | null;
+      tone: string | null;
+      bio: string | null;
+      designs: Array<{ design_json: unknown }>;
+    } | null>;
+    update: (args: {
+      where: { id: string };
+      data: { bio?: string; avatar_r2_key?: string; header_r2_key?: string; profile_generated_at?: Date };
+    }) => Promise<unknown>;
+  };
+}
+
+export interface UploadBufferFn {
+  (key: string, buffer: Buffer, contentType: string): Promise<unknown>;
+}
+
+export interface NoteAccountProfileDeps {
+  prisma?: NoteAccountProfilePrisma;
+  logger?: Logger;
+  generateProfile?: (input: NoteAccountProfileInput) => Promise<NoteAccountProfileOutput>;
+  generateImages?: (
+    design: { avatar_prompt: string; header_prompt: string; persona_type: 'person' | 'brand' },
+  ) => Promise<NoteAccountDesignImages>;
+  generateImage?: GenerateImageFn;
+  uploadBuffer?: UploadBufferFn;
+  now?: () => Date;
+}
+
+async function defaultUploadBuffer(key: string, buffer: Buffer, contentType: string): Promise<unknown> {
+  const mod = await import('@a2p/storage/operations');
+  return mod.uploadBuffer(key, buffer, contentType);
+}
+
+/** R2 キー用のスタンプ (`YYYYMMDDHHmmss`、`assertId` の英数字制約を満たす)。 */
+export function profileKeyStamp(d: Date): string {
+  return d.toISOString().replace(/[-:TZ.]/g, '').slice(0, 14);
+}
+
+export async function runNoteAccountProfile(
+  payload: unknown,
+  deps: NoteAccountProfileDeps = {},
+): Promise<void> {
+  const parsed = NoteAccountProfilePayloadSchema.safeParse(payload);
+  if (!parsed.success) {
+    throw new ValidationError('note.account.profile payload が不正です', {
+      details: { issues: parsed.error.issues },
+    });
+  }
+  const { note_account_id: accountId, job_id: jobId, targets, instruction } = parsed.data;
+  const wants = (t: NoteAccountProfileTarget) => targets.includes(t);
+
+  const log = deps.logger ?? createLogger(`worker.${NOTE_ACCOUNT_PROFILE_TASK_NAME}`);
+  const prisma = deps.prisma ?? (defaultPrisma as unknown as NoteAccountProfilePrisma);
+  const uploadBuffer = deps.uploadBuffer ?? defaultUploadBuffer;
+  const now = deps.now ?? (() => new Date());
+  const generateProfile =
+    deps.generateProfile ?? ((input: NoteAccountProfileInput) => defaultGenerateNoteAccountProfile(input, { jobId }));
+  const imageFn: GenerateImageFn =
+    deps.generateImage ?? withImageLogging(defaultGenerateImage, { jobId, role: 'anp.strategist' });
+  const generateImages =
+    deps.generateImages ?? ((design) => defaultGenerateNoteAccountDesignImages(design, { generateImage: imageFn }));
+
+  const existing = await prisma.job.findUnique({ where: { id: jobId }, select: { status: true } });
+  if (!existing) {
+    throw new NotFoundError(`Job not found: ${jobId}`, { details: { jobId, accountId } });
+  }
+  if (existing.status === 'done') {
+    log.info({ task: NOTE_ACCOUNT_PROFILE_TASK_NAME, jobId }, 'job already done — skipping (idempotent)');
+    return;
+  }
+  const cas = await prisma.job.updateMany({
+    where: { id: jobId, status: { in: ['queued', 'failed'] } },
+    data: { status: 'running', started_at: now(), finished_at: null, error: null },
+  });
+  if (cas.count === 0) {
+    log.info({ task: NOTE_ACCOUNT_PROFILE_TASK_NAME, jobId }, 'job not in queued/failed state — skipping');
+    return;
+  }
+
+  try {
+    const account = await prisma.noteAccount.findUnique({
+      where: { id: accountId },
+      select: {
+        id: true,
+        display_name: true,
+        handle: true,
+        niche: true,
+        target_reader: true,
+        tone: true,
+        bio: true,
+        designs: { where: { status: 'adopted' }, orderBy: { created_at: 'desc' }, take: 1, select: { design_json: true } },
+      },
+    });
+    if (!account) {
+      throw new NotFoundError(`NoteAccount not found: ${accountId}`, { details: { accountId, jobId } });
+    }
+
+    const designParsed = account.designs[0]?.design_json
+      ? NoteAccountDesignSchema.safeParse(account.designs[0].design_json)
+      : null;
+    const design = designParsed?.success ? designParsed.data : null;
+
+    // 段階 4: プロンプト/bio の決定。
+    let profile: NoteAccountProfileOutput;
+    let usedLlm = false;
+    if (!wants('bio') && design && !instruction) {
+      profile = {
+        bio: account.bio ?? design.bio,
+        bio_alternatives: [],
+        avatar_prompt: design.avatar_prompt,
+        header_prompt: design.header_prompt,
+        persona_type: design.persona_type,
+      };
+    } else {
+      const input: NoteAccountProfileInput = {
+        display_name: account.display_name,
+        ...(account.handle ? { handle: account.handle } : {}),
+        niche: account.niche,
+        ...(account.target_reader ? { target_reader: account.target_reader } : {}),
+        ...(account.tone ? { tone: account.tone } : {}),
+        ...(design?.concept ? { concept: design.concept } : {}),
+        ...(design?.character_sheet ? { character_sheet: design.character_sheet } : {}),
+        ...(design ? { content_pillars: design.content_pillars.map((p) => p.name) } : {}),
+        ...(design ? { persona_type: design.persona_type } : {}),
+        ...(account.bio ? { existing_bio: account.bio } : {}),
+        ...(instruction ? { instruction } : {}),
+      };
+      profile = await generateProfile(input);
+      usedLlm = true;
+    }
+
+    const update: { bio?: string; avatar_r2_key?: string; header_r2_key?: string; profile_generated_at: Date } = {
+      profile_generated_at: now(),
+    };
+    if (wants('bio')) update.bio = profile.bio;
+
+    // 段階 6: 画像。
+    let avatarKey: string | undefined;
+    let headerKey: string | undefined;
+    if (wants('visuals')) {
+      const images = await generateImages({
+        avatar_prompt: profile.avatar_prompt,
+        header_prompt: profile.header_prompt,
+        persona_type: profile.persona_type,
+      });
+      const stamp = profileKeyStamp(now());
+      avatarKey = anpAccountAvatar(accountId, stamp);
+      headerKey = anpAccountHeader(accountId, stamp);
+      await uploadBuffer(avatarKey, images.avatar, 'image/png');
+      await uploadBuffer(headerKey, images.header, 'image/jpeg');
+      update.avatar_r2_key = avatarKey;
+      update.header_r2_key = headerKey;
+    }
+
+    await prisma.noteAccount.update({ where: { id: accountId }, data: update });
+
+    await prisma.job.update({
+      where: { id: jobId },
+      data: {
+        status: 'done',
+        finished_at: now(),
+        error: null,
+        result_json: {
+          note_account_id: accountId,
+          targets,
+          used_llm: usedLlm,
+          bio_alternatives: profile.bio_alternatives,
+          avatar_prompt: profile.avatar_prompt,
+          header_prompt: profile.header_prompt,
+          persona_type: profile.persona_type,
+          ...(avatarKey ? { avatar_r2_key: avatarKey } : {}),
+          ...(headerKey ? { header_r2_key: headerKey } : {}),
+        },
+      },
+    });
+
+    log.info(
+      { task: NOTE_ACCOUNT_PROFILE_TASK_NAME, jobId, accountId, targets, usedLlm, avatarKey, headerKey },
+      'note.account.profile done',
+    );
+  } catch (err) {
+    try {
+      await prisma.job.update({
+        where: { id: jobId },
+        data: { status: 'failed', finished_at: now(), error: serializeError(err) },
+      });
+    } catch (jobUpdateErr) {
+      log.warn({ task: NOTE_ACCOUNT_PROFILE_TASK_NAME, jobId, err: jobUpdateErr }, 'failed to mark internal Job as failed');
+    }
+    throw err;
+  }
+}
+
+function serializeError(err: unknown): string {
+  if (err instanceof Error) return `${err.name}: ${err.message}`;
+  try {
+    return JSON.stringify(err);
+  } catch {
+    return String(err);
+  }
+}
+
+export const noteAccountProfileTask: Task = async (payload: unknown, _helpers: JobHelpers) => {
+  await runNoteAccountProfile(payload);
+};

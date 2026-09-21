@@ -460,3 +460,45 @@ export function briefDraftToDesignBrief(
     ...(refs.length > 0 ? { reference_accounts: refs.slice(0, 10) } : {}),
   });
 }
+
+// ---------------------------------------------------------------------------
+// F-ANP-05 — note プロフィール素材の生成 (role='anp.strategist' を流用)
+//
+// 運営者要望 (2026-09-21)「アカウント詳細ページで、アイコン、カバー画像を生成して DL できるように
+// して。自己紹介文も生成してコピーできるようにして」への対応。設計案 (F-ANP-01) を経ずに作った
+// アカウントでも、台帳情報 (表示名/ニッチ/想定読者/トーン) から bio と画像プロンプトを作る。
+// ---------------------------------------------------------------------------
+
+/** note の自己紹介 (プロフィール文) は 140 字上限。 */
+export const NOTE_BIO_MAX_CHARS = 140;
+
+export const NoteAccountProfileTargetSchema = z.enum(['bio', 'visuals']);
+export type NoteAccountProfileTarget = z.infer<typeof NoteAccountProfileTargetSchema>;
+
+/** 生成の入力 (worker が note_accounts + 採用済み設計案から組み立てる)。 */
+export const NoteAccountProfileInputSchema = z.object({
+  display_name: z.string().min(1).max(100),
+  handle: z.string().max(32).optional(),
+  niche: z.string().min(1).max(500),
+  target_reader: z.string().max(500).optional(),
+  tone: z.string().max(300).optional(),
+  concept: z.string().max(1000).optional(),
+  character_sheet: z.string().max(3000).optional(),
+  content_pillars: z.array(z.string().max(200)).max(10).optional(),
+  persona_type: z.enum(['person', 'brand']).optional(),
+  /** 既存の自己紹介文 (あれば「これを改善する」指示になる)。 */
+  existing_bio: z.string().max(1000).optional(),
+  /** 運営者からの追加指示 (例: もっとカジュアルに / 顔出しなし)。 */
+  instruction: z.string().max(1000).optional(),
+});
+export type NoteAccountProfileInput = z.infer<typeof NoteAccountProfileInputSchema>;
+
+/** AI 出力。bio は 140 字以内を指示するが、超過は呼出側で切らず UI に文字数を出して運営者が調整する。 */
+export const NoteAccountProfileOutputSchema = z.object({
+  bio: z.string().min(1).max(600),
+  bio_alternatives: z.array(z.string().min(1).max(600)).max(3).default([]),
+  avatar_prompt: z.string().min(1).max(3000),
+  header_prompt: z.string().min(1).max(3000),
+  persona_type: z.enum(['person', 'brand']),
+});
+export type NoteAccountProfileOutput = z.infer<typeof NoteAccountProfileOutputSchema>;

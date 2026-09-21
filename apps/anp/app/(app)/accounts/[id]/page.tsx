@@ -5,8 +5,9 @@ import Link from 'next/link';
 import { notFound } from 'next/navigation';
 
 import { prisma } from '@a2p/db';
-import { NoteAccountDesignSchema, parseNoteAccountSettings } from '@a2p/contracts/agents/anp';
+import { parseNoteAccountSettings } from '@a2p/contracts/agents/anp';
 
+import { loadAccountProfileState } from '@/lib/account-profile-core';
 import { messages } from '@/lib/messages';
 
 import { AccountSettingsForm } from './account-settings-form';
@@ -14,6 +15,7 @@ import { ArticleReviewActions } from './article-review-actions';
 import { GenerateThemesButton } from './generate-themes-button';
 import { HandleForm } from './handle-form';
 import { NoteLinkForm } from './note-link-form';
+import { ProfilePanel } from './profile-panel';
 import { PublishArticleButton } from './publish-article-button';
 import { ThemeCard } from './theme-card';
 
@@ -49,8 +51,7 @@ export default async function AccountDetailPage({
   });
   if (!account) notFound();
   const adoptedDesign = account.designs[0] ?? null;
-  const adoptedDesignParsed = adoptedDesign?.design_json ? NoteAccountDesignSchema.safeParse(adoptedDesign.design_json) : null;
-  const adoptedBio = adoptedDesignParsed?.success ? adoptedDesignParsed.data.bio : null;
+  const profileState = await loadAccountProfileState(id);
   const accountSettings = parseNoteAccountSettings(account.settings_json);
 
   const [themes, articles, appSettings, pendingReauth] = await Promise.all([
@@ -118,7 +119,7 @@ export default async function AccountDetailPage({
 
       {/* F-ANP-20: note アカウント連携 (Cookie 貼り付け)。未連携/失効時は先頭に置いて次の一手を明示する。 */}
       <section className="mt-space-loose flex flex-col gap-space-snug">
-        {account.status === 'pending_session' && (adoptedBio || adoptedDesign) && (
+        {account.status === 'pending_session' && (
           <div className="rounded-container border border-border-warm bg-white p-space-relaxed">
             <h2 className="text-card-title font-medium text-charcoal">{messages.accounts.setupTitle}</h2>
             <p className="mt-1 text-caption text-muted">{messages.accounts.setupDescription}</p>
@@ -137,14 +138,6 @@ export default async function AccountDetailPage({
                   </dd>
                 </div>
               )}
-              {adoptedBio && (
-                <div>
-                  <dt className="text-caption text-muted">{messages.accountDesign.detail.bio}</dt>
-                  <dd className="whitespace-pre-wrap rounded-card border border-border-warm bg-cream-light px-3 py-2 text-body text-charcoal">
-                    {adoptedBio}
-                  </dd>
-                </div>
-              )}
             </dl>
             {adoptedDesign && (
               <Link href={`/accounts/design/${adoptedDesign.id}`} className="mt-2 inline-block text-caption text-charcoal underline">
@@ -153,6 +146,7 @@ export default async function AccountDetailPage({
             )}
           </div>
         )}
+        {profileState && <ProfilePanel noteAccountId={account.id} initial={profileState} />}
         <NoteLinkForm
           noteAccountId={account.id}
           handle={account.handle}

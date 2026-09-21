@@ -214,7 +214,7 @@ export async function adoptDesign(input: unknown): Promise<ActionResult<AdoptedA
   try {
     const row = await prisma.noteAccountDesign.findUnique({
       where: { id: designId },
-      select: { brief_json: true },
+      select: { brief_json: true, avatar_r2_key: true, header_r2_key: true },
     });
     if (!row) return { ok: false, error: m.notFound };
     const brief = NoteAccountDesignBriefSchema.safeParse(row.brief_json);
@@ -243,6 +243,11 @@ export async function adoptDesign(input: unknown): Promise<ActionResult<AdoptedA
           // note_accounts.genre_policy_json は現状 { slugs: string[] } で保存する
           // (docs/11 §6 は note.theme.generate 等では未参照。将来のジャンル別方針拡張のための下地)。
           genre_policy_json: { slugs: design.genre_policy },
+          // F-ANP-05: 設計案の bio / 生成済み画像をプロフィール素材の初期値として引き継ぐ
+          // (アカウント詳細の「note プロフィール素材」で再生成・編集・DL できる)。
+          bio: design.bio,
+          ...(row.avatar_r2_key ? { avatar_r2_key: row.avatar_r2_key } : {}),
+          ...(row.header_r2_key ? { header_r2_key: row.header_r2_key } : {}),
           status: 'pending_session',
         },
         select: { id: true },

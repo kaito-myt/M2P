@@ -261,6 +261,24 @@ export function anpAccountDesignHeader(designId: string): string {
 }
 
 /**
+ * `anp/accounts/{note_account_id}/avatar-{stamp}.png` — note アカウント (F-ANP-05) のアイコン。
+ * `note.account.profile` が生成・保存する。stamp (ISO 日時由来) で再生成ごとに別キーにし、
+ * 署名 URL/ブラウザキャッシュの取り違えを避ける。
+ */
+export function anpAccountAvatar(noteAccountId: string, stamp: string): string {
+  assertId('noteAccountId', noteAccountId);
+  assertId('stamp', stamp);
+  return `anp/accounts/${noteAccountId}/avatar-${stamp}.png`;
+}
+
+/** `anp/accounts/{note_account_id}/header-{stamp}.jpg` — note アカウントのヘッダー(カバー)画像 (F-ANP-05)。 */
+export function anpAccountHeader(noteAccountId: string, stamp: string): string {
+  assertId('noteAccountId', noteAccountId);
+  assertId('stamp', stamp);
+  return `anp/accounts/${noteAccountId}/header-${stamp}.jpg`;
+}
+
+/**
  * 論理削除用のキー変換 (docs/05 §8.1: `r2_key` を `_deleted/...` にリネーム)。
  * 既に `_deleted/` 配下にある場合はそのまま返す。
  */

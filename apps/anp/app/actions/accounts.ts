@@ -7,10 +7,12 @@ import { revalidatePath } from 'next/cache';
 import { z } from 'zod';
 
 import { prisma } from '@a2p/db';
-import { NoteAccountSettingsSchema } from '@a2p/contracts/agents/anp';
+import { NoteAccountProfileTargetSchema, NoteAccountSettingsSchema } from '@a2p/contracts/agents/anp';
 import { encryptKdpCredentials } from '@a2p/crypto';
 
 import { auth } from '@/auth';
+import { loadAccountProfileState, type AccountProfileState } from '@/lib/account-profile-core';
+import { enqueueJob } from '@/lib/graphile-client';
 import { messages } from '@/lib/messages';
 import {
   buildNoteStorageState,
@@ -262,4 +264,99 @@ export async function linkNoteAccountSession(input: unknown): Promise<ActionResu
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : lm.errors.linkFailed };
   }
+}
+
+// ---------------------------------------------------------------------------
+// F-ANP-05: プロフィール素材 (自己紹介文 / アイコン / カバー) の生成・編集
+// ---------------------------------------------------------------------------
+
+const NOTE_ACCOUNT_PROFILE_TASK_NAME = 'note.account.profile';
+
+const GenerateProfileSchema = z.object({
+  note_account_id: z.string().min(1),
+  targets: z.array(NoteAccountProfileTargetSchema).min(1),
+  instruction: z.string().trim().max(1000).optional(),
+});
+
+/**
+ * 「自己紹介文を生成」「アイコン/カバーを生成」→ worker `note.account.profile` を enqueue する。
+ * 同じアカウントの生成ジョブが queued/running のときは二重起動しない。
+ */
+export async function generateAccountProfile(input: unknown): Promise<ActionResult<{ job_id: string }>> {
+  const session = await auth();
+  if (!session?.user) return { ok: false, error: messages.common.unauthorized };
+
+  const parsed = GenerateProfileSchema.safeParse(input);
+  if (!parsed.success) return { ok: false, error: messages.accounts.profile.errors.generateFailed };
+  const { note_account_id: noteAccountId, targets, instruction } = parsed.data;
+  const pm = messages.accounts.profile;
+
+  try {
+    const account = await prisma.noteAccount.findUnique({ where: { id: noteAccountId }, select: { id: true } });
+    if (!account) return { ok: false, error: messages.accounts.errors.notFound };
+
+    const inflight = await prisma.job.count({
+      where: {
+        kind: NOTE_ACCOUNT_PROFILE_TASK_NAME,
+        status: { in: ['queued', 'running'] },
+        payload_json: { path: ['note_account_id'], equals: noteAccountId },
+      },
+    });
+    if (inflight > 0) return { ok: false, error: pm.errors.alreadyRunning };
+
+    const job = await prisma.job.create({
+      data: {
+        kind: NOTE_ACCOUNT_PROFILE_TASK_NAME,
+        status: 'queued',
+        payload_json: { note_account_id: noteAccountId, targets, ...(instruction ? { instruction } : {}) },
+      },
+    });
+    await enqueueJob(
+      NOTE_ACCOUNT_PROFILE_TASK_NAME,
+      { note_account_id: noteAccountId, job_id: job.id, targets, ...(instruction ? { instruction } : {}) },
+      { maxAttempts: 2 },
+    );
+    revalidatePath(`/accounts/${noteAccountId}`);
+    return { ok: true, data: { job_id: job.id } };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : pm.errors.generateFailed };
+  }
+}
+
+const UpdateBioSchema = z.object({
+  note_account_id: z.string().min(1),
+  bio: z.string().trim().max(1000),
+});
+
+/** 自己紹介文の手直しを保存する (空文字はクリア)。 */
+export async function updateAccountBio(input: unknown): Promise<ActionResult<void>> {
+  const session = await auth();
+  if (!session?.user) return { ok: false, error: messages.common.unauthorized };
+
+  const parsed = UpdateBioSchema.safeParse(input);
+  if (!parsed.success) return { ok: false, error: messages.accounts.profile.errors.saveFailed };
+  const { note_account_id: noteAccountId, bio } = parsed.data;
+  try {
+    await prisma.noteAccount.update({
+      where: { id: noteAccountId },
+      data: { bio: bio.length > 0 ? bio : null },
+    });
+    revalidatePath(`/accounts/${noteAccountId}`);
+    return { ok: true, data: undefined };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : messages.accounts.profile.errors.saveFailed };
+  }
+}
+
+const ProfileStateSchema = z.object({ note_account_id: z.string().min(1) });
+
+/** ポーリング用: 生成ジョブの状態と最新の素材 (署名 URL 付き)。 */
+export async function getAccountProfileState(input: unknown): Promise<ActionResult<AccountProfileState>> {
+  const session = await auth();
+  if (!session?.user) return { ok: false, error: messages.common.unauthorized };
+  const parsed = ProfileStateSchema.safeParse(input);
+  if (!parsed.success) return { ok: false, error: messages.accounts.errors.notFound };
+  const state = await loadAccountProfileState(parsed.data.note_account_id);
+  if (!state) return { ok: false, error: messages.accounts.errors.notFound };
+  return { ok: true, data: state };
 }

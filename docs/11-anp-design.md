@@ -307,6 +307,24 @@ ANP の機能は A2P の対応機能を note 向けに写像したもの。**太
   として残し、`session_source='script'` を記録するよう変更。**未検証**: Cookie のみ（localStorage 無し）の
   storageState で `pipeline.note.publish` のエディタ操作が通るか — 初回の自動公開で `not_logged_in` に
   なった場合はスクリプト経路にフォールバックする。
+- **F-ANP-05 note プロフィール素材の生成（アカウント詳細、実装済み 2026-09-21）**: 運営者要望
+  「アカウント詳細ページで、アイコン、カバー画像を生成して DL できるようにして。自己紹介文も生成して
+  コピーできるようにして」への対応。`/accounts/[id]` の「note プロフィール素材」パネル
+  （`profile-panel.tsx`）で **自己紹介文（生成/再生成・別案 2 件・手直し保存・コピー・140 字カウンタ）**
+  と **アイコン/カバー画像（生成/再生成・プレビュー・ダウンロード）** を扱う。任意の「追加指示」
+  （例: もっとカジュアルに / 青系）を両方の生成に渡せる。
+  - DB: `note_accounts.bio / avatar_r2_key / header_r2_key / profile_generated_at`
+    （migration `20260921030000_anp_account_profile`）。設計案採用時（`adoptDesign`）は設計案の bio と
+    生成済み画像キーをコピーして初期化する。
+  - worker: `note.account.profile`（`{ note_account_id, job_id, targets: ('bio'|'visuals')[], instruction? }`、
+    §7 Phase 8）。`generateNoteAccountProfile`（`packages/agents/src/anp/strategist.ts`、role=`anp.strategist`
+    を流用、出力 `NoteAccountProfileOutputSchema` = bio / bio_alternatives / avatar_prompt / header_prompt /
+    persona_type）→ 画像は `generateNoteAccountDesignImages`（人物型は実写・顔なし・首から下ルール適用）→
+    R2 `anp/accounts/<id>/avatar-<stamp>.png` / `header-<stamp>.jpg`（`anpAccountAvatar`/`anpAccountHeader`、
+    再生成ごとに別キー）。targets が visuals のみ＋採用済み設計案あり＋追加指示なしのときは LLM を呼ばず
+    設計案のプロンプトを使う。同一アカウントの queued/running ジョブがある間は二重起動しない。
+  - UI: 生成中は 3 秒ポーリング（`getAccountProfileState`）。画像は署名 URL（15 分）でプレビュー/DL。
+    別案はクリックで編集欄に差し替え。
 - **F-ANP-20 note 公開オートメーション（Playwright, アシスト型）**: 下書き作成→本文/画像流し込み→価格/ライン設定→予約 or 即時公開。KDP アシスト（`scripts/kdp-publish.mjs --assist`）と同型で `scripts/note-publish.mjs` を用意。
   **アカウント別 `auto_publish_enabled` を実装済み(2026-09-21)**: `note.publish.dispatch` が
   `resolveAutoPublishEnabled` でアカウント単位に自動公開の有効/無効を上書きできる(未指定はグローバル
@@ -443,6 +461,8 @@ A2P の `books` 系を note 記事系に写像。**マルチアカウントを�
   運営者のブリーフ (`NoteAccountDesignBriefSchema`) から `anp.strategist` が設計案
   (`NoteAccountDesignSchema`) を生成し `design_json` に保持する。採用時に `note_accounts` を
   新規作成し `note_account_id` で紐付ける（詳細は §3.1/§7）。
+- **`note_accounts.bio? / avatar_r2_key? / header_r2_key? / profile_generated_at?`（F-ANP-05, migration `20260921030000_anp_account_profile`）**:
+  アカウント詳細で生成/編集する note プロフィール素材。設計案採用時に設計案の値で初期化。
 - **`note_accounts.session_linked_at? / session_source?`（F-ANP-20b, migration `20260921020000_anp_session_link`）**:
   セッションを最後に取り込んだ日時と経路（`cookie_import` = ANP UI / `script` = ローカルスクリプト）。null = 未連携。
 - **`note_account_consultations`（Phase 6 新規, F-ANP-04, migration `20260921000000_anp_account_consult`）**:
@@ -677,6 +697,12 @@ web_search ループは 3〜7 分）。(3) 草案はサーバ側（AI）が毎�
 （修正は会話で伝える）。手直し UI が必要になれば `createDesignFromConsultation` の `brief_draft`
 引数（手直し草案を相談側にも保存）を使う。(4) 相談 → 設計案は多対一ではなく一対多
 （`note_account_designs.consultation_id`）: 同じ会話から複数案を出せる。
+
+### Phase 8 実装済みタスク — プロフィール素材の生成 (F-ANP-05, 2026-09-21)
+
+| タスク名 | ペイロード | 処理概要 | 完了後の遷移/状態 |
+|---|---|---|---|
+| `note.account.profile` | `{ note_account_id, job_id, targets: ('bio'\|'visuals')[], instruction? }` | `/accounts/[id]` の「自己紹介文を生成」「アイコンとカバーを生成」から enqueue（`maxAttempts=2`、同一アカウントの queued/running があれば SA 側で拒否）。`note_accounts` と採用済み設計案を読み、`generateNoteAccountProfile`（role=`anp.strategist`）で bio/画像プロンプト/persona_type を生成（visuals のみ＋設計案あり＋指示なしなら LLM 省略）。visuals なら gpt-image で生成し R2 `anp/accounts/<id>/avatar-<stamp>.png`・`header-<stamp>.jpg` へ upload。`NoteLock` は使わない | 成功: `bio`（targets に bio がある時）/`avatar_r2_key`/`header_r2_key`/`profile_generated_at` 更新、Job `result_json` に bio_alternatives・プロンプト・キー。失敗: Job `failed`（`note_accounts` は変更しない） |
 
 ### Phase 7 実装済みタスク — 残項目一括実装 (2026-09-21, 運営者指示「ANP の実装を仕上げちゃって」)
 

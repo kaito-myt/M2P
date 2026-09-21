@@ -189,6 +189,7 @@ import { NOTE_THEME_AUTO_TASK_NAME, noteThemeAutoTask } from './tasks/note-theme
 import { NOTE_ACCOUNT_DESIGN_TASK_NAME, noteAccountDesignTask } from './tasks/note-account-design.js';
 import { NOTE_ACCOUNT_VISUALS_TASK_NAME, noteAccountVisualsTask } from './tasks/note-account-visuals.js';
 import { NOTE_ACCOUNT_CONSULT_TASK_NAME, noteAccountConsultTask } from './tasks/note-account-consult.js';
+import { NOTE_ACCOUNT_PROFILE_TASK_NAME, noteAccountProfileTask } from './tasks/note-account-profile.js';
 import {
   PIPELINE_NOTE_WRITER_OUTLINE_TASK_NAME,
   pipelineNoteWriterOutlineTask,
@@ -339,6 +340,7 @@ export function buildTaskList(): TaskList {
     [NOTE_ACCOUNT_DESIGN_TASK_NAME]: noteAccountDesignTask,
     [NOTE_ACCOUNT_VISUALS_TASK_NAME]: noteAccountVisualsTask,
     [NOTE_ACCOUNT_CONSULT_TASK_NAME]: noteAccountConsultTask,
+    [NOTE_ACCOUNT_PROFILE_TASK_NAME]: noteAccountProfileTask,
     [PIPELINE_NOTE_WRITER_OUTLINE_TASK_NAME]: pipelineNoteWriterOutlineTask,
     [PIPELINE_NOTE_WRITER_BODY_TASK_NAME]: pipelineNoteWriterBodyTask,
     [PIPELINE_NOTE_EDITOR_TASK_NAME]: pipelineNoteEditorTask,

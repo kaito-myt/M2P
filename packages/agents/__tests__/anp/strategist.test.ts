@@ -20,6 +20,8 @@ const {
   planNoteAccountDesign,
   buildUserMessage,
   generateNoteAccountDesignImages,
+  generateNoteAccountProfile,
+  buildProfileUserMessage,
 } = await import('../../src/anp/strategist.js');
 import type {
   PlanNoteAccountDesignDeps,
@@ -197,5 +199,59 @@ describe('generateNoteAccountDesignImages', () => {
         { generateImage: genImage } as GenerateNoteAccountDesignImagesDeps,
       ),
     ).rejects.toThrow('画像生成結果が空です');
+  });
+});
+
+describe('generateNoteAccountProfile (F-ANP-05)', () => {
+  const output = {
+    bio: 'AI で副業を始める会社員向けに、週末でできる手順を発信します。',
+    bio_alternatives: ['別案1'],
+    avatar_prompt: 'a desk with a notebook',
+    header_prompt: 'a wide desk scene',
+    persona_type: 'person',
+  };
+
+  it('bio / プロンプト / persona_type を返し role=anp.strategist で呼ぶ', async () => {
+    const client = makeClient([JSON.stringify(output)]);
+    const res = await generateNoteAccountProfile(
+      { display_name: '副業AIラボ', niche: '副業×AI', target_reader: '会社員' },
+      { createAgentClient: vi.fn(async () => client), loadActivePrompt: loadPromptStub() } as PlanNoteAccountDesignDeps,
+    );
+    expect(res.bio).toContain('副業');
+    expect(res.persona_type).toBe('person');
+    const arg = (client.complete as ReturnType<typeof vi.fn>).mock.calls[0]![0] as LLMCompleteArgs;
+    expect(arg.role).toBe('anp.strategist');
+    expect(arg.messages[1]!.content).toContain('【表示名】副業AIラボ');
+  });
+
+  it('不正 JSON は 2 回目で成功、2 回とも不正なら AgentError', async () => {
+    const ok = makeClient(['nope', JSON.stringify(output)]);
+    await expect(
+      generateNoteAccountProfile(
+        { display_name: 'x', niche: 'y' },
+        { createAgentClient: vi.fn(async () => ok), loadActivePrompt: loadPromptStub() } as PlanNoteAccountDesignDeps,
+      ),
+    ).resolves.toMatchObject({ bio: output.bio });
+    const bad = makeClient(['nope', 'still nope']);
+    await expect(
+      generateNoteAccountProfile(
+        { display_name: 'x', niche: 'y' },
+        { createAgentClient: vi.fn(async () => bad), loadActivePrompt: loadPromptStub() } as PlanNoteAccountDesignDeps,
+      ),
+    ).rejects.toThrow(AgentError);
+  });
+
+  it('buildProfileUserMessage は既存 bio・追加指示・140 字制約を含める', () => {
+    const msg = buildProfileUserMessage({
+      display_name: 'A',
+      niche: 'B',
+      existing_bio: '古い bio',
+      instruction: 'カジュアルに',
+      persona_type: 'brand',
+    });
+    expect(msg).toContain('古い bio');
+    expect(msg).toContain('カジュアルに');
+    expect(msg).toContain('140 字以内');
+    expect(msg).toContain('ブランド型');
   });
 });

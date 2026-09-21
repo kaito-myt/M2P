@@ -14,10 +14,15 @@
 import { AgentError } from '@a2p/contracts/errors';
 import type { LLMClient } from '@a2p/contracts/agents';
 import {
+  NOTE_BIO_MAX_CHARS,
   NoteAccountDesignBriefSchema,
   NoteAccountDesignSchema,
+  NoteAccountProfileInputSchema,
+  NoteAccountProfileOutputSchema,
   type NoteAccountDesign,
   type NoteAccountDesignBrief,
+  type NoteAccountProfileInput,
+  type NoteAccountProfileOutput,
 } from '@a2p/contracts/agents/anp';
 
 import { createAgentClient as defaultCreateAgentClient } from '../lib/llm-client-factory.js';
@@ -178,6 +183,121 @@ export function buildUserMessage(brief: NoteAccountDesignBrief): string {
     '',
     '出力形式: 上記フィールドを持つ JSON のみを返してください。JSON 以外の前置き・説明・',
     'コードフェンスは出力しないこと。日本語で出力する。',
+  ];
+  return lines.filter((l) => l !== '').join('\n');
+}
+
+// ---------------------------------------------------------------------------
+// F-ANP-05 — プロフィール素材 (bio + アイコン/ヘッダー画像プロンプト) の生成
+//
+// アカウント詳細ページの「自己紹介文を生成」「アイコン/カバーを生成」から (worker
+// `note.account.profile` 経由で) 呼ばれる。設計案を経ていないアカウントでも台帳情報だけで
+// 作れるよう、入力は `NoteAccountProfileInput` (表示名/ニッチ/想定読者/トーン + 任意の設計情報)。
+// role は anp.strategist を流用 (システムプロンプト/モデル割当は同じ、ユーザーメッセージだけ別)。
+// ---------------------------------------------------------------------------
+
+function hasBio(parsed: unknown): boolean {
+  if (typeof parsed !== 'object' || parsed === null) return false;
+  return typeof (parsed as Record<string, unknown>).bio === 'string';
+}
+
+export async function generateNoteAccountProfile(
+  input: NoteAccountProfileInput,
+  deps: PlanNoteAccountDesignDeps = {},
+): Promise<NoteAccountProfileOutput> {
+  const parsedInput = NoteAccountProfileInputSchema.parse(input);
+
+  const loadPrompt = deps.loadActivePrompt ?? defaultLoadActivePrompt;
+  const makeClient = deps.createAgentClient ?? defaultCreateAgentClient;
+
+  const prompt = await loadPrompt('anp.strategist', null, deps.promptLoaderDeps);
+  const systemPrompt = fillPlaceholders(prompt.template, {});
+
+  const ctx: LoggingContext = { role: 'anp.strategist' };
+  if (deps.jobId !== undefined) ctx.jobId = deps.jobId;
+
+  const factoryDeps: Parameters<typeof makeClient>[3] = {};
+  if (deps.loadAssignmentDeps) factoryDeps.loadAssignmentDeps = deps.loadAssignmentDeps;
+  if (deps.withTokenLoggingDeps) factoryDeps.withTokenLoggingDeps = deps.withTokenLoggingDeps;
+  if (deps.getApiKey) factoryDeps.getApiKey = deps.getApiKey;
+
+  const client: LLMClient = await makeClient('anp.strategist', null, ctx, factoryDeps);
+  const userMessage = buildProfileUserMessage(parsedInput);
+
+  let lastError: AgentError | undefined;
+  for (let attempt = 1; attempt <= MAX_PARSE_RETRIES; attempt++) {
+    const completion = await client.complete<string>({
+      role: 'anp.strategist',
+      genre: null,
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: userMessage },
+      ],
+      maxOutputTokens: 4096,
+    });
+    const rawText = completion.text;
+    if (typeof rawText !== 'string' || rawText.trim().length === 0) {
+      lastError = new AgentError('anp.strategist.profile.invalid_output: empty response', {
+        details: { rawText: String(rawText), attempt },
+      });
+      continue;
+    }
+    const parsedJson = extractLlmJson<unknown>(rawText, hasBio);
+    if (parsedJson === undefined) {
+      lastError = new AgentError('anp.strategist.profile.invalid_output: failed to parse JSON', {
+        details: { rawText, attempt },
+      });
+      continue;
+    }
+    const validated = NoteAccountProfileOutputSchema.safeParse(parsedJson);
+    if (!validated.success) {
+      lastError = new AgentError('anp.strategist.profile.invalid_output: schema validation failed', {
+        details: { rawText, issues: validated.error.issues, attempt },
+        cause: validated.error,
+      });
+      continue;
+    }
+    return validated.data;
+  }
+  throw lastError ?? new AgentError('anp.strategist.profile.invalid_output: unknown failure');
+}
+
+export function buildProfileUserMessage(input: NoteAccountProfileInput): string {
+  const personaHint =
+    input.persona_type === 'person'
+      ? '人物型 (実在の個人が書いている体)'
+      : input.persona_type === 'brand'
+        ? 'ブランド型 (ロゴ/世界観ベース、顔を出さない)'
+        : '(未指定。内容から人物型/ブランド型を判断してよい)';
+  const lines = [
+    'note アカウントのプロフィール素材 (自己紹介文・アイコン画像プロンプト・ヘッダー画像プロンプト) を作ってください。',
+    '',
+    `【表示名】${input.display_name}`,
+    input.handle ? `【note ハンドル】${input.handle}` : '',
+    `【ニッチ・発信テーマ】${input.niche}`,
+    input.target_reader ? `【想定読者】${input.target_reader}` : '',
+    input.tone ? `【トーン】${input.tone}` : '',
+    input.concept ? `【コンセプト】${input.concept}` : '',
+    input.content_pillars && input.content_pillars.length > 0
+      ? `【発信の柱】${input.content_pillars.join(' / ')}`
+      : '',
+    input.character_sheet ? `【キャラクター設定】\n${input.character_sheet}` : '',
+    `【人物設定】${personaHint}`,
+    input.existing_bio ? `【現在の自己紹介文 (これを改善する)】\n${input.existing_bio}` : '',
+    input.instruction ? `【運営者からの追加指示 (必ず反映)】\n${input.instruction}` : '',
+    '',
+    '要件:',
+    `- bio: note のプロフィール欄にそのまま貼れる自己紹介文。**${NOTE_BIO_MAX_CHARS} 字以内 (厳守)**。`,
+    '  「誰に・何を・なぜ読む価値があるか」を含め、宣伝臭を避けて人柄/世界観が伝わる文にする。改行は最大 2 回まで。',
+    `- bio_alternatives: トーン違いの代替案を 2 件 (各 ${NOTE_BIO_MAX_CHARS} 字以内)。`,
+    '- avatar_prompt: アイコン (正方形) 用の画像生成プロンプト。文字・ロゴ・数字は一切描かせない。',
+    '  人物型なら「実写・顔は映さない・首から下」の制約は呼出側で付与するので、服装/小物/雰囲気/色調を具体的に書く。',
+    '  ブランド型なら世界観を象徴するモチーフ/質感/配色を具体的に書く。',
+    '- header_prompt: ヘッダー (横長 1280x670 目安) 用の画像生成プロンプト。文字は一切描かせない。アイコンと世界観を揃える。',
+    '- persona_type: "person" か "brand" のどちらかを断定する。',
+    '',
+    '出力形式: {"bio": "...", "bio_alternatives": ["...", "..."], "avatar_prompt": "...", "header_prompt": "...", "persona_type": "person"|"brand"}',
+    'の JSON のみを返してください。JSON 以外の前置き・説明・コードフェンスは出力しないこと。日本語で出力する。',
   ];
   return lines.filter((l) => l !== '').join('\n');
 }

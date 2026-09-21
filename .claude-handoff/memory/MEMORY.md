@@ -41,3 +41,4 @@
 - [Railway deploy](reference_railway_deploy.md) — redeploy --from-source は反映されない; railway up --service X --detach を使う
 - [Re-kick freeze](reference_rekick_freeze.md) — judge再キック後に本がrunning/judgingで無言凍結(doneジョブを見るdedupeガード); 2026-09-16修正＋復旧手順(unfreeze)。
 - [SNS persona visuals](project_sns_persona_visuals.md) — ペルソナ画像=実写・顔なし・首から下(2026-09-18再生成済)、IGカルーセル＋固定テンプレ枚、character_sheet注入; OpenAI安全フィルタでNGな語彙の実測。
+- [Bash backslash collapse](reference_bash_backslash_collapse.md) — Bashツールのコマンド内 `\` は `\` に潰れる; python heredocパッチで改行エスケープを書くと実改行になりTSが壊れる→chr(92)かWrite/Editを使う。
