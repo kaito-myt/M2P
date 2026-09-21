@@ -43,7 +43,13 @@ import { anpAccountAvatar, anpAccountHeader } from '@a2p/storage/keys';
  *   7. Job を done (result_json: bio_alternatives / prompts / keys)。
  *
  * 失敗時: Job を failed にして rethrow (`note_accounts` は変更しない = 再試行可能)。
+ *
+ * 進捗 (運営者要望 2026-09-21「生成中の完了目安時間が分からないから進捗率を見えるように」):
+ *   実行中は `Job.result_json.progress = { stage, pct, at }` を段階ごとに書く (UI がポーリングで表示)。
+ *   stage = prompt (LLM) → avatar → header → upload。done 時は result_json を最終結果で置き換える。
  */
+
+export type NoteAccountProfileStage = 'prompt' | 'avatar' | 'header' | 'upload';
 
 export const NOTE_ACCOUNT_PROFILE_TASK_NAME = 'note.account.profile';
 
@@ -144,8 +150,28 @@ export async function runNoteAccountProfile(
     deps.generateProfile ?? ((input: NoteAccountProfileInput) => defaultGenerateNoteAccountProfile(input, { jobId }));
   const imageFn: GenerateImageFn =
     deps.generateImage ?? withImageLogging(defaultGenerateImage, { jobId, role: 'anp.strategist' });
+  // 画像は avatar → header の順に直列で呼ばれるので、呼出回数で段階を判定して進捗を書く。
+  let imageCalls = 0;
+  const trackedImageFn: GenerateImageFn = async (args) => {
+    imageCalls += 1;
+    if (imageCalls === 2) await report('header', 65);
+    return imageFn(args);
+  };
   const generateImages =
-    deps.generateImages ?? ((design) => defaultGenerateNoteAccountDesignImages(design, { generateImage: imageFn }));
+    deps.generateImages ??
+    ((design) => defaultGenerateNoteAccountDesignImages(design, { generateImage: trackedImageFn }));
+
+  /** 進捗を Job.result_json.progress に書く (失敗しても処理は止めない)。 */
+  const report = async (stage: NoteAccountProfileStage, pct: number): Promise<void> => {
+    try {
+      await prisma.job.update({
+        where: { id: jobId },
+        data: { result_json: { progress: { stage, pct, at: now().toISOString() } } },
+      });
+    } catch (err) {
+      log.warn({ task: NOTE_ACCOUNT_PROFILE_TASK_NAME, jobId, stage, err }, 'failed to report progress');
+    }
+  };
 
   const existing = await prisma.job.findUnique({ where: { id: jobId }, select: { status: true } });
   if (!existing) {
@@ -212,6 +238,7 @@ export async function runNoteAccountProfile(
         ...(account.bio ? { existing_bio: account.bio } : {}),
         ...(instruction ? { instruction } : {}),
       };
+      await report('prompt', 10);
       profile = await generateProfile(input);
       usedLlm = true;
     }
@@ -225,11 +252,13 @@ export async function runNoteAccountProfile(
     let avatarKey: string | undefined;
     let headerKey: string | undefined;
     if (wants('visuals')) {
+      await report('avatar', 35);
       const images = await generateImages({
         avatar_prompt: profile.avatar_prompt,
         header_prompt: profile.header_prompt,
         persona_type: profile.persona_type,
       });
+      await report('upload', 90);
       const stamp = profileKeyStamp(now());
       avatarKey = anpAccountAvatar(accountId, stamp);
       headerKey = anpAccountHeader(accountId, stamp);

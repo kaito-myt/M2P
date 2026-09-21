@@ -12,6 +12,7 @@ import { messages } from '@/lib/messages';
 
 import { DesignForm } from './design-form';
 import { FeedbackForm } from './feedback-form';
+import { DesignGeneratingIndicator } from './generating-indicator';
 
 export default async function AccountDesignDetailPage({
   params,
@@ -90,7 +91,10 @@ export default async function AccountDesignDetailPage({
       </section>
 
       {row.status === 'generating' && (
-        <p className="mt-space-relaxed text-body text-muted">{dm.detail.generatingNotice}</p>
+        <>
+          <DesignGeneratingIndicator createdAt={row.created_at.toISOString()} />
+          <p className="mt-2 text-caption text-muted">{dm.detail.generatingNotice}</p>
+        </>
       )}
       {row.status === 'failed' && (
         <div className="mt-space-relaxed rounded-container border border-red-300 bg-red-50 p-space-relaxed">

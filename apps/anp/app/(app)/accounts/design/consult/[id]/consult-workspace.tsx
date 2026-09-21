@@ -10,6 +10,8 @@ import { useRouter } from 'next/navigation';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Loader2, Send } from 'lucide-react';
 
+import { GenerationProgress } from '@/components/generation-progress';
+
 import {
   archiveConsultation,
   createDesignFromConsultation,
@@ -22,6 +24,8 @@ import { messages } from '@/lib/messages';
 
 const POLL_MS = 2500;
 const cm = messages.accountConsult;
+/** 返答の目安所要時間 (秒)。リサーチ計画 + Tavily + 返答生成 (Opus) で 30〜60 秒。 */
+const CONSULT_ESTIMATE_SEC = 50;
 
 export function ConsultWorkspace({ initial }: { initial: ConsultationStateView }) {
   const router = useRouter();
@@ -146,9 +150,14 @@ export function ConsultWorkspace({ initial }: { initial: ConsultationStateView }
             <ChatBubble key={msg.id} msg={msg} onRetry={handleRetry} />
           ))}
           {state.awaiting_reply && (
-            <div className="flex items-center gap-2 text-button-sm text-muted" data-testid="consult-chat-awaiting">
-              <Loader2 aria-hidden="true" className="h-4 w-4 animate-spin" />
-              {cm.chat.awaiting}
+            <div data-testid="consult-chat-awaiting">
+              <GenerationProgress
+                startedAt={[...state.messages].reverse().find((m) => m.role === 'operator')?.created_at ?? new Date().toISOString()}
+                estimateSec={CONSULT_ESTIMATE_SEC}
+                pct={null}
+                stageLabel={cm.chat.awaiting}
+                capPct={92}
+              />
             </div>
           )}
         </div>

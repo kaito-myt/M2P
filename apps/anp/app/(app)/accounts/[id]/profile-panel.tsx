@@ -9,12 +9,36 @@ import { useCallback, useEffect, useState } from 'react';
 import { Check, Copy, Download, Loader2, RefreshCw, Sparkles } from 'lucide-react';
 
 import { generateAccountProfile, getAccountProfileState, updateAccountBio } from '@/app/actions/accounts';
+import { GenerationProgress } from '@/components/generation-progress';
 import type { AccountProfileState } from '@/lib/account-profile-core';
 import { messages } from '@/lib/messages';
 
 const POLL_MS = 3000;
 const NOTE_BIO_MAX = 140;
 const pm = messages.accounts.profile;
+
+/** 目安の所要時間 (秒)。bio = LLM 1 回、visuals = (LLM) + 画像 2 枚 + upload。実測で調整する。 */
+const ESTIMATE_SEC = { bio: 40, visuals: 120 } as const;
+
+/** 進捗の段階ラベルと、実進捗が無い区間の補間上限。 */
+function progressView(job: NonNullable<AccountProfileState['job']>): { label: string; pct: number | null; cap: number } {
+  if (job.status === 'queued') return { label: pm.progress.queued, pct: null, cap: 8 };
+  const stage = job.progress?.stage;
+  const pct = job.progress?.pct ?? null;
+  const visuals = job.targets.includes('visuals');
+  switch (stage) {
+    case 'prompt':
+      return { label: visuals ? pm.progress.prompt : pm.progress.bio, pct, cap: visuals ? 33 : 88 };
+    case 'avatar':
+      return { label: pm.progress.avatar, pct, cap: 63 };
+    case 'header':
+      return { label: pm.progress.header, pct, cap: 88 };
+    case 'upload':
+      return { label: pm.progress.upload, pct, cap: 98 };
+    default:
+      return { label: pm.progress.starting, pct, cap: 10 };
+  }
+}
 
 export function ProfilePanel({ noteAccountId, initial }: { noteAccountId: string; initial: AccountProfileState }) {
   const [state, setState] = useState<AccountProfileState>(initial);
@@ -59,7 +83,16 @@ export function ProfilePanel({ noteAccountId, initial }: { noteAccountId: string
     setState((prev) => ({
       ...prev,
       generating: true,
-      job: { id: res.data.job_id, status: 'queued', targets, error: null, bio_alternatives: [], created_at: new Date().toISOString() },
+      job: {
+        id: res.data.job_id,
+        status: 'queued',
+        targets,
+        error: null,
+        bio_alternatives: [],
+        progress: null,
+        created_at: new Date().toISOString(),
+        started_at: null,
+      },
     }));
     void load();
   };
@@ -89,6 +122,8 @@ export function ProfilePanel({ noteAccountId, initial }: { noteAccountId: string
   };
 
   const generatingTargets = state.generating ? state.job?.targets ?? [] : [];
+  const progress = state.generating && state.job ? progressView(state.job) : null;
+  const estimateSec = generatingTargets.includes('visuals') ? ESTIMATE_SEC.visuals : ESTIMATE_SEC.bio;
   const bioGenerating = generatingTargets.includes('bio');
   const visualsGenerating = generatingTargets.includes('visuals');
   const lastFailed = state.job?.status === 'failed';
@@ -99,6 +134,17 @@ export function ProfilePanel({ noteAccountId, initial }: { noteAccountId: string
     <section className="rounded-container border border-border-warm bg-cream-light p-space-relaxed" data-testid="profile-panel">
       <h2 className="text-card-title font-medium text-charcoal">{pm.title}</h2>
       <p className="mt-1 text-caption text-muted">{pm.description}</p>
+
+      {progress && state.job && (
+        <GenerationProgress
+          className="mt-space-snug rounded-card border border-border-warm bg-white px-3 py-2"
+          startedAt={state.job.created_at}
+          estimateSec={estimateSec}
+          pct={progress.pct}
+          stageLabel={progress.label}
+          capPct={progress.cap}
+        />
+      )}
 
       {/* --- 自己紹介文 --- */}
       <div className="mt-space-snug">

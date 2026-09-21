@@ -325,6 +325,13 @@ ANP の機能は A2P の対応機能を note 向けに写像したもの。**太
     設計案のプロンプトを使う。同一アカウントの queued/running ジョブがある間は二重起動しない。
   - UI: 生成中は 3 秒ポーリング（`getAccountProfileState`）。画像は署名 URL（15 分）でプレビュー/DL。
     別案はクリックで編集欄に差し替え。
+  - **進捗表示（運営者要望 2026-09-21「生成中の完了目安時間が分からないから進捗率を見えるように」）**:
+    worker が段階ごとに `Job.result_json.progress = { stage: prompt|avatar|header|upload, pct, at }` を書き、
+    共通コンポーネント `apps/anp/components/generation-progress.tsx` が「段階ラベル・%・経過・残り目安」を
+    表示する。実進捗が無い区間（順番待ち・段階の途中）は経過時間から目安総所要時間（bio 40 秒 / visuals
+    120 秒）に対して補間するが、次の段階の手前（cap）で止まり、実進捗を追い越さない。同コンポーネントを
+    設計案生成（`/accounts/design/[id]`、目安 90 秒、4 秒ごと自動更新で提案済みに切替）と AI 相談の
+    返答待ち（目安 50 秒）にも適用した。
 - **F-ANP-20 note 公開オートメーション（Playwright, アシスト型）**: 下書き作成→本文/画像流し込み→価格/ライン設定→予約 or 即時公開。KDP アシスト（`scripts/kdp-publish.mjs --assist`）と同型で `scripts/note-publish.mjs` を用意。
   **アカウント別 `auto_publish_enabled` を実装済み(2026-09-21)**: `note.publish.dispatch` が
   `resolveAutoPublishEnabled` でアカウント単位に自動公開の有効/無効を上書きできる(未指定はグローバル

@@ -10,13 +10,24 @@ const NOTE_ACCOUNT_PROFILE_TASK_NAME = 'note.account.profile';
 /** 署名 URL の有効期限 (秒)。ポーリングで更新されるので短めでよい。 */
 const SIGNED_URL_TTL_SEC = 900;
 
+export interface AccountProfileJobProgress {
+  /** worker `note.account.profile` の段階: prompt | avatar | header | upload。 */
+  stage: string;
+  /** 0〜100。 */
+  pct: number;
+  at: string;
+}
+
 export interface AccountProfileJobView {
   id: string;
   status: string;
   targets: string[];
   error: string | null;
   bio_alternatives: string[];
+  /** 実行中に worker が書く進捗 (Job.result_json.progress)。無ければ null。 */
+  progress: AccountProfileJobProgress | null;
   created_at: string;
+  started_at: string | null;
 }
 
 export interface AccountProfileState {
@@ -40,7 +51,7 @@ export async function loadAccountProfileState(noteAccountId: string): Promise<Ac
   const job = await prisma.job.findFirst({
     where: { kind: NOTE_ACCOUNT_PROFILE_TASK_NAME, payload_json: { path: ['note_account_id'], equals: noteAccountId } },
     orderBy: { created_at: 'desc' },
-    select: { id: true, status: true, error: true, payload_json: true, result_json: true, created_at: true },
+    select: { id: true, status: true, error: true, payload_json: true, result_json: true, created_at: true, started_at: true },
   });
 
   const [avatarUrl, headerUrl] = await Promise.all([
@@ -51,7 +62,12 @@ export async function loadAccountProfileState(noteAccountId: string): Promise<Ac
   let jobView: AccountProfileJobView | null = null;
   if (job) {
     const payload = (job.payload_json ?? {}) as { targets?: unknown };
-    const result = (job.result_json ?? {}) as { bio_alternatives?: unknown };
+    const result = (job.result_json ?? {}) as { bio_alternatives?: unknown; progress?: unknown };
+    const p = result.progress as { stage?: unknown; pct?: unknown; at?: unknown } | undefined;
+    const progress: AccountProfileJobProgress | null =
+      p && typeof p.stage === 'string' && typeof p.pct === 'number'
+        ? { stage: p.stage, pct: Math.max(0, Math.min(100, p.pct)), at: typeof p.at === 'string' ? p.at : '' }
+        : null;
     jobView = {
       id: job.id,
       status: job.status,
@@ -60,7 +76,9 @@ export async function loadAccountProfileState(noteAccountId: string): Promise<Ac
       bio_alternatives: Array.isArray(result.bio_alternatives)
         ? result.bio_alternatives.filter((b): b is string => typeof b === 'string')
         : [],
+      progress,
       created_at: job.created_at.toISOString(),
+      started_at: job.started_at ? job.started_at.toISOString() : null,
     };
   }
 
