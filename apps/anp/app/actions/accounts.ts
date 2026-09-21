@@ -7,7 +7,7 @@ import { revalidatePath } from 'next/cache';
 import { z } from 'zod';
 
 import { prisma } from '@a2p/db';
-import { NoteAccountProfileTargetSchema, NoteAccountSettingsSchema } from '@a2p/contracts/agents/anp';
+import { NOTE_PROMOTION_CHANNELS, NoteAccountProfileTargetSchema, NoteAccountSettingsSchema, NoteMonetizationPolicySchema, parseNoteMonetizationPolicy } from '@a2p/contracts/agents/anp';
 import { encryptKdpCredentials } from '@a2p/crypto';
 
 import { auth } from '@/auth';
@@ -133,6 +133,56 @@ export async function updateAccountSettings(input: unknown): Promise<ActionResul
       ok: false,
       error: err instanceof Error ? err.message : messages.accounts.errors.unknown,
     };
+  }
+}
+
+const UpdateAccountMonetizationSchema = z
+  .object({
+    note_account_id: z.string().min(1),
+    /** null = 未設定 (AI 任せ)。 */
+    paid_ratio: z.number().min(0).max(1).nullable(),
+    free_ratio: z.number().min(0.05).max(0.95),
+    price_min: z.coerce.number().int().min(0).max(50000),
+    price_max: z.coerce.number().int().min(0).max(50000),
+    membership: z.boolean(),
+  })
+  .refine((v) => v.price_min <= v.price_max, { message: messages.accountDetail.monetization.errors.priceRange, path: ['price_max'] });
+
+/**
+ * F-ANP-08 (2026-09-21): アカウント詳細の収益化設定 (有料記事の比率 / 無料公開部分 / 価格帯 / メンバーシップ)。
+ * `note_accounts.monetization_policy_json` を置き換える (既存の未知キーは保持)。
+ */
+export async function updateAccountMonetization(input: unknown): Promise<ActionResult<void>> {
+  const session = await auth();
+  if (!session?.user) {
+    return { ok: false, error: messages.common.unauthorized };
+  }
+  const parsed = UpdateAccountMonetizationSchema.safeParse(input);
+  if (!parsed.success) {
+    const first = parsed.error.issues[0];
+    return { ok: false, error: first?.message ?? messages.accounts.errors.unknown };
+  }
+  const { note_account_id: accountId, paid_ratio, free_ratio, price_min, price_max, membership } = parsed.data;
+  try {
+    const current = await prisma.noteAccount.findUnique({ where: { id: accountId }, select: { monetization_policy_json: true } });
+    if (!current) return { ok: false, error: messages.accounts.errors.unknown };
+    const existing = current.monetization_policy_json && typeof current.monetization_policy_json === 'object' ? (current.monetization_policy_json as Record<string, unknown>) : {};
+    const next = NoteMonetizationPolicySchema.parse({
+      ...parseNoteMonetizationPolicy(existing),
+      free_ratio,
+      price_band: [price_min, price_max],
+      membership,
+      ...(paid_ratio === null ? {} : { paid_ratio }),
+    });
+    // 既存の未知キー (設計案由来の paid_line_strategy 等) は保持し、paid_ratio は null なら落とす (= AI 任せ)。
+    const stored: Record<string, unknown> = { ...existing, free_ratio: next.free_ratio, price_band: next.price_band, membership: next.membership };
+    if (paid_ratio === null) delete stored.paid_ratio;
+    else stored.paid_ratio = paid_ratio;
+    await prisma.noteAccount.update({ where: { id: accountId }, data: { monetization_policy_json: stored as object } });
+    revalidatePath(`/accounts/${accountId}`);
+    return { ok: true, data: undefined };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : messages.accounts.errors.unknown };
   }
 }
 
@@ -301,6 +351,8 @@ const GenerateProfileSchema = z.object({
   instruction: z.string().trim().max(1000).optional(),
   /** F-ANP-06: 添付した参考画像の R2 キー (anp/uploads/...)。LLM のビジョン入力として渡す。 */
   reference_image_keys: z.array(z.string().regex(/^anp\/uploads\/[A-Za-z0-9_.-]+$/)).max(4).optional(),
+  /** F-ANP-32: targets=['promotion'] のときの対象媒体。 */
+  channel: z.enum(NOTE_PROMOTION_CHANNELS).optional(),
 });
 
 /**
@@ -313,11 +365,13 @@ export async function generateAccountProfile(input: unknown): Promise<ActionResu
 
   const parsed = GenerateProfileSchema.safeParse(input);
   if (!parsed.success) return { ok: false, error: messages.accounts.profile.errors.generateFailed };
-  const { note_account_id: noteAccountId, targets, instruction, reference_image_keys: referenceImageKeys } = parsed.data;
+  const { note_account_id: noteAccountId, targets, instruction, reference_image_keys: referenceImageKeys, channel } = parsed.data;
   const pm = messages.accounts.profile;
+  if (targets.includes('promotion') && !channel) return { ok: false, error: pm.errors.generateFailed };
   const extra = {
     ...(instruction ? { instruction } : {}),
     ...(referenceImageKeys && referenceImageKeys.length > 0 ? { reference_image_keys: referenceImageKeys } : {}),
+    ...(channel ? { channel } : {}),
   };
 
   try {
@@ -346,6 +400,7 @@ export async function generateAccountProfile(input: unknown): Promise<ActionResu
       { maxAttempts: 2 },
     );
     revalidatePath(`/accounts/${noteAccountId}`);
+    revalidatePath('/promotion');
     return { ok: true, data: { job_id: job.id } };
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : pm.errors.generateFailed };

@@ -18,6 +18,10 @@ import {
   NoteAccountDesignBriefSchema,
   NoteAccountDesignSchema,
   NoteAccountEditorialOutputSchema,
+  NotePromotionPolicyInputSchema,
+  NotePromotionPolicyOutputSchema,
+  type NotePromotionPolicyInput,
+  type NotePromotionPolicyOutput,
   NoteAccountProfileInputSchema,
   NoteAccountProfileOutputSchema,
   type NoteAccountDesign,
@@ -411,6 +415,127 @@ export function buildEditorialUserMessage(input: NoteAccountProfileInput, existi
     '- rationale: なぜこの方針か 2〜3 行 (任意)。',
     '',
     '出力形式: {"target_reader": "...", "tone": "...", "editorial_policy": "...", "rationale": "..."} の JSON のみ。',
+    'JSON 以外の前置き・説明・コードフェンスは出力しないこと。日本語で出力する。',
+  ];
+  return lines.filter((l) => l !== '').join(String.fromCharCode(10));
+}
+
+// ---------------------------------------------------------------------------
+// F-ANP-32 — アカウント別・媒体別の販促施策 (role='anp.strategist')
+// ---------------------------------------------------------------------------
+
+const CHANNEL_LABEL_FOR_POLICY: Record<NotePromotionPolicyInput['channel'], string> = {
+  x: 'X (旧 Twitter)',
+  instagram: 'Instagram',
+  tiktok: 'TikTok',
+  blog: 'ブログ',
+};
+
+const CHANNEL_GUIDE_FOR_POLICY: Record<NotePromotionPolicyInput['channel'], string> = {
+  x: '140〜280 字のテキスト投稿。冒頭 1 行で止める / 数字と具体 / 記事 URL を末尾に。リプ・引用での会話も施策に含めてよい。',
+  instagram: 'フィード (画像 or カルーセル) + キャプション。保存されるノウハウ型・カルーセルの構成案・プロフィール導線を含める。',
+  tiktok: '15〜40 秒の縦動画 (スライド動画)。冒頭 1 秒のフック、テロップの型、コメント誘導、プロフィールから note への導線。',
+  blog: '検索流入向けの長文記事 (1,500〜3,000 字)。狙う検索意図・見出し構成の型・内部リンクと note への導線・更新頻度。',
+};
+
+function hasPromotionPolicy(parsed: unknown): boolean {
+  return typeof parsed === 'object' && parsed !== null && typeof (parsed as Record<string, unknown>).policy === 'string';
+}
+
+/**
+ * アカウント × 媒体の販促施策 (方針・ハッシュタグ・投稿頻度・CTA) を設計する。
+ * 出力は `NotePromotionPolicyOutputSchema` の JSON。画像 (参考スクショ) は vision 入力として渡す。
+ */
+export async function generateNoteAccountPromotionPolicy(
+  input: NotePromotionPolicyInput,
+  deps: PlanNoteAccountDesignDeps = {},
+): Promise<NotePromotionPolicyOutput> {
+  const parsedInput = NotePromotionPolicyInputSchema.parse(input);
+
+  const loadPrompt = deps.loadActivePrompt ?? defaultLoadActivePrompt;
+  const makeClient = deps.createAgentClient ?? defaultCreateAgentClient;
+  const prompt = await loadPrompt('anp.strategist', null, deps.promptLoaderDeps);
+  const systemPrompt = fillPlaceholders(prompt.template, {});
+  const ctx: LoggingContext = { role: 'anp.strategist' };
+  const jobId = deps.jobId ?? parsedInput.job_id;
+  if (jobId !== undefined) ctx.jobId = jobId;
+  const factoryDeps: Parameters<typeof makeClient>[3] = {};
+  if (deps.loadAssignmentDeps) factoryDeps.loadAssignmentDeps = deps.loadAssignmentDeps;
+  if (deps.withTokenLoggingDeps) factoryDeps.withTokenLoggingDeps = deps.withTokenLoggingDeps;
+  if (deps.getApiKey) factoryDeps.getApiKey = deps.getApiKey;
+  const client: LLMClient = await makeClient('anp.strategist', null, ctx, factoryDeps);
+
+  const userMessage = buildPromotionPolicyUserMessage(parsedInput);
+  const images = parsedInput.reference_images ?? [];
+
+  let lastError: AgentError | undefined;
+  for (let attempt = 1; attempt <= MAX_PARSE_RETRIES; attempt++) {
+    const completion = await client.complete<string>({
+      role: 'anp.strategist',
+      genre: null,
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: userMessage, ...(images.length > 0 ? { images } : {}) },
+      ],
+      maxOutputTokens: 4096,
+    });
+    const rawText = completion.text;
+    if (typeof rawText !== 'string' || rawText.trim().length === 0) {
+      lastError = new AgentError('anp.strategist.promotion.invalid_output: empty response', { details: { attempt } });
+      continue;
+    }
+    const parsedJson = extractLlmJson<unknown>(rawText, hasPromotionPolicy);
+    if (parsedJson === undefined) {
+      lastError = new AgentError('anp.strategist.promotion.invalid_output: failed to parse JSON', { details: { rawText, attempt } });
+      continue;
+    }
+    const validated = NotePromotionPolicyOutputSchema.safeParse(parsedJson);
+    if (!validated.success) {
+      lastError = new AgentError('anp.strategist.promotion.invalid_output: schema validation failed', {
+        details: { rawText, issues: validated.error.issues, attempt },
+        cause: validated.error,
+      });
+      continue;
+    }
+    return validated.data;
+  }
+  throw lastError ?? new AgentError('anp.strategist.promotion.invalid_output: unknown failure');
+}
+
+export function buildPromotionPolicyUserMessage(input: NotePromotionPolicyInput): string {
+  const a = input.account;
+  const label = CHANNEL_LABEL_FOR_POLICY[input.channel];
+  const ex = input.existing_policy;
+  const lines = [
+    `note アカウントの「${label} での販促施策」を設計してください。公開した note 記事をこの媒体でどう告知・拡散し、`,
+    'note のフォロワー・記事の閲覧・有料記事の購入につなげるかの運営方針です。この方針は告知文の生成プロンプトに毎回注入されます。',
+    '',
+    `【媒体】${label} — ${CHANNEL_GUIDE_FOR_POLICY[input.channel]}`,
+    `【表示名】${a.display_name}${a.handle ? ` (@${a.handle})` : ''}`,
+    `【ニッチ・発信テーマ】${a.niche}`,
+    a.target_reader ? `【想定読者】${a.target_reader}` : '',
+    a.tone ? `【トーン】${a.tone}` : '',
+    a.concept ? `【コンセプト】${a.concept}` : '',
+    a.bio ? `【自己紹介文】${a.bio}` : '',
+    a.editorial_policy ? `【記事の方針・トンマナ】` + String.fromCharCode(10) + a.editorial_policy : '',
+    ex?.policy ? `【現在の施策 (これを改善する)】` + String.fromCharCode(10) + ex.policy : '',
+    ex && ex.hashtags.length > 0 ? `【現在のハッシュタグ】${ex.hashtags.join(' ')}` : '',
+    input.instruction ? `【運営者からの追加指示 (必ず反映)】` + String.fromCharCode(10) + input.instruction : '',
+    input.reference_images && input.reference_images.length > 0
+      ? `【添付された参考画像 ${input.reference_images.length} 枚】参考にしたい投稿/アカウントのスクリーンショット等。見せ方・構成・トーンの特徴を読み取って施策に反映すること。`
+      : '',
+    '',
+    '要件:',
+    '- policy: 販促施策。プレーンテキストの箇条書き (「・」始まり)、3000 字以内。次を含める:',
+    '  1) この媒体での役割と狙う読者、2) 投稿の型 (冒頭フック・構成・長さ・絵文字/改行の作法)、3) 記事告知の頻度と時間帯、',
+    '  4) 記事告知以外の日常投稿の比率と内容、5) 書き手のキャラの出し方と NG (煽り・自演・過度な宣伝 等)、',
+    '  6) note への導線 (プロフィール/固定投稿/リプでの誘導)、7) 効果の見方 (何を KPI にするか)。',
+    '- hashtags: 常に付けるハッシュタグ 3〜8 個 (# なし、日本語可、媒体の慣習に合わせる)。',
+    '- posts_per_week: 週あたりの投稿目安 (整数)。',
+    '- cta: 記事への誘導の決まり文句 (1 文、60 字以内)。',
+    '- rationale: なぜこの施策か 2〜3 行 (任意)。',
+    '',
+    '出力形式: {"policy": "...", "hashtags": ["..."], "posts_per_week": 5, "cta": "...", "rationale": "..."} の JSON のみ。',
     'JSON 以外の前置き・説明・コードフェンスは出力しないこと。日本語で出力する。',
   ];
   return lines.filter((l) => l !== '').join(String.fromCharCode(10));

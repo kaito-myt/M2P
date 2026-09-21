@@ -6,7 +6,7 @@
 import { prisma } from '@a2p/db';
 import { getSignedDownloadUrl } from '@a2p/storage/operations';
 
-const NOTE_ACCOUNT_PROFILE_TASK_NAME = 'note.account.profile';
+export const NOTE_ACCOUNT_PROFILE_TASK_NAME = 'note.account.profile';
 /** 署名 URL の有効期限 (秒)。ポーリングで更新されるので短めでよい。 */
 const SIGNED_URL_TTL_SEC = 900;
 

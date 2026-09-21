@@ -108,6 +108,8 @@ export function buildUserMessage(
     '',
     input.persona.concept ? `【アカウントのコンセプト】\n${input.persona.concept}` : '',
     input.persona.tone_of_voice ? `【トーン&マナー】\n${input.persona.tone_of_voice}` : '',
+    input.account_policy ? `【この note アカウントの販促施策 (運営者設定・必ず守る)】\n${input.account_policy}` : '',
+    input.account_cta ? `【記事への誘導文 (必ずこの言い回しを使う)】\n${input.account_cta}` : '',
     input.persona.character_sheet
       ? `【キャラクター設定(この投稿の書き手の人柄。短く自然に滲ませる)】\n${input.persona.character_sheet}`
       : '',

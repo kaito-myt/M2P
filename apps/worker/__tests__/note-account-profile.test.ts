@@ -73,6 +73,7 @@ function buildPrisma(args: { jobStatus?: string; withDesign?: boolean; bio?: str
               target_reader: '会社員',
               tone: 'カジュアル',
               bio: args.bio ?? null,
+              promotion_policy_json: { x: { enabled: true, policy: '旧施策', hashtags: ['副業'] } },
               designs: args.withDesign ? [{ design_json: design() }] : [],
             }
           : null,
@@ -206,6 +207,37 @@ describe(NOTE_ACCOUNT_PROFILE_TASK_NAME, () => {
     expect(d.generateProfile).not.toHaveBeenCalled();
     expect(d.generateImages).not.toHaveBeenCalled();
     expect(accountUpdates[0]!.data).toMatchObject({ target_reader: '30代会社員', tone: 'です・ます調', editorial_policy: '・冒頭で悩みを言い当てる' });
+  });
+
+  it('promotion (F-ANP-32): 媒体別の販促施策を生成し promotion_policy_json の当該媒体だけ更新する', async () => {
+    const { prisma, accountUpdates, jobUpdates } = buildPrisma({ withDesign: true, bio: '今の bio' });
+    const generatePromotionPolicy = vi.fn(async (_input: unknown) => ({
+      policy: '・冒頭 1 行で止める',
+      hashtags: ['副業', 'AI活用'],
+      posts_per_week: 5,
+      cta: '続きは note で',
+      rationale: 'r',
+    }));
+    const d = deps(prisma, { generatePromotionPolicy });
+    await runNoteAccountProfile(
+      { note_account_id: 'acc-1', job_id: 'job-1', targets: ['promotion'], channel: 'instagram', instruction: '保存される型で' },
+      d,
+    );
+    expect(generatePromotionPolicy).toHaveBeenCalledTimes(1);
+    const input = generatePromotionPolicy.mock.calls[0]![0] as Record<string, unknown>;
+    expect(input).toMatchObject({ channel: 'instagram', instruction: '保存される型で', account: { display_name: '副業AIラボ', bio: '今の bio' } });
+    expect(input).not.toHaveProperty('existing_policy');
+    expect(d.generateProfile).not.toHaveBeenCalled();
+    const saved = accountUpdates[0]!.data as { promotion_policy_json: Record<string, unknown> };
+    expect(saved.promotion_policy_json.x).toMatchObject({ enabled: true, policy: '旧施策' });
+    expect(saved.promotion_policy_json.instagram).toMatchObject({ policy: '・冒頭 1 行で止める', hashtags: ['副業', 'AI活用'], posts_per_week: 5, cta: '続きは note で' });
+    expect(jobUpdates.at(-1)!.data).toMatchObject({ status: 'done' });
+  });
+
+  it('promotion で channel が無ければ失敗する', async () => {
+    const { prisma } = buildPrisma({ withDesign: true });
+    const d = deps(prisma, { generatePromotionPolicy: vi.fn() });
+    await expect(runNoteAccountProfile({ note_account_id: 'acc-1', job_id: 'job-1', targets: ['promotion'] }, d)).rejects.toThrow(/channel/);
   });
 
   it('Job が done なら何もしない (冪等)', async () => {

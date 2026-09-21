@@ -151,7 +151,7 @@ describe('note.theme.generate', () => {
       expect.objectContaining({
         note_account_id: 'acc1',
         job_id: 'job1',
-        account: { niche: 'AI副業', target_reader: '会社員', tone: 'カジュアル', editorial_policy: null },
+        account: expect.objectContaining({ niche: 'AI副業', target_reader: '会社員', tone: 'カジュアル', editorial_policy: null, monetization: expect.objectContaining({ free_ratio: 0.3 }) }),
       }),
     );
     expect(createManyCalls).toHaveLength(1);

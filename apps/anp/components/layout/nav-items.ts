@@ -27,7 +27,20 @@ export const navSections: readonly NavSection[] = [
       { key: 'home', label: m.itemHome, href: '/', enabled: true },
       { key: 'accounts', label: m.itemAccounts, href: '/accounts', enabled: true },
       { key: 'articles', label: m.itemArticles, href: '/articles', enabled: true },
-      { key: 'settings', label: m.itemSettings, href: '/settings', enabled: true },
+      { key: 'promotion', label: m.itemPromotion, href: '/promotion', enabled: true },
     ],
+  },
+  {
+    key: 'analytics',
+    label: m.sectionAnalytics,
+    items: [
+      { key: 'sales', label: m.itemSalesDashboard, href: '/analytics/sales', enabled: true },
+      { key: 'cost', label: m.itemCostDashboard, href: '/analytics/cost', enabled: true },
+    ],
+  },
+  {
+    key: 'system',
+    label: m.sectionSystem,
+    items: [{ key: 'settings', label: m.itemSettings, href: '/settings', enabled: true }],
   },
 ];

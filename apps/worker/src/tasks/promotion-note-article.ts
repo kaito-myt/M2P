@@ -33,7 +33,7 @@ import { z } from 'zod';
 
 import { createAnpArticlePromoContent as defaultCreateAnpArticlePromoContent } from '@a2p/agents/anp/promo';
 import { AccountStrategyProfileSchema, resolveCharacterSheet } from '@a2p/contracts/agents';
-import type { AnpPromoContentInput } from '@a2p/contracts/agents/anp';
+import { isNotePromotionChannelEnabled, parseNoteAccountSettings, parseNotePromotionPolicy, type AnpPromoContentInput } from '@a2p/contracts/agents/anp';
 import { PromoPlaybookSchema, playbookToGuidance } from '@a2p/contracts/agents/promo-strategist';
 import {
   appendArticleLink,
@@ -85,6 +85,8 @@ interface NoteAccountRow {
   handle: string | null;
   niche: string;
   settings_json?: unknown;
+  /** [F-ANP-32] アカウント別・媒体別の販促施策 (`NotePromotionPolicySchema`)。旧テストでは undefined。 */
+  promotion_policy_json?: unknown;
 }
 
 export interface PromotionNoteArticlePrisma {
@@ -112,7 +114,7 @@ export interface PromotionNoteArticlePrisma {
   noteAccount: {
     findUnique: (args: {
       where: { id: string };
-      select: { id: true; handle: true; niche: true; settings_json?: true };
+      select: { id: true; handle: true; niche: true; settings_json?: true; promotion_policy_json?: true };
     }) => Promise<NoteAccountRow | null>;
   };
   promotionChannelSetting: {
@@ -232,7 +234,7 @@ export async function runPromotionNoteArticle(
 
     const account = await prisma.noteAccount.findUnique({
       where: { id: article.note_account_id },
-      select: { id: true, handle: true, niche: true, settings_json: true },
+      select: { id: true, handle: true, niche: true, settings_json: true, promotion_policy_json: true },
     });
     if (!account) {
       throw new NotFoundError(`NoteAccount not found: ${article.note_account_id}`, {
@@ -258,8 +260,17 @@ export async function runPromotionNoteArticle(
       status: string;
     }> = [];
 
+    // [F-ANP-32] アカウント別・媒体別の販促施策。enabled=false の媒体は告知しない。
+    const promoPolicy = parseNotePromotionPolicy(account.promotion_policy_json);
+    const accountSettingsForPromo = parseNoteAccountSettings(account.settings_json);
+
     for (let i = 0; i < PROMO_CHANNELS.length; i++) {
       const channel: PromoChannel = PROMO_CHANNELS[i]!;
+      if (!isNotePromotionChannelEnabled(promoPolicy, channel, accountSettingsForPromo)) {
+        log.info({ articleId, channel }, 'account promotion policy disabled for channel — skip');
+        continue;
+      }
+      const channelPolicy = promoPolicy[channel];
       const setting = settingByChannel.get(channel);
       const profile = setting?.strategy_json ? AccountStrategyProfileSchema.safeParse(setting.strategy_json) : null;
       // 運営者要望「投稿にSNSのキャラクター性が出るように」— 戦略未設定なら既定ペルソナ「ことは」。
@@ -283,6 +294,8 @@ export async function runPromotionNoteArticle(
           ...(article.lead ? { lead: article.lead } : {}),
         },
         ...(playbookGuidance ? { playbook_guidance: playbookGuidance } : {}),
+        ...(channelPolicy?.policy ? { account_policy: channelPolicy.policy } : {}),
+        ...(channelPolicy?.cta ? { account_cta: channelPolicy.cta } : {}),
       };
 
       let generated: { body: string };
@@ -299,7 +312,9 @@ export async function runPromotionNoteArticle(
       if (account.handle) body = `${body}\n(@${account.handle})`;
       body = appendArticleLink(channel, body, article.note_url);
 
-      const coreTags = resolveHashtags(profile?.success ? profile.data.hashtag_strategy?.core : null);
+      // [F-ANP-32] アカウント設定のハッシュタグを常時タグの先頭に足す (重複は除く)。
+      const accountTags = (channelPolicy?.hashtags ?? []).map((t) => t.replace(/^#/, '')).filter((t) => t.length > 0);
+      const coreTags = [...new Set([...accountTags, ...resolveHashtags(profile?.success ? profile.data.hashtag_strategy?.core : null)])];
       const rotatingTags = profile?.success ? profile.data.hashtag_strategy?.rotating ?? [] : [];
       const topicTags = pickTopicHashtags(body, coreTags, rotatingTags);
       body = appendHashtags(channel, body, topicTags);

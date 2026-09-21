@@ -1,5 +1,15 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
+// LINE 接続情報は M2P API 管理 (DB) → env の順で解決されるが、本テストは env の有無で分岐を確認するため env のみにする。
+vi.mock('@a2p/credentials', () => ({
+  peekLineCredentials: () => null,
+  resolveLineCredentials: async () => {
+    const token = process.env.LINE_CHANNEL_ACCESS_TOKEN;
+    const to = process.env.LINE_ALLOWED_USER_ID;
+    return token && to ? { channelAccessToken: token, channelSecret: null, allowedUserId: to } : null;
+  },
+}));
+
 import { encryptKdpCredentials } from '@a2p/crypto';
 import type { Logger } from '@a2p/contracts/logger';
 

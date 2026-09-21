@@ -61,7 +61,10 @@ function RoleRow({ row, catalog }: { row: AnpRoleAssignmentRow; catalog: Record<
   return (
     <tr className="border-b border-border-warm align-top last:border-b-0" data-testid={`anp-model-row-${row.role}`}>
       <td className="px-3 py-2.5">
-        <div className="font-medium text-charcoal">{row.label}</div>
+        <div className="font-medium text-charcoal">
+          {row.label}
+          {row.custom && <span className="ml-2 rounded-pill border border-border-warm bg-white px-1.5 py-0.5 text-caption font-normal text-muted">カスタム</span>}
+        </div>
         <div className="font-mono text-caption text-muted">{row.role}</div>
         {row.description && <div className="mt-0.5 text-caption text-muted">{row.description}</div>}
       </td>

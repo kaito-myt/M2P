@@ -367,6 +367,21 @@ ANP の機能は A2P の対応機能を note 向けに写像したもの。**太
   出力 `NoteAccountEditorialOutputSchema` = target_reader / tone / editorial_policy / rationale）→ 3 列を保存、
   進捗バー付き、指示欄は画像添付可）。表示名（アカウント名）も同ページのヘッダーフォームで変更できるようにした
   （`updateAccountHandle` に `display_name` を追加）。
+- **F-ANP-08 アカウント設定（実装済み 2026-09-21）**: 運営者要望「アカウント詳細ページで無料公開の割合の設定とか、
+  各種設定できるようにしといてね」「On/Off は基本トグルで」「1 日のテーマ作成数は各アカウントで設定するようにしましょう」。
+  `/accounts/[id]` の「アカウント設定」節（`account-settings-form.tsx`）に 2 パネル:
+  (a) **自動運転** — テーマ自動生成 / 1 日のテーマ作成数 / テーマ自動採用 / 自動公開 / TikTok 連動動画。各項目はトグルで、
+  個別設定が無い間は全体設定（/settings 運用設定）の実効値を表示し「全体設定に従う (現在: ON/OFF)」チップ、触ると
+  このアカウント専用値、「全体設定に戻す」で解除（`note_accounts.settings_json`、`NoteAccountSettingsSchema`、
+  Server Action `updateAccountSettings` の tri-state は据え置き）。1 日のテーマ作成数はアカウント値が正で、空欄なら
+  全体既定（`app_settings.anp_themes_per_day` は「全体既定」に格下げ、UI も運用設定に残置）。
+  (b) **収益化** — 有料記事の比率（ON/OFF＋0〜100%、OFF = AI 任せ）/ 有料記事の無料公開部分（5〜95%）/ 価格帯 下限・上限 /
+  メンバーシップ（トグル）。`note_accounts.monetization_policy_json`（`NoteMonetizationPolicySchema` に `paid_ratio?` を
+  追加、`parseNoteMonetizationPolicy`）を Server Action `updateAccountMonetization` で保存。テーマ生成
+  （`note.theme.generate` / `note.theme.auto`）は `NoteAccountContext.monetization` として受け取り、
+  `packages/agents/src/anp/account-context.ts` `monetizationLines(account, count)` が「【収益化方針】有料比率 X%
+  （候補 N 件のうち約 M 件を recommend_paid=true）/ 価格帯 / 無料公開部分 / メンバーシップ」を注入する。
+  執筆側の `free_ratio` 利用（ペイウォール位置）は従来どおり。
 - **F-ANP-20 note 公開オートメーション（Playwright, アシスト型）**: 下書き作成→本文/画像流し込み→価格/ライン設定→予約 or 即時公開。KDP アシスト（`scripts/kdp-publish.mjs --assist`）と同型で `scripts/note-publish.mjs` を用意。
   **アカウント別 `auto_publish_enabled` を実装済み(2026-09-21)**: `note.publish.dispatch` が
   `resolveAutoPublishEnabled` でアカウント単位に自動公開の有効/無効を上書きできる(未指定はグローバル
@@ -395,6 +410,25 @@ ANP の機能は A2P の対応機能を note 向けに写像したもの。**太
   新しい生成器は作っていない。CTA「プロフィールの note で全文」を明示的に付加(`ensureNoteCta`)。
   `promotion_posts` に `kind='anp_article', channel='tiktok', note_article_id=<article>` で登録し
   既存 dispatcher にそのまま乗る(§7 参照)。
+- **F-ANP-32 販促施策（アカウント別・媒体別、実装済み 2026-09-21）**: 運営者要望「メニューに販促施策を作って。アカウント
+  ごとに販促施策が設定できるようにして。ページの右上あたりにアカウント切替…各アカウントごとに X、IG、TikTok、ブログでの
+  販促施策を確認できるようにして。各媒体はページ内にさらにタブで分かれるようにして」「アカウントの切替も…ステータスと
+  同じようにボタンにして」。**S-ANP-10 `/promotion`**（`app/(app)/promotion/page.tsx`、URL `?account=&channel=`）:
+  右上にアカウント切替ピル（`components/account-pills.tsx`、記事一覧の段階タブと同型。記事一覧のアカウント/有料提案の
+  絞り込みも select からピルに変更）、媒体タブ X / Instagram / TikTok / ブログ、左に施策パネル・右に投稿一覧。
+  `note_accounts.promotion_policy_json`（migration `20260921050000_anp_promotion_policy_agent_roles`、
+  `NotePromotionPolicySchema` = `{ x?, instagram?, tiktok?, blog? }` 各 `{ enabled?, policy?, hashtags[], posts_per_week?,
+  cta?, rationale?, updated_at? }`）。実効 ON/OFF は `isNotePromotionChannelEnabled`（未指定の既定: x/instagram=ON、
+  tiktok=`settings_json.tiktok_enabled`、blog=OFF）。**パイプライン連携**: `promotion.note.article` は enabled=false の
+  媒体をスキップし、`policy` / `cta` を `AnpPromoContentInput.account_policy` / `account_cta` として `anp.promo` の
+  ユーザーメッセージに注入（「【この note アカウントの販促施策 (運営者設定・必ず守る)】」）、`hashtags` を常時タグの
+  先頭に足す。**AI 生成**: `note.account.profile` に targets=`['promotion']`＋`channel` を追加し、
+  `generateNoteAccountPromotionPolicy`（role `anp.strategist`、`NotePromotionPolicyInput/Output`、媒体別ガイド
+  `CHANNEL_GUIDE_FOR_POLICY`、参考画像可）が policy/hashtags/posts_per_week/cta/rationale を返して当該媒体だけ更新。
+  Server Action は `app/actions/promotion.ts`（`updateAccountPromotionPolicy` / `generateAccountPromotionPolicy` /
+  `getAccountPromotionState`）、純関数は `lib/promotion-view.ts`（クライアント可）、DB ローダは `lib/promotion-core.ts`。
+  投稿一覧は `promotion_posts`（`note_article_id` がそのアカウントの記事、`channel` 一致）の直近 30 件＋投稿済み/予約/
+  表示回数の集計。ブログは施策設計のみ（自動投稿の配線は未接続、UI に明記）。
 - **F-ANP-31 相互流入設計**: 同一運営者の A2P 書籍 ⇄ note 記事の相互送客（書籍LPに note、note に書籍リンク）。
   **実装済み(最小・2026-09-16)**: `pipeline.note.writer.body` が同ジャンル(`NoteTheme.genre`)で
   `publish_status='published'` の A2P 書籍を最大2件(`asin`必須)取得し、`NoteWriterInput.related_books`
@@ -414,6 +448,15 @@ ANP の機能は A2P の対応機能を note 向けに写像したもの。**太
 - **F-ANP-42 ホーム（ミッションコントロール）**: A2P の S-002 再実装版を流用。当月純利益/売上/コスト/公開記事数/アカウント別成長を集約。**仕上げ実装済み(2026-09-21)**: `apps/anp/app/(app)/page.tsx` が RSC で当月の公開記事数/総ビュー/総売上/AIコスト(token_usage role LIKE 'anp.%')/純利益、アカウント別 KPI(フォロワー/公開数(累計・30日)/当月売上・コスト・純利益)、今日のパイプライン(実行中/待機中ジョブと直近24hの失敗)、セッション要再取込アラート、直近公開記事5件を表示する。集計ロジックは `apps/anp/lib/home-core.ts`(`computeAccountKpis`/`jstMonthRange`)に純関数化しユニットテスト済み。
   **アカウント別コストの近似**: `token_usage` にアカウント紐付け列が無いため(§6 実装時の発見と同じ制約)、当月コストは `note_articles.cost_jpy_total`(当月作成分)の合計をアカウント単位の近似値として使う(記事単位の集計は `applyNoteArticleCostFromJob` で既に確定しているため厳密には token_usage 合計と一致するが、月をまたぐ編集ジョブがある場合はわずかにズレうる)。
   **記事の全件横断ビューを新規実装(2026-09-21, F-ANP-42 関連)**: `/articles`(全記事一覧。運営者要望「作成中、公開前、公開中の記事が全部一覧化」に合わせ **段階タブ = すべて/作成中/公開前/公開中/失敗・非公開**（件数バッジ付き。定義は `apps/anp/lib/article-stage.ts`: 作成中=queued/writing/editing/eyecatch/judging、公開前=ready/needs_human_review（+公開同期前の status=published & publish_status=draft）、公開中=publish_status=published、失敗・非公開=failed/cancelled/unlisted）＋アカウント/有料提案でフィルタ、note 記事リンクと更新/公開日時列。サイドバーの項目名は「記事一覧」)・`/articles/[id]`(記事詳細: 本文整形表示・アイキャッチ・品質判定内訳・コスト・ジョブ履歴・売上・告知投稿・公開/再審査操作)を追加した。本文の Markdown 相当表示は新規パーサ依存を増やさず `apps/anp/lib/note-markdown.ts`(`parseNoteMarkdown`)の自前実装で見出し/箇条書き/段落に整形する。ジョブ履歴は `Job.book_id` が常に null なため `Job.payload_json` の JSON path クエリ(`path:['note_article_id'], equals:<id>`、`alert-cost-check.ts` と同じ Prisma パターン)で突合する。
+- **F-ANP-40/41 ダッシュボード UI（実装済み 2026-09-21）**: 運営者要望「売上ダッシュボードとコストダッシュボードも
+  作りましょうか。A2P と同じように、分析メニューの配下に」。サイドメニューに「分析」節を追加し
+  **S-ANP-11 `/analytics/sales`**（当月 KPI: 売上/ビュー/スキ/購入者/MRR と前月比、6 か月推移テーブル＋バー、アカウント別
+  表（今月の最良記事付き）、記事別トップ 10）と **S-ANP-12 `/analytics/cost`**（当月 AI コスト・前月比・月末着地予測
+  (日割り)・呼出回数/トークン・記事 1 本あたり・公開記事 1 本あたり、日次バー、役割別/モデル別、アカウント別、コストの
+  高い記事）。集計は `lib/analytics-core.ts`（`computeSalesDashboard` / `computeCostDashboard`、Vitest
+  `lib/__tests__/analytics-core.test.ts`）。コストは `token_usage` を `role LIKE 'anp.%'` で JST 日次集計（前月 1 日〜）、
+  記事別/アカウント別は `note_articles.cost_jpy_total`（当月作成分）。表示部品は `app/(app)/analytics/dashboard-parts.tsx`
+  （recharts 不使用）。「設定」はサイドメニューの「システム」節へ移動。
 - **F-ANP-43 org 自律運用連携**: A2P の org（CEO+本部長+担当者・自律ループ）に「note 出版本部」「note 販促本部」を追加、または ANP 独立の org を持つ（§5 で選択）。**今回のタスクではスコープ外**(運営者指示: 大規模なため対象外。org 連携は A2P 側の CEO/本部長/自律ループ全体を巻き込む設計判断が要り、本セッションの他項目(アカウント別設定/認証リレー/記事詳細UI/ホーム仕上げ/TikTok連動)と独立して大きいため次回以降に切り出す)。
 
 ---
@@ -493,6 +536,19 @@ graphile-worker を流用。ANP のタスクは `pipeline.note.*`（marketer/out
 `source='anp'`）に記録。呼出不可（`available=false`）のモデルに割り当たっている役割は警告表示。API キーは
 M2P ポータル（docs/10 §10.4b）で一元管理する。
 
+**設定のタブ化とカスタム AI ロール（2026-09-21）**: 運営者要望「設定はモデル設定と運用設定ができるようにして。On/Off は
+基本トグルで。モデル設定 → AI ロールごとのモデル割り当て設定＆新たな AI ロール作成。運用設定 → 現状設定してるような
+自動公開とかの設定」。`/settings?tab=models|ops`（既定 models、ピル型タブ）。**運用設定**は自動テーマ生成 / テーマ作成数の
+全体既定 / 自動採用 / 自動公開 / ドライランをトグル（`components/switch.tsx`）で保存（Server Action は従来の
+`updateAnpSettings`）。**モデル設定**は既存の割当表＋「新しい AI ロールを作成」（`custom-roles-panel.tsx`）: ロール ID
+（`anp.<slug>`、`^[a-z][a-z0-9_]{1,30}$`）/ 表示名 / 説明 / システムプロンプト / プロバイダ・モデル → Server Action
+`createAnpAgentRole` が 1 トランザクションで `anp_agent_roles`（表示名・説明、§6）＋ `prompts`（role, genre=null,
+version=1, active, created_by='human', placeholders_json=[]）＋ `model_assignments`（active）を作成し `audit_log`
+（`anp_agent_role.create`）。削除 `deleteAnpAgentRole` は表示名行を消し、プロンプト/割当は archived（履歴保持）。
+`buildAnpRoleRows` は `anp_agent_roles` の表示名/説明を組み込みロール定義に重ねる（`custom=true` で「カスタム」バッジ）。
+**制約**: カスタムロールはプロンプトと割当を保持するのみで、記事パイプラインの各工程からの呼び出し配線は未接続
+（UI に明記。`AgentRole` 型も閉じた union のまま）。用途が決まり次第つなぐ。
+
 ## 6. DB スキーマ（新規モデル・A2P 命名規約準拠）
 
 A2P の `books` 系を note 記事系に写像。**マルチアカウントを主キー動線に組み込む**。
@@ -513,6 +569,9 @@ A2P の `books` 系を note 記事系に写像。**マルチアカウントを�
   (`NoteAccountDesignSchema`) を生成し `design_json` に保持する。採用時に `note_accounts` を
   新規作成し `note_account_id` で紐付ける（詳細は §3.1/§7）。
 - **`note_accounts.editorial_policy?`（F-ANP-07, migration `20260921040000_anp_editorial_policy`）**: 記事の方針・トンマナ（全記事プロンプトに注入）。
+- **`note_accounts.promotion_policy_json`（F-ANP-32, migration `20260921050000_anp_promotion_policy_agent_roles`, JSONB 既定 `{}`）**: 媒体別販促施策 `{ x?, instagram?, tiktok?, blog? }`（`NotePromotionPolicySchema`）。
+- **`note_accounts.monetization_policy_json.paid_ratio?`（F-ANP-08, 列追加なし）**: 有料記事の目安比率 0〜1。未指定 = AI 任せ。
+- **`anp_agent_roles`（§5.4 カスタム AI ロール, 同 migration）**: `role PK ('anp.<slug>')`, `label`, `description?`, `created_by`, `created_at`, `updated_at`。プロンプト本体は `prompts`、割当は `model_assignments`。
 - **`note_accounts.bio? / avatar_r2_key? / header_r2_key? / profile_generated_at?`（F-ANP-05, migration `20260921030000_anp_account_profile`）**:
   アカウント詳細で生成/編集する note プロフィール素材。設計案採用時に設計案の値で初期化。
 - **`note_accounts.session_linked_at? / session_source?`（F-ANP-20b, migration `20260921020000_anp_session_link`）**:
@@ -754,7 +813,7 @@ web_search ループは 3〜7 分）。(3) 草案はサーバ側（AI）が毎�
 
 | タスク名 | ペイロード | 処理概要 | 完了後の遷移/状態 |
 |---|---|---|---|
-| `note.account.profile` | `{ note_account_id, job_id, targets: ('bio'\|'visuals'\|'editorial')[], instruction?, reference_image_keys? }` | `/accounts/[id]` の「自己紹介文を生成」「アイコンとカバーを生成」から enqueue（`maxAttempts=2`、同一アカウントの queued/running があれば SA 側で拒否）。`note_accounts` と採用済み設計案を読み、`generateNoteAccountProfile`（role=`anp.strategist`）で bio/画像プロンプト/persona_type を生成（visuals のみ＋設計案あり＋指示なしなら LLM 省略）。visuals なら gpt-image で生成し R2 `anp/accounts/<id>/avatar-<stamp>.png`・`header-<stamp>.jpg` へ upload。`NoteLock` は使わない | 成功: `bio`（targets に bio がある時）/`avatar_r2_key`/`header_r2_key`/`profile_generated_at` 更新、Job `result_json` に bio_alternatives・プロンプト・キー。失敗: Job `failed`（`note_accounts` は変更しない） |
+| `note.account.profile` | `{ note_account_id, job_id, targets: ('bio'\|'visuals'\|'editorial'\|'promotion')[], instruction?, reference_image_keys?, channel? }` | `/accounts/[id]` の「自己紹介文を生成」「アイコンとカバーを生成」から enqueue（`maxAttempts=2`、同一アカウントの queued/running があれば SA 側で拒否）。`note_accounts` と採用済み設計案を読み、`generateNoteAccountProfile`（role=`anp.strategist`）で bio/画像プロンプト/persona_type を生成（visuals のみ＋設計案あり＋指示なしなら LLM 省略）。visuals なら gpt-image で生成し R2 `anp/accounts/<id>/avatar-<stamp>.png`・`header-<stamp>.jpg` へ upload。`NoteLock` は使わない | 成功: `bio`（targets に bio がある時）/`avatar_r2_key`/`header_r2_key`/`profile_generated_at` 更新、Job `result_json` に bio_alternatives・プロンプト・キー。失敗: Job `failed`（`note_accounts` は変更しない） |
 
 ### Phase 7 実装済みタスク — 残項目一括実装 (2026-09-21, 運営者指示「ANP の実装を仕上げちゃって」)
 

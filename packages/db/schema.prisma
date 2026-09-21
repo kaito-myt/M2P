@@ -1488,6 +1488,10 @@ model NoteAccount {
   // { auto_theme_enabled?, themes_per_day?, autopass_enabled?, auto_publish_enabled?, tiktok_enabled? }
   // 未指定キーは AppSettings のグローバル既定値に従う (`note.theme.auto`/`note.publish.dispatch` が参照)。
   settings_json            Json     @default("{}")
+  // [F-ANP-32] アカウント別・媒体別の販促施策 (docs/11 §3.4)。
+  // { x?: {enabled, policy, hashtags[], posts_per_week?, cta?}, instagram?, tiktok?, blog? } (`NotePromotionPolicySchema`)。
+  // `promotion.note.article` が enabled=false の媒体をスキップし、policy/hashtags/cta を anp.promo に注入する。
+  promotion_policy_json    Json     @default("{}")
   created_at               DateTime @default(now())
   updated_at               DateTime @updatedAt
 
@@ -1499,6 +1503,20 @@ model NoteAccount {
 
   @@index([status, created_at(sort: Desc)], map: "note_accounts_status_time_idx")
   @@map("note_accounts")
+}
+
+// docs/11-anp-design.md §5.4 — 運営者が ANP /settings (モデル設定) で作成したカスタム AI ロール。
+// 表示名・説明のみを持ち、プロンプト本体は `prompts` (role='anp.<slug>', genre=null)、モデル割当は
+// `model_assignments` に置く (既存の役割と同じ読み方で呼び出せる)。
+model AnpAgentRole {
+  role        String   @id // 'anp.<slug>'
+  label       String
+  description String?
+  created_by  String // User.id
+  created_at  DateTime @default(now())
+  updated_at  DateTime @updatedAt
+
+  @@map("anp_agent_roles")
 }
 
 // F-ANP-01/03 (docs/11-anp-design.md §3.1/§7) — note アカウント設計。

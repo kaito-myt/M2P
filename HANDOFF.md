@@ -135,6 +135,19 @@ ANP のアカウント戦略を AI に相談しながら策定）を実施。mai
   R2_* / LINE_* env を削除できる（削除しなくても DB 優先で動く）。Amazon Ads はオンボーディング完了後にポータルの
   フォームへ 5 項目を貼るだけでよい（Railway env は不要になった）。
 
+### ANP — 9/21 深夜の追加分（アカウント設定・販促施策・設定タブ・分析ダッシュボード）
+- **記事一覧**: アカウント/有料提案の絞り込みを段階タブと同じピル型ボタンに（`components/account-pills.tsx`）。
+- **アカウント設定（F-ANP-08）**: `/accounts/[id]` に「自動運転」（トグル＋全体設定に従う/戻す、1 日のテーマ作成数はアカウント値が正）と
+  「収益化」（有料記事の比率 ON/OFF＋%、無料公開部分 %、価格帯、メンバーシップ）。収益化方針はテーマ生成プロンプトに注入
+  （`monetizationLines`）。
+- **販促施策（F-ANP-32, S-ANP-10 `/promotion`）**: 右上アカウント切替ピル、媒体タブ X/IG/TikTok/ブログ、媒体別に ON/OFF・施策・
+  ハッシュタグ・週投稿数・CTA を `note_accounts.promotion_policy_json` に保存、「AI で施策を生成」（`note.account.profile`
+  targets=['promotion']）、投稿一覧。`promotion.note.article` が enabled と policy/cta/hashtags を反映。ブログの自動投稿は未接続。
+- **設定タブ**: `/settings?tab=models|ops`。運用設定はトグル化。モデル設定に「新しい AI ロールを作成」（`anp_agent_roles`＋prompts＋
+  model_assignments、削除は archived）。カスタムロールのパイプライン配線は未接続（UI に明記）。
+- **分析**: `/analytics/sales`・`/analytics/cost`（`lib/analytics-core.ts`、Vitest 5 件）。サイドメニューに「分析」「システム」節。
+- migration `20260921050000_anp_promotion_policy_agent_roles`（`promotion_policy_json` 列＋`anp_agent_roles` 表）を本番適用＋resolve 済。
+
 ### DB マイグレーション履歴の整合
 - 本番 `_prisma_migrations` に未記録だった 20260915/0918/0919 と今日の 3 本を `prisma migrate resolve --applied` で記録。
   `migrate status` ではまだ 8 月〜9/9 の数本（20260826120000_ad_spend 〜 20260909000000_bw_retag）が未記録のまま

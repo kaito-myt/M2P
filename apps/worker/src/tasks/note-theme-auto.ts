@@ -1,7 +1,7 @@
 import type { JobHelpers, Task } from 'graphile-worker';
 
 import { generateNoteThemes as defaultGenerateNoteThemes } from '@a2p/agents/anp/theme';
-import type { NoteThemeInput, NoteThemeOutput } from '@a2p/contracts/agents/anp';
+import { parseNoteMonetizationPolicy, type NoteThemeInput, type NoteThemeOutput } from '@a2p/contracts/agents/anp';
 import { createLogger, type Logger } from '@a2p/contracts/logger';
 import { prisma as defaultPrisma } from '@a2p/db';
 
@@ -42,6 +42,8 @@ interface NoteAccountRow {
   editorial_policy?: string | null;
   /** [F-ANP-17] アカウント別設定 (`NoteAccountSettingsSchema`)。未選択/旧テストでは undefined。 */
   settings_json?: unknown;
+  /** [F-ANP-08] 収益化方針 (`NoteMonetizationPolicySchema`)。未選択/旧テストでは undefined。 */
+  monetization_policy_json?: unknown;
 }
 
 interface CreatedTheme {
@@ -56,7 +58,7 @@ export interface NoteThemeAutoPrisma extends AnpAutopassPrisma {
   noteAccount: {
     findMany: (args: {
       where: { status: string };
-      select: { id: true; niche: true; target_reader: true; tone: true; settings_json?: true; editorial_policy?: true };
+      select: { id: true; niche: true; target_reader: true; tone: true; settings_json?: true; editorial_policy?: true; monetization_policy_json?: true };
       orderBy: { created_at: 'asc' };
     }) => Promise<NoteAccountRow[]>;
   };
@@ -168,7 +170,7 @@ export async function runNoteThemeAuto(deps: NoteThemeAutoDeps = {}): Promise<No
 
   const accounts = await prisma.noteAccount.findMany({
     where: { status: 'active' },
-    select: { id: true, niche: true, target_reader: true, tone: true, settings_json: true, editorial_policy: true },
+    select: { id: true, niche: true, target_reader: true, tone: true, settings_json: true, editorial_policy: true, monetization_policy_json: true },
     orderBy: { created_at: 'asc' },
   });
 
@@ -212,7 +214,13 @@ export async function runNoteThemeAuto(deps: NoteThemeAutoDeps = {}): Promise<No
       const input: NoteThemeInput = {
         note_account_id: account.id,
         job_id: genJob.id,
-        account: { niche: account.niche, target_reader: account.target_reader, tone: account.tone, editorial_policy: account.editorial_policy ?? null },
+        account: {
+          niche: account.niche,
+          target_reader: account.target_reader,
+          tone: account.tone,
+          editorial_policy: account.editorial_policy ?? null,
+          monetization: parseNoteMonetizationPolicy(account.monetization_policy_json),
+        },
         count: effective.themes_per_day,
         exclude_titles_recent: recentAccepted.map((r) => r.title),
       };

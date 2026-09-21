@@ -25,15 +25,32 @@ export const NoteAccountContextSchema = z.object({
    * ユーザーメッセージに「【記事の方針・トンマナ】」ブロックとして注入される。
    */
   editorial_policy: z.string().max(3000).nullable().optional(),
+  /**
+   * F-ANP-08 (2026-09-21): 収益化方針 (有料比率・無料公開割合・価格帯・メンバーシップ)。
+   * テーマ生成のユーザーメッセージに「【収益化方針】」ブロックとして注入される (theme 以外は無視)。
+   */
+  monetization: z.lazy(() => NoteMonetizationPolicySchema).optional(),
 });
 export type NoteAccountContext = z.infer<typeof NoteAccountContextSchema>;
 
 export const NoteMonetizationPolicySchema = z.object({
+  /** 有料記事の本文のうち無料公開する分量の目安比率 (ペイウォール位置)。 */
   free_ratio: z.number().min(0).max(1).default(0.3),
   price_band: z.tuple([z.number().int().min(0), z.number().int().min(0)]).optional(),
   membership: z.boolean().default(false),
+  /**
+   * F-ANP-08 (2026-09-21): 記事全体に占める有料記事の目安比率。テーマ生成 (anp.theme) に
+   * 「候補のうち約 N 件を recommend_paid=true」として注入する。未指定なら AI 任せ (従来どおり)。
+   */
+  paid_ratio: z.number().min(0).max(1).optional(),
 });
 export type NoteMonetizationPolicy = z.infer<typeof NoteMonetizationPolicySchema>;
+
+/** `note_accounts.monetization_policy_json` (unknown/Json) を安全にパースする。失敗時は既定値。 */
+export function parseNoteMonetizationPolicy(json: unknown): NoteMonetizationPolicy {
+  const parsed = NoteMonetizationPolicySchema.safeParse(json ?? {});
+  return parsed.success ? parsed.data : NoteMonetizationPolicySchema.parse({});
+}
 
 // ---------------------------------------------------------------------------
 // F-ANP-10 — テーマ候補生成 (role='anp.theme')
@@ -223,12 +240,100 @@ export const AnpPromoPersonaSchema = z.object({
 });
 export type AnpPromoPersona = z.infer<typeof AnpPromoPersonaSchema>;
 
+// ---------------------------------------------------------------------------
+// F-ANP-32 (2026-09-21) — アカウント別・媒体別の販促施策 (`note_accounts.promotion_policy_json`)
+//
+// 運営者要望「メニューに販促施策を作って。アカウントごとに販促施策が設定できるようにして。…各アカウントごとに
+// X、IG、TikTok、ブログでの販促施策を確認できるようにして」への対応。媒体ごとに ON/OFF・方針・ハッシュタグ・
+// 投稿頻度・CTA を持ち、`promotion.note.article` (X/IG 告知) と `promotion.note.article.video` (TikTok) が参照する。
+// ---------------------------------------------------------------------------
+
+export const NOTE_PROMOTION_CHANNELS = ['x', 'instagram', 'tiktok', 'blog'] as const;
+export type NotePromotionChannel = (typeof NOTE_PROMOTION_CHANNELS)[number];
+
+export const NotePromotionChannelPolicySchema = z.object({
+  /** この媒体で告知するか。未指定の既定: x/instagram=true、tiktok=settings_json.tiktok_enabled、blog=false。 */
+  enabled: z.boolean().optional(),
+  /** 施策・方針 (何を/どう告知するか。書き手のキャラ、NG、狙う読者)。anp.promo に注入。 */
+  policy: z.string().max(3000).optional(),
+  /** 常に付けるハッシュタグ (# は付けても付けなくてもよい)。 */
+  hashtags: z.array(z.string().trim().min(1).max(40)).max(20).default([]),
+  /** 週あたりの投稿目安 (表示・将来の頻度制御用)。 */
+  posts_per_week: z.number().int().min(0).max(70).optional(),
+  /** 記事へ誘導する決まり文句 (例: 「続きは note で」)。 */
+  cta: z.string().max(300).optional(),
+  /** AI 生成した根拠メモ (表示のみ)。 */
+  rationale: z.string().max(2000).optional(),
+  updated_at: z.string().optional(),
+});
+export type NotePromotionChannelPolicy = z.infer<typeof NotePromotionChannelPolicySchema>;
+
+export const NotePromotionPolicySchema = z.object({
+  x: NotePromotionChannelPolicySchema.optional(),
+  instagram: NotePromotionChannelPolicySchema.optional(),
+  tiktok: NotePromotionChannelPolicySchema.optional(),
+  blog: NotePromotionChannelPolicySchema.optional(),
+});
+export type NotePromotionPolicy = z.infer<typeof NotePromotionPolicySchema>;
+
+/** `note_accounts.promotion_policy_json` を安全にパースする。失敗時は空 (= 既定挙動)。 */
+export function parseNotePromotionPolicy(json: unknown): NotePromotionPolicy {
+  const parsed = NotePromotionPolicySchema.safeParse(json ?? {});
+  return parsed.success ? parsed.data : {};
+}
+
+/** 媒体の実効 ON/OFF (未指定の既定は上記コメントのとおり)。 */
+export function isNotePromotionChannelEnabled(
+  policy: NotePromotionPolicy,
+  channel: NotePromotionChannel,
+  settings: { tiktok_enabled?: boolean | undefined },
+): boolean {
+  const explicit = policy[channel]?.enabled;
+  if (explicit !== undefined) return explicit;
+  if (channel === 'x' || channel === 'instagram') return true;
+  if (channel === 'tiktok') return settings.tiktok_enabled === true;
+  return false;
+}
+
+/** F-ANP-32: AI に販促施策を作らせる (role anp.strategist)。 */
+export const NotePromotionPolicyInputSchema = z.object({
+  note_account_id: z.string().min(1),
+  job_id: z.string().optional(),
+  channel: z.enum(NOTE_PROMOTION_CHANNELS),
+  account: z.object({
+    display_name: z.string().max(100),
+    handle: z.string().max(64).nullable().optional(),
+    niche: z.string().max(200),
+    target_reader: z.string().max(300).nullable().optional(),
+    tone: z.string().max(200).nullable().optional(),
+    bio: z.string().max(400).nullable().optional(),
+    editorial_policy: z.string().max(3000).nullable().optional(),
+    concept: z.string().max(2000).nullable().optional(),
+  }),
+  existing_policy: NotePromotionChannelPolicySchema.optional(),
+  instruction: z.string().max(2000).optional(),
+  reference_images: z.array(z.object({ data: z.string().min(1), mimeType: z.string().min(1) })).max(4).optional(),
+});
+export type NotePromotionPolicyInput = z.infer<typeof NotePromotionPolicyInputSchema>;
+
+export const NotePromotionPolicyOutputSchema = z.object({
+  policy: z.string().min(1).max(3000),
+  hashtags: z.array(z.string().trim().min(1).max(40)).max(20).default([]),
+  posts_per_week: z.number().int().min(0).max(70).optional(),
+  cta: z.string().max(300).optional(),
+  rationale: z.string().max(2000).optional(),
+});
+export type NotePromotionPolicyOutput = z.infer<typeof NotePromotionPolicyOutputSchema>;
+
 export const AnpPromoContentInputSchema = z.object({
   // TikTok は記事に無関係な動画をオンデマンド生成する経路(tiktok-video.ts)に乗ってしまうため
   // Phase 4 まで対象外とする(docs/11 §3.4/§7)。
   channel: z.enum(['x', 'instagram']),
   persona: AnpPromoPersonaSchema,
   playbook_guidance: z.string().max(4000).optional(),
+  /** F-ANP-32: アカウント別・媒体別の販促施策 (運営者設定)。あれば必ず守る。 */
+  account_policy: z.string().max(3000).optional(),
+  account_cta: z.string().max(300).optional(),
   article: z.object({
     title: z.string().min(1).max(200),
     hook: z.string().max(600).optional(),
@@ -478,7 +583,7 @@ export function briefDraftToDesignBrief(
 /** note の自己紹介 (プロフィール文) は 140 字上限。 */
 export const NOTE_BIO_MAX_CHARS = 140;
 
-export const NoteAccountProfileTargetSchema = z.enum(['bio', 'visuals', 'editorial']);
+export const NoteAccountProfileTargetSchema = z.enum(['bio', 'visuals', 'editorial', 'promotion']);
 export type NoteAccountProfileTarget = z.infer<typeof NoteAccountProfileTargetSchema>;
 
 /** 生成の入力 (worker が note_accounts + 採用済み設計案から組み立てる)。 */

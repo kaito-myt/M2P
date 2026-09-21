@@ -2,7 +2,7 @@ import type { JobHelpers, Task } from 'graphile-worker';
 import { z } from 'zod';
 
 import { generateNoteThemes as defaultGenerateNoteThemes } from '@a2p/agents/anp/theme';
-import type { NoteThemeInput, NoteThemeOutput } from '@a2p/contracts/agents/anp';
+import { parseNoteMonetizationPolicy, type NoteThemeInput, type NoteThemeOutput } from '@a2p/contracts/agents/anp';
 import { NotFoundError, ValidationError } from '@a2p/contracts/errors';
 import { createLogger, type Logger } from '@a2p/contracts/logger';
 import { prisma as defaultPrisma } from '@a2p/db';
@@ -57,13 +57,14 @@ export interface NoteThemeGeneratePrisma {
   noteAccount: {
     findUnique: (args: {
       where: { id: string };
-      select: { id: true; niche: true; target_reader: true; tone: true; editorial_policy?: true };
+      select: { id: true; niche: true; target_reader: true; tone: true; editorial_policy?: true; monetization_policy_json?: true };
     }) => Promise<{
       id: string;
       niche: string;
       target_reader: string | null;
       tone: string | null;
       editorial_policy?: string | null;
+      monetization_policy_json?: unknown;
     } | null>;
   };
   noteTheme: {
@@ -162,6 +163,7 @@ export async function runNoteThemeGenerate(
         target_reader: account.target_reader,
         tone: account.tone,
         editorial_policy: account.editorial_policy ?? null,
+        monetization: parseNoteMonetizationPolicy(account.monetization_policy_json),
       },
       count,
       exclude_titles_recent: recentAccepted.map((r) => r.title),

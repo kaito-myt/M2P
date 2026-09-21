@@ -5,7 +5,7 @@ import Link from 'next/link';
 import { notFound } from 'next/navigation';
 
 import { prisma } from '@a2p/db';
-import { parseNoteAccountSettings } from '@a2p/contracts/agents/anp';
+import { parseNoteAccountSettings, parseNoteMonetizationPolicy } from '@a2p/contracts/agents/anp';
 
 import { loadAccountProfileState } from '@/lib/account-profile-core';
 import { messages } from '@/lib/messages';
@@ -38,6 +38,7 @@ export default async function AccountDetailPage({
       status: true,
       handle: true,
       settings_json: true,
+      monetization_policy_json: true,
       session_state_enc: true,
       session_linked_at: true,
       session_source: true,
@@ -54,6 +55,7 @@ export default async function AccountDetailPage({
   const adoptedDesign = account.designs[0] ?? null;
   const profileState = await loadAccountProfileState(id);
   const accountSettings = parseNoteAccountSettings(account.settings_json);
+  const monetization = parseNoteMonetizationPolicy(account.monetization_policy_json);
 
   const [themes, articles, appSettings, pendingReauth] = await Promise.all([
     prisma.noteTheme.findMany({
@@ -84,7 +86,10 @@ export default async function AccountDetailPage({
         created_at: true,
       },
     }),
-    prisma.appSettings.findUnique({ where: { id: 'singleton' }, select: { anp_publish_dry_run: true } }),
+    prisma.appSettings.findUnique({
+      where: { id: 'singleton' },
+      select: { anp_publish_dry_run: true, anp_auto_theme_enabled: true, anp_themes_per_day: true, anp_autopass_enabled: true, anp_auto_publish_enabled: true },
+    }),
     prisma.noteAuthRequest.findFirst({
       where: { note_account_id: id, purpose: 'session_expired', status: 'pending' },
       select: { id: true },
@@ -161,7 +166,25 @@ export default async function AccountDetailPage({
       </section>
 
       <section className="mt-space-loose">
-        <AccountSettingsForm noteAccountId={account.id} initial={accountSettings} />
+        <h2 className="text-section-title text-charcoal">{messages.accountDetail.settingsTitle}</h2>
+        <div className="mt-space-snug">
+          <AccountSettingsForm
+            noteAccountId={account.id}
+            initial={accountSettings}
+            globals={{
+              auto_theme_enabled: appSettings?.anp_auto_theme_enabled ?? false,
+              themes_per_day: appSettings?.anp_themes_per_day ?? 1,
+              autopass_enabled: appSettings?.anp_autopass_enabled ?? false,
+              auto_publish_enabled: appSettings?.anp_auto_publish_enabled ?? false,
+            }}
+            monetization={{
+              free_ratio: monetization.free_ratio,
+              price_band: monetization.price_band,
+              membership: monetization.membership,
+              paid_ratio: monetization.paid_ratio,
+            }}
+          />
+        </div>
       </section>
 
       <section className="mt-space-loose">

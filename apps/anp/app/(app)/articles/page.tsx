@@ -16,6 +16,7 @@ import {
   resolveArticleStage,
   type ArticleStage,
 } from '@/lib/article-stage';
+import { AccountPills } from '@/components/account-pills';
 import { cn } from '@/lib/cn';
 import { messages } from '@/lib/messages';
 
@@ -42,7 +43,7 @@ export default async function ArticlesPage({
   if (stageFilter) Object.assign(where, articleStageWhere(stageFilter));
   if (statusFilter) where.status = statusFilter;
 
-  const [accounts, stageRows, articles] = await Promise.all([
+  const [accounts, stageRows, articles, accountCounts] = await Promise.all([
     prisma.noteAccount.findMany({
       orderBy: { display_name: 'asc' },
       select: { id: true, display_name: true },
@@ -68,21 +69,37 @@ export default async function ArticlesPage({
         account: { select: { id: true, display_name: true } },
       },
     }),
+    // アカウントピルのバッジ用 (段階・有料提案の条件は掛けた上で、アカウントの条件だけ外す)。
+    prisma.noteArticle.groupBy({
+      by: ['note_account_id'],
+      where: (() => {
+        const w: Record<string, unknown> = { ...where };
+        delete w.note_account_id;
+        return w;
+      })(),
+      _count: { _all: true },
+    }),
   ]);
   const counts = countArticleStages(stageRows);
   const total = stageRows.length;
+  const countByAccount = new Map(accountCounts.map((r) => [r.note_account_id, r._count._all]));
+  const allAccountsCount = accountCounts.reduce((sum, r) => sum + r._count._all, 0);
 
   const m = messages.articles;
   const fm = m.filters;
 
-  const tabHref = (stage: ArticleStage | '') => {
+  const buildHref = (o: { stage?: ArticleStage | ''; account?: string; priceSuggestion?: boolean }) => {
     const q = new URLSearchParams();
+    const stage = o.stage ?? stageFilter;
+    const account = o.account ?? accountFilter;
+    const ps = o.priceSuggestion ?? priceSuggestionOnly;
     if (stage) q.set('stage', stage);
-    if (accountFilter) q.set('account', accountFilter);
-    if (priceSuggestionOnly) q.set('price_suggestion', '1');
+    if (account) q.set('account', account);
+    if (ps) q.set('price_suggestion', '1');
     const qs = q.toString();
     return qs ? `/articles?${qs}` : '/articles';
   };
+  const tabHref = (stage: ArticleStage | '') => buildHref({ stage });
 
   return (
     <div className="mx-auto flex max-w-6xl flex-col">
@@ -116,50 +133,51 @@ export default async function ArticlesPage({
         )}
       </nav>
 
-      <form method="get" className="mt-space-snug flex flex-wrap items-end gap-space-snug">
-        {stageFilter && <input type="hidden" name="stage" value={stageFilter} />}
-        <label className="flex flex-col gap-1 text-caption text-muted">
-          {fm.account}
-          <select
-            name="account"
-            defaultValue={accountFilter}
-            className="rounded-card border border-border-warm bg-white px-2 py-1.5 text-body text-charcoal"
-          >
-            <option value="">{fm.accountAll}</option>
-            {accounts.map((a) => (
-              <option key={a.id} value={a.id}>
-                {a.display_name}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label className="flex flex-col gap-1 text-caption text-muted">
-          {fm.priceSuggestion}
-          <select
-            name="price_suggestion"
-            defaultValue={priceSuggestionOnly ? '1' : ''}
-            className="rounded-card border border-border-warm bg-white px-2 py-1.5 text-body text-charcoal"
-          >
-            <option value="">{fm.priceSuggestionAll}</option>
-            <option value="1">{fm.priceSuggestionOnly}</option>
-          </select>
-        </label>
-        <button
-          type="submit"
-          className="rounded-card border border-border-warm bg-cream-light px-4 py-2 text-button-sm text-charcoal"
-        >
-          {fm.apply}
-        </button>
+      {/* アカウント切替 (段階タブと同じピル型ボタン) */}
+      <div className="mt-space-snug flex flex-wrap items-center gap-x-space-snug gap-y-2">
+        <span className="text-caption text-muted">{fm.account}</span>
+        <AccountPills
+          accounts={accounts.map((a) => ({ id: a.id, label: a.display_name, count: countByAccount.get(a.id) ?? 0 }))}
+          activeId={accountFilter}
+          hrefFor={(id) => buildHref({ account: id })}
+          allLabel={fm.accountAll}
+          allCount={allAccountsCount}
+          ariaLabel={fm.account}
+          testId="articles-account-pills"
+        />
+      </div>
+      <div className="mt-2 flex flex-wrap items-center gap-x-space-snug gap-y-2">
+        <span className="text-caption text-muted">{fm.priceSuggestion}</span>
+        <nav aria-label={fm.priceSuggestion} className="flex flex-wrap gap-2">
+          {([
+            [false, fm.priceSuggestionAll],
+            [true, fm.priceSuggestionOnly],
+          ] as const).map(([v, label]) => {
+            const active = priceSuggestionOnly === v;
+            return (
+              <Link
+                key={String(v)}
+                href={buildHref({ priceSuggestion: v })}
+                aria-current={active ? 'page' : undefined}
+                className={cn(
+                  'rounded-pill border px-3 py-1 text-button-sm no-underline transition-colors',
+                  active ? 'border-charcoal bg-charcoal text-white' : 'border-border-warm bg-white text-charcoal-82 hover:bg-charcoal-04',
+                )}
+              >
+                {label}
+              </Link>
+            );
+          })}
+        </nav>
         {statusFilter && (
           <span className="text-caption text-muted">
-            {fm.status}: {messages.accountDetail.articleStatus[statusFilter as keyof typeof messages.accountDetail.articleStatus] ?? statusFilter}
-            {' '}
+            {fm.status}: {messages.accountDetail.articleStatus[statusFilter as keyof typeof messages.accountDetail.articleStatus] ?? statusFilter}{' '}
             <Link href={tabHref(stageFilter)} className="text-charcoal underline">
               {fm.clearStatus}
             </Link>
           </span>
         )}
-      </form>
+      </div>
 
       <section className="mt-space-relaxed">
         {articles.length === 0 ? (

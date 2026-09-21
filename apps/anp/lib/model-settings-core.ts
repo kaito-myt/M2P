@@ -40,6 +40,48 @@ export function anpRoleLabel(role: string): string {
   return ANP_ROLE_META[role]?.label ?? role;
 }
 
+// ---------------------------------------------------------------------------
+// カスタム AI ロール (運営者要望 2026-09-21「モデル設定 → AI ロールごとのモデル割り当て設定 & 新たな AI ロール作成」)
+// `anp_agent_roles` に表示名/説明、`prompts` にシステムプロンプト (role='anp.<slug>', genre=null, version=1)、
+// `model_assignments` に割当を作る。既存の役割と同じ読み方 (loadActivePrompt / loadModelAssignment) で呼べる。
+// ---------------------------------------------------------------------------
+
+export const ANP_CUSTOM_ROLE_SLUG_PATTERN = /^[a-z][a-z0-9_]{1,30}$/;
+
+export const createAnpRoleInput = z.object({
+  /** 'anp.' を除いた識別子 (英小文字/数字/_、2〜31 文字)。 */
+  slug: z.string().trim().regex(ANP_CUSTOM_ROLE_SLUG_PATTERN, 'ロール ID は英小文字で始まり、英小文字・数字・_ のみ 2〜31 文字で入力してください'),
+  label: z.string().trim().min(1, '表示名を入力してください').max(60),
+  description: z.string().trim().max(300).optional(),
+  system_prompt: z.string().trim().min(20, 'システムプロンプトは 20 文字以上で入力してください').max(20000),
+  provider: z.enum(MODEL_PROVIDERS),
+  model: z.string().trim().min(1).max(128),
+});
+export type CreateAnpRoleInput = z.infer<typeof createAnpRoleInput>;
+
+export const deleteAnpRoleInput = z.object({
+  role: z
+    .string()
+    .trim()
+    .refine((r) => r.startsWith(ANP_ROLE_PREFIX) && !(r in ANP_ROLE_META), '組み込みの役割は削除できません'),
+});
+
+export interface CustomRoleMeta {
+  role: string;
+  label: string;
+  description: string | null;
+  created_at: string;
+}
+
+export function customRoleFromSlug(slug: string): string {
+  return `${ANP_ROLE_PREFIX}${slug}`;
+}
+
+/** 組み込み (`ANP_ROLE_META`) と衝突しないか。 */
+export function isBuiltinAnpRole(role: string): boolean {
+  return role in ANP_ROLE_META;
+}
+
 export interface CatalogOption {
   provider: ModelProvider;
   model: string;
@@ -58,6 +100,8 @@ export interface AnpRoleAssignmentRow {
   activated_at: string | null;
   /** 割当先モデルがカタログで available=false と判定されているか。 */
   unavailable: boolean;
+  /** 運営者が作成したカスタムロールか (削除可)。 */
+  custom: boolean;
 }
 
 export interface ActiveAssignmentSource {
@@ -73,11 +117,14 @@ export function buildAnpRoleRows(
   promptRoles: Array<{ role: string }>,
   assignments: ActiveAssignmentSource[],
   catalog: CatalogOption[],
+  customRoles: ReadonlyArray<Pick<CustomRoleMeta, 'role' | 'label' | 'description'>> = [],
 ): AnpRoleAssignmentRow[] {
   const unavailable = new Set(catalog.filter((c) => c.available === false).map((c) => `${c.provider}/${c.model}`));
+  const customByRole = new Map(customRoles.map((c) => [c.role, c]));
   const names = new Set<string>();
   for (const r of promptRoles) if (r.role.startsWith(ANP_ROLE_PREFIX)) names.add(r.role);
   for (const a of assignments) if (a.role.startsWith(ANP_ROLE_PREFIX)) names.add(a.role);
+  for (const c of customRoles) if (c.role.startsWith(ANP_ROLE_PREFIX)) names.add(c.role);
 
   const order = Object.keys(ANP_ROLE_META);
   return [...names]
@@ -89,14 +136,16 @@ export function buildAnpRoleRows(
     .map((role) => {
       const def = assignments.find((a) => a.role === role && a.genre === null) ?? null;
       const provider = def && (MODEL_PROVIDERS as readonly string[]).includes(def.provider) ? (def.provider as ModelProvider) : null;
+      const custom = customByRole.get(role);
       return {
         role,
-        label: anpRoleLabel(role),
-        description: ANP_ROLE_META[role]?.description ?? '',
+        label: custom?.label ?? anpRoleLabel(role),
+        description: custom?.description ?? ANP_ROLE_META[role]?.description ?? '',
         provider,
         model: def?.model ?? null,
         activated_at: def ? def.activated_at.toISOString() : null,
         unavailable: def ? unavailable.has(`${def.provider}/${def.model}`) : false,
+        custom: custom !== undefined,
       };
     });
 }
