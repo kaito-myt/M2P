@@ -536,6 +536,11 @@ graphile-worker を流用。ANP のタスクは `pipeline.note.*`（marketer/out
 `source='anp'`）に記録。呼出不可（`available=false`）のモデルに割り当たっている役割は警告表示。API キーは
 M2P ポータル（docs/10 §10.4b）で一元管理する。
 
+**モデル配分（2026-09-21 適材適所化、docs/03 §A 参照）**: anp.theme / anp.strategist / anp.consultant = `claude-opus-5`
+（旧 opus-4-7 は非現行でコストが ¥0 記録になっていた）、anp.writer / anp.judge = `claude-sonnet-5`、**anp.editor = `openai/gpt-5`**
+（整える工程は品質差小・安価）、anp.outline / anp.promo = `claude-sonnet-4-6`、画像 = `gpt-image-2`。seed（`seed-anp.ts`
+`buildAnpModelAssignmentSeeds`）も同内容。
+
 **設定のタブ化とカスタム AI ロール（2026-09-21）**: 運営者要望「設定はモデル設定と運用設定ができるようにして。On/Off は
 基本トグルで。モデル設定 → AI ロールごとのモデル割り当て設定＆新たな AI ロール作成。運用設定 → 現状設定してるような
 自動公開とかの設定」。`/settings?tab=models|ops`（既定 models、ピル型タブ）。**運用設定**は自動テーマ生成 / テーマ作成数の

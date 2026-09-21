@@ -76,6 +76,28 @@ interface LLMClient {
 - `model_assignments` テーブル（F-022）の `provider`/`model` と `role` を見て、**`role=marketer` かつ `provider=anthropic`** の場合のみ `AgentSdkClient` を、それ以外は全て `AISdkClient` を選択するファクトリを `packages/agents/lib/llm-client/factory.ts` に置く。
 - 両クライアントは `getApiKey(provider)` ヘルパ (T-02-13) 経由で API キーを取得し、DB `api_credentials` 設定を優先・env 変数をフォールバックとする統一規約に従う。
 - 全 LLM 呼び出しは `withTokenLogging()` ミドルウェアでラップし、`token_usage` に自動 INSERT（F-032 を漏れなく実装）。`AgentSdkClient` は Messages API の `response.usage` を、`AISdkClient` は AI SDK の `result.usage` を、それぞれ同一の `{ inputTokens, outputTokens, cacheReadTokens?, cacheWriteTokens? }` 形に正規化する。
+- **適材適所のプロバイダ配分（2026-09-21 本番適用、運営者指示「使っている AI モデルがすべて Claude なので、適材適所で
+  使う AI モデルを最適化しておいて」）**: 30 日実績（editor sonnet-5 ¥72k / writer ¥42k / judge ¥7.5k …、ほぼ全役が Anthropic）
+  と過去の実測（gpt-5 の editor は ¥16/call vs ¥68 で品質差小、gpt-5 の judge は採点が甘い、readings は gpt-5 で構造化出力が
+  空、Gemini は廃止/枠枯渇で書籍生成を止めた前歴 → editor/judge には載せない）、および 2026-09-21 の実 API プローブ
+  （gpt-5 / gpt-5-mini / gemini-3.8-flash の 3 つとも `responseSchema`(generateObject) と JSON テキスト応答が通ることを確認）を
+  根拠に、`model_assignments`（genre=null 既定）を次の方針で配分した。**適用スクリプト `scripts/models/model-mix-2026-09-21.cjs`**
+  （dry-run/--apply、旧 active 行のバックアップ `ma-backup-model-mix-2026-09-21.json`、`audit_log` に
+  `source='model-mix-2026-09-21'` と理由を記録）。
+  | 方針 | 役割 | モデル |
+  |---|---|---|
+  | **Claude Opus 5** — 日本語の企画・戦略・創作 | anp.theme / anp.strategist / anp.consultant（非現行 opus-4-7 からの更新。旧 ID はカタログ外で **cost ¥0 記録**になっていた）、小説 writer 7 ジャンル（既存） | `anthropic/claude-opus-5` |
+  | **Claude Opus 4.8** — 既存の創作/戦略/経営役（同価格帯、据え置き） | ceo / ceo_chat / marketer_plan / promo_strategist / sns_strategist / promoter / tiktok_scenario / tiktok_marketer / prompt_editor / optimizer / editorial_mgr / promo_mgr / publish_mgr / cover_art_direction | `anthropic/claude-opus-4-8` |
+  | **Claude Sonnet 5** — 日本語本文の執筆と品質判定（採点の厳しさ） | writer（実用書既定）/ judge / anp.writer / anp.judge / account_strategist / 小説 editor 7 ジャンル | `anthropic/claude-sonnet-5` |
+  | **Claude Sonnet 4.6** — web_search 必須・構造化出力が Claude 前提・日本語コピー | marketer / growth_scout（web_search）/ readings（gpt-5 不可）/ content_creator / content_optimizer / outline_review / thumbnail_text / cover_text_check / tiktok_creator / tiktok_editor / anp.outline / anp.promo | `anthropic/claude-sonnet-4-6` |
+  | **GPT-5** — 整える工程・SEO・数値分析・構造化推論（$1.25/$10） | **editor（実用書既定）** / anp.editor / seo_optimizer / blog_seo（既存）/ finance_mgr / cost_accountant / market_analyst / promo_analyst / cost_optimizer / metadata_worker / ops_mgr | `openai/gpt-5` |
+  | **GPT-5 mini** — 軽い校正 | tiktok_proofreader | `openai/gpt-5-mini` |
+  | **Gemini 3.8 Flash** — 長文入力の集計/報告（低リスク役のみ。`model.health.probe`＋`healModelOutages` で保護） | analytics_mgr / sales_analyst | `google/gemini-3.8-flash` |
+  | 画像 | thumbnail_image / anp.eyecatch / anp.strategist 画像 = `openai/gpt-image-2`、promo_image = `google/imagen-4.0-fast`（既存） | — |
+  **対象外**: `book_cover` はコード側 `assignmentOverride`（sonnet-5）固定で DB 割当を参照しない。**既知の副作用**: Anthropic の
+  `model_catalog` 現行行は haiku/opus/sonnet-5 が全て $10/$50 になっており（取得元の不備）、コストメーターの Claude 側は
+  実勢より高めに出る（要カタログ修正）。**戻し方**: バックアップ JSON の id を `status='active'` に戻し、
+  `created_by='model-mix-2026-09-21'` の行を archived にする。
 - **プロバイダ障害時の緊急フォールバック（2026-09-01 実運用で実証）**: Anthropic が利用不能（クレジット枯渇・決済不可）になった際、`model_assignments` の切替だけで **仕上げ工程（editor / judge / thumbnail_text / cover_text_check / cover_art_direction）を `openai/gpt-5` へ一時退避**でき、コード変更なしで稼働した（editor ¥16/call, judge ¥44/冊 と Claude 比 1/4 程度）。ただし (a) **`readings` は gpt-5 で構造化出力が空になり失敗**するため対象外、(b) gpt-5 の judge は **採点が甘い**（同一原稿で Sonnet 65→84 / 54→86）ので合格＝品質保証ではなく、継続性欠陥は本文の機械走査で別途確認する、(c) 文体を決める writer / marketer / outline_review は切替えず保留する、(d) 復旧後は必ず元の割当へ戻す。手順スクリプトは `scripts/.stage/reroute-openai.cjs` / `revert-anthropic.cjs`（割当バックアップ `ma-backup.json`）。
 
 ### B. モデル単価カタログ自動取得（F-024）

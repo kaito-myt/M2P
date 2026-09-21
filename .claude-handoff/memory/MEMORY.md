@@ -21,7 +21,7 @@
 - [LINE auth relay](project_line_auth_relay.md) — LINE双方向認証リレー(OTP通知&返信)出荷・疎通済; kdp_auth_requests+/api/line/webhook; 売上worker自動再ログイン+販売中→出版済み同期(kdp.publish.status.sync 6h)。
 - [KDP publish auth wall](reference_kdp_publish_authwall.md) — 新規タイトル作成/出版はmax_auth_age=0で再認証強制→サーバ完全自動出版は不可、運営者アシスト型のみ可(本棚アーカイブ等の閲覧系は再利用セッションで可)。
 - [KDP sales integration](project_kdp_sales.md) — KDP売上取得; Phase1実レポート2形式対応(月別ロイヤリティ=確定/推定=見込み, KENP売上+KPI表示)出荷済2026-07-24, Phase2(Playwright自動DL)未着手; 設計=docs/09。
-- [Model assignment routing](reference_model_assignment_routing.md) — model_assignmentsルーティング仕様＋Gemini無料枠枯渇で書籍パイプラインが4日間静かに停止した事故と復旧手順(各roleにactive1件必須).
+- [Model assignment routing](reference_model_assignment_routing.md) — model_assignmentsルーティング仕様＋Gemini停止事故と復旧手順(各roleにactive1件必須); 2026-09-21 適材適所化(editor/分析系→gpt-5, 報告役→gemini-3.8-flash, ANP企画→opus-5).
 - [SNS engage bot](project_sns_engage_bot.md) — IG/TikTok自動フォローbot(F-077)＋ログイン済セッション取り込み動線; IG稼働・実フォロー検証済, TikTokはGoogle/QRログイン待ち。
 - [SNS reboot](project_sns_reboot.md) — 2026-09-02 SNS全面リブート実装済(スパム判定解消=頻度2/日・同一タグ廃止、栞統一、断言型/カルーセル/制作実録の勝ち型移植、競馬・ラノベ柱凍結)。残=手動リネーム・P3計測・TikTok復旧。調整はexample_post書換→content.generate再enqueue。
 - [Growth autonomy](project_growth_autonomy.md) — 全社ToDo自動承認スイープ(F-082)＋販促強化継続AIループ(F-081)出荷; ベースライン=Xフォロワー2人/到達1.7/当月349円(未黒字化)。

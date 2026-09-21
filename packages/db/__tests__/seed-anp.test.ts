@@ -66,13 +66,17 @@ describe('buildAnpPromptSeeds', () => {
 });
 
 describe('buildAnpModelAssignmentSeeds', () => {
-  it('7 role すべてに anthropic モデルを割当てる', () => {
+  it('8 role に適材適所のモデルを割当てる (企画/戦略=Opus 5, 執筆/判定=Sonnet 5, 校閲=GPT-5)', () => {
     const seeds = buildAnpModelAssignmentSeeds();
     expect(seeds).toHaveLength(8);
-    for (const s of seeds) {
-      expect(s.provider).toBe('anthropic');
-      expect(s.status).toBe('active');
-    }
+    for (const s of seeds) expect(s.status).toBe('active');
+    const by = new Map(seeds.map((s) => [s.role, `${s.provider}/${s.model}`]));
+    expect(by.get('anp.theme')).toBe('anthropic/claude-opus-5');
+    expect(by.get('anp.strategist')).toBe('anthropic/claude-opus-5');
+    expect(by.get('anp.consultant')).toBe('anthropic/claude-opus-5');
+    expect(by.get('anp.writer')).toBe('anthropic/claude-sonnet-5');
+    expect(by.get('anp.judge')).toBe('anthropic/claude-sonnet-5');
+    expect(by.get('anp.editor')).toBe('openai/gpt-5');
   });
 });
 

@@ -312,17 +312,21 @@ export interface AnpModelAssignmentSeed {
   created_by: string;
 }
 
-/** docs/11-anp-design.md §5.4 — A2P と同じモデルルーティング方針 (Opus=企画/創作, Sonnet=判断/校閲)。 */
+/**
+ * docs/11-anp-design.md §5.4 — 適材適所のモデル割当 (2026-09-21 運営者指示「使っている AI モデルがすべて Claude なので
+ * 適材適所で最適化」)。Opus 5 = 企画/戦略/創作、Sonnet 5 = 本文執筆と品質判定 (GPT は採点が甘い実測)、
+ * GPT-5 = 校閲 (整える工程は品質差が小さく ¥16 vs ¥68/call)。本番は `scripts/models/model-mix-2026-09-21.cjs` で同内容を適用済み。
+ */
 export function buildAnpModelAssignmentSeeds(): AnpModelAssignmentSeed[] {
   return [
-    { role: 'anp.theme', genre: null, provider: 'anthropic', model: 'claude-opus-4-7', status: 'active', created_by: 'system' },
+    { role: 'anp.theme', genre: null, provider: 'anthropic', model: 'claude-opus-5', status: 'active', created_by: 'system' },
     { role: 'anp.outline', genre: null, provider: 'anthropic', model: 'claude-sonnet-4-6', status: 'active', created_by: 'system' },
-    { role: 'anp.writer', genre: null, provider: 'anthropic', model: 'claude-sonnet-4-6', status: 'active', created_by: 'system' },
-    { role: 'anp.editor', genre: null, provider: 'anthropic', model: 'claude-sonnet-4-6', status: 'active', created_by: 'system' },
-    { role: 'anp.judge', genre: null, provider: 'anthropic', model: 'claude-sonnet-4-6', status: 'active', created_by: 'system' },
+    { role: 'anp.writer', genre: null, provider: 'anthropic', model: 'claude-sonnet-5', status: 'active', created_by: 'system' },
+    { role: 'anp.editor', genre: null, provider: 'openai', model: 'gpt-5', status: 'active', created_by: 'system' },
+    { role: 'anp.judge', genre: null, provider: 'anthropic', model: 'claude-sonnet-5', status: 'active', created_by: 'system' },
     { role: 'anp.promo', genre: null, provider: 'anthropic', model: 'claude-sonnet-4-6', status: 'active', created_by: 'system' },
-    { role: 'anp.strategist', genre: null, provider: 'anthropic', model: 'claude-opus-4-7', status: 'active', created_by: 'system' },
-    { role: 'anp.consultant', genre: null, provider: 'anthropic', model: 'claude-opus-4-7', status: 'active', created_by: 'system' },
+    { role: 'anp.strategist', genre: null, provider: 'anthropic', model: 'claude-opus-5', status: 'active', created_by: 'system' },
+    { role: 'anp.consultant', genre: null, provider: 'anthropic', model: 'claude-opus-5', status: 'active', created_by: 'system' },
   ];
 }
 

@@ -26,11 +26,11 @@ export const setAnpModelAssignmentInput = z.object({
 
 /** 役割の日本語ラベルと説明 (seed-anp.ts の役割一覧に対応)。未知の役割は生の名前を出す。 */
 export const ANP_ROLE_META: Record<string, { label: string; description: string }> = {
-  'anp.theme': { label: 'テーマ企画', description: '日次テーマ生成 (note.theme.generate / note.theme.auto)。創作寄り = Opus 推奨' },
+  'anp.theme': { label: 'テーマ企画', description: '日次テーマ生成 (note.theme.generate / note.theme.auto)。創作寄り = Claude Opus 推奨' },
   'anp.outline': { label: '構成', description: '記事の見出し構成' },
-  'anp.writer': { label: '執筆', description: '本文執筆 (長文)' },
-  'anp.editor': { label: '校閲', description: '本文の推敲・整形' },
-  'anp.judge': { label: '品質判定', description: 'フック/可読性/有料転換/検索流入の採点。判断系 = Sonnet で十分' },
+  'anp.writer': { label: '執筆', description: '本文執筆 (長文)。日本語の文体 = Claude Sonnet 推奨' },
+  'anp.editor': { label: '校閲', description: '本文の推敲・整形。整える工程は GPT-5 で十分 (安価)' },
+  'anp.judge': { label: '品質判定', description: 'フック/可読性/有料転換/検索流入の採点。GPT は採点が甘い実測があるため Claude Sonnet 推奨' },
   'anp.promo': { label: 'SNS 告知', description: '公開記事の X / Instagram 告知文' },
   'anp.strategist': { label: 'アカウント設計・プロフィール素材', description: '設計案 (表示名/bio/柱/収益方針) と自己紹介文・画像プロンプト' },
   'anp.consultant': { label: 'アカウント戦略の AI 相談', description: '/accounts/design/consult のチャット相手 (Tavily リサーチ込み)' },

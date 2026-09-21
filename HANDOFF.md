@@ -148,6 +148,16 @@ ANP のアカウント戦略を AI に相談しながら策定）を実施。mai
 - **分析**: `/analytics/sales`・`/analytics/cost`（`lib/analytics-core.ts`、Vitest 5 件）。サイドメニューに「分析」「システム」節。
 - migration `20260921050000_anp_promotion_policy_agent_roles`（`promotion_policy_json` 列＋`anp_agent_roles` 表）を本番適用＋resolve 済。
 
+### AI モデルの適材適所化（2026-09-21 深夜、本番 DB 適用済）
+- 運営者指示「使っている AI モデルがすべて Claude なので、適材適所で最適化」→ `scripts/models/model-mix-2026-09-21.cjs --apply` で
+  17 役割を切替（docs/03 §A の表が正）。要点: **editor(実用書既定)/anp.editor → gpt-5**（最大のコスト源 ¥72k/月 → 約 1/4 見込み）、
+  分析/財務/運用の本部長・担当 → gpt-5、analytics_mgr/sales_analyst → gemini-3.8-flash、tiktok_proofreader → gpt-5-mini、
+  ANP の企画/戦略/相談 → opus-5（非現行 opus-4-7 の cost ¥0 記録を解消）、anp.writer/anp.judge → sonnet-5。
+  judge / writer / marketer / readings / 小説系は Claude のまま（採点の甘さ・web_search・構造化出力・文体の理由）。
+- 実 API プローブで gpt-5 / gpt-5-mini / gemini-3.8-flash の generateObject と JSON 応答を確認済。戻し方はスクリプト冒頭コメント。
+- 要フォロー: (a) 数日後に `token_usage` で editor の単価と judge 合格率に異常が無いか確認、(b) Anthropic の `model_catalog`
+  現行行が全て $10/$50 になっている取得不備の修正（コストメーターが Claude 側で高めに出る）。
+
 ### DB マイグレーション履歴の整合
 - 本番 `_prisma_migrations` に未記録だった 20260915/0918/0919 と今日の 3 本を `prisma migrate resolve --applied` で記録。
   `migrate status` ではまだ 8 月〜9/9 の数本（20260826120000_ad_spend 〜 20260909000000_bw_retag）が未記録のまま
