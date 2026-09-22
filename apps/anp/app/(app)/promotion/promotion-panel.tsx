@@ -36,6 +36,7 @@ export function PromotionPanel({
   summary,
   linked,
   zernio,
+  flash,
 }: {
   noteAccountId: string;
   initial: AccountPromotionState;
@@ -44,6 +45,7 @@ export function PromotionPanel({
   /** F-ANP-33: この媒体の投稿先アカウント連携。 */
   linked: LinkedPromotionAccountView;
   zernio: { configured: boolean; accounts: ZernioAccountView[] } | null;
+  flash?: { tone: 'ok' | 'err'; text: string } | null;
 }) {
   const channel = initial.channel;
   const [state, setState] = useState<AccountPromotionState>(initial);
@@ -238,7 +240,7 @@ export function PromotionPanel({
 
       <div className="flex flex-col gap-space-relaxed">
       {/* 投稿先アカウント連携 (F-ANP-33) */}
-      <LinkedAccountCard noteAccountId={noteAccountId} channel={channel} initial={linked} zernio={zernio} />
+      <LinkedAccountCard noteAccountId={noteAccountId} channel={channel} initial={linked} zernio={zernio} flash={flash ?? null} />
 
       {/* 投稿一覧 */}
       <section className="rounded-container border border-border-warm bg-white p-space-relaxed" data-testid="promotion-posts-panel">

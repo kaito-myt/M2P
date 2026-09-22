@@ -14,7 +14,7 @@ import { Prisma, prisma } from '@a2p/db';
 import { auth } from '@/auth';
 import { messages } from '@/lib/messages';
 import { loadLinkedPromotionAccount, type LinkedPromotionAccountView } from '@/lib/promotion-accounts-core';
-import { listZernioAccounts, type ZernioAccountView } from '@/lib/zernio';
+import { ensureZernioProfile, getZernioConnectUrl, listZernioAccounts, zernioProfileNameFor, type ZernioAccountView } from '@/lib/zernio';
 
 export type ActionResult<T> = { ok: true; data: T } | { ok: false; error: string };
 
@@ -213,5 +213,33 @@ export async function getZernioAccounts(input: unknown): Promise<ActionResult<{ 
     return { ok: true, data: { configured: true, accounts: await listZernioAccounts(parsed.data.channel) } };
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : m.errors.zernioFetchFailed };
+  }
+}
+
+/**
+ * F-ANP-33c — ANP から Zernio のアカウント接続を開始する (運営者の質問 2026-09-22「事前に Zernio に連携する必要はある?
+ * ANP 側から接続できる形?」→ できる形にした)。note アカウント用の Zernio profile を用意し、OAuth 開始 URL を返す。
+ * 認可後は Zernio が `/api/zernio/callback` に accountId/username を付けて戻し、そこで台帳に保存する。
+ */
+export async function startZernioConnect(input: unknown): Promise<ActionResult<{ url: string }>> {
+  const userId = await requireUser();
+  if (!userId) return { ok: false, error: messages.common.unauthorized };
+  const parsed = z.object({ note_account_id: z.string().min(1), channel: z.enum(['x', 'instagram', 'tiktok']) }).safeParse(input);
+  if (!parsed.success) return { ok: false, error: m.errors.invalid };
+  if (!(typeof process.env.ZERNIO_API_KEY === 'string' && process.env.ZERNIO_API_KEY.length > 0)) return { ok: false, error: m.errors.zernioNotConfigured };
+  const { note_account_id, channel } = parsed.data;
+  try {
+    const account = await prisma.noteAccount.findUnique({ where: { id: note_account_id }, select: { id: true, display_name: true } });
+    if (!account) return { ok: false, error: messages.accounts.errors.notFound };
+    const profileId = await ensureZernioProfile(zernioProfileNameFor(account));
+    const base = (process.env.NEXTAUTH_URL ?? process.env.NEXT_PUBLIC_APP_URL ?? '').replace(/\/$/, '');
+    if (!base) return { ok: false, error: m.errors.noPublicUrl };
+    const cb = new URL(`${base}/api/zernio/callback`);
+    cb.searchParams.set('note_account_id', note_account_id);
+    cb.searchParams.set('channel', channel);
+    const url = await getZernioConnectUrl(channel, profileId, cb.toString());
+    return { ok: true, data: { url } };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : m.errors.zernioConnectFailed };
   }
 }

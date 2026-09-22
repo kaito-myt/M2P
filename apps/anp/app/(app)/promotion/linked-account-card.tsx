@@ -10,7 +10,7 @@
 import { useState, useTransition } from 'react';
 import { CheckCircle2, ExternalLink, Link2, Loader2, ShieldAlert, Unlink } from 'lucide-react';
 
-import { getZernioAccounts, linkPromotionAccount, testPromotionAccount, unlinkPromotionAccount } from '@/app/actions/promotion-accounts';
+import { getZernioAccounts, linkPromotionAccount, startZernioConnect, testPromotionAccount, unlinkPromotionAccount } from '@/app/actions/promotion-accounts';
 import { messages } from '@/lib/messages';
 import type { LinkedPromotionAccountView } from '@/lib/promotion-accounts-core';
 import type { NotePromotionChannel } from '@/lib/promotion-view';
@@ -23,11 +23,14 @@ export function LinkedAccountCard({
   channel,
   initial,
   zernio,
+  flash,
 }: {
   noteAccountId: string;
   channel: NotePromotionChannel;
   initial: LinkedPromotionAccountView;
   zernio: { configured: boolean; accounts: ZernioAccountView[] } | null;
+  /** Zernio OAuth の戻りの結果表示。 */
+  flash: { tone: 'ok' | 'err'; text: string } | null;
 }) {
   const [state, setState] = useState(initial);
   const [handle, setHandle] = useState(initial.handle ?? '');
@@ -41,8 +44,23 @@ export function LinkedAccountCard({
   // X: 既定は Zernio。OAuth1 直接は「上級」として折りたたみ (運営者要望 2026-09-22「X も Zernio にしたい」)。
   const [xDirect, setXDirect] = useState(channel === 'x' && initial.connected && !initial.zernio_account_id);
   const [busy, setBusy] = useState<'save' | 'test' | 'unlink' | 'reload' | null>(null);
-  const [message, setMessage] = useState<{ tone: 'ok' | 'err'; text: string } | null>(null);
+  const [message, setMessage] = useState<{ tone: 'ok' | 'err'; text: string } | null>(flash);
+  const [connecting, setConnecting] = useState(false);
   const [, startTransition] = useTransition();
+
+  const connectViaZernio = () => {
+    setConnecting(true);
+    setMessage(null);
+    startTransition(async () => {
+      const res = await startZernioConnect({ note_account_id: noteAccountId, channel });
+      if (res.ok) {
+        window.location.assign(res.data.url);
+        return;
+      }
+      setConnecting(false);
+      setMessage({ tone: 'err', text: res.error });
+    });
+  };
 
   const fieldClass = 'w-full rounded-card border border-border-warm bg-white px-3 py-2 text-body text-charcoal disabled:opacity-60';
 
@@ -226,6 +244,21 @@ export function LinkedAccountCard({
           ) : (
             <>
               <p className="text-caption text-muted">{m.zernioHint(messages.promotion.channelLabel[channel])}</p>
+              {zernioList?.configured && (
+                <div className="flex flex-col gap-1">
+                  <button
+                    type="button"
+                    onClick={connectViaZernio}
+                    disabled={busy !== null || connecting}
+                    className="inline-flex w-fit items-center gap-1.5 rounded-card border border-border-warm bg-charcoal px-3 py-1.5 text-button-sm text-white disabled:opacity-50"
+                    data-testid={`linked-account-zernio-connect-${channel}`}
+                  >
+                    {connecting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Link2 className="h-4 w-4" />}
+                    {connecting ? m.connecting : m.connectViaZernio}
+                  </button>
+                  <span className="text-caption text-muted">{m.connectViaZernioHint}</span>
+                </div>
+              )}
               {zernioList?.configured ? (
                 <label className="flex flex-col gap-1 text-caption text-muted">
                   {m.zernioAccount}

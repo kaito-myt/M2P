@@ -41,6 +41,13 @@ export default async function PromotionPage({ searchParams }: { searchParams: Pr
   const requested = typeof sp.account === 'string' ? sp.account : '';
   const account = accounts.find((a) => a.id === requested) ?? accounts[0] ?? null;
   const channel: NotePromotionChannel = isNotePromotionChannel(sp.channel) ? sp.channel : 'x';
+  // F-ANP-33c: Zernio OAuth の戻り (/api/zernio/callback) からのフラッシュ表示。
+  const flash: { tone: 'ok' | 'err'; text: string } | null =
+    typeof sp.linked === 'string' && sp.linked
+      ? { tone: 'ok', text: m.link.flashLinked(m.channelLabel[isNotePromotionChannel(sp.linked) ? sp.linked : channel], typeof sp.linked_handle === 'string' ? sp.linked_handle : '') }
+      : typeof sp.link_error === 'string' && sp.link_error
+        ? { tone: 'err', text: m.link.flashError(sp.link_error) }
+        : null;
 
   const hrefFor = (o: { account?: string; channel?: NotePromotionChannel }) => {
     const q = new URLSearchParams();
@@ -164,7 +171,7 @@ export default async function PromotionPage({ searchParams }: { searchParams: Pr
           </nav>
 
           {state && linked && (
-            <PromotionPanel key={`${account.id}:${channel}`} noteAccountId={account.id} initial={state} posts={posts} summary={summary} linked={linked} zernio={zernio} />
+            <PromotionPanel key={`${account.id}:${channel}`} noteAccountId={account.id} initial={state} posts={posts} summary={summary} linked={linked} zernio={zernio} flash={flash} />
           )}
         </>
       )}

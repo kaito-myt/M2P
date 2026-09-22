@@ -153,6 +153,7 @@ ANP のアカウント戦略を AI に相談しながら策定）を実施。mai
   `promotion_accounts.note_account_id` で紐付け、告知投稿はその台帳へ routing（未連携は従来どおり既定アカウント）。
 - migration `20260922000000_anp_promotion_account_link` 本番適用＋resolve 済。ANP に `API_CRED_KEY` / `ZERNIO_API_KEY` を追加。
 - X も Zernio 経由に (platform `twitter`、テキストのみ可)。台帳に zernio_account_id がある X だけ Zernio、それ以外の X は従来の OAuth1 直叩き。
+- ANP から Zernio の OAuth 接続を開始できる (「Zernio で接続」→ 認可 → `/api/zernio/callback` で台帳 upsert)。note アカウントごとに Zernio profile を自動作成。Zernio 無料枠は 2 アカウント。
 
 ### 「AI で生成」が作成されない障害の修正（2026-09-22）
 - 原因: (1) 方針 JSON が 4096 トークンで途中切れ → parse 失敗 (2) 再デプロイで running のまま残ったジョブが UI を「生成中」に固定＆多重起動拒否。

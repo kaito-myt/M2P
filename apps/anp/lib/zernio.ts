@@ -55,3 +55,62 @@ export async function listZernioAccounts(
       needsReconnection: a.needsReconnection === true,
     }));
 }
+
+// ---------------------------------------------------------------------------
+// F-ANP-33c — ANP から Zernio のアカウント接続 (OAuth) を開始する
+//   GET /v1/connect/{platform}?profileId&redirect_url → authUrl (docs.zernio.com/guides/connecting-accounts)。
+//   認可後、Zernio が redirect_url に `connected, profileId, accountId, username` を付けて戻す (既存クエリは保持)。
+//   profile は note アカウントごとに 1 つ (名前で一意、409 なら existingProfileId を再利用)。
+// ---------------------------------------------------------------------------
+
+export function zernioProfileNameFor(noteAccount: { id: string; display_name: string }): string {
+  return `ANP ${noteAccount.display_name} (${noteAccount.id.slice(-6)})`;
+}
+
+async function zernioFetch(path: string, init: RequestInit, env: Record<string, string | undefined>): Promise<Response> {
+  const apiKey = env.ZERNIO_API_KEY;
+  if (!apiKey) throw new Error('ZERNIO_API_KEY is not configured');
+  return fetch(`${ZERNIO_API_BASE}${path}`, {
+    ...init,
+    headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json', ...(init.headers ?? {}) },
+    signal: AbortSignal.timeout(20_000),
+  });
+}
+
+/** 名前で profile を取得、無ければ作成して id を返す。 */
+export async function ensureZernioProfile(name: string, env: Record<string, string | undefined> = process.env): Promise<string> {
+  const list = await zernioFetch(`/profiles?name=${encodeURIComponent(name)}`, { method: 'GET' }, env);
+  if (list.ok) {
+    const json = (await list.json()) as { profiles?: Array<{ _id?: string; name?: string }> };
+    const hit = (json.profiles ?? []).find((p) => p.name === name && typeof p._id === 'string');
+    if (hit?._id) return hit._id;
+  }
+  const created = await zernioFetch('/profiles', { method: 'POST', body: JSON.stringify({ name, description: 'M2P ANP note アカウント用 (自動作成)' }) }, env);
+  if (created.status === 409) {
+    const json = (await created.json().catch(() => ({}))) as { details?: { existingProfileId?: string } };
+    if (json.details?.existingProfileId) return json.details.existingProfileId;
+  }
+  if (!created.ok) throw new Error(`zernio POST /profiles ${created.status}`);
+  const json = (await created.json()) as { profile?: { _id?: string } };
+  if (!json.profile?._id) throw new Error('zernio POST /profiles: no profile id');
+  return json.profile._id;
+}
+
+/** OAuth 開始 URL を取得する。 */
+export async function getZernioConnectUrl(
+  channel: 'x' | 'instagram' | 'tiktok',
+  profileId: string,
+  redirectUrl: string,
+  env: Record<string, string | undefined> = process.env,
+): Promise<string> {
+  const platform = zernioPlatformOf(channel);
+  const q = new URLSearchParams({ profileId, redirect_url: redirectUrl });
+  const res = await zernioFetch(`/connect/${platform}?${q.toString()}`, { method: 'GET' }, env);
+  if (!res.ok) {
+    const text = await res.text().catch(() => '');
+    throw new Error(`zernio GET /connect/${platform} ${res.status} ${text.slice(0, 200)}`.trim());
+  }
+  const json = (await res.json()) as { authUrl?: string };
+  if (!json.authUrl) throw new Error('zernio connect: authUrl missing');
+  return json.authUrl;
+}

@@ -484,6 +484,15 @@ ANP の機能は A2P の対応機能を note 向けに写像したもの。**太
   OAuth 1.0a 直接は「上級」チェックで残置。worker `promotion.post.publish` の `defaultResolvePort(channel, config)` は
   X かつ台帳の `config_json.zernio_account_id` があるときだけ Zernio ポートを使い、それ以外の X（A2P 共通ペルソナ等）は
   従来の OAuth1 直叩き（http port）のまま。Zernio ポートは `x`→`twitter` を追加し、X はメディア無しでも投稿可。
+  **ANP から Zernio の接続を開始（F-ANP-33c、運営者の質問 2026-09-22「事前に Zernio に連携する必要はある？ANP 側から
+  接続できる形？」→ できる形にした）**: カードの「Zernio で接続 (ブラウザで認証)」→ Server Action `startZernioConnect` が
+  note アカウント用の Zernio profile を用意（`ensureZernioProfile`: `GET /v1/profiles?name=` → 無ければ `POST /v1/profiles`、
+  名前 `ANP <表示名> (<id 末尾 6>)`、409 は existingProfileId を再利用）→ `GET /v1/connect/{platform}?profileId&redirect_url`
+  の `authUrl` へ遷移。認可後 Zernio が `/api/zernio/callback?note_account_id&channel&connected&profileId&accountId&username`
+  へ戻し（`app/api/zernio/callback/route.ts`、要ログイン）、台帳を `connected` で upsert（`config_json.zernio_account_id /
+  zernio_profile_id`）して `/promotion?linked=<channel>&linked_handle=` に戻す（失敗は `?link_error=`）。戻り先の基点は
+  `NEXTAUTH_URL`。TikTok は「1 profile に 1 アカウント」等の Zernio 側制約あり（`GET /v1/connect` の説明参照）。
+  Zernio の無料枠はアカウント 2 つまで（超過は 402/403）。
 - **F-ANP-31 相互流入設計**: 同一運営者の A2P 書籍 ⇄ note 記事の相互送客（書籍LPに note、note に書籍リンク）。
   **実装済み(最小・2026-09-16)**: `pipeline.note.writer.body` が同ジャンル(`NoteTheme.genre`)で
   `publish_status='published'` の A2P 書籍を最大2件(`asin`必須)取得し、`NoteWriterInput.related_books`
