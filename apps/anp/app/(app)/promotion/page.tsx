@@ -82,7 +82,7 @@ export default async function PromotionPage({ searchParams }: { searchParams: Pr
             })
           : Promise.resolve([]),
         loadLinkedPromotionAccount(account.id, channel),
-        channel === 'instagram' || channel === 'tiktok'
+        channel === 'x' || channel === 'instagram' || channel === 'tiktok'
           ? (async () => {
               if (!isZernioConfigured()) return { configured: false, accounts: [] };
               try {

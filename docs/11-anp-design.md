@@ -479,6 +479,11 @@ ANP の機能は A2P の対応機能を note 向けに写像したもの。**太
   があればそのアカウントに投稿（指定があるのに見つからなければ既定へ落とさず not_connected）。未連携の媒体は従来どおり
   channel 既定（A2P 共通ペルソナ）に投稿され、UI に「未連携 (既定アカウントに投稿)」と明示。ANP サービスに
   `API_CRED_KEY` / `ZERNIO_API_KEY` を設定済み。
+  **X も Zernio 経由に（F-ANP-33b、運営者要望 2026-09-22「X も Zernio にしたい」）**: X タブの既定は Zernio 接続アカウントの選択
+  （platform 名は `twitter`、docs.zernio.com/platforms/twitter。テキストのみ可・画像は 4 枚まで・無料アカウントは 280 字）。
+  OAuth 1.0a 直接は「上級」チェックで残置。worker `promotion.post.publish` の `defaultResolvePort(channel, config)` は
+  X かつ台帳の `config_json.zernio_account_id` があるときだけ Zernio ポートを使い、それ以外の X（A2P 共通ペルソナ等）は
+  従来の OAuth1 直叩き（http port）のまま。Zernio ポートは `x`→`twitter` を追加し、X はメディア無しでも投稿可。
 - **F-ANP-31 相互流入設計**: 同一運営者の A2P 書籍 ⇄ note 記事の相互送客（書籍LPに note、note に書籍リンク）。
   **実装済み(最小・2026-09-16)**: `pipeline.note.writer.body` が同ジャンル(`NoteTheme.genre`)で
   `publish_status='published'` の A2P 書籍を最大2件(`asin`必須)取得し、`NoteWriterInput.related_books`

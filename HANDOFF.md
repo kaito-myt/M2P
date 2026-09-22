@@ -152,6 +152,7 @@ ANP のアカウント戦略を AI に相談しながら策定）を実施。mai
 - `/promotion` 各媒体タブに「投稿先アカウント」カード。X は OAuth1 4 項目、IG/TikTok は Zernio 接続アカウントの選択。note アカウント別に
   `promotion_accounts.note_account_id` で紐付け、告知投稿はその台帳へ routing（未連携は従来どおり既定アカウント）。
 - migration `20260922000000_anp_promotion_account_link` 本番適用＋resolve 済。ANP に `API_CRED_KEY` / `ZERNIO_API_KEY` を追加。
+- X も Zernio 経由に (platform `twitter`、テキストのみ可)。台帳に zernio_account_id がある X だけ Zernio、それ以外の X は従来の OAuth1 直叩き。
 
 ### 「AI で生成」が作成されない障害の修正（2026-09-22）
 - 原因: (1) 方針 JSON が 4096 トークンで途中切れ → parse 失敗 (2) 再デプロイで running のまま残ったジョブが UI を「生成中」に固定＆多重起動拒否。

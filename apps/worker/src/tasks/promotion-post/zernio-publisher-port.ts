@@ -19,10 +19,11 @@ import type { PublishFailureReason, PublishInput, PublishResult, PublisherPort }
 
 const ZERNIO_API_BASE = 'https://zernio.com/api/v1';
 
-/** channel → Zernio platform 名。 */
-function zernioPlatform(channel: string): 'instagram' | 'tiktok' | null {
+/** channel → Zernio platform 名 (X は docs.zernio.com/platforms/twitter のとおり 'twitter')。 */
+export function zernioPlatform(channel: string): 'instagram' | 'tiktok' | 'twitter' | null {
   if (channel === 'instagram') return 'instagram';
   if (channel === 'tiktok') return 'tiktok';
+  if (channel === 'x') return 'twitter';
   return null;
 }
 
@@ -68,8 +69,8 @@ export function createZernioPublisherPort(deps: ZernioPublisherDeps = {}): Publi
         return { ok: false, reason: 'invalid', message: `zernio 未対応チャンネル: ${input.channel}` };
       }
       const mediaUrl = input.mediaUrls?.[0];
-      if (!mediaUrl) {
-        // IG は画像、TikTok は動画が必須。
+      if (!mediaUrl && platform !== 'twitter') {
+        // IG は画像、TikTok は動画が必須。X はテキストのみ可 (F-ANP-33b)。
         return {
           ok: false,
           reason: 'invalid',
@@ -102,20 +103,23 @@ export function createZernioPublisherPort(deps: ZernioPublisherDeps = {}): Publi
         typeof account.profileId === 'string' ? account.profileId : account.profileId?._id ?? undefined;
 
       // [F-084] 動画メディアなら IG も Reel(type:'video')で投稿する。TikTok動画を IG リールに流用。
-      const isVideo = platform === 'tiktok' || /\.mp4(\?|$)/i.test(mediaUrl);
+      const isVideo = platform === 'tiktok' || (!!mediaUrl && /\.mp4(\?|$)/i.test(mediaUrl));
+      const mediaItems = !mediaUrl
+        ? []
+        : isVideo
+          ? [{ type: 'video', url: mediaUrl }]
+          : (input.mediaUrls ?? [])
+              .filter((u): u is string => typeof u === 'string' && u.length > 0)
+              // X は画像 4 枚まで、IG は 2〜10 枚でカルーセル化 (docs.zernio.com/platforms/*)。
+              .slice(0, platform === 'twitter' ? 4 : 10)
+              .map((url) => ({ type: 'image', url }));
       const body: Record<string, unknown> = {
         content: input.body,
         publishNow: true,
         ...(profileId ? { profileId } : {}),
         platforms: [{ platform, accountId: account._id }],
-        // 2026-09-18 IG カルーセル: 静止画が複数枚あれば全て渡す (Zernio は 2〜10 枚でカルーセル化、
-        // docs.zernio.com/platforms/instagram)。動画(Reel/TikTok)は 1 本のみ。
-        mediaItems: isVideo
-          ? [{ type: 'video', url: mediaUrl }]
-          : (input.mediaUrls ?? [])
-              .filter((u): u is string => typeof u === 'string' && u.length > 0)
-              .slice(0, 10)
-              .map((url) => ({ type: 'image', url })),
+        // 2026-09-18 IG カルーセル: 静止画が複数枚あれば全て渡す。動画(Reel/TikTok)は 1 本のみ。X はテキストのみでも可。
+        ...(mediaItems.length > 0 ? { mediaItems } : {}),
       };
       if (platform === 'tiktok') {
         // TikTok 公開投稿の必須フラグ(Content Posting API 準拠)。

@@ -31,11 +31,12 @@ const LinkXSchema = z.object({
 });
 const LinkZernioSchema = z.object({
   note_account_id: z.string().min(1),
-  channel: z.enum(['instagram', 'tiktok']),
+  channel: z.enum(['x', 'instagram', 'tiktok']),
   handle: z.string().trim().max(64),
   zernio_account_id: z.string().trim().min(1).max(100),
 });
-const LinkSchema = z.discriminatedUnion('channel', [LinkXSchema, LinkZernioSchema]);
+/** X は Zernio (既定、運営者要望 2026-09-22「X も Zernio にしたい」) か OAuth1 直接 (レガシー) のどちらか。 */
+const LinkSchema = z.union([LinkZernioSchema, LinkXSchema]);
 
 async function requireUser(): Promise<string | null> {
   const session = await auth();
@@ -67,7 +68,10 @@ export async function linkPromotionAccount(input: unknown): Promise<ActionResult
     let token_enc: string | null | undefined;
     let token_mask: string | null | undefined;
     let config: Record<string, unknown> = { ...baseConfig, source: 'anp' };
-    if (data.channel === 'x') {
+    if ('zernio_account_id' in data) {
+      // Zernio 経由 (X / Instagram / TikTok)。X の OAuth1 資格情報が残っていても Zernio を優先する (publish 側の判定)。
+      config = { ...config, zernio_account_id: data.zernio_account_id };
+    } else if (data.channel === 'x') {
       const parts = [data.api_key, data.api_secret, data.access_token, data.access_token_secret];
       const filled = parts.filter((p) => p.length > 0).length;
       if (filled > 0 && filled < 4) return { ok: false, error: m.errors.xAllFour };
@@ -78,12 +82,12 @@ export async function linkPromotionAccount(input: unknown): Promise<ActionResult
       } else if (!existing?.token_enc) {
         return { ok: false, error: m.errors.xAllFour };
       }
-    } else {
-      config = { ...config, zernio_account_id: data.zernio_account_id };
+      // OAuth1 直接に切り替えたら Zernio 指定は外す。
+      delete config.zernio_account_id;
     }
     delete config.last_test;
     const handle = data.handle.replace(/^@/, '') || existing?.handle || null;
-    const connected = data.channel === 'x' ? Boolean(token_enc ?? existing?.token_enc) : true;
+    const connected = 'zernio_account_id' in data ? true : Boolean(token_enc ?? existing?.token_enc);
 
     const row = existing
       ? await prisma.promotionAccount.update({
@@ -161,7 +165,9 @@ export async function testPromotionAccount(input: unknown): Promise<ActionResult
     if (!existing) return { ok: false, error: m.errors.notLinked };
     let result: { ok: boolean; message: string };
     const started = Date.now();
-    if (channel === 'x') {
+    const cfgAll = (existing.config_json ?? {}) as { zernio_account_id?: unknown };
+    const viaZernio = typeof cfgAll.zernio_account_id === 'string' && cfgAll.zernio_account_id.length > 0;
+    if (channel === 'x' && !viaZernio) {
       const creds = existing.token_enc ? parseXCredentials(decryptApiKey(existing.token_enc)) : null;
       if (!creds) result = { ok: false, message: m.test.noCredentials };
       else {
@@ -199,7 +205,7 @@ export async function testPromotionAccount(input: unknown): Promise<ActionResult
 export async function getZernioAccounts(input: unknown): Promise<ActionResult<{ configured: boolean; accounts: ZernioAccountView[] }>> {
   const userId = await requireUser();
   if (!userId) return { ok: false, error: messages.common.unauthorized };
-  const parsed = z.object({ channel: z.enum(['instagram', 'tiktok']) }).safeParse(input);
+  const parsed = z.object({ channel: z.enum(['x', 'instagram', 'tiktok']) }).safeParse(input);
   if (!parsed.success) return { ok: false, error: m.errors.invalid };
   const configured = typeof process.env.ZERNIO_API_KEY === 'string' && process.env.ZERNIO_API_KEY.length > 0;
   if (!configured) return { ok: true, data: { configured: false, accounts: [] } };

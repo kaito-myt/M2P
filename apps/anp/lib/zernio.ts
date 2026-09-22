@@ -27,10 +27,16 @@ export function isZernioConfigured(env: Record<string, string | undefined> = pro
   return typeof env.ZERNIO_API_KEY === 'string' && env.ZERNIO_API_KEY.length > 0;
 }
 
+/** ANP の媒体 → Zernio platform 名 (X は 'twitter')。 */
+export function zernioPlatformOf(channel: 'x' | 'instagram' | 'tiktok'): 'twitter' | 'instagram' | 'tiktok' {
+  return channel === 'x' ? 'twitter' : channel;
+}
+
 export async function listZernioAccounts(
-  platform?: 'instagram' | 'tiktok',
+  channel?: 'x' | 'instagram' | 'tiktok',
   deps: { fetch?: typeof fetch; env?: Record<string, string | undefined> } = {},
 ): Promise<ZernioAccountView[]> {
+  const platform = channel ? zernioPlatformOf(channel) : undefined;
   const env = deps.env ?? process.env;
   const apiKey = env.ZERNIO_API_KEY;
   if (!apiKey) return [];

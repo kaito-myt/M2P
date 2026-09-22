@@ -114,7 +114,8 @@ export interface PromotionPostPublishDeps {
   prisma?: PromotionPostPublishPrisma;
   logger?: Logger;
   /** チャンネル→ポート解決 (テスト差し替え)。既定は env で stub/http/ayrshare を選ぶ。 */
-  resolvePort?: (channel: string) => PublisherPort;
+  /** channel (＋台帳アカウントの config) からポートを選ぶ。config は F-ANP-33b の X→Zernio 判定に使う。 */
+  resolvePort?: (channel: string, config?: PublishChannelConfig) => PublisherPort;
   /** token_enc 復号関数 (テスト差し替え)。 */
   decryptToken?: (enc: string) => string;
   /** F-058/F-059/F-060: IG/TikTok の添付メディア(公開URL)を用意する。既定は事前mp4→本の販促画像→投稿ごと画像。 */
@@ -133,9 +134,14 @@ export type PromotionPostPublishResult =
   | { status: 'failed'; reason: string; message: string }
   | { status: 'skipped'; reason: string };
 
-function defaultResolvePort(channel: string): PublisherPort {
+function defaultResolvePort(channel: string, config?: PublishChannelConfig): PublisherPort {
   if (process.env.PROMOTION_PUBLISHER === 'stub') {
     return createStubPublisherPort();
+  }
+  // [F-ANP-33b] X: 台帳アカウントが Zernio 接続 (config_json.zernio_account_id) なら Zernio 経由で投稿する
+  //   (運営者要望 2026-09-22「X も Zernio にしたい」)。それ以外の X は従来どおり OAuth1 直叩き (http port)。
+  if (channel === 'x' && process.env.ZERNIO_API_KEY && typeof config?.extra['zernio_account_id'] === 'string' && config.extra['zernio_account_id']) {
+    return createZernioPublisherPort();
   }
   // 所有ブログは第三者接続不要 — ツール自身の blog_posts に公開する。
   if (channel === 'blog') {
@@ -366,7 +372,7 @@ export async function runPromotionPostPublish(
       }
     }
 
-    const port = resolvePort(post.channel);
+    const port = resolvePort(post.channel, config);
     const result = await port.publish({
       channel: post.channel as PromotionChannel,
       title: post.title,

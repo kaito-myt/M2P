@@ -38,6 +38,8 @@ export function LinkedAccountCard({
   const [zernioId, setZernioId] = useState(initial.zernio_account_id ?? '');
   const [zernioList, setZernioList] = useState(zernio);
   const [open, setOpen] = useState(!initial.connected);
+  // X: 既定は Zernio。OAuth1 直接は「上級」として折りたたみ (運営者要望 2026-09-22「X も Zernio にしたい」)。
+  const [xDirect, setXDirect] = useState(channel === 'x' && initial.connected && !initial.zernio_account_id);
   const [busy, setBusy] = useState<'save' | 'test' | 'unlink' | 'reload' | null>(null);
   const [message, setMessage] = useState<{ tone: 'ok' | 'err'; text: string } | null>(null);
   const [, startTransition] = useTransition();
@@ -53,19 +55,19 @@ export function LinkedAccountCard({
     );
   }
 
-  const canSaveX = channel === 'x' && ((apiKey && apiSecret && accessToken && accessTokenSecret) || (state.connected && !apiKey && !apiSecret && !accessToken && !accessTokenSecret));
-  const canSaveZernio = channel !== 'x' && zernioId.trim().length > 0;
-  const canSave = channel === 'x' ? Boolean(canSaveX) : canSaveZernio;
+  const useDirectX = channel === 'x' && xDirect;
+  const canSaveX = useDirectX && ((apiKey && apiSecret && accessToken && accessTokenSecret) || (state.connected && !state.zernio_account_id && !apiKey && !apiSecret && !accessToken && !accessTokenSecret));
+  const canSaveZernio = !useDirectX && zernioId.trim().length > 0;
+  const canSave = useDirectX ? Boolean(canSaveX) : canSaveZernio;
 
   const run = (kind: 'save' | 'test' | 'unlink' | 'reload') => {
     setBusy(kind);
     setMessage(null);
     startTransition(async () => {
       if (kind === 'save') {
-        const res =
-          channel === 'x'
-            ? await linkPromotionAccount({ note_account_id: noteAccountId, channel: 'x', handle, api_key: apiKey, api_secret: apiSecret, access_token: accessToken, access_token_secret: accessTokenSecret })
-            : await linkPromotionAccount({ note_account_id: noteAccountId, channel, handle, zernio_account_id: zernioId.trim() });
+        const res = useDirectX
+          ? await linkPromotionAccount({ note_account_id: noteAccountId, channel: 'x', handle, api_key: apiKey, api_secret: apiSecret, access_token: accessToken, access_token_secret: accessTokenSecret })
+          : await linkPromotionAccount({ note_account_id: noteAccountId, channel, handle, zernio_account_id: zernioId.trim() });
         if (res.ok) {
           setState(res.data);
           setApiKey('');
@@ -92,7 +94,7 @@ export function LinkedAccountCard({
           setOpen(true);
           setMessage({ tone: 'ok', text: m.unlinked });
         } else setMessage({ tone: 'err', text: res.error });
-      } else if (channel !== 'x') {
+      } else {
         const res = await getZernioAccounts({ channel });
         if (res.ok) setZernioList(res.data);
         else setMessage({ tone: 'err', text: res.error });
@@ -135,13 +137,13 @@ export function LinkedAccountCard({
       <dl className="mt-2 grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-1 text-caption">
         <dt className="text-muted">{m.currentHandle}</dt>
         <dd className="text-charcoal">{state.handle ? `@${state.handle}` : '—'}</dd>
-        {channel === 'x' && (
+        {channel === 'x' && !state.zernio_account_id && state.token_mask && (
           <>
             <dt className="text-muted">{m.currentCredentials}</dt>
-            <dd className="font-mono text-charcoal">{state.token_mask ?? '—'}</dd>
+            <dd className="font-mono text-charcoal">{state.token_mask}</dd>
           </>
         )}
-        {channel !== 'x' && (
+        {(channel !== 'x' || state.zernio_account_id || !state.token_mask) && (
           <>
             <dt className="text-muted">{m.currentZernio}</dt>
             <dd className="text-charcoal">
@@ -189,7 +191,13 @@ export function LinkedAccountCard({
             {m.handle}
             <input value={handle} onChange={(e) => setHandle(e.target.value)} maxLength={64} placeholder={m.handlePlaceholder} className={fieldClass} data-testid={`linked-account-handle-${channel}`} />
           </label>
-          {channel === 'x' ? (
+          {channel === 'x' && (
+            <label className="flex items-center gap-2 text-caption text-muted">
+              <input type="checkbox" checked={xDirect} onChange={(e) => setXDirect(e.target.checked)} />
+              {m.xDirectToggle}
+            </label>
+          )}
+          {useDirectX ? (
             <>
               <p className="text-caption text-muted">{m.xHint}</p>
               <div className="grid grid-cols-1 gap-space-snug sm:grid-cols-2">
