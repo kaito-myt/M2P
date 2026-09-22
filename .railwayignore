@@ -28,3 +28,8 @@ docs
 !.env.example
 Xキー情報
 TikTokキー情報
+
+# BookWalker 入稿ツールの出力 (スクショ/EPUB, 約 100MB) — upload に不要
+scripts/bookwalker/out
+scripts/**/out
+scripts/.stage
