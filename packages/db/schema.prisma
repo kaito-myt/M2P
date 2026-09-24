@@ -195,6 +195,9 @@ model Book {
   /// KDP のペーパーバック title id (下書き作成時に採番)。出版フェーズで使う。
   pb_title_id               String?
   pb_last_error             String?
+  /// F-097b: ペーパーバック版の ASIN (Kindle 版とは別)。本棚同期で書き戻す。
+  pb_asin                   String?
+  pb_status_checked_at      DateTime?
   // [F-096] BOOTH (booth.pm) 出版ステータス/キュー。入稿エンジンは準備中(初回ログインのセッション保存待ち)。
   booth_publish_status      String    @default("unlisted")
   booth_publish_queued      Boolean   @default(false)

@@ -15,6 +15,7 @@ import { PIPELINE_THEME_AUTO_TASK_NAME } from './tasks/pipeline-theme-auto.js';
 import { KDP_SUBMIT_DISPATCHER_TASK_NAME } from './tasks/kdp-submit-dispatcher.js';
 import { BW_SUBMIT_DISPATCHER_TASK_NAME } from './tasks/bw-submit-dispatcher.js';
 import { PAPERBACK_QUEUE_SWEEP_TASK_NAME } from './tasks/paperback-queue-sweep.js';
+import { PAPERBACK_STATUS_SYNC_TASK_NAME } from './tasks/paperback-status-sync.js';
 import { BW_RETAG_TASK_NAME } from './tasks/bw-retag.js';
 import { PROMOTION_DISPATCH_TASK_NAME } from './tasks/promotion-dispatch.js';
 import { PROMOTION_REVIEW_DAILY_TASK_NAME } from './tasks/promotion-review-daily.js';
@@ -280,6 +281,12 @@ export const BW_RETAG_CRON = '0 20 * * *';
  * 軽い処理なので静的 cron でよい (実際の入稿はローカルアシストが本キューを読む)。
  */
 export const PAPERBACK_QUEUE_SWEEP_CRON = '10 21 * * *';
+
+/**
+ * F-097b: ペーパーバックが実際に販売中になったかを KDP 本棚で確認する同期。
+ * 日次 07:40 JST (22:40 UTC)。READ-ONLY・1 回 12 冊まで。
+ */
+export const PAPERBACK_STATUS_SYNC_CRON = '40 22 * * *';
 
 /**
  * docs/11-anp-design.md §7 Phase2: note サーバー自動公開ディスパッチャの既定 cron (30分毎)。
@@ -648,6 +655,12 @@ export const CRON_ITEMS: CronItem[] = [
     task: PAPERBACK_QUEUE_SWEEP_TASK_NAME,
     match: PAPERBACK_QUEUE_SWEEP_CRON,
     identifier: 'paperback-queue-sweep-daily',
+  },
+  {
+    // F-097b: ペーパーバックの販売状態を KDP 本棚で確認 (paperback.status.sync)。
+    task: PAPERBACK_STATUS_SYNC_TASK_NAME,
+    match: PAPERBACK_STATUS_SYNC_CRON,
+    identifier: 'paperback-status-sync-daily',
   },
   {
     // F-094b: 却下書籍の自動再申請(bw.retag.tick)。bw_retag_enabled=false なら即 no-op。
