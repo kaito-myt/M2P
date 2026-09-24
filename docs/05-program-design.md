@@ -1947,6 +1947,13 @@ export const KdpSubmitPayload = z.object({
 | `code_requests` | ソースコード変更の**要求を起票** (`org_code_requests`) | 自動適用しない (本番コンテナはリポジトリを書き換えられない) |
 | `research_queries` | Tavily で Web 検索し、結果を添えて**1 往復だけ**聞き直す | `MAX_RESEARCH_ROUNDS=1`・検索結果添付時は空にする指示 |
 
+**コード変更要求の扱い (F-098b)**: `org_code_requests` は **自動では適用されない**。適用するときは運営者の端末で
+`bash scripts/org/apply-code-requests.sh` を実行すると、1 件ずつ (a) `ceo/<id>` ブランチを切り
+(b) Claude Code CLI (headless) に要求内容を渡して実装させ (c) 触ったパッケージの typecheck と
+Vitest を回し (d) **通ったときだけ**そのブランチにコミットして `status='done'` にする。
+失敗時は `status='open'` に戻して理由を `resolution_note` に残し、調査用にブランチを残す。
+**main へのマージと push は行わない** (人が差分を見てから)。作業ツリーが汚れている場合は何もせず終了する。
+
 すべて `audit_log` に記録し (`settings.update` / `model_assignment.upsert`)、CEO の返信末尾に
 「――― 設定変更 ―――」等のセクションで何が効いたかを明示する。コード変更要求は A2P の `/org` に一覧表示する。
 
@@ -1972,7 +1979,8 @@ Kindle 出版済み **93 冊中 12 冊 (13%)** しかペーパーバックが出
   `bash scripts/paperback/pb-env.sh bash scripts/paperback/pb-auto.sh all` が
   DB キューを読んで `pb-plan → build-wrap-cover → pb-pilot (下書き) → pb-complete (出版)` を回し、
   各ステップの結果を `pb-state.cjs` 経由で DB に書き戻す。KDP の作成数制限に当たったら 20h の
-  クールダウンを置いて翌日再開する。原稿は Amazon 側の変換待ちがあるため、出版フェーズは
+  クールダウンを置いて翌日再開する (運営者指示 2026-09-24: **冊数で止めず、KDP が制限を返すまで回す**。
+  実測ではペーパーバックの下書き作成は Kindle の 1 日 5 冊枠を共有しない。環境異常の暴走を防ぐため連続 3 失敗でも打ち切る)。原稿は Amazon 側の変換待ちがあるため、出版フェーズは
   下書き作成から 3 時間以上経ったものだけを対象にする。
 - UI: **S-031 `/paperback`** (パイプライン > ペーパーバック) でカバレッジ (出版済み/Kindle 出版済み) と
   本ごとの状態を一覧し、キューへの追加/取消ができる。

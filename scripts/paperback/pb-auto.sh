@@ -11,15 +11,25 @@
 #   - 各ステップの結果を DB に書き戻す (pb-state.cjs)。テキストはログとしてのみ残す。
 #   - 表紙 PDF が無ければ自動生成する (旧: 無ければ SKIP していた)。
 #
-# KDP は「1 日 5 冊」の作成数制限があるので draft フェーズは既定 5 冊で止める。
+# 既定は **KDP が作成数制限を返すまで** 回す (運営者指示 2026-09-24)。
+#   - docs/05 §5.3.15b の実測では、ペーパーバックの下書き作成は Kindle の「1 日 5 冊」枠を
+#     共有しない (同日に Kindle 5 冊 + ペーパーバック 10 冊を作っても creation_limit は出なかった)。
+#   - それでも上限に当たったら pb-pilot.mjs が rc=4 を返すので、その時点で打ち切って 20h の
+#     クールダウンを置く (翌日 sweep → 再開)。
+#   - 環境異常でむやみに叩き続けないよう、連続 3 失敗でも打ち切る。
+#   - `--limit=N` を渡せば従来どおり冊数で止められる。
 # 原稿は Amazon 側の変換完了 (数時間) を待たないと出版できないため、publish フェーズは
 # 下書き作成から 3 時間以上経ったものだけを対象にする。
 set -uo pipefail
 cd /c/DEV/M2P
 
 PHASE="${1:-all}"
-LIMIT="5"
+# 既定 0 = 冊数で止めない (KDP の制限メッセージ or 連続失敗まで回す)。
+LIMIT="0"
 for a in "$@"; do case "$a" in --limit=*) LIMIT="${a#--limit=}";; esac; done
+# pb-state.cjs には実数を渡す必要があるので、0 のときは十分大きい値にする。
+QUEUE_LIMIT="$LIMIT"
+[ "$QUEUE_LIMIT" = "0" ] && QUEUE_LIMIT=500
 
 OUT=scripts/paperback/out
 mkdir -p "$OUT"
@@ -36,7 +46,7 @@ cleanup_chrome() {
 
 state() { node scripts/paperback/pb-state.cjs "$@"; }
 
-echo "=== pb-auto 開始 phase=$PHASE limit=$LIMIT $(date '+%m/%d %H:%M') ==="
+echo "=== pb-auto 開始 phase=$PHASE limit=$(if [ "$LIMIT" = "0" ]; then echo '制限まで'; else echo "$LIMIT"; fi) $(date '+%m/%d %H:%M') ==="
 state stats
 
 # ---------------------------------------------------------------------------
@@ -89,7 +99,7 @@ if [ "$PHASE" = "draft" ] || [ "$PHASE" = "all" ]; then
     fi
     if [ $consec -ge 3 ]; then echo "!!! 連続 $consec 失敗 — 中断 (環境確認要)"; break; fi
     cleanup_chrome; sleep 20
-  done < <(state queue --limit="$LIMIT")
+  done < <(state queue --limit="$QUEUE_LIMIT")
   echo "DRAFT DONE ok=$okc fail=$fail"
 fi
 

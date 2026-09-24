@@ -41,13 +41,15 @@
 - **F-098 CEO 権限拡張**: CEO との会話だけで 設定トグル / モデル割当 / プロンプト改訂 / Web リサーチ(Tavily)
   が完結する。ソースコードは `org_code_requests` に要求として起票され `/org` に出る (自動適用はしない)。
   保護 role (ceo/ceo_chat/prompt_editor) とホワイトリスト外の設定は拒否。
+- **F-098b コード変更要求の実装**: `bash scripts/org/apply-code-requests.sh` (ローカル)。ceo/<id> ブランチを切って
+  Claude Code CLI に実装させ、typecheck とテストが通ったときだけコミットする。main へのマージ/push はしない。
 
 ### F-097 ペーパーバックを確実に出す（2026-09-24）
 - 調査結果: **Kindle 出版済み 93 冊に対しペーパーバックは 12 冊だけ**だった。原因は進捗がローカルのテキスト台帳にしか無く、
   対象リストも静的 plan.json 由来で新刊が永久に対象外だったこと。
 - `books.pb_*` に状態を移し (migration `20260924100000_book_paperback_queue` 本番適用済み・旧台帳はバックフィル済み)、
   日次 cron `paperback.queue.sweep` が「Kindle 済み・PB 未対応」を自動でキューに積むようにした。
-- ローカル実行: `bash scripts/paperback/pb-env.sh bash scripts/paperback/pb-auto.sh all`
+- ローカル実行: `bash scripts/paperback/pb-env.sh bash scripts/paperback/pb-auto.sh all` (**冊数で止めず KDP が制限を返すまで**。`--limit=N` で冊数指定も可)
   (draft → 表紙生成 → 下書き作成、publish → 変換済みの下書きを出版。結果は DB に書き戻る)。
   KDP 作成数制限に当たると自動で 20h クールダウン。
 - UI: A2P の パイプライン > **ペーパーバック** (`/paperback`) でカバレッジと本ごとの状態を確認・キュー操作。
