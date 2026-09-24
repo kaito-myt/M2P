@@ -85,7 +85,19 @@ const KEEP_ON = [
       `UPDATE app_settings SET ${sets} WHERE id='singleton'`,
       FREEZE_FLAGS.map(() => target),
     );
+    // 反映を読み直して検証する (一度 org_* が落ちていない状態に気付けなかったため)。
+    const { rows: after } = await c.query(
+      `SELECT ${FREEZE_FLAGS.map(([k]) => `"${k}"`).join(', ')} FROM app_settings WHERE id='singleton'`,
+    );
+    const verified = after[0] ?? {};
+    const stuck = FREEZE_FLAGS.filter(([k]) => verified[k] !== target).map(([k]) => k);
     console.log(`\n${REVERT ? '解凍' : '凍結'}しました (${FREEZE_FLAGS.length} 項目 → ${String(target)})`);
+    if (stuck.length > 0) {
+      console.error(`⚠️ 反映できていない項目があります: ${stuck.join(', ')}`);
+      process.exitCode = 1;
+    } else {
+      console.log('✅ 全項目の反映を確認しました');
+    }
     console.log('※ cron 構成は worker 起動時に反映されるため、即座に効かせるには worker を再起動する');
   } finally {
     await c.end();
