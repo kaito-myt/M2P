@@ -11,6 +11,12 @@
  */
 import { z } from 'zod';
 
+/**
+ * 記事の方針 (editorial_policy) の最大長。UI は 7 区分 (各 800〜2000 字) に分けて入力するため
+ * 連結すると 1 万字近くなる。エージェント入力の上限が小さいと ZodError でパイプラインが止まる。
+ */
+export const EDITORIAL_POLICY_MAX = 12000;
+
 // ---------------------------------------------------------------------------
 // 共通: アカウント文脈
 // ---------------------------------------------------------------------------
@@ -24,7 +30,10 @@ export const NoteAccountContextSchema = z.object({
    * 入れ方など)。アカウント詳細で運営者が編集 or AI 生成する。theme/outline/writer/editor/judge の
    * ユーザーメッセージに「【記事の方針・トンマナ】」ブロックとして注入される。
    */
-  editorial_policy: z.string().max(3000).nullable().optional(),
+  // 2026-09-24: 上限 3000 では足りず **本番のテーマ自動生成が ZodError(too_big) で連日失敗していた**
+  // (7 区分 × 各 800〜2000 字 = 実データで 4,400 字)。UI の入力上限 (合計 ~10,300 字) + 見出し分を
+  // 吸収できる 12,000 字に引き上げる。プロンプトが膨らみすぎないかはコスト側で監視する。
+  editorial_policy: z.string().max(EDITORIAL_POLICY_MAX).nullable().optional(),
   /**
    * F-ANP-08 (2026-09-21): 収益化方針 (有料比率・無料公開割合・価格帯・メンバーシップ)。
    * テーマ生成のユーザーメッセージに「【収益化方針】」ブロックとして注入される (theme 以外は無視)。
@@ -325,7 +334,7 @@ export const NotePromotionPolicyInputSchema = z.object({
     target_reader: z.string().max(300).nullable().optional(),
     tone: z.string().max(200).nullable().optional(),
     bio: z.string().max(400).nullable().optional(),
-    editorial_policy: z.string().max(3000).nullable().optional(),
+    editorial_policy: z.string().max(EDITORIAL_POLICY_MAX).nullable().optional(),
     concept: z.string().max(2000).nullable().optional(),
   }),
   existing_policy: NotePromotionChannelPolicySchema.optional(),
@@ -763,7 +772,7 @@ export const NoteAccountEditorialOutputSchema = z.object({
   /** F-ANP-07b: 5 区分。worker が `composeEditorialPolicy` で 1 本のテキストにして保存する。 */
   sections: NoteEditorialSectionsSchema,
   /** 旧出力との互換 (sections が無い応答用)。 */
-  editorial_policy: z.string().max(4000).optional(),
+  editorial_policy: z.string().max(EDITORIAL_POLICY_MAX).optional(),
   rationale: z.string().max(1000).optional(),
 });
 export type NoteAccountEditorialOutput = z.infer<typeof NoteAccountEditorialOutputSchema>;

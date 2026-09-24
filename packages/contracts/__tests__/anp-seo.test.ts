@@ -12,6 +12,8 @@ import {
   parseEditorialPolicy,
   composeEditorialPolicy,
   emptyEditorialSections,
+  EDITORIAL_POLICY_MAX,
+  NoteAccountContextSchema,
 } from '../src/agents/anp.js';
 
 describe('applyHeadingFixes (F-ANP-42)', () => {
@@ -111,5 +113,20 @@ describe('NoteSeoOutputSchema', () => {
   it('ハッシュタグは 5 個まで / キャッチは 24 字まで', () => {
     expect(NoteSeoOutputSchema.safeParse({ ...base, hashtags: ['a', 'b', 'c', 'd', 'e', 'f'] }).success).toBe(false);
     expect(NoteSeoOutputSchema.safeParse({ ...base, eyecatch_copy: 'あ'.repeat(25) }).success).toBe(false);
+  });
+});
+
+describe('editorial_policy の長さ上限 (2026-09-24 の本番障害)', () => {
+  it('7 区分をフルに書いた方針 (実データ 4,400 字超) が各エージェント入力を通る', () => {
+    // 上限 3000 のままだと note.theme.generate / note.account.profile / anp.promo が
+    // ZodError(too_big) で失敗し、テーマの日次自動生成が連日止まっていた。
+    const policy = 'あ'.repeat(4500);
+    expect(NoteAccountContextSchema.safeParse({ niche: '競馬', editorial_policy: policy }).success).toBe(true);
+    expect(EDITORIAL_POLICY_MAX).toBeGreaterThanOrEqual(10000);
+  });
+
+  it('上限を超える方針は弾く (無制限にはしない)', () => {
+    const tooLong = 'あ'.repeat(EDITORIAL_POLICY_MAX + 1);
+    expect(NoteAccountContextSchema.safeParse({ niche: '競馬', editorial_policy: tooLong }).success).toBe(false);
   });
 });
