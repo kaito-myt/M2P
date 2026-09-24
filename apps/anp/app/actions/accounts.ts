@@ -92,6 +92,7 @@ const UpdateAccountSettingsSchema = z.object({
   autopass_enabled: TriStateSchema,
   auto_publish_enabled: TriStateSchema,
   tiktok_enabled: TriStateSchema,
+  paid_publish_enabled: TriStateSchema,
   // 空文字 = グローバルに従う (未指定)。
   themes_per_day: z
     .string()
@@ -122,6 +123,7 @@ export async function updateAccountSettings(input: unknown): Promise<ActionResul
     ...(rest.autopass_enabled !== undefined ? { autopass_enabled: rest.autopass_enabled } : {}),
     ...(rest.auto_publish_enabled !== undefined ? { auto_publish_enabled: rest.auto_publish_enabled } : {}),
     ...(rest.tiktok_enabled !== undefined ? { tiktok_enabled: rest.tiktok_enabled } : {}),
+    ...(rest.paid_publish_enabled !== undefined ? { paid_publish_enabled: rest.paid_publish_enabled } : {}),
   });
 
   try {

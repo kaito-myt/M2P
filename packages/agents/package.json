@@ -45,6 +45,7 @@
     "./anp/editor": "./src/anp/editor.ts",
     "./anp/judge": "./src/anp/judge.ts",
     "./anp/eyecatch": "./src/anp/eyecatch.ts",
+    "./anp/eyecatch-style": "./src/anp/eyecatch-style.ts",
     "./anp/promo": "./src/anp/promo.ts",
     "./anp/strategist": "./src/anp/strategist.ts",
     "./anp/consultant": "./src/anp/consultant.ts"

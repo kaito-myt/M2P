@@ -475,6 +475,12 @@ export const NoteAccountSettingsSchema = z.object({
   auto_publish_enabled: z.boolean().optional(),
   /** [Phase 4] 公開記事の TikTok 連動動画 (`promotion.note.article.video`) を作るか。既定 false。 */
   tiktok_enabled: z.boolean().optional(),
+  /**
+   * [F-ANP-16b] 有料記事の自動公開を許可するか (既定 false)。note の本人確認 (KYC) が完了して
+   * いないアカウントで有料を選ぶと「本人情報の登録」モーダルで止まるため、運営者が KYC を
+   * 済ませたアカウントだけ ON にする。OFF の間は judge が `paid=false` に落として無料公開する。
+   */
+  paid_publish_enabled: z.boolean().optional(),
 });
 export type NoteAccountSettings = z.infer<typeof NoteAccountSettingsSchema>;
 

@@ -19,10 +19,12 @@
  *      動作したが、確実性のため明示的に開く。開けなかった/項目が見つからない場合は log.warn し
  *      有料エリア指定は §のブロック処理へ、それ以外はプレーンテキストとして続行する）。
  *   4. 「下書き保存」を必ず押す(dry_run はここで終了)。
- *   5. **有料記事の実公開(dry_run=false)は価格/有料ライン設定 UI が未実装のため、
- *      「公開に進む」を押す前に必ず `blocked` で中断する**（`shouldBlockPaidPublish`）。
- *      有料エリア指定マーカーの挿入に失敗した場合も同様に中断する(有料本文が無料公開される
- *      経路を塞ぐ)。
+ *   5. **有料記事の実公開 (F-ANP-16b, 2026-09-24)**: アカウント設定 `paid_publish_enabled` が ON の
+ *      ときだけ有料で公開する (`shouldBlockPaidPublish(paid, dryRun, allowPaid)`)。OFF の間は従来どおり
+ *      「公開に進む」前に `blocked` で中断する。有料エリア指定マーカーの挿入に失敗した場合も中断する
+ *      (有料本文が無料公開される経路を塞ぐ)。有料公開の手順は
+ *      記事タイプ `#paid` を trusted click → 本人確認 (KYC) モーダルが出たら中断 → 公開設定画面で
+ *      価格入力欄に `priceJpy` を入力 → 「投稿する」。価格欄が見つからない場合も中断する(0円/誤価格防止)。
  *   6. 記事タイプ(`#free`/`#paid` name=is_paid)のラジオは視覚的に隠された `<input>` で
  *      **synthetic click (`el.click()`) では note の React ハンドラが切り替わらない**
  *      （BW の非表示チェックボックスと同型の罠、2026-09-15 実証）。祖先 `<label>` の
@@ -58,6 +60,8 @@ export interface NotePublishBlock {
 export interface NoteArticleInput {
   id: string;
   title: string;
+  /** F-ANP-16b: アカウント設定で有料公開が許可されているか (note の本人確認が済んでいるか)。 */
+  allowPaid?: boolean;
   /** 段落分解済みブロック列 (有料ラインの前後で 2 系列に分ける)。 */
   freeBlocks: NotePublishBlock[];
   paidBlocks: NotePublishBlock[];
@@ -115,8 +119,8 @@ export function createPlaywrightNotePublishPort(): NotePublishPort {
  * 価格/有料ライン設定 UI が未実装のため、有料記事は下書き保存までしか自動化しない
  * (code review 2026-09-16 指摘 #2)。純関数として切り出しユニットテスト可能にする。
  */
-export function shouldBlockPaidPublish(paid: boolean, dryRun: boolean): boolean {
-  return paid && !dryRun;
+export function shouldBlockPaidPublish(paid: boolean, dryRun: boolean, allowPaid = false): boolean {
+  return paid && !dryRun && !allowPaid;
 }
 
 /**
@@ -246,18 +250,40 @@ async function publishOne(args: NotePublishArgs): Promise<NotePublishResult> {
       return { ok: true, status: 'draft', noteUrl: draftEditUrl };
     }
 
-    // 有料記事の価格/有料ライン設定 UI は未実装 — 実公開は必ずここで止める(code review #2)。
-    if (shouldBlockPaidPublish(a.paid, dryRun)) {
+    // 有料公開が許可されていないアカウントでは、実公開は必ずここで止める (KYC 未完了想定)。
+    if (shouldBlockPaidPublish(a.paid, dryRun, a.allowPaid === true)) {
       await screenshot(page, stageDir, `${a.id}-paid-publish-unsupported`);
       return {
         ok: false,
         reason: 'blocked',
-        message: '有料記事の価格/有料ライン設定は未実装のため実公開できません(下書きは保存済み)',
+        message: '有料記事の自動公開が未許可です(アカウント設定「有料記事の自動公開」を ON に。下書きは保存済み)',
         noteUrl: draftEditUrl,
       };
     }
 
-    // 6. 公開設定へ(この時点で a.paid===false であることが保証されている)。
+    // 5b. [F-ANP-16b] 有料記事: 記事タイプを有料に切り替える (KYC モーダルが出たら中断)。
+    if (a.paid) {
+      if (a.priceJpy === null || a.priceJpy <= 0) {
+        await screenshot(page, stageDir, `${a.id}-paid-no-price`);
+        return { ok: false, reason: 'blocked', message: '有料記事ですが価格が未設定のため中断しました(下書きは保存済み)', noteUrl: draftEditUrl };
+      }
+      const kyc = await selectPaidAndCheckKyc(page).catch((err) => {
+        log.warn({ err: errMsg(err), articleId: a.id }, '有料切替で例外');
+        return true;
+      });
+      if (kyc) {
+        await screenshot(page, stageDir, `${a.id}-paid-kyc-required`);
+        return {
+          ok: false,
+          reason: 'blocked',
+          message: 'note の本人情報登録(KYC)が未完了のため有料記事を公開できません(note の設定で登録後に再実行してください。下書きは保存済み)',
+          noteUrl: draftEditUrl,
+        };
+      }
+      await screenshot(page, stageDir, `${a.id}-paid-selected`);
+    }
+
+    // 6. 公開設定へ。
     const proceeded = await clickByText(page, '公開に進む');
     if (!proceeded) {
       await screenshot(page, stageDir, `${a.id}-no-proceed-button`);
@@ -265,6 +291,23 @@ async function publishOne(args: NotePublishArgs): Promise<NotePublishResult> {
     }
     await page.waitForTimeout(5000);
     await screenshot(page, stageDir, `${a.id}-publish-settings`);
+
+    // [F-ANP-16b] 有料記事は公開設定画面で価格を入力してから投稿する。
+    if (a.paid && a.priceJpy !== null) {
+      const priceSet = await fillPaidPrice(page, a.priceJpy).catch((err) => {
+        log.warn({ err: errMsg(err), articleId: a.id }, '価格入力で例外');
+        return false;
+      });
+      await screenshot(page, stageDir, `${a.id}-paid-price`);
+      if (!priceSet) {
+        return {
+          ok: false,
+          reason: 'blocked',
+          message: '有料記事の価格入力欄が見つからないため中断しました(誤った価格での公開防止。下書きは保存済み)',
+          noteUrl: draftEditUrl,
+        };
+      }
+    }
 
     const posted = await clickByText(page, '投稿する');
     if (!posted) {
@@ -477,9 +520,38 @@ async function selectPaidAndCheckKyc(page: Page): Promise<boolean> {
   return /本人情報の登録|本人情報の入力/.test(bodyText);
 }
 
-// selectPaidAndCheckKyc は現状未呼び出し(shouldBlockPaidPublish で手前で止まるため)。
-// 価格/有料ライン UI 実装時に有効化するので、未使用警告を避けるためここで参照だけ残す。
-void selectPaidAndCheckKyc;
+/**
+ * [F-ANP-16b] 公開設定画面で有料記事の価格を入力する。note の価格欄は `input[type=number]` か
+ * 数値入力の text で、ラベル/プレースホルダに「価格」「円」を含む。見つからなければ false を返し、
+ * 呼出側が中断する (0 円や誤った価格での公開を防ぐ)。
+ */
+async function fillPaidPrice(page: Page, priceJpy: number): Promise<boolean> {
+  const value = String(Math.round(priceJpy));
+  const selectors = [
+    'input[name="price"]',
+    'input#price',
+    'input[type="number"]',
+    'input[placeholder*="価格"]',
+    'input[placeholder*="円"]',
+    'input[aria-label*="価格"]',
+  ];
+  for (const sel of selectors) {
+    const loc = page.locator(sel).first();
+    const count = await loc.count().catch(() => 0);
+    if (!count) continue;
+    const visible = await loc.isVisible().catch(() => false);
+    if (!visible) continue;
+    await loc.click({ timeout: 5000 }).catch(() => {});
+    await loc.fill('').catch(() => {});
+    await loc.type(value, { delay: 60 }).catch(async () => {
+      await loc.fill(value).catch(() => {});
+    });
+    await page.waitForTimeout(800);
+    const actual: string = await loc.inputValue().catch(() => '');
+    if (actual.replace(/[^0-9]/g, '') === value) return true;
+  }
+  return false;
+}
 
 /**
  * 「投稿する」後、投稿が実際に完了したかを確認する。note は本文ページへ遷移せず、

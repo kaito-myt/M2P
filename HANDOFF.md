@@ -148,6 +148,12 @@ ANP のアカウント戦略を AI に相談しながら策定）を実施。mai
 - **分析**: `/analytics/sales`・`/analytics/cost`（`lib/analytics-core.ts`、Vitest 5 件）。サイドメニューに「分析」「システム」節。
 - migration `20260921050000_anp_promotion_policy_agent_roles`（`promotion_policy_json` 列＋`anp_agent_roles` 表）を本番適用＋resolve 済。
 
+### 有料記事の自動公開 / アイキャッチの画風バリエーション（2026-09-24）
+- 有料公開: アカウント設定「有料記事の自動公開」(既定 OFF) を ON にすると judge が paid を維持し、publish が有料切替→価格入力→投稿まで行う。
+  KYC 未完了・価格欄未検出・有料ライン無しはすべて中断 (下書きは保存)。
+- アイキャッチ: 8 種の画風を記事ごとに決定的に振り分け (直近 3 件と重複回避)、AI っぽいモチーフを名指しで禁止。実生成で確認済み。
+- 既存記事のサムネは `scripts/anp/regen-eyecatch.mjs` で再生成できる。
+
 ### 販促 SNS アカウントの連携（F-ANP-33, 2026-09-22）
 - `/promotion` 各媒体タブに「投稿先アカウント」カード。X は OAuth1 4 項目、IG/TikTok は Zernio 接続アカウントの選択。note アカウント別に
   `promotion_accounts.note_account_id` で紐付け、告知投稿はその台帳へ routing（未連携は従来どおり既定アカウント）。

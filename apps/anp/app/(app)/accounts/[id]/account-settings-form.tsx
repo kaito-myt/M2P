@@ -49,6 +49,7 @@ interface AccountSettingsFormProps {
     autopass_enabled?: boolean;
     auto_publish_enabled?: boolean;
     tiktok_enabled?: boolean;
+    paid_publish_enabled?: boolean;
   };
   globals: AccountSettingsGlobals;
   monetization: AccountMonetizationInitial;
@@ -109,6 +110,7 @@ export function AccountSettingsForm({ noteAccountId, initial, globals, monetizat
   const [autopass, setAutopass] = useState<TriState>(toTriState(initial.autopass_enabled));
   const [autoPublish, setAutoPublish] = useState<TriState>(toTriState(initial.auto_publish_enabled));
   const [tiktok, setTiktok] = useState<TriState>(toTriState(initial.tiktok_enabled));
+  const [paidPublish, setPaidPublish] = useState<TriState>(toTriState(initial.paid_publish_enabled));
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
   const [isPending, startTransition] = useTransition();
@@ -124,7 +126,7 @@ export function AccountSettingsForm({ noteAccountId, initial, globals, monetizat
   const [monSaved, setMonSaved] = useState(false);
   const [monPending, startMonTransition] = useTransition();
 
-  const save = (overrides: Partial<{ autoTheme: TriState; themesPerDay: string; autopass: TriState; autoPublish: TriState; tiktok: TriState }> = {}) => {
+  const save = (overrides: Partial<{ autoTheme: TriState; themesPerDay: string; autopass: TriState; autoPublish: TriState; tiktok: TriState; paidPublish: TriState }> = {}) => {
     setError(null);
     setSaved(false);
     const next = {
@@ -133,6 +135,7 @@ export function AccountSettingsForm({ noteAccountId, initial, globals, monetizat
       autopass_enabled: overrides.autopass ?? autopass,
       auto_publish_enabled: overrides.autoPublish ?? autoPublish,
       tiktok_enabled: overrides.tiktok ?? tiktok,
+      paid_publish_enabled: overrides.paidPublish ?? paidPublish,
     };
     startTransition(async () => {
       const result = await updateAccountSettings({ note_account_id: noteAccountId, ...next });
@@ -221,6 +224,18 @@ export function AccountSettingsForm({ noteAccountId, initial, globals, monetizat
             save({ autoPublish: v });
           }}
           testId="account-toggle-auto-publish"
+        />
+        <OverrideToggle
+          label={m.paidPublishEnabled}
+          description={m.paidPublishDescription}
+          value={paidPublish}
+          globalValue={null}
+          disabled={isPending}
+          onChange={(v) => {
+            setPaidPublish(v);
+            save({ paidPublish: v });
+          }}
+          testId="account-toggle-paid-publish"
         />
         <OverrideToggle
           label={m.tiktokEnabled}

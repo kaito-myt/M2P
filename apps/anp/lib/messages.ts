@@ -281,6 +281,8 @@ export const messages = {
       autopassDescription: '生成したテーマを承認なしで採用し、構成→執筆→校閲→判定まで自動で進めます。',
       autoPublishEnabled: '自動公開',
       autoPublishDescription: '品質判定を通った記事を note に自動公開します (全体設定の dry-run 中は下書き止まり)。',
+      paidPublishEnabled: '有料記事の自動公開',
+      paidPublishDescription: 'note の本人確認 (登録情報) が完了しているアカウントのみ ON に。ON にすると、AI が有料と判断した記事を価格つきで有料公開します (OFF の間は無料公開し、価格は提案として保存)。',
       tiktokEnabled: 'TikTok 連動動画',
       tiktokDescription: '公開記事ごとに TikTok 用スライド動画を生成します (動画生成コストがかかります)。',
       followGlobal: (v: boolean) => `全体設定に従う (現在: ${v ? 'ON' : 'OFF'})`,

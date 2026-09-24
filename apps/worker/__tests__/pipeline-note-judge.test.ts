@@ -36,12 +36,13 @@ interface ArticleRecord {
   body_md: string | null;
   paid: boolean;
   price_jpy: number | null;
+  paywall_line_pos: number | null;
 }
 
 function buildPrisma(args: {
   jobs: JobRecord[];
   articles: ArticleRecord[];
-  accounts: Array<{ id: string; niche: string; target_reader: string | null }>;
+  accounts: Array<{ id: string; niche: string; target_reader: string | null; settings_json?: unknown }>;
 }) {
   const jobs = [...args.jobs];
   const articleUpdates: Array<{ where: { id: string }; data: Record<string, unknown> }> = [];
@@ -97,6 +98,7 @@ function makeArticle(overrides: Partial<ArticleRecord> = {}): ArticleRecord {
     body_md: '本文'.padEnd(300, 'あ'),
     paid: false,
     price_jpy: null,
+    paywall_line_pos: null,
     ...overrides,
   };
 }
@@ -139,10 +141,10 @@ describe('pipeline.note.judge', () => {
     expect(addJob).not.toHaveBeenCalled();
   });
 
-  it('F-ANP-16: 合格時も paid は常に false へ強制し、有料推奨なら price_jpy に提案価格を保存する', async () => {
+  it('F-ANP-16: 有料公開が許可されていないアカウントでは paid=false に落とし、price_jpy に提案価格だけ残す', async () => {
     const { prisma, articleUpdates } = buildPrisma({
       jobs: [{ id: 'job1', status: 'queued' }],
-      articles: [makeArticle({ paid: true, price_jpy: 300 })],
+      articles: [makeArticle({ paid: true, price_jpy: 300, paywall_line_pos: 120 })],
       accounts: [{ id: 'acc1', niche: '副業', target_reader: null }],
     });
     const addJob: AddJobLike = vi.fn();
@@ -162,6 +164,36 @@ describe('pipeline.note.judge', () => {
       price_jpy: 500,
       paywall_line_pos: null,
     });
+  });
+
+  it('F-ANP-16b: paid_publish_enabled のアカウントでは paid=true のまま有料ラインを保持する', async () => {
+    const { prisma, articleUpdates } = buildPrisma({
+      jobs: [{ id: 'job1', status: 'queued' }],
+      articles: [makeArticle({ paid: true, price_jpy: 300, paywall_line_pos: 120 })],
+      accounts: [{ id: 'acc1', niche: '副業', target_reader: null, settings_json: { paid_publish_enabled: true } }],
+    });
+    const judgeArticle = vi.fn().mockResolvedValue({ ...PASS_OUTPUT, recommend_paid: true, suggested_price_jpy: 500 });
+    await runPipelineNoteJudge(
+      { note_article_id: 'art1', job_id: 'job1', retry_count: 0 },
+      vi.fn() as unknown as AddJobLike,
+      { prisma, logger: makeLogger(), judgeArticle, acquireLock: vi.fn().mockResolvedValue(undefined), releaseLock: vi.fn().mockResolvedValue(undefined) },
+    );
+    expect(articleUpdates[0]!.data).toMatchObject({ status: 'ready', paid: true, price_jpy: 500, paywall_line_pos: 120 });
+  });
+
+  it('F-ANP-16b: 許可済みでも有料ラインが無ければ paid=false に落とす (有料本文の欠落防止)', async () => {
+    const { prisma, articleUpdates } = buildPrisma({
+      jobs: [{ id: 'job1', status: 'queued' }],
+      articles: [makeArticle({ paid: true, price_jpy: 300, paywall_line_pos: null })],
+      accounts: [{ id: 'acc1', niche: '副業', target_reader: null, settings_json: { paid_publish_enabled: true } }],
+    });
+    const judgeArticle = vi.fn().mockResolvedValue({ ...PASS_OUTPUT, recommend_paid: true, suggested_price_jpy: 500 });
+    await runPipelineNoteJudge(
+      { note_article_id: 'art1', job_id: 'job1', retry_count: 0 },
+      vi.fn() as unknown as AddJobLike,
+      { prisma, logger: makeLogger(), judgeArticle, acquireLock: vi.fn().mockResolvedValue(undefined), releaseLock: vi.fn().mockResolvedValue(undefined) },
+    );
+    expect(articleUpdates[0]!.data).toMatchObject({ status: 'ready', paid: false, price_jpy: 500 });
   });
 
   it('F-ANP-16: judge が有料化を推奨しない場合は price_jpy を null にクリアする', async () => {

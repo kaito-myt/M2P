@@ -24,6 +24,7 @@ import {
   acquireNoteLock as defaultAcquireNoteLock,
   releaseNoteLock as defaultReleaseNoteLock,
 } from '@a2p/agents/lib/note-lock';
+import { parseNoteAccountSettings } from '@a2p/contracts/agents/anp';
 import { NotFoundError, ValidationError } from '@a2p/contracts/errors';
 import { createLogger, type Logger } from '@a2p/contracts/logger';
 import { decryptKdpCredentials } from '@a2p/crypto';
@@ -67,6 +68,8 @@ interface NoteAccountRow {
   session_state_enc: string | null;
   status: string;
   handle: string | null;
+  /** [F-ANP-16b] `NoteAccountSettingsSchema` (paid_publish_enabled 等)。旧テストでは未設定。 */
+  settings_json?: unknown;
 }
 
 export interface PipelineNotePublishPrisma {
@@ -235,6 +238,8 @@ export async function runPipelineNotePublish(
       paidBlocks,
       paid: article.paid,
       priceJpy: article.price_jpy,
+      // [F-ANP-16b] 有料公開はアカウント設定で許可されたときだけ (note の本人確認が済んでいる想定)。
+      allowPaid: parseNoteAccountSettings(account.settings_json).paid_publish_enabled === true,
       existingNoteUrl: article.note_url,
       eyecatchPath,
     };

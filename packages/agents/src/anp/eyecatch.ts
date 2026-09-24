@@ -17,6 +17,8 @@
  */
 import { noteArticleEyecatch } from '@a2p/storage/keys';
 
+import { EYECATCH_BANNED_MOTIFS, pickEyecatchStyle, type EyecatchStyle } from './eyecatch-style.js';
+
 import {
   generateImage as defaultGenerateImage,
   type GenerateImageFn,
@@ -38,11 +40,17 @@ export interface GenerateNoteEyecatchInput {
   title: string;
   hook: string;
   niche: string;
+  /** F-ANP-14b: 直近の記事で使った画風キー (連続で同じ見た目にならないよう避ける)。 */
+  recentStyleKeys?: readonly string[];
+  /** F-ANP-14b: 記事の方針・トンマナ (アカウント設定) の抜粋。画のトーンに反映する。 */
+  editorialPolicy?: string | null;
 }
 
 export interface GenerateNoteEyecatchResult {
   r2Key: string;
   promptUsed: string;
+  /** 採用した画風キー (次回の重複回避に使う)。 */
+  styleKey: string;
 }
 
 export interface UploadBufferFn {
@@ -56,18 +64,37 @@ export interface GenerateNoteEyecatchDeps {
   uploadBuffer?: UploadBufferFn;
 }
 
-function buildPrompt(input: GenerateNoteEyecatchInput): string {
+/**
+ * F-ANP-14b: 記事ごとに画風を振り、AI っぽいモチーフを名指しで禁止したプロンプトを組み立てる。
+ * (旧プロンプトは汎用的すぎて gpt-image が毎回「光る脳 + ノート PC の人物」に収束していた。)
+ */
+export function buildPrompt(input: GenerateNoteEyecatchInput, style: EyecatchStyle): string {
+  const policy = (input.editorialPolicy ?? '').trim().slice(0, 300);
   return [
-    'note (Web メディア) の記事アイキャッチ画像を1枚作成してください。横長・高解像度。',
-    `・記事テーマ: ${input.niche}`,
-    `・タイトル: 「${input.title}」`,
-    `・フック: ${input.hook}`,
+    'Web メディア (note) の記事アイキャッチを 1 枚作成してください。横長・高解像度。',
     '',
-    '要件:',
-    '- タイトルの内容を象徴する、洗練された現代的なイラスト/写真調の1枚。小さなサムネイル表示でも一瞬で内容が伝わる。',
-    '- **文字・ロゴ・透かし・キャプション・数字は一切描かない** (画像内にテキストを含めない)。',
-    '- 安っぽい AI 感を避け、意図的な構図・上質な配色。過度な彩度/グラデーションの濁りは避ける。健全な内容。',
-  ].join('\n');
+    `【記事のテーマ】${input.niche}`,
+    `【タイトル】「${input.title}」`,
+    `【フック】${input.hook}`,
+    policy ? `【媒体のトーン】${policy}` : '',
+    '',
+    '【画風 (必ず守る)】',
+    `- 画材・質感: ${style.medium}`,
+    `- 構図: ${style.composition}`,
+    `- 配色: ${style.palette}`,
+    '',
+    '【内容の作り方】',
+    '- タイトルの中身を「具体的なモノ・場面」に翻訳して描く (抽象的な概念の比喩に逃げない)。',
+    '- 要素は最大 3 つまで。小さなサムネイルでも何の記事か一目で分かる大きさにする。',
+    '- 人物は原則描かない。必要な場合も顔は写さず、手元や後ろ姿など部分的に留める。',
+    '',
+    '【禁止 (これらが写ると失敗)】',
+    ...EYECATCH_BANNED_MOTIFS.map((m) => `- ${m}`),
+    '',
+    '健全な内容。実在の商標・人物・作品を描かない。',
+  ]
+    .filter((line) => line !== '')
+    .join('\n');
 }
 
 export async function generateNoteEyecatch(
@@ -84,7 +111,8 @@ export async function generateNoteEyecatch(
     deps.withImageLoggingDeps,
   );
 
-  const promptUsed = buildPrompt(input);
+  const style = pickEyecatchStyle(input.noteArticleId, input.recentStyleKeys ?? []);
+  const promptUsed = buildPrompt(input, style);
   const result = await loggedGenerateImage({
     prompt: promptUsed,
     width: IMAGE_WIDTH,
@@ -102,7 +130,7 @@ export async function generateNoteEyecatch(
   const r2Key = noteArticleEyecatch(input.noteArticleId);
   await upload(r2Key, image, 'image/jpeg');
 
-  return { r2Key, promptUsed };
+  return { r2Key, promptUsed, styleKey: style.key };
 }
 
 async function defaultUploadBuffer(): Promise<UploadBufferFn> {

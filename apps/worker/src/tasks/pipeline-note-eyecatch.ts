@@ -34,6 +34,37 @@ export const PipelineNoteEyecatchPayloadSchema = z.object({
 });
 export type PipelineNoteEyecatchPayload = z.infer<typeof PipelineNoteEyecatchPayloadSchema>;
 
+/**
+ * F-ANP-14b: 同一アカウントの直近アイキャッチ 3 件で使った画風キー。`jobs.result_json.style_key` に
+ * 保存しているので、記事 → アカウントの join を避けて記事 id の集合で引く。
+ */
+export async function defaultRecentStyleKeys(prisma: PipelineNoteEyecatchPrisma, noteAccountId: string): Promise<string[]> {
+  const repo = (prisma as unknown as {
+    noteArticle?: { findMany?: (args: unknown) => Promise<Array<{ id: string }>> };
+    job?: { findMany?: (args: unknown) => Promise<Array<{ result_json: unknown }>> };
+  });
+  if (!repo.noteArticle?.findMany || !repo.job?.findMany) return [];
+  const articles = await repo.noteArticle.findMany({
+    where: { note_account_id: noteAccountId },
+    orderBy: { created_at: 'desc' },
+    take: 6,
+    select: { id: true },
+  });
+  if (articles.length === 0) return [];
+  const jobs = await repo.job.findMany({
+    where: { kind: PIPELINE_NOTE_EYECATCH_TASK_NAME, status: 'done', payload_json: { path: ['note_article_id'], in: articles.map((a) => a.id) } },
+    orderBy: { created_at: 'desc' },
+    take: 3,
+    select: { result_json: true },
+  });
+  const keys: string[] = [];
+  for (const j of jobs) {
+    const r = (j.result_json ?? {}) as { style_key?: unknown };
+    if (typeof r.style_key === 'string' && r.style_key.length > 0 && !keys.includes(r.style_key)) keys.push(r.style_key);
+  }
+  return keys;
+}
+
 export interface PipelineNoteEyecatchPrisma {
   job: {
     findUnique: (args: {
@@ -68,8 +99,8 @@ export interface PipelineNoteEyecatchPrisma {
   noteAccount: {
     findUnique: (args: {
       where: { id: string };
-      select: { id: true; niche: true };
-    }) => Promise<{ id: string; niche: string } | null>;
+      select: { id: true; niche: true; editorial_policy?: true };
+    }) => Promise<{ id: string; niche: string; editorial_policy?: string | null } | null>;
   };
   noteTheme: {
     findUnique: (args: {
@@ -89,6 +120,8 @@ export interface PipelineNoteEyecatchDeps {
   prisma?: PipelineNoteEyecatchPrisma;
   logger?: Logger;
   generateEyecatch?: (input: GenerateNoteEyecatchInput) => Promise<GenerateNoteEyecatchResult>;
+  /** F-ANP-14b: 直近の画風キーを取得する (既定は同一アカウントの直近 job の result_json から)。 */
+  recentStyleKeys?: (noteAccountId: string) => Promise<string[]>;
   acquireLock?: typeof defaultAcquireNoteLock;
   releaseLock?: typeof defaultReleaseNoteLock;
   now?: () => Date;
@@ -154,6 +187,7 @@ export async function runPipelineNoteEyecatch(
     // 変わりうるが挿絵の作り直しは通常不要 — 既に生成済みなら再生成せず画像コストの
     // 重複を避ける (code-reviewer 任意提案)。
     let r2Key: string;
+    let styleKey: string | null = null;
     if (retryCount > 0 && article.eyecatch_r2_key) {
       r2Key = article.eyecatch_r2_key;
       log.info(
@@ -163,7 +197,7 @@ export async function runPipelineNoteEyecatch(
     } else {
       const account = await prisma.noteAccount.findUnique({
         where: { id: article.note_account_id },
-        select: { id: true, niche: true },
+        select: { id: true, niche: true, editorial_policy: true },
       });
       if (!account) {
         throw new NotFoundError(`NoteAccount not found: ${article.note_account_id}`, {
@@ -175,14 +209,22 @@ export async function runPipelineNoteEyecatch(
         ? await prisma.noteTheme.findUnique({ where: { id: article.theme_id }, select: { id: true, hook: true } })
         : null;
 
+      // F-ANP-14b: 直近 (同一アカウント) で使った画風を避ける → 連続する記事のサムネが揃わない。
+      const recent = deps.recentStyleKeys
+        ? await deps.recentStyleKeys(article.note_account_id).catch(() => [])
+        : await defaultRecentStyleKeys(prisma, article.note_account_id).catch(() => []);
+
       const result = await generateEyecatch({
         noteArticleId,
         jobId,
         title: article.title,
         hook: theme?.hook ?? article.title,
         niche: account.niche,
+        recentStyleKeys: recent,
+        ...(account.editorial_policy ? { editorialPolicy: account.editorial_policy } : {}),
       });
       r2Key = result.r2Key;
+      styleKey = result.styleKey;
 
       try {
         await applyNoteArticleCostFromJob(prisma, jobId, noteArticleId);
@@ -223,7 +265,7 @@ export async function runPipelineNoteEyecatch(
         status: 'done',
         finished_at: now(),
         error: null,
-        result_json: { r2_key: r2Key, next_job_id: childJob.id, skipped_regeneration: retryCount > 0 && !!article.eyecatch_r2_key },
+        result_json: { r2_key: r2Key, next_job_id: childJob.id, skipped_regeneration: retryCount > 0 && !!article.eyecatch_r2_key, style_key: styleKey },
       },
     });
 

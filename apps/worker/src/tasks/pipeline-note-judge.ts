@@ -7,6 +7,7 @@ import {
 } from '@a2p/agents/lib/note-lock';
 import { judgeNoteArticle as defaultJudgeNoteArticle } from '@a2p/agents/anp/judge';
 import { NOTE_JUDGE_PASS_THRESHOLD, type NoteJudgeInput, type NoteJudgeOutput } from '@a2p/contracts/agents/anp';
+import { parseNoteAccountSettings } from '@a2p/contracts/agents/anp';
 import { NotFoundError, ValidationError } from '@a2p/contracts/errors';
 import { createLogger, type Logger } from '@a2p/contracts/logger';
 import { prisma as defaultPrisma } from '@a2p/db';
@@ -70,6 +71,7 @@ export interface PipelineNoteJudgePrisma {
         body_md: true;
         paid: true;
         price_jpy: true;
+        paywall_line_pos: true;
       };
     }) => Promise<{
       id: string;
@@ -79,14 +81,15 @@ export interface PipelineNoteJudgePrisma {
       body_md: string | null;
       paid: boolean;
       price_jpy: number | null;
+      paywall_line_pos: number | null;
     } | null>;
   } & NoteArticleRepo;
   tokenUsage: NoteArticleCostPrisma['tokenUsage'];
   noteAccount: {
     findUnique: (args: {
       where: { id: string };
-      select: { id: true; niche: true; target_reader: true; editorial_policy?: true };
-    }) => Promise<{ id: string; niche: string; target_reader: string | null; editorial_policy?: string | null } | null>;
+      select: { id: true; niche: true; target_reader: true; editorial_policy?: true; settings_json?: true };
+    }) => Promise<{ id: string; niche: string; target_reader: string | null; editorial_policy?: string | null; settings_json?: unknown } | null>;
   };
 }
 
@@ -161,6 +164,7 @@ export async function runPipelineNoteJudge(
         body_md: true,
         paid: true,
         price_jpy: true,
+        paywall_line_pos: true,
       },
     });
     if (!article) {
@@ -176,7 +180,7 @@ export async function runPipelineNoteJudge(
 
     const account = await prisma.noteAccount.findUnique({
       where: { id: article.note_account_id },
-      select: { id: true, niche: true, target_reader: true, editorial_policy: true },
+      select: { id: true, niche: true, target_reader: true, editorial_policy: true, settings_json: true },
     });
     if (!account) {
       throw new NotFoundError(`NoteAccount not found: ${article.note_account_id}`, {
@@ -215,7 +219,10 @@ export async function runPipelineNoteJudge(
     // と表示するための下準備。KYC完了後に有料化する際の初期値になる)。paywall_line_pos も同時に
     // クリアする — paid=false のまま残すと `buildNoteBlocks` が有料エリア以降の本文を publish 時に
     // 破棄してしまう(内容欠落)ため。
-    const finalPricing = resolveFinalPricing(article, judged);
+    // [F-ANP-16b] アカウント設定で有料公開が許可されていれば judge の判断どおり有料のまま確定する。
+    // 許可されていない (= note の本人確認が未完了) 間は従来どおり paid=false に落として価格だけ提案として残す。
+    const paidAllowed = parseNoteAccountSettings(account.settings_json).paid_publish_enabled === true;
+    const finalPricing = resolveFinalPricing(article, judged, paidAllowed);
 
     if (judged.score_total >= NOTE_JUDGE_PASS_THRESHOLD) {
       await prisma.noteArticle.update({
@@ -223,9 +230,10 @@ export async function runPipelineNoteJudge(
         data: {
           quality_score: judged.score_total,
           status: 'ready',
-          paid: false,
+          paid: finalPricing.paid,
           price_jpy: finalPricing.price_jpy,
-          paywall_line_pos: null,
+          // 無料化するときだけ有料ラインを消す (paid=false のまま残すと publish 時に有料本文が破棄される)。
+          paywall_line_pos: finalPricing.paid ? article.paywall_line_pos : null,
         },
       });
       phase = 'ready';
@@ -286,9 +294,9 @@ export async function runPipelineNoteJudge(
         data: {
           quality_score: judged.score_total,
           status: 'needs_human_review',
-          paid: false,
+          paid: finalPricing.paid,
           price_jpy: finalPricing.price_jpy,
-          paywall_line_pos: null,
+          paywall_line_pos: finalPricing.paid ? article.paywall_line_pos : null,
         },
       });
       phase = 'needs_human_review';
@@ -340,12 +348,16 @@ export async function runPipelineNoteJudge(
  * 最終コンテンツを見た judge の判断を優先する。
  */
 function resolveFinalPricing(
-  article: { paid: boolean; price_jpy: number | null },
+  article: { paid: boolean; price_jpy: number | null; paywall_line_pos?: number | null },
   judged: NoteJudgeOutput,
-): { price_jpy: number | null } {
+  paidAllowed: boolean,
+): { paid: boolean; price_jpy: number | null } {
   const recommendPaid = judged.recommend_paid ?? article.paid;
-  if (!recommendPaid) return { price_jpy: null };
-  return { price_jpy: judged.suggested_price_jpy ?? article.price_jpy ?? null };
+  if (!recommendPaid) return { paid: false, price_jpy: null };
+  const price = judged.suggested_price_jpy ?? article.price_jpy ?? null;
+  // 有料にできるのは「アカウントが許可」かつ「有料ラインが本文にある」かつ「価格が決まっている」ときだけ。
+  const canPaid = paidAllowed && price !== null && price > 0 && (article.paywall_line_pos ?? null) !== null;
+  return { paid: canPaid, price_jpy: price };
 }
 
 function toFeedbackItems(output: NoteJudgeOutput): string[] {

@@ -93,6 +93,7 @@ function buildPrisma(args: {
 const SAMPLE_RESULT: GenerateNoteEyecatchResult = {
   r2Key: 'note/art1/eyecatch.jpg',
   promptUsed: 'prompt',
+  styleKey: 'flat_editorial',
 };
 
 describe('pipeline.note.eyecatch', () => {

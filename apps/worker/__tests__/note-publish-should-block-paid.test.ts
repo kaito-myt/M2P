@@ -27,3 +27,22 @@ describe('buildNotePublicUrl (2026-09-18: note 公開API から公開URLを組�
     );
   });
 });
+
+describe('shouldBlockPaidPublish — F-ANP-16b (allowPaid)', () => {
+  it('アカウントが有料公開を許可していれば実公開を止めない', () => {
+    expect(shouldBlockPaidPublish(true, false, true)).toBe(false);
+  });
+
+  it('許可していなければ従来どおり止める', () => {
+    expect(shouldBlockPaidPublish(true, false, false)).toBe(true);
+    expect(shouldBlockPaidPublish(true, false)).toBe(true);
+  });
+
+  it('dry-run 中は許可されていても実公開しない (下書き保存で終了)', () => {
+    expect(shouldBlockPaidPublish(true, true, true)).toBe(false);
+  });
+
+  it('無料記事は常に止めない', () => {
+    expect(shouldBlockPaidPublish(false, false, false)).toBe(false);
+  });
+});
