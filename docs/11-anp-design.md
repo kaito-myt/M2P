@@ -730,6 +730,9 @@ A2P の `books` 系を note 記事系に写像。**マルチアカウントを�
   AI 相談から生成した設計案の出自。相談画面の「この相談から作った設計案」一覧に使う。
 - **`note_themes`**（= theme_candidates 相当）: `id, note_account_id, title, hook, target_reader, recommend_paid:bool, suggested_price, competitors_json, genre, status(pending|accepted|rejected), rejected_reason, created_at`
 - **`note_articles`**（= books 相当）: `id, note_account_id, theme_id?, title, lead, body_md, paid:bool, price_jpy?, paywall_line_pos?, membership_magazine?, eyecatch_r2_key?, status(queued|writing|editing|eyecatch|judging|ready|published|failed|cancelled|needs_human_review), publish_status(draft|published|unlisted), note_url?, cost_jpy_total, has_pending_comments, quality_score?, published_at, created_at, updated_at`。
+  **2026-09-24 追加 (F-ANP-41/42, migration `20260924000000_model_effort_and_note_seo`)**: `seo_json?`
+  (anp.seo の出力: primary_keyword/keywords/hashtags/title_alternatives/internal_links/rationale)、
+  `eyecatch_copy?` / `eyecatch_sub?` (アイキャッチに実フォントで焼き込む文言)、`eyecatch_alt?` (画像の代替テキスト)。
   `publish_status='unlisted'` は Phase 2 `note.publish.status.sync` が追加した状態（公開後に非公開化/404 を検知）。
 - **`note_jobs`** / **`note_locks`**: A2P の jobs/book_locks 相当（or 既存 `jobs` を `tool` 列で共用）
 - **`note_sales`**（= sales_records 相当）: `id, note_article_id, year_month, revenue_jpy, views, likes, buyers, source, fetched_at`
