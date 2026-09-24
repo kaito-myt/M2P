@@ -75,9 +75,11 @@ describe('probeChannelAuth', () => {
   });
 
   it('webhook があれば test:true を POST し 2xx で OK', async () => {
+    // note はブラウザ自動化 (メール+パスワード) の分岐に移ったため、webhook 経路は
+    // threads のような中継チャンネルで検証する。
     const fetchImpl = fetchReturning(200, 'ok');
     const res = await probeChannelAuth(
-      { channel: 'note', token: null, webhookUrl: 'https://hook.test/relay' },
+      { channel: 'threads', token: null, webhookUrl: 'https://hook.test/relay' },
       { fetchImpl },
     );
     expect(res.ok).toBe(true);
@@ -85,10 +87,10 @@ describe('probeChannelAuth', () => {
     const [url, init] = fetchImpl.mock.calls[0]! as unknown as [string, { method: string; body: string }];
     expect(url).toBe('https://hook.test/relay');
     expect(init.method).toBe('POST');
-    expect(JSON.parse(init.body)).toMatchObject({ test: true, channel: 'note' });
+    expect(JSON.parse(init.body)).toMatchObject({ test: true, channel: 'threads' });
   });
 
-  it('webhook も token も無い note は not_connected', async () => {
+  it('note はメール/パスワードが無ければ not_connected (ブラウザ自動化のため webhook は使わない)', async () => {
     const fetchImpl = vi.fn();
     const res = await probeChannelAuth({ channel: 'note', token: null, webhookUrl: null }, { fetchImpl });
     expect(res.ok).toBe(false);
