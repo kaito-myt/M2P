@@ -1731,3 +1731,22 @@ model NoteLock {
 
   @@map("note_locks")
 }
+
+/// F-098: CEO が起票するソースコード変更要求。worker はリポジトリを書き換えられないため、
+/// 「何をどう変えたいか」を残して運営者/開発エージェントが実装する。
+model OrgCodeRequest {
+  id                String   @id @default(cuid())
+  title             String
+  intent            String   @db.Text
+  files_json        Json     @default("[]")
+  change_summary    String   @db.Text
+  urgency           String   @default("normal") // low | normal | high
+  status            String   @default("open") // open | in_progress | done | rejected
+  source_message_id String?
+  resolution_note   String?  @db.Text
+  created_at        DateTime @default(now())
+  updated_at        DateTime @updatedAt
+
+  @@index([status, created_at(sort: Desc)], map: "org_code_requests_status_idx")
+  @@map("org_code_requests")
+}

@@ -50,10 +50,34 @@ export type ReadBookStatusResult =
   | { ok: true; status: KdpBookStatus; /** 本棚行から読み取った ASIN(取得できた場合のみ)。DB backfill に使う。 */ asin?: string | null }
   | { ok: false; reason: 'session_expired' | 'no_session' | 'action_failed' | 'unknown'; message: string };
 
+/** F-097b: ペーパーバック版の状態読み取り。Kindle の ASIN で検索し、同じカード内の
+ * 「ペーパーバック」行を読む (KDP 本棚は電子書籍と紙書籍を 1 カードに並べる)。 */
+export interface ReadPaperbackStatusArgs {
+  /** Kindle 版の ASIN (カードの特定に使う。完全一致検索)。 */
+  asin: string;
+  /** 復号済み Playwright storageState(JSON)。 */
+  sessionState: string;
+  timeoutMs?: number;
+}
+
+export type ReadPaperbackStatusResult =
+  | {
+      ok: true;
+      /** 'not_found' = そのカードにペーパーバック行が無い (＝まだ作られていない)。 */
+      status: KdpBookStatus | 'unpublished';
+      /** ペーパーバック版の ASIN (行から読めた場合)。 */
+      pbAsin?: string | null;
+      /** 行から読めた価格 (円)。 */
+      priceJpy?: number | null;
+    }
+  | { ok: false; reason: 'session_expired' | 'no_session' | 'action_failed' | 'unknown'; message: string };
+
 export type BookshelfPort = {
   takedownBook(args: TakedownBookArgs): Promise<TakedownBookResult>;
   /** READ-ONLY。ログイン/出版/取り下げ等の状態変更操作は一切行わない。 */
   readBookStatus(args: ReadBookStatusArgs): Promise<ReadBookStatusResult>;
+  /** READ-ONLY。ペーパーバック行の状態を読む (F-097b)。 */
+  readPaperbackStatus(args: ReadPaperbackStatusArgs): Promise<ReadPaperbackStatusResult>;
 };
 
 /** 常に成功を返すダミー(テスト用)。 */
@@ -67,6 +91,9 @@ export function createFixtureBookshelfPort(finalState = 'archived'): BookshelfPo
     async readBookStatus() {
       return { ok: true, status: 'live', asin: null };
     },
+    async readPaperbackStatus() {
+      return { ok: true, status: 'live', pbAsin: 'B0TESTPB01', priceJpy: 1480 };
+    },
   };
 }
 
@@ -77,6 +104,9 @@ export function createSessionExpiredBookshelfPort(): BookshelfPort {
       return { ok: false, reason: 'session_expired', message: 'session expired (test dummy)' };
     },
     async readBookStatus() {
+      return { ok: false, reason: 'session_expired', message: 'session expired (test dummy)' };
+    },
+    async readPaperbackStatus() {
       return { ok: false, reason: 'session_expired', message: 'session expired (test dummy)' };
     },
   };

@@ -2892,6 +2892,12 @@ export const messages = {
         'ログインセッションが未保存です。ローカルで手動ログイン後、bash scripts/bookwalker/bw-session-push.sh を実行してください',
     },
   },
+  // F-098: CEO が起票したソースコード変更要求
+  orgCodeRequests: {
+    title: 'CEO からのコード変更要求',
+    description: '会話の中で CEO が「こう直したい」と起票したもの。実装は開発側で行います。',
+    urgency: { high: '至急', normal: '通常', low: '低' },
+  },
   // F-097: ペーパーバック出版 (S-031)
   paperback: {
     pageTitle: 'ペーパーバック',

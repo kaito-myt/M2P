@@ -291,6 +291,96 @@ export const CeoPromptEditRequestSchema = z.object({
 });
 export type CeoPromptEditRequest = z.infer<typeof CeoPromptEditRequestSchema>;
 
+// ---------------------------------------------------------------------------
+// F-098 — 「運営者は CEO との会話だけで完結できる」ための CEO 権限拡張
+// (2026-09-24 運営者要望: ソースコード/システムプロンプトの変更、会話で完結、Web リサーチ)
+// ---------------------------------------------------------------------------
+
+/** CEO が自分自身の制御ループを書き換えないようガードする role。 */
+export const CEO_PROTECTED_ROLES = ['ceo', 'ceo_chat', 'prompt_editor'] as const;
+
+/**
+ * CEO が会話の中で切り替えてよい運用トグル (AppSettings の boolean 列) のホワイトリスト。
+ * ここに無いキーは worker 側で拒否する — 破壊的な設定 (dry_run 解除など) を
+ * 会話の勢いで変えられないようにするため。
+ */
+export const CEO_SETTINGS_WHITELIST: Readonly<Record<string, string>> = {
+  autopass_theme_enabled: '新刊の日次テーマ自動生成',
+  autopass_outline_enabled: '構成の自動パス',
+  autopass_content_enabled: '本文の自動パス',
+  autopass_cover_enabled: '表紙の自動パス',
+  autopass_kdp_enabled: 'KDP メタデータの自動パス',
+  promo_auto_post_enabled: 'SNS 自動投稿',
+  promo_auto_on_publish_enabled: '出版時の自動販促',
+  promo_daily_review_enabled: '日次の投稿見直し',
+  promo_growth_loop_enabled: '販促強化ループ',
+  sns_engage_enabled: 'IG/TikTok 自動フォロー',
+  x_engage_enabled: 'X 自動エンゲージ',
+  video_use_veo_enabled: '動画生成 (Veo)',
+  book_cull_enabled: '低品質本の間引き',
+  cost_auto_analyze_enabled: '週次コスト分析',
+  org_auto_plan_enabled: '組織: 計画ループ',
+  org_auto_execute_enabled: '組織: 実行ループ',
+  org_ops_watch_enabled: '組織: 運用監視ループ',
+  org_finance_tick_enabled: '組織: 財務ループ',
+  org_kdp_auto_publish_enabled: '組織: 出版候補スクリーニング',
+  org_auto_approve_tasks: '組織 ToDo の自動承認',
+  kdp_auto_submit_enabled: 'KDP 出版キューの投入',
+  bw_auto_submit_enabled: 'BOOK☆WALKER 申請',
+  sales_auto_fetch_enabled: '売上の自動取得',
+  anp_auto_theme_enabled: 'ANP: テーマ自動生成',
+  anp_auto_publish_enabled: 'ANP: 自動公開',
+};
+
+/** CEO による運用トグルの変更要求。 */
+export const CeoSettingChangeSchema = z.object({
+  key: z.string().min(1).max(60),
+  value: z.boolean(),
+  reason: z.string().min(1).max(300),
+});
+export type CeoSettingChange = z.infer<typeof CeoSettingChangeSchema>;
+
+/** CEO によるモデル割当の変更要求 (genre 既定行のみ・保護 role は不可)。 */
+export const CeoModelChangeSchema = z.object({
+  role: z.string().min(1).max(60),
+  provider: z.enum(['anthropic', 'openai', 'google']),
+  model: z.string().min(1).max(80),
+  reasoning_effort: z.enum(['none', 'low', 'medium', 'high', 'max']).nullable().optional(),
+  reason: z.string().min(1).max(300),
+});
+export type CeoModelChange = z.infer<typeof CeoModelChangeSchema>;
+
+/**
+ * CEO によるソースコード変更の要求。worker は本番コンテナで動いておりリポジトリを
+ * 書き換えられないため、**要求として起票**し (`org_code_requests`)、運営者または
+ * 開発エージェントが実装する。CEO には「自分で直接コードは書き換わらない」と明示する。
+ */
+export const CeoCodeRequestSchema = z.object({
+  title: z.string().min(1).max(120),
+  /** 何のために変えたいか (背景・期待効果)。 */
+  intent: z.string().min(1).max(1500),
+  /** 触る想定のファイル/画面 (分かる範囲で)。 */
+  files: z.array(z.string().max(200)).max(10).default([]),
+  /** どう変えるか (仕様レベル)。 */
+  change_summary: z.string().min(1).max(2000),
+  urgency: z.enum(['low', 'normal', 'high']).default('normal'),
+});
+export type CeoCodeRequest = z.infer<typeof CeoCodeRequestSchema>;
+
+/** CEO が外部情報を必要とするときに出す検索クエリ (Tavily で 1 往復だけ実行する)。 */
+export const CeoResearchQuerySchema = z.string().min(2).max(200);
+
+/** Tavily の検索結果 (CEO へ再投入するときの形)。 */
+export const CeoResearchResultSchema = z.object({
+  query: z.string(),
+  results: z
+    .array(z.object({ title: z.string(), url: z.string(), snippet: z.string() }))
+    .max(8)
+    .default([]),
+});
+export type CeoResearchResult = z.infer<typeof CeoResearchResultSchema>;
+
+
 /**
  * F-089 — prompt_editor エージェントの I/O。対象 role の現行システムプロンプト本文と
  * 改訂指示を受け取り、プレースホルダを厳守したまま最小改訂した新本文を返す。
@@ -321,6 +411,14 @@ export const CeoChatOutputSchema = z.object({
   directive_summary: z.string().max(600).optional(),
   new_tasks: z.array(CeoChatTaskDraftSchema).max(8).default([]),
   prompt_edits: z.array(CeoPromptEditRequestSchema).max(5).optional(),
+  /** F-098: 運用トグルの変更 (ホワイトリスト内のみ worker が適用)。 */
+  settings_changes: z.array(CeoSettingChangeSchema).max(10).optional(),
+  /** F-098: モデル割当の変更 (genre 既定行のみ)。 */
+  model_changes: z.array(CeoModelChangeSchema).max(6).optional(),
+  /** F-098: ソースコード変更の要求 (起票のみ。自動では適用されない)。 */
+  code_requests: z.array(CeoCodeRequestSchema).max(3).optional(),
+  /** F-098: 外部情報が要るときの検索クエリ。worker が Tavily で引いて 1 度だけ再質問する。 */
+  research_queries: z.array(CeoResearchQuerySchema).max(3).optional(),
 });
 export type CeoChatOutput = z.infer<typeof CeoChatOutputSchema>;
 

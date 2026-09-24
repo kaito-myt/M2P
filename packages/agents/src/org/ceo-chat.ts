@@ -8,8 +8,11 @@
 import type { LLMClient, AgentRole } from '@a2p/contracts/agents';
 import {
   CeoChatOutputSchema,
+  CEO_PROTECTED_ROLES,
+  CEO_SETTINGS_WHITELIST,
   DIVISION_KINDS,
   type CeoChatOutput,
+  type CeoResearchResult,
   type Division,
 } from '@a2p/contracts/org';
 
@@ -38,6 +41,11 @@ export interface CeoChatInput {
   history: CeoChatTurn[];
   /** 今回の運営者メッセージ。 */
   message: string;
+  /**
+   * F-098: 前のターンで CEO が要求した検索クエリの結果 (Tavily)。
+   * これが入っているターンは「調べ直し」ではなく **結論を出す** ターン。
+   */
+  research?: CeoResearchResult[];
 }
 
 export interface CeoChatDeps {
@@ -117,6 +125,17 @@ export function buildCeoChatUserMessage(input: CeoChatInput): string {
     '【本部別に起票できる kind（越境禁止・必ずこの対応で）】',
     kindsCatalog(),
     '',
+    ...(input.research && input.research.length > 0
+      ? [
+          '【あなたの依頼で調べた Web 検索結果】',
+          ...input.research.flatMap((r) => [
+            `検索: ${r.query}`,
+            ...r.results.map((x) => `  - ${x.title} ${x.url} / ${x.snippet}`),
+          ]),
+          '※ この結果を踏まえて結論を出すこと。research_queries は空にする。',
+          '',
+        ]
+      : []),
     '【これまでの対話】',
     history,
     '',
@@ -131,5 +150,22 @@ export function buildCeoChatUserMessage(input: CeoChatInput): string {
     '  制作の新規企画は production/plan_book（書籍コンセプトのみ。SNS販促等は入れない）。',
     '  販促は promotion/create_content|publish_post|analyze_promo。価格/メタデータは publishing。',
     '- directive_summary: 恒常的に効かせたい方針があれば1〜2文で要約（なければ省略）。',
+    '',
+    '【あなたが会話の中で直接できること (F-098)】',
+    '運営者はあなたとの会話だけで運営を完結させたいと考えています。以下は起票ではなく **その場で反映** されます。',
+    '- prompt_edits: 各エージェントのシステムプロンプトを改訂する。{role, instruction}。',
+    `  改訂できない role: ${CEO_PROTECTED_ROLES.join(' / ')} (あなた自身の制御ループのため)。`,
+    '- settings_changes: 運用トグルの ON/OFF。{key, value, reason}。指定できる key は次のみ:',
+    ...Object.entries(CEO_SETTINGS_WHITELIST).map(([k, label]) => `    ${k} = ${label}`),
+    '- model_changes: 役割ごとの AI モデル割当変更。{role, provider(anthropic|openai|google), model, reasoning_effort, reason}。',
+    '  model_catalog に存在するモデルのみ。コストと品質の根拠を reason に書くこと。',
+    '- research_queries: 外部情報が要るときの検索クエリ (最大3)。これを返すと worker が Web 検索し、',
+    '  その結果を添えて **もう一度あなたに聞き直します**。検索結果が添えられているターンでは',
+    '  research_queries を空にして結論を出すこと (無限ループ防止)。',
+    '',
+    '【会話ではできないこと】',
+    '- ソースコードの変更はこの場では反映されません。必要なら code_requests に',
+    '  {title, intent, files, change_summary, urgency} で **要求として起票** してください (運営者/開発担当が実装します)。',
+    '- 出版・販促の停止/再開は settings_changes で行います (タスク起票ではなく設定変更が確実)。',
   ].join('\n');
 }

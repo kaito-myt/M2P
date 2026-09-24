@@ -23,16 +23,22 @@ import {
 } from '@a2p/agents';
 import type { CompanySnapshot } from '@a2p/agents';
 import {
+  CEO_PROTECTED_ROLES,
+  CEO_SETTINGS_WHITELIST,
   DIVISION_KINDS,
   DIVISION_DEFAULT_ASSIGNEE,
   isHumanKind,
   type CeoChatOutput,
+  type CeoCodeRequest,
+  type CeoModelChange,
+  type CeoResearchResult,
+  type CeoSettingChange,
   type Division,
   type PromptEditorInput,
   type PromptEditorOutput,
 } from '@a2p/contracts/org';
 import { createLogger, type Logger } from '@a2p/contracts/logger';
-import { prisma as defaultPrisma } from '@a2p/db';
+import { Prisma, prisma as defaultPrisma } from '@a2p/db';
 
 export const ORG_CEO_CHAT_TASK_NAME = 'org.ceo.chat';
 
@@ -41,7 +47,12 @@ export const OrgCeoChatPayloadSchema = z.object({
 });
 
 /** F-089 — CEO が改訂してはならない role（自身の制御ループ保護）。 */
-const PROMPT_EDIT_EXCLUDED_ROLES = new Set(['ceo', 'ceo_chat', 'prompt_editor']);
+const PROMPT_EDIT_EXCLUDED_ROLES = new Set<string>(CEO_PROTECTED_ROLES);
+
+/** F-098 — 1 ターンで許す Web 検索の往復回数 (無限ループ防止)。 */
+const MAX_RESEARCH_ROUNDS = 1;
+/** F-098 — 1 クエリあたりの検索結果数。 */
+const RESEARCH_RESULTS_PER_QUERY = 5;
 
 type RewriteAgentPromptFn = (input: PromptEditorInput) => Promise<PromptEditorOutput>;
 
@@ -177,6 +188,179 @@ async function applyCeoPromptEdit(
   return { role, ok: true, to_version: newVersion, note: `${role} を v${newVersion} に更新（${out.summary || '改訂'}）` };
 }
 
+/**
+ * [F-098] CEO による運用トグルの変更を適用する。ホワイトリスト外・boolean 以外は拒否。
+ * 会話で完結させるための機能なので「起票」ではなくその場で反映し、audit_log に残す。
+ */
+export async function applyCeoSettingChanges(
+  prisma: typeof defaultPrisma,
+  changes: readonly CeoSettingChange[],
+  messageId: string,
+  log: Logger,
+): Promise<Array<{ key: string; ok: boolean; note: string }>> {
+  const out: Array<{ key: string; ok: boolean; note: string }> = [];
+  if (changes.length === 0) return out;
+
+  const allowed = Object.keys(CEO_SETTINGS_WHITELIST);
+  const current = (await prisma.appSettings.findUnique({ where: { id: 'singleton' } })) as unknown as
+    | Record<string, unknown>
+    | null;
+
+  for (const ch of changes) {
+    const key = ch.key.trim();
+    if (!allowed.includes(key)) {
+      out.push({ key, ok: false, note: `${key} は CEO が変更できる設定ではありません` });
+      continue;
+    }
+    const before = current ? current[key] : null;
+    if (before === ch.value) {
+      out.push({ key, ok: true, note: `${CEO_SETTINGS_WHITELIST[key]} は既に ${ch.value ? 'ON' : 'OFF'} です` });
+      continue;
+    }
+    try {
+      await prisma.appSettings.update({
+        where: { id: 'singleton' },
+        data: { [key]: ch.value } as never,
+      });
+      await prisma.auditLog.create({
+        data: {
+          actor_id: null,
+          action: 'settings.update',
+          target_kind: 'app_settings',
+          target_id: key,
+          before_json: { value: before ?? null, trigger: 'ceo', message_id: messageId },
+          after_json: { value: ch.value, reason: ch.reason },
+        },
+      });
+      out.push({
+        key,
+        ok: true,
+        note: `${CEO_SETTINGS_WHITELIST[key]} を ${ch.value ? 'ON' : 'OFF'} に変更 (${ch.reason})`,
+      });
+      log.info({ task: ORG_CEO_CHAT_TASK_NAME, key, value: ch.value }, 'ceo setting change applied');
+    } catch (e) {
+      const em = e instanceof Error ? e.message : String(e);
+      out.push({ key, ok: false, note: `${key} の変更に失敗 (${em})` });
+    }
+  }
+  return out;
+}
+
+/**
+ * [F-098] CEO によるモデル割当の変更を適用する (genre 既定行のみ)。
+ * 保護 role・カタログに無いモデル・利用不可のモデルは拒否する。
+ */
+export async function applyCeoModelChanges(
+  prisma: typeof defaultPrisma,
+  changes: readonly CeoModelChange[],
+  messageId: string,
+  now: Date,
+  log: Logger,
+): Promise<Array<{ role: string; ok: boolean; note: string }>> {
+  const out: Array<{ role: string; ok: boolean; note: string }> = [];
+  for (const ch of changes) {
+    const role = ch.role.trim();
+    if (PROMPT_EDIT_EXCLUDED_ROLES.has(role)) {
+      out.push({ role, ok: false, note: `${role} は保護対象のためモデルを変更できません` });
+      continue;
+    }
+    const catalog = await prisma.modelCatalog.findFirst({
+      where: { provider: ch.provider, model: ch.model, is_current: true },
+      select: { available: true },
+    });
+    if (!catalog) {
+      out.push({ role, ok: false, note: `${ch.provider}/${ch.model} はモデルカタログにありません` });
+      continue;
+    }
+    if (catalog.available === false) {
+      out.push({ role, ok: false, note: `${ch.provider}/${ch.model} は現在利用できません` });
+      continue;
+    }
+    const before = await prisma.modelAssignment.findFirst({
+      where: { role, genre: null, status: 'active' },
+      select: { id: true, provider: true, model: true, reasoning_effort: true },
+    });
+    if (before && before.provider === ch.provider && before.model === ch.model) {
+      out.push({ role, ok: true, note: `${role} は既に ${ch.provider}/${ch.model} です` });
+      continue;
+    }
+    try {
+      await prisma.$transaction(async (tx) => {
+        await tx.modelAssignment.updateMany({
+          where: { role, genre: null, status: 'active' },
+          data: { status: 'archived', archived_at: now },
+        });
+        await tx.modelAssignment.create({
+          data: {
+            role,
+            genre: null,
+            provider: ch.provider,
+            model: ch.model,
+            reasoning_effort: ch.reasoning_effort ?? null,
+            status: 'active',
+            activated_at: now,
+            created_by: `ceo:${messageId}`,
+          },
+        });
+        await tx.auditLog.create({
+          data: {
+            actor_id: null,
+            action: 'model_assignment.upsert',
+            target_kind: 'model_assignment',
+            target_id: `${role}:default`,
+            before_json: before
+              ? { provider: before.provider, model: before.model, reasoning_effort: before.reasoning_effort ?? null }
+              : Prisma.JsonNull,
+            after_json: {
+              provider: ch.provider,
+              model: ch.model,
+              reasoning_effort: ch.reasoning_effort ?? null,
+              reason: ch.reason,
+              trigger: 'ceo',
+              message_id: messageId,
+            },
+          },
+        });
+      });
+      out.push({
+        role,
+        ok: true,
+        note: `${role} を ${ch.provider}/${ch.model}${ch.reasoning_effort ? ` (${ch.reasoning_effort})` : ''} に変更 (${ch.reason})`,
+      });
+      log.info({ task: ORG_CEO_CHAT_TASK_NAME, role, model: ch.model }, 'ceo model change applied');
+    } catch (e) {
+      const em = e instanceof Error ? e.message : String(e);
+      out.push({ role, ok: false, note: `${role} のモデル変更に失敗 (${em})` });
+    }
+  }
+  return out;
+}
+
+/** [F-098] CEO からのソースコード変更要求を起票する (自動では適用されない)。 */
+export async function saveCeoCodeRequests(
+  prisma: typeof defaultPrisma,
+  requests: readonly CeoCodeRequest[],
+  messageId: string,
+): Promise<Array<{ title: string; id: string }>> {
+  const out: Array<{ title: string; id: string }> = [];
+  for (const r of requests) {
+    const created = await prisma.orgCodeRequest.create({
+      data: {
+        title: r.title,
+        intent: r.intent,
+        files_json: r.files,
+        change_summary: r.change_summary,
+        urgency: r.urgency,
+        status: 'open',
+        source_message_id: messageId,
+      },
+      select: { id: true },
+    });
+    out.push({ title: r.title, id: created.id });
+  }
+  return out;
+}
+
 function toNumber(v: unknown): number {
   const n = typeof v === 'number' ? v : Number(v);
   return Number.isFinite(n) ? n : 0;
@@ -190,6 +374,7 @@ type ChatWithCeoFn = (input: {
   snapshot: CompanySnapshot;
   history: CeoChatTurn[];
   message: string;
+  research?: CeoResearchResult[];
 }, deps?: CeoChatDeps) => Promise<CeoChatOutput>;
 
 export interface OrgCeoChatDeps {
@@ -198,6 +383,8 @@ export interface OrgCeoChatDeps {
   chatWithCeo?: ChatWithCeoFn;
   rewriteAgentPrompt?: RewriteAgentPromptFn;
   now?: () => Date;
+  /** F-098: Web 検索 (既定は Tavily)。空配列を返すと検索なしで続行する。 */
+  webSearch?: (queries: readonly string[]) => Promise<CeoResearchResult[]>;
 }
 
 export interface OrgCeoChatResult {
@@ -259,6 +446,35 @@ async function buildSnapshot(prisma: typeof defaultPrisma, now: Date): Promise<C
   };
 }
 
+/**
+ * [F-098] 既定の Web 検索 — Tavily。キー未設定なら空配列 (検索なしで続行)。
+ * Anthropic 純正 web_search は無上限ループで数分かかる実測があるため使わない (docs/03 §R-04)。
+ */
+async function defaultCeoWebSearch(queries: readonly string[]): Promise<CeoResearchResult[]> {
+  const { getTavilyApiKey } = await import('@a2p/agents/lib/get-tavily-key');
+  const key = await getTavilyApiKey();
+  if (!key) return [];
+  const { createWebSearchAdapter } = await import('@a2p/agents/tools/web-search');
+  const adapter = createWebSearchAdapter({ provider: 'tavily', tavilyApiKey: key });
+  const out: CeoResearchResult[] = [];
+  for (const query of queries.slice(0, 3)) {
+    try {
+      const res = await adapter.search({ query, maxResults: RESEARCH_RESULTS_PER_QUERY });
+      out.push({
+        query,
+        results: res.items.slice(0, RESEARCH_RESULTS_PER_QUERY).map((i) => ({
+          title: i.title,
+          url: i.url,
+          snippet: (i.snippet ?? '').slice(0, 300),
+        })),
+      });
+    } catch {
+      out.push({ query, results: [] });
+    }
+  }
+  return out;
+}
+
 export async function runOrgCeoChat(payload: unknown, deps: OrgCeoChatDeps = {}): Promise<OrgCeoChatResult> {
   const parsed = OrgCeoChatPayloadSchema.parse(payload ?? {});
   const prisma = deps.prisma ?? defaultPrisma;
@@ -292,7 +508,22 @@ export async function runOrgCeoChat(payload: unknown, deps: OrgCeoChatDeps = {})
       .reverse()
       .map((r) => ({ role: r.role === 'ceo' ? 'ceo' : 'operator', content: r.content }));
 
-    const out = await chat({ snapshot, history, message: opMsg.content });
+    let out = await chat({ snapshot, history, message: opMsg.content });
+
+    // [F-098] CEO が外部情報を要求したら 1 往復だけ検索して聞き直す (無限ループ防止)。
+    let research: CeoResearchResult[] = [];
+    const searchFn = deps.webSearch ?? defaultCeoWebSearch;
+    for (let round = 0; round < MAX_RESEARCH_ROUNDS; round += 1) {
+      const queries = (out.research_queries ?? []).filter((q) => q.trim().length > 0);
+      if (queries.length === 0) break;
+      log.info({ task: ORG_CEO_CHAT_TASK_NAME, queries }, 'ceo requested web research');
+      research = await searchFn(queries).catch((e) => {
+        log.warn({ task: ORG_CEO_CHAT_TASK_NAME, err: e }, 'ceo web research failed');
+        return [] as CeoResearchResult[];
+      });
+      if (research.length === 0) break;
+      out = await chat({ snapshot, history, message: opMsg.content, research });
+    }
 
     // 自動承認トグル。
     const settings = await prisma.appSettings.findUnique({
@@ -353,11 +584,27 @@ export async function runOrgCeoChat(payload: unknown, deps: OrgCeoChatDeps = {})
       }
     }
 
-    let replyContent = out.reply;
-    if (promptEditResults.length) {
-      const lines = promptEditResults.map((r) => `${r.ok ? '✅' : '⚠️'} ${r.note}`);
-      replyContent = `${out.reply}\n\n――― プロンプト改訂 ―――\n${lines.join('\n')}`;
+    // [F-098] 運用トグル / モデル割当 / コード変更要求を適用する。
+    const settingResults = await applyCeoSettingChanges(prisma, out.settings_changes ?? [], opMsg.id, log);
+    const modelResults = await applyCeoModelChanges(prisma, out.model_changes ?? [], opMsg.id, now(), log);
+    const codeRequests = await saveCeoCodeRequests(prisma, out.code_requests ?? [], opMsg.id);
+
+    const NL2 = String.fromCharCode(10);
+    const sections: string[] = [];
+    const bullets = (rows: Array<{ ok: boolean; note: string }>): string =>
+      rows.map((r) => `${r.ok ? '✅' : '⚠️'} ${r.note}`).join(NL2);
+    if (promptEditResults.length) sections.push(`――― プロンプト改訂 ―――${NL2}${bullets(promptEditResults)}`);
+    if (settingResults.length) sections.push(`――― 設定変更 ―――${NL2}${bullets(settingResults)}`);
+    if (modelResults.length) sections.push(`――― モデル割当 ―――${NL2}${bullets(modelResults)}`);
+    if (codeRequests.length) {
+      sections.push(
+        `――― コード変更要求 (起票のみ・実装は開発側) ―――${NL2}${codeRequests.map((c) => `📝 ${c.title}`).join(NL2)}`,
+      );
     }
+    if (research.length) {
+      sections.push(`――― 参照した Web 検索 ―――${NL2}${research.map((r) => `🔎 ${r.query} (${r.results.length}件)`).join(NL2)}`);
+    }
+    const replyContent = sections.length ? `${out.reply}${NL2}${NL2}${sections.join(NL2 + NL2)}` : out.reply;
 
     const ceoMsg = await prisma.orgCeoMessage.create({
       data: {
@@ -374,6 +621,10 @@ export async function runOrgCeoChat(payload: unknown, deps: OrgCeoChatDeps = {})
             to_version: r.to_version ?? null,
             note: r.note,
           })),
+          settings_changes: settingResults,
+          model_changes: modelResults,
+          code_request_ids: codeRequests.map((c) => c.id),
+          research_queries: research.map((r) => r.query),
         },
       },
       select: { id: true },

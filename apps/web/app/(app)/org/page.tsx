@@ -23,6 +23,7 @@ import { RunPlanButton } from '@/components/org/run-plan-button';
 import { ModelBakeoffControl } from '@/components/org/model-bakeoff-control';
 import { OrgAutomationSettings } from '@/components/org/org-automation-settings';
 import { CeoChat } from '@/components/org/ceo-chat';
+import { OrgCodeRequests } from '@/components/org/code-requests';
 import {
   computeSpentByDivision,
   divisionTaskCounts,
@@ -161,6 +162,8 @@ export default async function OrgDashboardPage() {
       )}
 
       <CeoChat />
+
+      <OrgCodeRequests />
 
       <OrgAutomationSettings initial={automationInitial} />
 

@@ -1930,6 +1930,26 @@ export const KdpSubmitPayload = z.object({
 
 **自動運用**: `AppSettings.kdp_auto_submit_enabled=true`＋dispatcher（`kdp.submit.dispatch`, 例 30 分毎）が `kdp_publish_queued=true AND publish_status<>'published'` の本を 1 冊ずつ `kdp.submit` へ enqueue（同時 1 冊。`org.kdp.screen` 合格→queue と連携）。`AMAZON_EMAIL`/`AMAZON_PASSWORD` 未設定時は起動しない。
 
+#### 5.3.15d CEO を「会話で完結する司令塔」にする（F-098, 2026-09-24）
+
+運営者要望「A2P の CEO にも A2P のソースコードやシステムプロンプトを変更できるようにして」
+「私が CEO との会話ですべて完結できるようにしたい」「CEO は Web リサーチもできるんだっけ？」。
+
+**調査結果**: `org.ceo.chat` は (a) 対話 (b) org_tasks 起票 (c) **プロンプト改訂 (F-089)** まではできたが、
+運用トグル・モデル割当・コード変更・Web 検索は持っていなかった (`WEB_SEARCH_ROLES` に ceo_chat は不在)。
+
+**追加した権限** (`CeoChatOutputSchema` の新フィールド。worker が適用し、結果を CEO の返信に追記する):
+| フィールド | 効果 | ガード |
+|---|---|---|
+| `prompt_edits` | 各 role のシステムプロンプト改訂 (既存 F-089) | `CEO_PROTECTED_ROLES` (ceo/ceo_chat/prompt_editor) 不可 |
+| `settings_changes` | 運用トグルの ON/OFF を即時反映 | `CEO_SETTINGS_WHITELIST` 内のキーのみ。dry_run 解除等は不可 |
+| `model_changes` | 役割ごとのモデル割当変更 (genre 既定行) | 保護 role 不可 / `model_catalog` に現行行があり `available!==false` のみ |
+| `code_requests` | ソースコード変更の**要求を起票** (`org_code_requests`) | 自動適用しない (本番コンテナはリポジトリを書き換えられない) |
+| `research_queries` | Tavily で Web 検索し、結果を添えて**1 往復だけ**聞き直す | `MAX_RESEARCH_ROUNDS=1`・検索結果添付時は空にする指示 |
+
+すべて `audit_log` に記録し (`settings.update` / `model_assignment.upsert`)、CEO の返信末尾に
+「――― 設定変更 ―――」等のセクションで何が効いたかを明示する。コード変更要求は A2P の `/org` に一覧表示する。
+
 #### 5.3.15b-2 ペーパーバック化の恒常運用（F-097, 2026-09-24）
 
 運営者指摘「ペーパーバックが結構売れてるから、**確実に**出版した本はペーパーバックも出版されるように」。

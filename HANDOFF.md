@@ -28,6 +28,20 @@
 - **F-ANP-44 judge ルーティング**: 合格 85 点 / 70〜84 は校閲へ / 69 以下は構成 (writer.outline) からやり直し。
 - 本番反映済み: migration `20260924000000_model_effort_and_note_seo`、prompts (`anp.seo` v2 / `anp.theme` v2)、model_assignments 8 件、model_catalog 8 行。
 
+### A2P コスト凍結 & CEO 権限拡張（2026-09-24）
+- **コスト凍結**: 運営者指示「A2P は赤字。出版・販促作業は中止、作成済みの本の出版のみ」。
+  `bash scripts/paperback/pb-env.sh node scripts/ops/a2p-cost-freeze.cjs --apply` で 15 個のトグルを OFF
+  (新刊の日次生成 / SNS 投稿・エンゲージ / 動画 / 間引き / 組織エージェントの全ループ)。解除は `--revert`。
+  維持したのは KDP 出版キュー・BOOK☆WALKER 申請・ペーパーバック・売上取得・週次コスト分析・ANP 一式。
+  30 日コスト実績: editor ¥97.5k / writer ¥49.0k (= 新刊生成) / content_creator ¥13.3k (= 販促)。
+- **A2P モデル構成** (運営者指定): writer=claude-sonnet-4-6 (維持) / editor=gpt-6-sol(medium) /
+  marketer=gemini-3.1-pro (維持) / judge=gpt-6-sol(high) / thumbnail_text=gpt-6-luna(low) /
+  thumbnail_image=gpt-image-2 (維持) / optimizer=gpt-6-sol(high)。小説 7 ジャンルの Claude 上書きは維持。
+  適用は `scripts/models/model-mix-a2p-2026-09-24.cjs`。
+- **F-098 CEO 権限拡張**: CEO との会話だけで 設定トグル / モデル割当 / プロンプト改訂 / Web リサーチ(Tavily)
+  が完結する。ソースコードは `org_code_requests` に要求として起票され `/org` に出る (自動適用はしない)。
+  保護 role (ceo/ceo_chat/prompt_editor) とホワイトリスト外の設定は拒否。
+
 ### F-097 ペーパーバックを確実に出す（2026-09-24）
 - 調査結果: **Kindle 出版済み 93 冊に対しペーパーバックは 12 冊だけ**だった。原因は進捗がローカルのテキスト台帳にしか無く、
   対象リストも静的 plan.json 由来で新刊が永久に対象外だったこと。

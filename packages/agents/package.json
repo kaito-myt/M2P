@@ -12,6 +12,7 @@
     "./lib/agent-sdk-client": "./src/lib/agent-sdk-client.ts",
     "./lib/errors": "./src/lib/errors.ts",
     "./lib/get-api-key": "./src/lib/get-api-key.ts",
+    "./lib/get-tavily-key": "./src/lib/get-tavily-key.ts",
     "./lib/with-token-logging": "./src/lib/with-token-logging.ts",
     "./lib/update-book-cost": "./src/lib/update-book-cost.ts",
     "./lib/load-model-assignment": "./src/lib/load-model-assignment.ts",

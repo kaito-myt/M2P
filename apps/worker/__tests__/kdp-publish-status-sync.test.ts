@@ -120,6 +120,9 @@ function makePort(byBookId: Record<string, ReadBookStatusResult>): { port: Books
     async takedownBook() {
       throw new Error('not used in this test');
     },
+    async readPaperbackStatus() {
+      throw new Error('not used in this test');
+    },
     async readBookStatus(args) {
       const key = args.asin ?? args.title;
       calls.push(key);
@@ -283,6 +286,9 @@ describe('runKdpPublishStatusSync', () => {
     let firstCall = true;
     const port: BookshelfPort = {
       async takedownBook() {
+        throw new Error('not used');
+      },
+      async readPaperbackStatus() {
         throw new Error('not used');
       },
       async readBookStatus(args) {

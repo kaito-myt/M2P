@@ -11,6 +11,8 @@
 import { createLogger } from '@a2p/contracts/logger';
 
 import type {
+  ReadPaperbackStatusArgs,
+  ReadPaperbackStatusResult,
   BookshelfPort,
   KdpBookStatus,
   ReadBookStatusArgs,
@@ -27,7 +29,7 @@ const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML,
 const LAUNCH_ARGS = ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--disable-gpu'];
 
 export function createPlaywrightBookshelfPort(): BookshelfPort {
-  return { takedownBook, readBookStatus };
+  return { takedownBook, readBookStatus, readPaperbackStatus };
 }
 
 /**
@@ -247,6 +249,97 @@ async function extractRowText(
     }
     return el.textContent ?? '';
   }, dots);
+}
+
+/**
+ * [F-097b] ペーパーバック行の状態を READ-ONLY で読む。
+ *
+ * KDP 本棚は 1 タイトルのカード内に「Kindle 本」行と「ペーパーバック」行を並べて表示し、
+ * 各行は `<種別> <状態> 提出日: ... ¥<価格> ... ASIN: <ASIN> ...` というテキストを持つ
+ * (2026-09-24 実測)。Kindle の ASIN で検索するとそのカードだけが出るので、
+ * 同カード内の「ペーパーバック」で始まる行を拾えば紙版の状態が分かる。
+ */
+async function readPaperbackStatus(args: ReadPaperbackStatusArgs): Promise<ReadPaperbackStatusResult> {
+  const timeoutMs = args.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+  if (!args.asin) return { ok: false, reason: 'action_failed', message: 'asin is required' };
+
+  let storageState: unknown;
+  try {
+    storageState = JSON.parse(args.sessionState);
+  } catch {
+    return { ok: false, reason: 'session_expired', message: 'stored session is not valid JSON' };
+  }
+
+  let chromium: typeof import('playwright').chromium;
+  try {
+    ({ chromium } = await import('playwright'));
+  } catch (err) {
+    return { ok: false, reason: 'unknown', message: `playwright unavailable: ${errMsg(err)}` };
+  }
+
+  const browser = await chromium.launch({ headless: true, args: LAUNCH_ARGS });
+  try {
+    const context = await browser.newContext({
+      storageState: storageState as Awaited<ReturnType<import('playwright').BrowserContext['storageState']>>,
+      locale: 'ja-JP',
+      userAgent: UA,
+      viewport: { width: 1500, height: 1100 },
+    });
+    await context.addInitScript({ content: 'globalThis.__name = globalThis.__name || function (f) { return f; };' });
+    const page = await context.newPage();
+    page.setDefaultTimeout(timeoutMs);
+
+    await page.goto(BOOKSHELF_URL, { waitUntil: 'domcontentloaded', timeout: timeoutMs }).catch(() => {});
+    await page.waitForTimeout(6000);
+    if (/\/ap\/signin|\/signin/i.test(page.url())) {
+      return { ok: false, reason: 'session_expired', message: `sign-in redirect (${page.url()})` };
+    }
+
+    const sb = await page.$('input[type="search"], input[aria-label*="検索"], input[placeholder*="検索"]');
+    if (!sb) return { ok: false, reason: 'action_failed', message: 'search box not found' };
+    await sb.fill(args.asin);
+    await page.keyboard.press('Enter');
+    await page.waitForTimeout(6000);
+
+    const rowText = await page.evaluate(() => {
+      // 「ペーパーバック」で始まり ASIN を含む最小の行コンテナを探す。
+      let best: string | null = null;
+      for (const el of Array.from(document.querySelectorAll('div,li,tr'))) {
+        const t = (el.textContent ?? '').replace(/\s+/g, ' ').trim();
+        if (!t.startsWith('ペーパーバック')) continue;
+        if (!/ASIN:/.test(t)) continue;
+        if (best === null || t.length < best.length) best = t;
+      }
+      return best;
+    });
+
+    if (!rowText) return { ok: true, status: 'not_found', pbAsin: null, priceJpy: null };
+
+    const pbAsin = (rowText.match(/ASIN:\s*([A-Z0-9]{10})/) ?? [])[1] ?? null;
+    const priceRaw = (rowText.match(/¥\s*([0-9,]+)/) ?? [])[1] ?? null;
+    const priceJpy = priceRaw ? Number(priceRaw.replace(/,/g, '')) : null;
+    const status = /販売停止中/.test(rowText) ? 'unpublished' : mapPaperbackStatusLabel(rowText);
+    return { ok: true, status, pbAsin, priceJpy: Number.isFinite(priceJpy) ? priceJpy : null };
+  } catch (err) {
+    const msg = errMsg(err);
+    log.warn({ err: msg, asin: args.asin }, 'readPaperbackStatus failed');
+    return { ok: false, reason: 'unknown', message: msg };
+  } finally {
+    await browser.close().catch(() => {});
+  }
+}
+
+/**
+ * ペーパーバック行のラベル → 状態。KDP は「出版準備中」も使うので in_review に寄せる
+ * (Kindle 側の mapStatusLabel には無いラベル)。
+ */
+export function mapPaperbackStatusLabel(text: string): 'live' | 'draft' | 'in_review' | 'blocked' | 'not_found' {
+  const t = (text ?? '').trim();
+  if (/ブロック|Blocked/i.test(t)) return 'blocked';
+  if (/レビュー中|出版準備中|In[\s_-]?Review/i.test(t)) return 'in_review';
+  if (/下書き|Draft/i.test(t)) return 'draft';
+  if (/販売中|Live/i.test(t)) return 'live';
+  return 'not_found';
 }
 
 async function saveShot(page: import('playwright').Page, asin: string, stage: string): Promise<void> {
