@@ -53,6 +53,30 @@ export function accentForNiche(niche: string | null | undefined): string {
   return palette[h % palette.length]!;
 }
 
+/**
+ * 行数が最小になるサイズの中で最大のものを選ぶ。
+ *
+ * `fitText` は「maxLines に収まるまで縮める」だけなので、「7つの型で迷う時間を減らす」が
+ * 104px で 2 行に割れて 2 行目が「らす」だけ、のような孤立行が出た。少し縮めれば 1 行に
+ * 収まるならその方が圧倒的に読みやすいので、行数優先で選び直す。
+ */
+function fitBalanced(
+  font: Parameters<typeof fitText>[0],
+  text: string,
+  maxWidth: number,
+  startSize: number,
+  minSize: number,
+  maxLines: number,
+): { size: number; lines: string[] } {
+  const base = fitText(font, text, maxWidth, startSize, minSize, maxLines);
+  let best = base;
+  for (let size = base.size; size >= minSize; size -= 2) {
+    const lines = wrapByWidth(font, text, size, maxWidth);
+    if (lines.length < best.lines.length) best = { size, lines };
+  }
+  return best;
+}
+
 /** 1 行を描画 (数字はアクセント色、それ以外は白、暗いハロー付き)。 */
 function drawCopyLine(
   bold: Parameters<typeof linePathLeft>[0],
@@ -137,15 +161,17 @@ export async function composeNoteEyecatch(
     cursorY -= 14;
   }
 
-  const { size: copySize, lines: copyLines } = fitText(bold, copy, textWidth, 104, 54, 3);
+  const { size: copySize, lines: copyLines } = fitBalanced(bold, copy, textWidth, 104, 52, 3);
   const copyLH = copySize * 1.26;
   for (let i = copyLines.length - 1; i >= 0; i -= 1) {
     parts.push(drawCopyLine(bold, copyLines[i]!, copySize, M, cursorY, accent));
     cursorY -= copyLH;
   }
 
-  // --- アクセントの下線 (キャッチの直上) ---
-  const ruleY = Math.round(cursorY + copyLH * 0.28);
+  // --- アクセントの下線 (キャッチの直上)。最上行のアセンダより上に置く
+  //     (行数に関係なく文字に重ならないよう、ベースラインから字面の高さ分を引いて算出する)。 ---
+  const topBaseline = cursorY + copyLH;
+  const ruleY = Math.round(topBaseline - copySize * 1.02 - 16);
   parts.push(`<rect x="${M}" y="${ruleY}" width="96" height="8" rx="4" fill="${accent}"/>`);
 
   // --- バッジ (左上) ---

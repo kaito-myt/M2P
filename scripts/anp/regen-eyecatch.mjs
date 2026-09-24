@@ -38,9 +38,7 @@ async function loadAgents() {
   const base = pathToFileURL(path.join(ROOT, 'packages', 'agents', 'src', 'anp') + path.sep);
   const style = await import(new URL('eyecatch-style.ts', base).href);
   const eyecatch = await import(new URL('eyecatch.ts', base).href);
-  const imageGen = await import(pathToFileURL(path.join(ROOT, 'packages', 'agents', 'src', 'tools', 'image-gen.ts')).href);
-  const logging = await import(pathToFileURL(path.join(ROOT, 'packages', 'agents', 'src', 'lib', 'with-image-logging.ts')).href);
-  return { style, eyecatch, imageGen, logging };
+  return { style, eyecatch };
 }
 
 async function main() {
@@ -48,9 +46,7 @@ async function main() {
     console.error('--account=<note_account_id> か --article=<note_article_id> を指定してください');
     process.exit(1);
   }
-  const { style, eyecatch, imageGen, logging } = await loadAgents();
-  // role を分けて記録し、通常パイプライン (anp.eyecatch) と再生成分を後から区別できるようにする。
-  const generateImage = logging.withImageLogging(imageGen.generateImage, { role: 'anp.eyecatch.regen' });
+  const { style, eyecatch } = await loadAgents();
   const db = new Client({ connectionString: process.env.DBURL, ssl: { rejectUnauthorized: false } });
   await db.connect();
   const s3 = new S3Client({
@@ -62,7 +58,7 @@ async function main() {
 
   const where = ARTICLE ? 'a.id = $1' : 'a.note_account_id = $1';
   const { rows } = await db.query(
-    `SELECT a.id, a.title, a.eyecatch_r2_key, acc.niche, acc.editorial_policy, t.hook
+    `SELECT a.id, a.title, a.eyecatch_r2_key, a.eyecatch_copy, a.eyecatch_sub, acc.niche, acc.editorial_policy, t.hook
        FROM note_articles a
        JOIN note_accounts acc ON acc.id = a.note_account_id
        LEFT JOIN note_themes t ON t.id = a.theme_id
@@ -77,22 +73,40 @@ async function main() {
   for (const r of rows) {
     const chosen = style.pickEyecatchStyle(r.id, used.slice(-3));
     used.push(chosen.key);
-    const prompt = eyecatch.buildPrompt(
-      { noteArticleId: r.id, title: r.title, hook: r.hook ?? r.title, niche: r.niche, editorialPolicy: r.editorial_policy },
-      chosen,
-    );
-    console.log(`- ${r.id} style=${chosen.key} ${r.title.slice(0, 30)}`);
+    console.log(`- ${r.id} style=${chosen.key} copy=${r.eyecatch_copy ?? '(なし)'} ${r.title.slice(0, 26)}`);
     if (DRY) continue;
-    const res = await generateImage({ prompt, width: 1536, height: 1024, outputFormat: 'jpeg', outputCompression: 90 });
-    const buf = res.images[0];
-    if (!buf) {
+
+    // F-ANP-41: 本番と同じ経路 (画像モデル割当 + キャッチコピーの実フォント合成) を通す。
+    let saved = null;
+    const res = await eyecatch.generateNoteEyecatch(
+      {
+        noteArticleId: r.id,
+        title: r.title,
+        hook: r.hook ?? r.title,
+        niche: r.niche,
+        eyecatchCopy: r.eyecatch_copy ?? null,
+        eyecatchSub: r.eyecatch_sub ?? null,
+        editorialPolicy: r.editorial_policy,
+      },
+      {
+        // generateImage は渡さない: 本番と同じく role='anp.eyecatch' のモデル割当
+        // (既定 Nano Banana 2) を解決させ、token_usage も agent 側で記録させる。
+        uploadBuffer: async (key, buf, contentType) => {
+          const target = r.eyecatch_r2_key || key;
+          await s3.send(
+            new PutObjectCommand({ Bucket: process.env.R2_BUCKET_NAME, Key: target, Body: buf, ContentType: contentType }),
+          );
+          saved = { key: target, size: buf.length };
+          return null;
+        },
+      },
+    );
+    if (!saved) {
       console.log('  画像が返らなかった — スキップ');
       continue;
     }
-    const key = r.eyecatch_r2_key || `note/${r.id}/eyecatch.jpg`;
-    await s3.send(new PutObjectCommand({ Bucket: process.env.R2_BUCKET_NAME, Key: key, Body: buf, ContentType: 'image/jpeg' }));
-    if (!r.eyecatch_r2_key) await db.query('UPDATE note_articles SET eyecatch_r2_key=$2 WHERE id=$1', [r.id, key]);
-    console.log(`  saved ${key} (${buf.length} bytes)`);
+    if (!r.eyecatch_r2_key) await db.query('UPDATE note_articles SET eyecatch_r2_key=$2 WHERE id=$1', [r.id, saved.key]);
+    console.log(`  saved ${saved.key} (${saved.size} bytes, 文字=${String(res.composedText)})`);
   }
   await db.end();
 }
