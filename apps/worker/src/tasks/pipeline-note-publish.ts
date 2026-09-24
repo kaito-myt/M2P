@@ -60,6 +60,8 @@ interface NoteArticleRow {
   eyecatch_r2_key: string | null;
   note_url: string | null;
   status: string;
+  /** [F-ANP-42] anp.seo の出力 (hashtags 等)。旧レコード/テストでは未設定。 */
+  seo_json?: unknown;
 }
 
 interface NoteAccountRow {
@@ -106,6 +108,20 @@ export interface PipelineNotePublishPrisma {
 }
 
 export type FetchAssetFn = (key: string) => Promise<Buffer | null>;
+
+/** [F-ANP-42] `note_articles.seo_json.hashtags` を安全に取り出す (未設定/型崩れは空配列)。 */
+export function readSeoHashtags(seoJson: unknown): string[] {
+  if (!seoJson || typeof seoJson !== 'object') return [];
+  const raw = (seoJson as { hashtags?: unknown }).hashtags;
+  if (!Array.isArray(raw)) return [];
+  const out: string[] = [];
+  for (const v of raw) {
+    if (typeof v !== 'string') continue;
+    const tag = v.replace(/^#/, '').trim();
+    if (tag.length > 0 && tag.length <= 30 && !out.includes(tag)) out.push(tag);
+  }
+  return out.slice(0, 5);
+}
 
 export type AddJobLike = (
   identifier: string,
@@ -242,6 +258,8 @@ export async function runPipelineNotePublish(
       allowPaid: parseNoteAccountSettings(account.settings_json).paid_publish_enabled === true,
       existingNoteUrl: article.note_url,
       eyecatchPath,
+      // [F-ANP-42] note 内 SEO: 公開設定でハッシュタグを付ける (anp.seo が決めた 5 個)。
+      hashtags: readSeoHashtags(article.seo_json),
     };
 
     // 安全側デフォルト: payload の dry_run 省略時は true 扱い。かつ AppSettings.anp_publish_dry_run=true

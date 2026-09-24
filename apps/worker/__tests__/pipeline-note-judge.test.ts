@@ -11,6 +11,7 @@ import {
   type PipelineNoteJudgePrisma,
 } from '../src/tasks/pipeline-note-judge.js';
 import { PIPELINE_NOTE_EDITOR_TASK_NAME } from '../src/tasks/pipeline-note-editor.js';
+import { PIPELINE_NOTE_WRITER_OUTLINE_TASK_NAME } from '../src/tasks/pipeline-note-writer-outline.js';
 
 function makeLogger(): Logger {
   return {
@@ -214,7 +215,7 @@ describe('pipeline.note.judge', () => {
     expect(articleUpdates[0]!.data).toMatchObject({ status: 'ready', paid: false, price_jpy: null });
   });
 
-  it('不合格 + retry_count=0 — editor へ差し戻し (retry_count=1 を forward)', async () => {
+  it('低スコア (69 以下) + retry_count=0 — 構成 (writer.outline) からやり直し (F-ANP-44)', async () => {
     const { prisma, articleUpdates, jobCreates } = buildPrisma({
       jobs: [{ id: 'job1', status: 'queued' }],
       articles: [makeArticle()],
@@ -229,9 +230,33 @@ describe('pipeline.note.judge', () => {
       { prisma, logger: makeLogger(), judgeArticle, acquireLock: vi.fn().mockResolvedValue(undefined), releaseLock: vi.fn().mockResolvedValue(undefined) },
     );
 
-    expect(articleUpdates[0]!.data).toMatchObject({ status: 'editing', quality_score: 50 });
-    expect(jobCreates[0]!.data).toMatchObject({ kind: PIPELINE_NOTE_EDITOR_TASK_NAME });
+    expect(articleUpdates[0]!.data).toMatchObject({ status: 'writing', quality_score: 50 });
+    expect(jobCreates[0]!.data).toMatchObject({ kind: PIPELINE_NOTE_WRITER_OUTLINE_TASK_NAME });
     expect((jobCreates[0]!.data.payload_json as { retry_count: number }).retry_count).toBe(1);
+    expect(addJob).toHaveBeenCalledWith(
+      PIPELINE_NOTE_WRITER_OUTLINE_TASK_NAME,
+      expect.objectContaining({ note_article_id: 'art1', retry_count: 1 }),
+      { maxAttempts: 2 },
+    );
+  });
+
+  it('中間スコア (70〜84) — 校閲 (editor) へ差し戻し (F-ANP-44)', async () => {
+    const { prisma, articleUpdates, jobCreates } = buildPrisma({
+      jobs: [{ id: 'job1', status: 'queued' }],
+      articles: [makeArticle()],
+      accounts: [{ id: 'acc1', niche: '副業', target_reader: null }],
+    });
+    const addJob: AddJobLike = vi.fn();
+    const judgeArticle = vi.fn().mockResolvedValue({ ...FAIL_OUTPUT, score_total: 78 });
+
+    await runPipelineNoteJudge(
+      { note_article_id: 'art1', job_id: 'job1', retry_count: 0 },
+      addJob,
+      { prisma, logger: makeLogger(), judgeArticle, acquireLock: vi.fn().mockResolvedValue(undefined), releaseLock: vi.fn().mockResolvedValue(undefined) },
+    );
+
+    expect(articleUpdates[0]!.data).toMatchObject({ status: 'editing', quality_score: 78 });
+    expect(jobCreates[0]!.data).toMatchObject({ kind: PIPELINE_NOTE_EDITOR_TASK_NAME });
     expect(addJob).toHaveBeenCalledWith(
       PIPELINE_NOTE_EDITOR_TASK_NAME,
       expect.objectContaining({ note_article_id: 'art1', retry_count: 1 }),

@@ -6,7 +6,12 @@ import {
   releaseNoteLock as defaultReleaseNoteLock,
 } from '@a2p/agents/lib/note-lock';
 import { judgeNoteArticle as defaultJudgeNoteArticle } from '@a2p/agents/anp/judge';
-import { NOTE_JUDGE_PASS_THRESHOLD, type NoteJudgeInput, type NoteJudgeOutput } from '@a2p/contracts/agents/anp';
+import {
+  NOTE_JUDGE_PASS_THRESHOLD,
+  routeByJudgeScore,
+  type NoteJudgeInput,
+  type NoteJudgeOutput,
+} from '@a2p/contracts/agents/anp';
 import { parseNoteAccountSettings } from '@a2p/contracts/agents/anp';
 import { NotFoundError, ValidationError } from '@a2p/contracts/errors';
 import { createLogger, type Logger } from '@a2p/contracts/logger';
@@ -15,6 +20,7 @@ import { prisma as defaultPrisma } from '@a2p/db';
 import { applyNoteArticleCostFromJob, type NoteArticleCostPrisma } from './lib/note-article-cost.js';
 import type { NoteArticleRepo } from './lib/note-article-repo.js';
 import { PIPELINE_NOTE_EDITOR_TASK_NAME } from './pipeline-note-editor.js';
+import { PIPELINE_NOTE_WRITER_OUTLINE_TASK_NAME } from './pipeline-note-writer-outline.js';
 
 /**
  * `pipeline.note.judge` タスク (docs/11-anp-design.md §7, F-ANP-15).
@@ -224,7 +230,10 @@ export async function runPipelineNoteJudge(
     const paidAllowed = parseNoteAccountSettings(account.settings_json).paid_publish_enabled === true;
     const finalPricing = resolveFinalPricing(article, judged, paidAllowed);
 
-    if (judged.score_total >= NOTE_JUDGE_PASS_THRESHOLD) {
+    // F-ANP-44: 85 以上=公開 / 70〜84=校閲へ / 69 以下=構成から書き直し / 差し戻し上限=人手。
+    const route = routeByJudgeScore(judged.score_total, retryCount, RETRY_LIMIT);
+
+    if (route === 'ready') {
       await prisma.noteArticle.update({
         where: { id: noteArticleId },
         data: {
@@ -241,18 +250,24 @@ export async function runPipelineNoteJudge(
         { task: PIPELINE_NOTE_JUDGE_TASK_NAME, jobId, noteArticleId, scoreTotal: judged.score_total },
         'score >= threshold — NoteArticle status=ready',
       );
-    } else if (retryCount < RETRY_LIMIT) {
+    } else if (route === 'editor' || route === 'writer') {
       const nextRetryCount = retryCount + 1;
       const feedbackItems = toFeedbackItems(judged);
+      // 69 点以下は校閲では直らない (構成・切り口の問題) ので outline からやり直す。
+      const targetTask =
+        route === 'writer' ? PIPELINE_NOTE_WRITER_OUTLINE_TASK_NAME : PIPELINE_NOTE_EDITOR_TASK_NAME;
 
       await prisma.noteArticle.update({
         where: { id: noteArticleId },
-        data: { quality_score: judged.score_total, status: 'editing' },
+        data: {
+          quality_score: judged.score_total,
+          status: route === 'writer' ? 'writing' : 'editing',
+        },
       });
 
       const editorJob = await prisma.job.create({
         data: {
-          kind: PIPELINE_NOTE_EDITOR_TASK_NAME,
+          kind: targetTask,
           status: 'queued',
           parent_job_id: jobId,
           payload_json: {
@@ -265,7 +280,7 @@ export async function runPipelineNoteJudge(
       // retry_count は editor → eyecatch → judge へそのまま forward され、次回
       // pipeline.note.judge の RETRY_LIMIT 判定に使われる (無限ループ防止)。
       await addJob(
-        PIPELINE_NOTE_EDITOR_TASK_NAME,
+        targetTask,
         {
           note_article_id: noteArticleId,
           job_id: editorJob.id,
@@ -286,7 +301,7 @@ export async function runPipelineNoteJudge(
           nextRetryCount,
           editorJobId: editorJob.id,
         },
-        'score < threshold — pipeline.note.editor re-kicked',
+        `score < threshold — ${targetTask} re-kicked`,
       );
     } else {
       await prisma.noteArticle.update({

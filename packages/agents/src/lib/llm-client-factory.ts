@@ -20,6 +20,7 @@ import { getApiKey, type ApiKeyProvider } from './get-api-key.js';
 import {
   loadModelAssignment,
   type LoadModelAssignmentDeps,
+  type ReasoningEffort,
 } from './load-model-assignment.js';
 import {
   withTokenLogging,
@@ -38,7 +39,7 @@ export interface CreateAgentClientDeps {
    * モデル割当を DB から解決せず、この provider/model を直接使う。
    * モデル比較(バエオフ)で「同じ役割・プロンプトを別モデルで走らせる」ために使用。
    */
-  assignmentOverride?: { provider: string; model: string };
+  assignmentOverride?: { provider: string; model: string; reasoningEffort?: ReasoningEffort | null };
   /**
    * true のとき、web_search server tool を積む役割 (marketer 等) でも
    * 純正 web_search を積まない素の `AISdkClient` を返す。
@@ -68,7 +69,11 @@ export async function createAgentClient(
   const fetchKey = deps.getApiKey ?? getApiKey;
 
   const assignment = deps.assignmentOverride
-    ? { provider: deps.assignmentOverride.provider, model: deps.assignmentOverride.model }
+    ? {
+        provider: deps.assignmentOverride.provider,
+        model: deps.assignmentOverride.model,
+        reasoningEffort: deps.assignmentOverride.reasoningEffort ?? null,
+      }
     : await load(role, genre, deps.loadAssignmentDeps);
   assertSupportedProvider(assignment.provider);
 
@@ -83,6 +88,8 @@ export async function createAgentClient(
         provider: assignment.provider,
         model: assignment.model,
         apiKey,
+        // 役割ごとの推論量 (GPT-6 sol/luna の reasoning effort)。null ならモデル既定。
+        reasoningEffort: assignment.reasoningEffort ?? null,
       });
 
   return withTokenLogging(raw, ctx, deps.withTokenLoggingDeps);

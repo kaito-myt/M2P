@@ -31,6 +31,8 @@ export const PipelineNoteWriterBodyPayloadSchema = z.object({
   lead: z.string().min(1),
   headings: z.array(z.string().min(1)).min(1),
   feedback: z.array(z.string().max(2000)).max(20).optional(),
+  /** F-ANP-44: judge 差し戻し回数。body → editor → eyecatch → judge へ持ち回る。 */
+  retry_count: z.number().int().min(0).default(0),
 });
 export type PipelineNoteWriterBodyPayload = z.infer<typeof PipelineNoteWriterBodyPayloadSchema>;
 
@@ -137,7 +139,14 @@ export async function runPipelineNoteWriterBody(
       details: { issues: parsed.error.issues },
     });
   }
-  const { note_article_id: noteArticleId, job_id: jobId, lead, headings, feedback } = parsed.data;
+  const {
+    note_article_id: noteArticleId,
+    job_id: jobId,
+    lead,
+    headings,
+    feedback,
+    retry_count: retryCount,
+  } = parsed.data;
 
   const log = deps.logger ?? createLogger(`worker.${PIPELINE_NOTE_WRITER_BODY_TASK_NAME}`);
   const prisma = deps.prisma ?? (defaultPrisma as unknown as PipelineNoteWriterBodyPrisma);
@@ -276,12 +285,12 @@ export async function runPipelineNoteWriterBody(
         kind: PIPELINE_NOTE_EDITOR_TASK_NAME,
         status: 'queued',
         parent_job_id: jobId,
-        payload_json: { note_article_id: noteArticleId },
+        payload_json: { note_article_id: noteArticleId, retry_count: retryCount },
       },
     });
     await addJob(
       PIPELINE_NOTE_EDITOR_TASK_NAME,
-      { note_article_id: noteArticleId, job_id: childJob.id },
+      { note_article_id: noteArticleId, job_id: childJob.id, retry_count: retryCount },
       { maxAttempts: 3 },
     );
 

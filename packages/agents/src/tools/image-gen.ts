@@ -59,6 +59,9 @@ export interface GenerateImageResult {
   costJpy: number;
   usage: {
     imageCount: number;
+    /** トークン課金のプロバイダ (Google 等) のみ設定。OpenAI は枚数課金なので未設定。 */
+    inputTokens?: number;
+    outputTokens?: number;
   };
 }
 

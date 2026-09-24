@@ -33,7 +33,7 @@ const ESTIMATE_SEC = 45;
 const POLICY_MAX = 3000;
 const em = messages.accounts.editorial;
 
-const SECTION_ROWS: Record<EditorialSectionKey, number> = { themes: 4, format: 6, style_rules: 5, cta: 3, quality: 6, other: 4 };
+const SECTION_ROWS: Record<EditorialSectionKey, number> = { themes: 4, format: 6, style_rules: 5, cta: 3, quality: 6, seo: 5, other: 4 };
 
 export function EditorialPanel({ noteAccountId, initial }: { noteAccountId: string; initial: AccountProfileState }) {
   const [state, setState] = useState<AccountProfileState>(initial);

@@ -797,6 +797,8 @@ model ModelAssignment {
   genre        String? // null = 全ジャンル既定
   provider     String
   model        String
+  // 推論モデル (OpenAI GPT-6 系等) の思考量。null = モデル既定。none|low|medium|high|max
+  reasoning_effort String?
   status       String    @default("active") // active | archived
   activated_at DateTime  @default(now())
   archived_at  DateTime?
@@ -1628,6 +1630,12 @@ model NoteArticle {
   paywall_line_pos     Int?
   membership_magazine  String?
   eyecatch_r2_key      String?
+  // F-ANP-42 note 内 SEO: anp.seo エージェントの出力 (keywords / meta / 内部リンク等)
+  seo_json             Json?
+  // F-ANP-41 アイキャッチに焼き込む短いコピー (画像 AI には描かせず実フォントで合成)
+  eyecatch_copy        String?
+  eyecatch_sub         String?
+  eyecatch_alt         String?
   status               String    @default("queued") // queued|writing|editing|eyecatch|judging|ready|published|failed|cancelled
   publish_status       String    @default("draft")  // draft | published
   note_url             String?

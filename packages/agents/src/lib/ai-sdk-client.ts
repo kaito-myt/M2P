@@ -31,6 +31,11 @@ export interface AISdkClientOptions {
   provider: AISdkProvider;
   model: string;
   apiKey: string;
+  /**
+   * 推論モデルの思考量 (model_assignments.reasoning_effort)。
+   * OpenAI GPT-6 系 (sol/luna/astra) と gpt-5 系に効く。null/undefined ならモデル既定。
+   */
+  reasoningEffort?: 'none' | 'low' | 'medium' | 'high' | 'max' | null;
 }
 
 interface RetryPolicy {
@@ -69,6 +74,19 @@ function makeModel(opts: AISdkClientOptions): LanguageModel {
       throw new ConfigError(`unsupported provider: ${String(exhaustive)}`);
     }
   }
+}
+
+/**
+ * 役割ごとの推論量を provider 固有オプションへ変換する。
+ * OpenAI の reasoning models は `providerOptions.openai.reasoningEffort` を見る。
+ * Anthropic / Google は本値を使わない (それぞれ別concept なので無視する)。
+ */
+export function buildProviderOptions(
+  provider: AISdkProvider,
+  reasoningEffort: AISdkClientOptions['reasoningEffort'],
+): Record<string, Record<string, string>> | undefined {
+  if (!reasoningEffort || provider !== 'openai') return undefined;
+  return { openai: { reasoningEffort } };
 }
 
 type LLMMessageImage = NonNullable<LLMCompleteArgs['messages'][number]['images']>[number];
@@ -164,6 +182,7 @@ export class AISdkClient implements LLMClient {
   readonly #provider: AISdkProvider;
   readonly #model: string;
   readonly #apiKey: string;
+  readonly #reasoningEffort: AISdkClientOptions['reasoningEffort'];
 
   constructor(opts: AISdkClientOptions) {
     if (!opts.apiKey) throw new ConfigError('AISdkClient: apiKey is required');
@@ -171,6 +190,7 @@ export class AISdkClient implements LLMClient {
     this.#provider = opts.provider;
     this.#model = opts.model;
     this.#apiKey = opts.apiKey;
+    this.#reasoningEffort = opts.reasoningEffort ?? null;
   }
 
   get provider(): AISdkProvider {
@@ -190,6 +210,8 @@ export class AISdkClient implements LLMClient {
     const { system, rest } = splitMessages(args.messages);
 
     const usePromptCaching = this.#provider === 'anthropic' && args.enablePromptCaching === true;
+    // 役割ごとの推論量 (GPT-6 sol/luna 等)。provider が対応しない場合は undefined。
+    const providerOptions = buildProviderOptions(this.#provider, this.#reasoningEffort);
 
     const run = async (): Promise<LLMCompleteResult<T>> => {
       if (args.responseSchema) {
@@ -204,6 +226,7 @@ export class AISdkClient implements LLMClient {
               ? { maxOutputTokens: args.maxOutputTokens }
               : {}),
             ...(args.temperature !== undefined ? { temperature: args.temperature } : {}),
+            ...(providerOptions !== undefined ? { providerOptions } : {}),
             maxRetries: 0,
           };
         } else {
@@ -216,6 +239,7 @@ export class AISdkClient implements LLMClient {
               ? { maxOutputTokens: args.maxOutputTokens }
               : {}),
             ...(args.temperature !== undefined ? { temperature: args.temperature } : {}),
+            ...(providerOptions !== undefined ? { providerOptions } : {}),
             maxRetries: 0,
           };
         }
@@ -245,6 +269,7 @@ export class AISdkClient implements LLMClient {
             ? { maxOutputTokens: args.maxOutputTokens }
             : {}),
           ...(args.temperature !== undefined ? { temperature: args.temperature } : {}),
+          ...(providerOptions !== undefined ? { providerOptions } : {}),
           maxRetries: 0,
         };
       } else {
@@ -257,6 +282,7 @@ export class AISdkClient implements LLMClient {
             ? { maxOutputTokens: args.maxOutputTokens }
             : {}),
           ...(args.temperature !== undefined ? { temperature: args.temperature } : {}),
+          ...(providerOptions !== undefined ? { providerOptions } : {}),
           maxRetries: 0,
         };
       }

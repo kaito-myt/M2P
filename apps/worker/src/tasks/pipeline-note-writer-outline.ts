@@ -33,6 +33,13 @@ export const PIPELINE_NOTE_WRITER_OUTLINE_TASK_NAME = 'pipeline.note.writer.outl
 export const PipelineNoteWriterOutlinePayloadSchema = z.object({
   note_article_id: z.string().min(1),
   job_id: z.string().min(1),
+  /**
+   * F-ANP-44: judge が「低スコア (< 70)」と判定したときの差し戻しコメント。
+   * 構成からやり直すため outline→body へそのまま forward する。
+   */
+  feedback: z.array(z.string().max(2000)).max(20).optional(),
+  /** judge の RETRY_LIMIT 判定用。writer から judge まで持ち回る。 */
+  retry_count: z.number().int().min(0).default(0),
 });
 export type PipelineNoteWriterOutlinePayload = z.infer<
   typeof PipelineNoteWriterOutlinePayloadSchema
@@ -124,7 +131,12 @@ export async function runPipelineNoteWriterOutline(
       details: { issues: parsed.error.issues },
     });
   }
-  const { note_article_id: noteArticleId, job_id: jobId } = parsed.data;
+  const {
+    note_article_id: noteArticleId,
+    job_id: jobId,
+    feedback,
+    retry_count: retryCount,
+  } = parsed.data;
 
   const log = deps.logger ?? createLogger(`worker.${PIPELINE_NOTE_WRITER_OUTLINE_TASK_NAME}`);
   const prisma = deps.prisma ?? (defaultPrisma as unknown as PipelineNoteWriterOutlinePrisma);
@@ -224,6 +236,8 @@ export async function runPipelineNoteWriterOutline(
           note_article_id: noteArticleId,
           lead: outline.lead,
           headings: outline.headings,
+          ...(feedback && feedback.length > 0 ? { feedback } : {}),
+          retry_count: retryCount,
         },
       },
     });
@@ -234,6 +248,8 @@ export async function runPipelineNoteWriterOutline(
         job_id: childJob.id,
         lead: outline.lead,
         headings: outline.headings,
+        ...(feedback && feedback.length > 0 ? { feedback } : {}),
+        retry_count: retryCount,
       },
       { maxAttempts: 3 },
     );

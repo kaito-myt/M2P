@@ -94,6 +94,8 @@ const SAMPLE_RESULT: GenerateNoteEyecatchResult = {
   r2Key: 'note/art1/eyecatch.jpg',
   promptUsed: 'prompt',
   styleKey: 'flat_editorial',
+  composedText: true,
+  alt: 'alt',
 };
 
 describe('pipeline.note.eyecatch', () => {

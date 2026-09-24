@@ -321,6 +321,7 @@ function buildDeps(
         provider: entry.provider,
         model: entry.model,
         genre,
+        reasoningEffort: null,
       };
       return result;
     }) as unknown as PipelineBookKickoffDeps['loadModelAssignment'],

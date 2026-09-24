@@ -15,6 +15,10 @@ import { createLogger, type Logger } from '@a2p/contracts/logger';
 import { prisma as defaultPrisma } from '@a2p/db';
 
 import { applyNoteArticleCostFromJob, type NoteArticleCostPrisma } from './lib/note-article-cost.js';
+import {
+  runNoteSeoStep as defaultRunNoteSeoStep,
+  type NoteSeoStepPrisma,
+} from './lib/note-seo-step.js';
 import type { NoteArticleRepo } from './lib/note-article-repo.js';
 import { PIPELINE_NOTE_JUDGE_TASK_NAME } from './pipeline-note-judge.js';
 
@@ -22,6 +26,10 @@ import { PIPELINE_NOTE_JUDGE_TASK_NAME } from './pipeline-note-judge.js';
  * `pipeline.note.eyecatch` タスク (docs/11-anp-design.md §7, F-ANP-14).
  *
  * note 記事のアイキャッチ画像を生成し R2 に保存、`pipeline.note.judge` を自動連結する。
+ *
+ * F-ANP-42: 画像を作る前に **note 内 SEO (anp.seo)** を挟み、完成原稿からタイトル/リード/
+ * 見出し/ハッシュタグ/アイキャッチのコピーを決める。ここで決めたコピーを画像に焼き込むため
+ * 同じタスク内で行う (SEO が失敗しても画像生成は続行する = ベストエフォート)。
  */
 
 export const PIPELINE_NOTE_EYECATCH_TASK_NAME = 'pipeline.note.eyecatch';
@@ -99,8 +107,14 @@ export interface PipelineNoteEyecatchPrisma {
   noteAccount: {
     findUnique: (args: {
       where: { id: string };
-      select: { id: true; niche: true; editorial_policy?: true };
-    }) => Promise<{ id: string; niche: string; editorial_policy?: string | null } | null>;
+      select: { id: true; niche: true; editorial_policy?: true; tone?: true; target_reader?: true };
+    }) => Promise<{
+      id: string;
+      niche: string;
+      editorial_policy?: string | null;
+      tone?: string | null;
+      target_reader?: string | null;
+    } | null>;
   };
   noteTheme: {
     findUnique: (args: {
@@ -122,6 +136,8 @@ export interface PipelineNoteEyecatchDeps {
   generateEyecatch?: (input: GenerateNoteEyecatchInput) => Promise<GenerateNoteEyecatchResult>;
   /** F-ANP-14b: 直近の画風キーを取得する (既定は同一アカウントの直近 job の result_json から)。 */
   recentStyleKeys?: (noteAccountId: string) => Promise<string[]>;
+  /** F-ANP-42: note 内 SEO ステップ (テスト差し替え用)。 */
+  runSeoStep?: typeof defaultRunNoteSeoStep;
   acquireLock?: typeof defaultAcquireNoteLock;
   releaseLock?: typeof defaultReleaseNoteLock;
   now?: () => Date;
@@ -197,7 +213,7 @@ export async function runPipelineNoteEyecatch(
     } else {
       const account = await prisma.noteAccount.findUnique({
         where: { id: article.note_account_id },
-        select: { id: true, niche: true, editorial_policy: true },
+        select: { id: true, niche: true, editorial_policy: true, tone: true, target_reader: true },
       });
       if (!account) {
         throw new NotFoundError(`NoteAccount not found: ${article.note_account_id}`, {
@@ -214,13 +230,42 @@ export async function runPipelineNoteEyecatch(
         ? await deps.recentStyleKeys(article.note_account_id).catch(() => [])
         : await defaultRecentStyleKeys(prisma, article.note_account_id).catch(() => []);
 
+      // F-ANP-42: 画像を作る前に note 内 SEO。タイトル/リード/見出し/ハッシュタグを確定し、
+      // アイキャッチに焼き込むキャッチコピーを受け取る (失敗しても続行)。
+      const runSeoStep = deps.runSeoStep ?? defaultRunNoteSeoStep;
+      const seo = await runSeoStep(
+        prisma as unknown as NoteSeoStepPrisma,
+        {
+          noteArticleId,
+          jobId,
+          noteAccountId: article.note_account_id,
+          currentTitle: article.title,
+          hook: theme?.hook ?? null,
+          account: {
+            niche: account.niche,
+            tone: account.tone ?? null,
+            target_reader: account.target_reader ?? null,
+            editorial_policy: account.editorial_policy ?? null,
+          },
+        },
+        { logger: log },
+      ).catch((seoErr: unknown) => {
+        log.warn(
+          { task: PIPELINE_NOTE_EYECATCH_TASK_NAME, jobId, noteArticleId, err: seoErr },
+          'note SEO step failed — continuing without it',
+        );
+        return { applied: false, title: article.title, eyecatchCopy: null, eyecatchSub: null };
+      });
+
       const result = await generateEyecatch({
         noteArticleId,
         jobId,
-        title: article.title,
-        hook: theme?.hook ?? article.title,
+        title: seo.title,
+        hook: theme?.hook ?? seo.title,
         niche: account.niche,
         recentStyleKeys: recent,
+        ...(seo.eyecatchCopy ? { eyecatchCopy: seo.eyecatchCopy } : {}),
+        ...(seo.eyecatchSub ? { eyecatchSub: seo.eyecatchSub } : {}),
         ...(account.editorial_policy ? { editorialPolicy: account.editorial_policy } : {}),
       });
       r2Key = result.r2Key;

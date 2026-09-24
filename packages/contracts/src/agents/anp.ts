@@ -217,8 +217,26 @@ export const NoteJudgeOutputSchema = z.object({
 });
 export type NoteJudgeOutput = z.infer<typeof NoteJudgeOutputSchema>;
 
-/** judge 合格ライン (docs/11 §7)。A2P Judge の 80 点基準を踏襲。 */
-export const NOTE_JUDGE_PASS_THRESHOLD = 80;
+/**
+ * judge 合格ライン (docs/11 §7)。
+ * F-ANP-44 (2026-09-24): 運営者の設計方針
+ *   85 点以上 → 公開 / 70〜84 → 校閲 (editor) へ / 69 以下 → 構成からやり直し (writer)
+ * に合わせて 80 → 85 に引き上げ、低スコア帯の差し戻し先を分けた。
+ */
+export const NOTE_JUDGE_PASS_THRESHOLD = 85;
+/** これ未満は「校閲では直らない」とみなし、構成 (outline) から書き直す。 */
+export const NOTE_JUDGE_REWRITE_THRESHOLD = 70;
+
+/** judge スコアから次の工程を決める (docs/11 §7, F-ANP-44)。 */
+export function routeByJudgeScore(
+  scoreTotal: number,
+  retryCount: number,
+  retryLimit: number,
+): 'ready' | 'editor' | 'writer' | 'needs_human_review' {
+  if (scoreTotal >= NOTE_JUDGE_PASS_THRESHOLD) return 'ready';
+  if (retryCount >= retryLimit) return 'needs_human_review';
+  return scoreTotal < NOTE_JUDGE_REWRITE_THRESHOLD ? 'writer' : 'editor';
+}
 
 // ---------------------------------------------------------------------------
 // F-ANP-30 — note 記事の SNS 告知投稿 (role='anp.promo')
@@ -638,7 +656,7 @@ export type NoteAccountProfileOutput = z.infer<typeof NoteAccountProfileOutputSc
  * DB (`note_accounts.editorial_policy`) とプロンプト注入は従来どおり 1 本のテキストで、
  * `composeEditorialPolicy` が「【見出し】」付きで連結し、`parseEditorialPolicy` が UI 用に分割する。
  */
-export const EDITORIAL_SECTION_KEYS = ['themes', 'format', 'style_rules', 'cta', 'quality', 'other'] as const;
+export const EDITORIAL_SECTION_KEYS = ['themes', 'format', 'style_rules', 'cta', 'quality', 'seo', 'other'] as const;
 export type EditorialSectionKey = (typeof EDITORIAL_SECTION_KEYS)[number];
 
 export const EDITORIAL_SECTION_HEADINGS: Record<EditorialSectionKey, string> = {
@@ -647,6 +665,7 @@ export const EDITORIAL_SECTION_HEADINGS: Record<EditorialSectionKey, string> = {
   style_rules: '文末表現・禁止事項',
   cta: 'CTA',
   quality: '品質判定項目',
+  seo: 'SEO対策',
   other: 'その他',
 };
 
@@ -655,6 +674,12 @@ export const NoteEditorialSectionsSchema = z.object({
   format: z.string().max(1500).default(''),
   style_rules: z.string().max(1500).default(''),
   cta: z.string().max(800).default(''),
+  /**
+   * F-ANP-42: note 内 SEO の方針 (運営者要望 2026-09-24「記事の方針のところに SEO 対策という
+   * 項目もつけましょうか」)。狙うキーワード領域・よく使うハッシュタグ・避ける語などを書くと
+   * `anp.seo` がタイトル/リード/タグを決めるときの制約として使う。
+   */
+  seo: z.string().max(1500).default(''),
   /** 品質判定 (anp.judge) が減点基準として使う項目 (運営者要望 2026-09-22「品質判定項目も設けましょうか」)。 */
   quality: z.string().max(1500).default(''),
   other: z.string().max(2000).default(''),
@@ -662,10 +687,10 @@ export const NoteEditorialSectionsSchema = z.object({
 export type NoteEditorialSections = z.infer<typeof NoteEditorialSectionsSchema>;
 
 export function emptyEditorialSections(): NoteEditorialSections {
-  return { themes: '', format: '', style_rules: '', cta: '', quality: '', other: '' };
+  return { themes: '', format: '', style_rules: '', cta: '', quality: '', seo: '', other: '' };
 }
 
-/** 5 区分 → 1 本のテキスト (空の区分は出さない)。全て空なら ''。 */
+/** 各区分 → 1 本のテキスト (空の区分は出さない)。全て空なら ''。 */
 export function composeEditorialPolicy(sections: Partial<NoteEditorialSections>): string {
   const parts: string[] = [];
   for (const key of EDITORIAL_SECTION_KEYS) {
@@ -684,6 +709,7 @@ const HEADING_TO_KEY: Record<string, EditorialSectionKey> = Object.fromEntries(
 export function classifyEditorialLine(line: string): EditorialSectionKey {
   const m = /^[・\-*]?\s*[【\[]([^】\]]+)[】\]]/.exec(line.trim());
   const label = m ? m[1]! : line.slice(0, 24);
+  if (/SEO|検索|キーワード|ハッシュタグ|タグ/i.test(label)) return 'seo';
   if (/品質|減点|判定|チェック|審査/.test(label)) return 'quality';
   if (/CTA|導線|フォロー|次に読む/i.test(label)) return 'cta';
   if (/語尾|人称|禁止|表現|文末|口調|呼びかけ|NG/.test(label)) return 'style_rules';
@@ -704,7 +730,7 @@ export function parseEditorialPolicy(text: string | null | undefined): NoteEdito
   const hasHeadings = lines.some((l) => HEADING_TO_KEY[l.trim().replace(/^【|】$/g, '')] !== undefined && /^【.+】$/.test(l.trim()));
   if (hasHeadings) {
     let current: EditorialSectionKey = 'other';
-    const buckets: Record<EditorialSectionKey, string[]> = { themes: [], format: [], style_rules: [], cta: [], quality: [], other: [] };
+    const buckets: Record<EditorialSectionKey, string[]> = { themes: [], format: [], style_rules: [], cta: [], quality: [], seo: [], other: [] };
     for (const raw of lines) {
       const t = raw.trim();
       const heading = /^【(.+)】$/.exec(t);
@@ -725,7 +751,7 @@ export function parseEditorialPolicy(text: string | null | undefined): NoteEdito
     if (/^[・\-*]/.test(t.trim()) || chunks.length === 0) chunks.push(t);
     else chunks[chunks.length - 1] = `${chunks[chunks.length - 1]}\n${t}`;
   }
-  const buckets: Record<EditorialSectionKey, string[]> = { themes: [], format: [], style_rules: [], cta: [], quality: [], other: [] };
+  const buckets: Record<EditorialSectionKey, string[]> = { themes: [], format: [], style_rules: [], cta: [], quality: [], seo: [], other: [] };
   for (const c of chunks) buckets[classifyEditorialLine(c)].push(c);
   for (const key of EDITORIAL_SECTION_KEYS) out[key] = buckets[key].join('\n').trim();
   return out;
@@ -741,3 +767,109 @@ export const NoteAccountEditorialOutputSchema = z.object({
   rationale: z.string().max(1000).optional(),
 });
 export type NoteAccountEditorialOutput = z.infer<typeof NoteAccountEditorialOutputSchema>;
+
+// ---------------------------------------------------------------------------
+// F-ANP-42 — note 内 SEO + クリックされるタイトル (role='anp.seo')
+// ---------------------------------------------------------------------------
+// 運営者要望「note内でのSEO対策も自動でやってくれるように」+「タイトルとアイキャッチが
+// 読者の目を引くようなものではないからもっと工夫して」。完成原稿を読んでから
+// タイトル/リード/キーワード/ハッシュタグ/見出し/アイキャッチのコピーを一括で決める。
+//
+// note の仕様上の制約 (2026-09-24 実地確認):
+//  - meta description は編集できない → **リード文が検索結果の説明になる** ので、
+//    リードは「結論 + 読むと何が分かるか」を 120 字前後で書く。
+//  - 公開設定画面で設定できるのは **ハッシュタグ (最大 5 個程度を推奨)**。
+//  - 記事 URL は note 側が採番する (スラッグ最適化は不可)。
+
+export const NoteSeoHeadingFixSchema = z.object({
+  /** 本文中の既存見出し行 (## / ### を除いたテキスト)。完全一致で置換する。 */
+  original: z.string().min(1).max(120),
+  /** キーワードを含んだ改善後の見出し。 */
+  improved: z.string().min(1).max(120),
+});
+export type NoteSeoHeadingFix = z.infer<typeof NoteSeoHeadingFixSchema>;
+
+export const NoteSeoInputSchema = z.object({
+  note_article_id: z.string().min(1),
+  job_id: z.string().optional(),
+  account: z.object({
+    niche: z.string().min(1),
+    target_reader: z.string().nullable().optional(),
+    tone: z.string().nullable().optional(),
+    editorial_policy: z.string().nullable().optional(),
+  }),
+  current_title: z.string().min(1),
+  hook: z.string().nullable().optional(),
+  body_md: z.string().min(1),
+  /** 同じアカウントの公開済み記事 (内部リンク候補)。 */
+  published: z
+    .array(z.object({ title: z.string().min(1), note_url: z.string().min(1) }))
+    .max(20)
+    .default([]),
+  /** 直近で使ったタイトル (言い回しの重複を避ける)。 */
+  recent_titles: z.array(z.string()).max(20).default([]),
+});
+export type NoteSeoInput = z.infer<typeof NoteSeoInputSchema>;
+
+export const NoteSeoOutputSchema = z.object({
+  /** 30 文字前後・主要キーワードを前半に置いたクリックされるタイトル。 */
+  title: z.string().min(6).max(70),
+  /** 代替案 (UI 表示用)。 */
+  title_alternatives: z.array(z.string().min(6).max(70)).max(4).default([]),
+  /** 検索結果の説明文になるリード (結論先出し・120 字前後)。 */
+  lead: z.string().min(20).max(400),
+  /** 主要キーワード (ロングテール 3 語以上を推奨)。 */
+  primary_keyword: z.string().min(2).max(60),
+  /** 共起語を含む関連キーワード。 */
+  keywords: z.array(z.string().min(1).max(60)).min(1).max(10),
+  /** note の公開設定で付けるハッシュタグ (# 無しで返す)。 */
+  hashtags: z.array(z.string().min(1).max(30)).min(1).max(5),
+  /** 見出しの改善案 (キーワードを含める / 見出しだけで要点が分かる)。 */
+  headings: z.array(NoteSeoHeadingFixSchema).max(12).default([]),
+  /** アイキャッチに焼き込むキャッチコピー (全角 8〜20 字)。 */
+  eyecatch_copy: z.string().min(2).max(24),
+  /** キャッチの下に置く 1 行 (任意・全角 24 字まで)。 */
+  eyecatch_sub: z.string().max(30).nullable().optional(),
+  /** 画像の代替テキスト。 */
+  eyecatch_alt: z.string().max(120).nullable().optional(),
+  /** 内部リンクとして本文末に添える公開済み記事の URL。 */
+  internal_links: z.array(z.string().min(1)).max(3).default([]),
+  /** なぜこのタイトルなのか (UI 表示・改善の記録用)。 */
+  rationale: z.string().max(600).optional(),
+});
+export type NoteSeoOutput = z.infer<typeof NoteSeoOutputSchema>;
+
+/**
+ * anp.seo の見出し改善を本文に適用する。`## 見出し` / `### 見出し` 行だけを
+ * 完全一致で置換するので、本文の他の部分は一切壊さない (LLM に本文を書き直させない)。
+ */
+export function applyHeadingFixes(bodyMd: string, fixes: readonly NoteSeoHeadingFix[]): string {
+  if (fixes.length === 0) return bodyMd;
+  const map = new Map<string, string>();
+  for (const f of fixes) {
+    const from = f.original.trim();
+    const to = f.improved.trim();
+    if (from.length > 0 && to.length > 0 && from !== to) map.set(from, to);
+  }
+  if (map.size === 0) return bodyMd;
+  return bodyMd
+    .split('\n')
+    .map((line) => {
+      const m = /^(#{1,4})\s+(.+?)\s*$/.exec(line);
+      if (!m) return line;
+      const replaced = map.get(m[2]!.trim());
+      return replaced ? `${m[1]!} ${replaced}` : line;
+    })
+    .join('\n');
+}
+
+/**
+ * 本文末に「関連記事」ブロックを付ける (note は URL を貼ると自動で記事カードになる)。
+ * 既に同じ URL がある場合は追加しない。
+ */
+export function appendInternalLinks(bodyMd: string, urls: readonly string[]): string {
+  const fresh = urls.map((u) => u.trim()).filter((u) => u.length > 0 && !bodyMd.includes(u));
+  if (fresh.length === 0) return bodyMd;
+  const block = ['', '## あわせて読みたい', ...fresh].join('\n');
+  return `${bodyMd.replace(/\s+$/, '')}\n${block}\n`;
+}

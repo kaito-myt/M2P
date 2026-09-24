@@ -704,6 +704,9 @@ model ModelAssignment {
   genre           String?  // null = 全ジャンル既定
   provider        String
   model           String
+  // F-ANP-43 (2026-09-24): 推論モデルの思考量。none|low|medium|high|max。null=モデル既定。
+  // AISdkClient が OpenAI の providerOptions.openai.reasoningEffort として渡す (他 provider は無視)。
+  reasoning_effort String?
   status          String   @default("active") // active | archived
   activated_at    DateTime @default(now())
   archived_at     DateTime?

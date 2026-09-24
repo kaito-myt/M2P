@@ -11,11 +11,11 @@ const NL = String.fromCharCode(10);
 
 describe('composeEditorialPolicy / parseEditorialPolicy (F-ANP-07b)', () => {
   it('round-trips sections with headings and skips empty ones', () => {
-    const text = composeEditorialPolicy({ themes: '・副業の最初の1万円', format: '', style_rules: '・です・ます調', cta: '', quality: '1) 出典なし', other: '' });
+    const text = composeEditorialPolicy({ themes: '・副業の最初の1万円', format: '', style_rules: '・です・ます調', cta: '', quality: '1) 出典なし', seo: '', other: '' });
     expect(text).toBe(['【主なテーマ】', '・副業の最初の1万円', '【文末表現・禁止事項】', '・です・ます調', '【品質判定項目】', '1) 出典なし'].join(NL));
-    expect(parseEditorialPolicy(text)).toEqual({ themes: '・副業の最初の1万円', format: '', style_rules: '・です・ます調', cta: '', quality: '1) 出典なし', other: '' });
+    expect(parseEditorialPolicy(text)).toEqual({ themes: '・副業の最初の1万円', format: '', style_rules: '・です・ます調', cta: '', quality: '1) 出典なし', seo: '', other: '' });
     expect(composeEditorialPolicy({})).toBe('');
-    expect(parseEditorialPolicy(null)).toEqual({ themes: '', format: '', style_rules: '', cta: '', quality: '', other: '' });
+    expect(parseEditorialPolicy(null)).toEqual({ themes: '', format: '', style_rules: '', cta: '', quality: '', seo: '', other: '' });
   });
 
   it('keeps multi-line bodies under a heading', () => {

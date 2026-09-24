@@ -12,3 +12,12 @@ export {
   type PromoContent,
   type PromoOptions,
 } from './compose-promo.js';
+export {
+  composeNoteEyecatch,
+  accentForNiche,
+  defaultEyecatchAlt,
+  NOTE_EYECATCH_WIDTH,
+  NOTE_EYECATCH_HEIGHT,
+  type NoteEyecatchText,
+  type NoteEyecatchOptions,
+} from './compose-note-eyecatch.js';

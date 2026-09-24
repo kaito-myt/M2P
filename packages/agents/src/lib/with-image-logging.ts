@@ -34,6 +34,10 @@ export interface ImageLoggingContext {
   jobId?: string;
   /** token_usage.role の上書き (既定 'thumbnail_image')。SNS アイコン/カバー生成等で使用。 */
   role?: string;
+  /** 画像プロバイダの上書き (既定 'openai')。Nano Banana 2 等を使う場合に 'google'。 */
+  provider?: string;
+  /** 画像モデルの上書き (既定 `IMAGE_MODEL`)。model_catalog の単価引きに使う。 */
+  model?: string;
 }
 
 interface TokenUsageCreateData {
@@ -90,6 +94,7 @@ export interface WithImageLoggingDeps {
     provider: string,
     model: string,
     imageCount: number,
+    tokens?: { inputTokens: number; outputTokens: number },
   ) => Promise<{ snapshot: Record<string, unknown>; costJpy: number | null }>;
 }
 
@@ -122,18 +127,36 @@ async function defaultFetchPriceSnapshot(
   model: string,
   imageCount: number,
   catalog?: ModelCatalogRepo,
+  tokens?: { inputTokens: number; outputTokens: number },
 ): Promise<{ snapshot: Record<string, unknown>; costJpy: number | null }> {
   if (!catalog) return { snapshot: {}, costJpy: null };
   try {
     const row = await catalog.findFirst({
       where: { provider, model, is_current: true },
       select: {
+        input_price_per_mtok_usd: true,
+        output_price_per_mtok_usd: true,
         image_price_per_image_usd: true,
         fx_rate_usd_jpy: true,
       },
     });
     if (!row) return { snapshot: {}, costJpy: null };
-    const pricePerImageUsd = toFiniteNumber(row.image_price_per_image_usd);
+    // Gemini (Nano Banana) は「画像 1 枚いくら」ではなく出力トークン課金なので、
+    // 枚数単価が無く token 実績があるときは input/output 単価で算出する。
+    const perImage = toFiniteNumber(row.image_price_per_image_usd);
+    if (perImage === null && tokens) {
+      const inUsd = toFiniteNumber((row as { input_price_per_mtok_usd?: unknown }).input_price_per_mtok_usd);
+      const outUsd = toFiniteNumber((row as { output_price_per_mtok_usd?: unknown }).output_price_per_mtok_usd);
+      const fx = toFiniteNumber(row.fx_rate_usd_jpy);
+      const snap: Record<string, unknown> = {};
+      if (inUsd !== null) snap.input_price_per_mtok_usd = inUsd;
+      if (outUsd !== null) snap.output_price_per_mtok_usd = outUsd;
+      if (fx !== null) snap.fx_rate_usd_jpy = fx;
+      if (inUsd === null || outUsd === null || fx === null) return { snapshot: snap, costJpy: null };
+      const usd = (tokens.inputTokens * inUsd + tokens.outputTokens * outUsd) / 1_000_000;
+      return { snapshot: snap, costJpy: usd * fx };
+    }
+    const pricePerImageUsd = perImage;
     const fxRate = toFiniteNumber(row.fx_rate_usd_jpy);
     const snapshot: Record<string, unknown> = {};
     if (pricePerImageUsd !== null) snapshot.image_price_per_image_usd = pricePerImageUsd;
@@ -169,9 +192,16 @@ export function withImageLogging(
   const catalogRepo = prismaClient.modelCatalog;
   const fetchSnapshot =
     deps.fetchPriceSnapshot ??
-    ((provider: string, model: string, imageCount: number) =>
-      defaultFetchPriceSnapshot(provider, model, imageCount, catalogRepo));
+    ((
+      provider: string,
+      model: string,
+      imageCount: number,
+      tokens?: { inputTokens: number; outputTokens: number },
+    ) => defaultFetchPriceSnapshot(provider, model, imageCount, catalogRepo, tokens));
   const role = ctx.role ?? ROLE;
+  // 画像プロバイダ/モデルは ctx で上書きできる (既定は OpenAI gpt-image-*)。
+  const provider = ctx.provider ?? PROVIDER;
+  const model = ctx.model ?? MODEL;
 
   return async function wrappedGenerateImage(
     args: GenerateImageArgs,
@@ -183,10 +213,18 @@ export function withImageLogging(
     // 2. token_usage INSERT — 失敗時は warn ログ
     let computedCostJpy = result.costJpy;
     try {
+      const tokens =
+        result.usage.inputTokens !== undefined || result.usage.outputTokens !== undefined
+          ? {
+              inputTokens: result.usage.inputTokens ?? 0,
+              outputTokens: result.usage.outputTokens ?? 0,
+            }
+          : undefined;
       const { snapshot, costJpy } = await fetchSnapshot(
-        PROVIDER,
-        MODEL,
+        provider,
+        model,
         result.usage.imageCount,
+        tokens,
       );
       if (costJpy !== null) computedCostJpy = costJpy;
 
@@ -195,11 +233,11 @@ export function withImageLogging(
           book_id: ctx.bookId ?? null,
           theme_session_id: ctx.themeSessionId ?? null,
           job_id: ctx.jobId ?? null,
-          provider: PROVIDER,
-          model: MODEL,
+          provider,
+          model,
           role,
-          input_tokens: 0,
-          output_tokens: 0,
+          input_tokens: result.usage.inputTokens ?? 0,
+          output_tokens: result.usage.outputTokens ?? 0,
           cached_input_tokens: 0,
           image_count: result.usage.imageCount,
           unit_price_snapshot: snapshot,
@@ -210,9 +248,9 @@ export function withImageLogging(
       logger.warn(
         {
           err,
-          role: ROLE,
-          provider: PROVIDER,
-          model: MODEL,
+          role,
+          provider,
+          model,
           bookId: ctx.bookId,
           jobId: ctx.jobId,
           imageCount: result.usage.imageCount,

@@ -11,6 +11,7 @@
  *   bash scripts/paperback/pb-env.sh apps/worker/node_modules/.bin/tsx scripts/anp/regen-eyecatch.mjs --article=<id>
  *   (TS を直接 import するため node ではなく tsx で実行する)
  *   環境変数: DBURL / R2_* / OPENAI_API_KEY (pb-env.sh が供給。OPENAI_API_KEY は Railway から export しておく)
+ *   DATABASE_URL は DBURL から自動で補う (withImageLogging が token_usage へ 1 行入れるため必須 — CLAUDE.md 規則 5)
  */
 import path from 'node:path';
 import { createRequire } from 'node:module';
@@ -26,6 +27,8 @@ const ACCOUNT = argOf('account');
 const ARTICLE = argOf('article');
 const LIMIT = Number(argOf('limit', '20'));
 const DRY = args.includes('--dry');
+// 画像生成は必ず token_usage に記録する (withImageLogging は既定 prisma を使うので DATABASE_URL が必要)。
+if (!process.env.DATABASE_URL && process.env.DBURL) process.env.DATABASE_URL = process.env.DBURL;
 
 const req = createRequire(path.join(ROOT, 'packages', 'storage') + path.sep);
 const { Client } = createRequire(path.join(ROOT, 'package.json'))(path.join(ROOT, 'node_modules/.pnpm/pg@8.21.0/node_modules/pg'));
@@ -36,7 +39,8 @@ async function loadAgents() {
   const style = await import(new URL('eyecatch-style.ts', base).href);
   const eyecatch = await import(new URL('eyecatch.ts', base).href);
   const imageGen = await import(pathToFileURL(path.join(ROOT, 'packages', 'agents', 'src', 'tools', 'image-gen.ts')).href);
-  return { style, eyecatch, imageGen };
+  const logging = await import(pathToFileURL(path.join(ROOT, 'packages', 'agents', 'src', 'lib', 'with-image-logging.ts')).href);
+  return { style, eyecatch, imageGen, logging };
 }
 
 async function main() {
@@ -44,7 +48,9 @@ async function main() {
     console.error('--account=<note_account_id> か --article=<note_article_id> を指定してください');
     process.exit(1);
   }
-  const { style, eyecatch, imageGen } = await loadAgents();
+  const { style, eyecatch, imageGen, logging } = await loadAgents();
+  // role を分けて記録し、通常パイプライン (anp.eyecatch) と再生成分を後から区別できるようにする。
+  const generateImage = logging.withImageLogging(imageGen.generateImage, { role: 'anp.eyecatch.regen' });
   const db = new Client({ connectionString: process.env.DBURL, ssl: { rejectUnauthorized: false } });
   await db.connect();
   const s3 = new S3Client({
@@ -77,7 +83,7 @@ async function main() {
     );
     console.log(`- ${r.id} style=${chosen.key} ${r.title.slice(0, 30)}`);
     if (DRY) continue;
-    const res = await imageGen.generateImage({ prompt, width: 1536, height: 1024, outputFormat: 'jpeg', outputCompression: 90 });
+    const res = await generateImage({ prompt, width: 1536, height: 1024, outputFormat: 'jpeg', outputCompression: 90 });
     const buf = res.images[0];
     if (!buf) {
       console.log('  画像が返らなかった — スキップ');

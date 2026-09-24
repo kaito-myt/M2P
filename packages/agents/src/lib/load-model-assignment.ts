@@ -19,9 +19,14 @@ import { ConfigError } from '@a2p/contracts/errors';
 import type { AgentRole, Genre } from '@a2p/contracts/agents';
 import { prisma as defaultPrisma } from '@a2p/db';
 
+/** 推論モデルの思考量 (OpenAI reasoning effort)。null/undefined = モデル既定。 */
+export type ReasoningEffort = 'none' | 'low' | 'medium' | 'high' | 'max';
+
 export interface LoadedAssignment {
   provider: string;
   model: string;
+  /** 役割ごとの推論量 (model_assignments.reasoning_effort)。未設定なら null。 */
+  reasoningEffort: ReasoningEffort | null;
   /** 解決に使われた assignment ID — 監査ログ等で使える。 */
   id: string;
   /** 解決に使われた genre (null = 全ジャンル既定 fallback)。 */
@@ -45,17 +50,28 @@ interface ModelAssignmentRepo {
       provider?: true;
       model?: true;
       genre?: true;
+      reasoning_effort?: true;
     };
   }): Promise<{
     id: string;
     provider: string;
     model: string;
     genre: string | null;
+    reasoning_effort?: string | null;
   } | null>;
 }
 
 export interface LoadModelAssignmentDeps {
   prisma?: { modelAssignment: ModelAssignmentRepo };
+}
+
+const EFFORTS = new Set<string>(['none', 'low', 'medium', 'high', 'max']);
+
+/** DB の自由入力を安全に絞る (未知の値はモデル既定=null に倒す)。 */
+export function normalizeEffort(value: string | null | undefined): ReasoningEffort | null {
+  if (!value) return null;
+  const v = value.trim().toLowerCase();
+  return EFFORTS.has(v) ? (v as ReasoningEffort) : null;
 }
 
 export async function loadModelAssignment(
@@ -77,7 +93,7 @@ export async function loadModelAssignment(
       OR: [{ genre }, { genre: null }],
     },
     orderBy: { genre: { sort: 'desc', nulls: 'last' } },
-    select: { id: true, provider: true, model: true, genre: true },
+    select: { id: true, provider: true, model: true, genre: true, reasoning_effort: true },
   });
 
   if (!row) {
@@ -94,5 +110,6 @@ export async function loadModelAssignment(
     provider: row.provider,
     model: row.model,
     genre: (row.genre as Genre | null) ?? null,
+    reasoningEffort: normalizeEffort(row.reasoning_effort),
   };
 }

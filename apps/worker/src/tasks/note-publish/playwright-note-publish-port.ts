@@ -74,6 +74,11 @@ export interface NoteArticleInput {
   existingNoteUrl?: string | null;
   /** ローカル tmp のアイキャッチ画像パス (無ければ画像挿入をスキップ)。 */
   eyecatchPath?: string | null;
+  /**
+   * F-ANP-42: 公開設定画面で付けるハッシュタグ (# 無し, 最大 5 個)。
+   * note のタグ検索とハッシュタグページからの流入を取るための SEO 施策。
+   */
+  hashtags?: string[];
 }
 
 export interface NotePublishArgs {
@@ -276,7 +281,8 @@ async function publishOne(args: NotePublishArgs): Promise<NotePublishResult> {
         return {
           ok: false,
           reason: 'blocked',
-          message: 'note の本人情報登録(KYC)が未完了のため有料記事を公開できません(note の設定で登録後に再実行してください。下書きは保存済み)',
+          message:
+            'note の本人情報登録(KYC)が未完了のため有料記事を公開できません(note の「設定 › お支払先 › お支払い口座」を登録後に再実行してください。下書きは保存済み)',
           noteUrl: draftEditUrl,
         };
       }
@@ -307,6 +313,18 @@ async function publishOne(args: NotePublishArgs): Promise<NotePublishResult> {
           noteUrl: draftEditUrl,
         };
       }
+    }
+
+    // [F-ANP-42] note 内 SEO: 公開設定画面でハッシュタグを付ける (入力欄は
+    // `input[placeholder="ハッシュタグを追加する"]`。2026-09-24 実 DOM 確認)。
+    const tags = (a.hashtags ?? []).filter((t) => t.trim().length > 0).slice(0, 5);
+    if (tags.length > 0) {
+      const added = await fillHashtags(page, tags).catch((err) => {
+        log.warn({ err: errMsg(err), articleId: a.id }, 'ハッシュタグ入力で例外 — タグ無しで続行');
+        return 0;
+      });
+      log.info({ articleId: a.id, requested: tags.length, added }, 'ハッシュタグ設定');
+      await screenshot(page, stageDir, `${a.id}-hashtags`);
     }
 
     const posted = await clickByText(page, '投稿する');
@@ -518,6 +536,37 @@ async function selectPaidAndCheckKyc(page: Page): Promise<boolean> {
   await page.waitForTimeout(2000);
   const bodyText: string = await page.locator('body').innerText().catch(() => '');
   return /本人情報の登録|本人情報の入力/.test(bodyText);
+}
+
+/**
+ * [F-ANP-42] 公開設定画面でハッシュタグを入力する。
+ *
+ * note の入力欄は placeholder「ハッシュタグを追加する」の text input で、
+ * 1 件ごとに Enter で確定する。付けられた件数を返す (0 なら欄が見つからなかった)。
+ * ハッシュタグは公開の必須条件ではないので、失敗しても投稿は続行する。
+ */
+async function fillHashtags(page: Page, tags: readonly string[]): Promise<number> {
+  const input = await page
+    .locator('input[placeholder="ハッシュタグを追加する"]')
+    .first()
+    .elementHandle({ timeout: 5000 })
+    .catch(() => null);
+  if (!input) return 0;
+  let added = 0;
+  for (const raw of tags) {
+    const tag = raw.replace(/^#/, '').trim();
+    if (tag.length === 0) continue;
+    try {
+      await input.click();
+      await input.type(tag, { delay: 30 });
+      await page.keyboard.press('Enter');
+      await page.waitForTimeout(600);
+      added += 1;
+    } catch {
+      break;
+    }
+  }
+  return added;
 }
 
 /**

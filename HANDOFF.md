@@ -15,6 +15,19 @@
    KDP は初回 OTP 再認証（LINE リレー or `kdp_auth_requests` 行を手動 fulfilled）。
    BW/Kobo/note のセッションは DB（app_settings / promotion_channel_settings）に暗号化保存済みなので端末非依存。
 
+## 2026-09-24 追加（タイトル/アイキャッチ/note SEO/モデル構成）
+- **F-ANP-41 アイキャッチ刷新**: 画像モデルを **Nano Banana 2 (google/gemini-3.1-flash-image)** に切替 (role=`anp.eyecatch` の割当で変更可)。
+  絵には文字を一切描かせず、キャッチコピーは `composeNoteEyecatch` (Noto Sans JP アウトライン, 1280×670) で焼き込む。実測 ¥0.5/枚 (旧 gpt-image-2 は ¥6.3)。
+- **F-ANP-42 note 内 SEO**: 新エージェント `anp.seo` (プロンプトは DB)。校閲後にタイトル/リード/見出し/ハッシュタグ/キーワード/内部リンク/
+  アイキャッチのコピーを決めて `note_articles` に反映。公開時に **note の公開設定でハッシュタグを自動入力**。
+  アカウント詳細「記事の方針」に **【SEO対策】区分**を追加 (ここの指示が anp.seo の最優先制約)。
+  note 仕様: meta description は編集不可 → **リードが検索結果の説明文**。記事 URL は note 採番。
+- **F-ANP-43 モデル構成**: `model_assignments.reasoning_effort` を追加。ANP は theme/outline/promo=GPT-6 Luna、strategist/judge/editor/seo=GPT-6 Sol、
+  writer=Claude Sonnet 5、eyecatch=Nano Banana 2。適用は `scripts/models/model-mix-2026-09-24.cjs`。
+  **`model_catalog` の Anthropic 単価が全て $10/$50 だった誤りを実単価に修正**（それまで Claude のコストは 2〜5 倍で表示されていた）。
+- **F-ANP-44 judge ルーティング**: 合格 85 点 / 70〜84 は校閲へ / 69 以下は構成 (writer.outline) からやり直し。
+- 本番反映済み: migration `20260924000000_model_effort_and_note_seo`、prompts (`anp.seo` v2 / `anp.theme` v2)、model_assignments 8 件、model_catalog 8 行。
+
 ## 2026-09-21（本機）で実施したこと
 運営者の依頼 5 件（Amazon Ads のパフォーマンス/コスト取込 / ANP の仕上げ / ANP メニューをサイドバーに / ANP ロゴ差し替え /
 ANP のアカウント戦略を AI に相談しながら策定）を実施。main に push 済み・本番デプロイ済み（下記「デプロイ結果」参照）。
@@ -152,7 +165,12 @@ ANP のアカウント戦略を AI に相談しながら策定）を実施。mai
 - 有料公開: アカウント設定「有料記事の自動公開」(既定 OFF) を ON にすると judge が paid を維持し、publish が有料切替→価格入力→投稿まで行う。
   KYC 未完了・価格欄未検出・有料ライン無しはすべて中断 (下書きは保存)。
 - アイキャッチ: 8 種の画風を記事ごとに決定的に振り分け (直近 3 件と重複回避)、AI っぽいモチーフを名指しで禁止。実生成で確認済み。
-- 既存記事のサムネは `scripts/anp/regen-eyecatch.mjs` で再生成できる。
+- 既存記事のサムネは `scripts/anp/regen-eyecatch.mjs` で再生成できる（2026-09-24 に両アカウント計 19 本を再生成済み。
+  note に公開済みの記事は note 側の画像が自動では差し替わらないため、必要なら note のエディタで貼り替える）。
+- **note の本人情報 (KYC) は両アカウントとも未完了** — `bash scripts/anp/note-kyc-recon.sh`（READ-ONLY 偵察）で確認した結果、
+  `https://note.com/settings/fee` の「お支払い口座」が **未登録**。この状態では有料記事を選ぶと note が本人情報の登録を求めるため、
+  「有料記事の自動公開」を ON にしても publish は `kyc_required` で中断して下書きを残す。運営者が口座登録を済ませてから ON にする。
+  既存 19 本は旧安全弁で `paid=false` / `paywall_line_pos=null` に確定済みなので遡及して有料化はできない（新規記事から有効）。
 
 ### 販促 SNS アカウントの連携（F-ANP-33, 2026-09-22）
 - `/promotion` 各媒体タブに「投稿先アカウント」カード。X は OAuth1 4 項目、IG/TikTok は Zernio 接続アカウントの選択。note アカウント別に

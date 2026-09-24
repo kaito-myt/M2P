@@ -88,7 +88,13 @@ export type AgentRole =
   // 投稿頻度/初回テーマ/アイコン・ヘッダー画像プロンプトを一括設計。sns_strategist の note 版)。
   | 'anp.strategist'
   // F-ANP-04 — note アカウント戦略の AI 相談 (チャット壁打ち + Tavily リサーチ → ブリーフ草案)。
-  | 'anp.consultant';
+  | 'anp.consultant'
+  // F-ANP-42 — note 内 SEO 担当。完成原稿からタイトル/リード/キーワード/ハッシュタグ/
+  // 見出し改善/アイキャッチのコピーを一括で決める (note は meta description を編集できず
+  // リード文が検索結果の説明になるため、リードも SEO の担当範囲に含める)。
+  | 'anp.seo'
+  // F-ANP-41 — アイキャッチの画像モデル割当 (LLM ではなく画像生成モデルを指す role)。
+  | 'anp.eyecatch';
 
 /**
  * マルチモーダル入力用の画像添付。`content` (テキスト) と併せてユーザーメッセージに付与する。

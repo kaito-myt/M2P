@@ -400,6 +400,56 @@ ANP の機能は A2P の対応機能を note 向けに写像したもの。**太
   が連結して保存（旧形式 `editorial_policy` 文字列の応答も `parseEditorialPolicy` で正規化）。`anp.judge` は
   【品質判定項目】がある場合「運営者の減点/差し戻し基準。該当すれば該当軸を減点し feedback に項目番号と理由」を明示注入。
   Vitest `packages/contracts/__tests__/anp-editorial.test.ts`。
+- **F-ANP-41 アイキャッチのコピー焼き込み＋Nano Banana 2（実装済み 2026-09-24）**: 運営者指摘「タイトルとアイキャッチが
+  読者の目を引くようなものではないからもっと工夫して」。絵だけでは小さなサムネイルで記事の中身が伝わらないため、
+  A2P の表紙と同じ **「絵は AI・文字は実フォント」** に切り替えた。
+  - 画像モデルは `model_assignments` の role=`anp.eyecatch` で切替。既定を **Nano Banana 2
+    (`google/gemini-3.1-flash-image`, 16:9)** に変更（`packages/agents/src/tools/image-gen-google.ts` を新設。
+    Gemini はトークン課金なので `withImageLogging` が input/output トークンから cost を算出する経路を追加）。
+    実測 1 枚 約 12 秒 / 約 ¥0.5（gpt-image-2 は約 ¥6.3）。
+  - 文字合成は `@a2p/output-image` の `composeNoteEyecatch`（1280×670、下から暗くするスクリム、
+    キャッチ最大 3 行の自動フィット、数字はアクセント色、ニッチのバッジ、Noto Sans JP アウトライン）。
+    キャッチ/サブは `anp.seo` が決め、`note_articles.eyecatch_copy` / `eyecatch_sub` / `eyecatch_alt` に保存する。
+  - 画像プロンプトに「下 1/3 は文字を載せるので静かな面にする」「文字・数字・ロゴを一切描かない（英語でも明記）」を追加。
+- **F-ANP-42 note 内 SEO（実装済み 2026-09-24）**: 運営者要望「note内でのSEO対策も自動でやってくれるようにして」
+  （参考 https://forcle.co.jp/blog/seo-note/）。新エージェント **`anp.seo`**（プロンプトは DB `prompts.role='anp.seo'`）を
+  校閲後・アイキャッチ生成前に実行する（`pipeline.note.eyecatch` 内の best-effort ステップ
+  `apps/worker/src/tasks/lib/note-seo-step.ts`。失敗しても記事は従来どおり進む）。
+  - 出力: タイトル（30 字前後・キーワードを前半・本文にある具体的な数字を 1 つ）、別案 2〜3、
+    リード（120 字前後）、primary_keyword、keywords、hashtags 5 個、見出し改善（完全一致置換のみ）、
+    アイキャッチのコピー/サブ/alt、内部リンク（提示候補の URL だけ許可＝捏造防止）。
+  - 反映: `title` / `lead` / `body_md`（`applyHeadingFixes` + `appendInternalLinks`）/ `seo_json` /
+    `eyecatch_copy|sub|alt`。公開時は `seo_json.hashtags` を **note の公開設定画面**で入力する
+    （`input[placeholder="ハッシュタグを追加する"]`、2026-09-24 実 DOM 確認。失敗しても投稿は続行）。
+  - **note の仕様（実地確認）**: meta description は編集できない → **リード文が検索結果の説明文**になるので
+    リードも SEO の担当範囲。公開設定で設定できるのはハッシュタグのみ。記事 URL は note 採番でスラッグ最適化不可。
+  - アカウント詳細の「記事の方針」に **【SEO対策】区分**を追加（運営者要望）。ここに書いた狙うキーワード領域・
+    定番ハッシュタグ・避ける語は `anp.seo` に「必ず従う」制約として最優先で渡す。
+  - タイトルは企画時（`anp.theme` v2）と執筆後（`anp.seo`）の 2 段構え。企画時は仮題、最終タイトルは
+    完成原稿を読んでから付け直す（具体的な数字を入れられるのは執筆後だけのため）。
+- **F-ANP-43 役割ごとのモデル/推論量（実装済み 2026-09-24）**: 運営者指示「モデルの構成はこれにして」。
+  `model_assignments.reasoning_effort`（none|low|medium|high|max）を追加し、`AISdkClient` が OpenAI の
+  `providerOptions.openai.reasoningEffort` として渡す（Anthropic/Google では無視）。割当は
+  `scripts/models/model-mix-2026-09-24.cjs`（dry-run→--apply、backup＋audit_log）:
+  | role | provider/model | effort | 意図 |
+  |---|---|---|---|
+  | anp.theme | openai/gpt-6-luna | low | 定型・高頻度（Sol の 1/20 単価） |
+  | anp.outline | openai/gpt-6-luna | medium | 構成（構造化出力で十分） |
+  | anp.strategist | openai/gpt-6-sol | high | 最上流の設計（毎記事は走らない） |
+  | anp.writer | anthropic/claude-sonnet-5 | — | 長文執筆（日本語の読み味） |
+  | anp.judge | openai/gpt-6-sol | high | **書いた Claude と別系統で採点**（自己採点の甘さを回避） |
+  | anp.editor | openai/gpt-6-sol | medium | 校閲（judge と系統を揃える） |
+  | anp.seo | openai/gpt-6-sol | medium | タイトル/SEO（1 記事 1 回） |
+  | anp.promo | openai/gpt-6-luna | low | 告知文（短文・高頻度） |
+  | anp.eyecatch | google/gemini-3.1-flash-image | — | アイキャッチ（Nano Banana 2） |
+  あわせて `model_catalog` の **Anthropic 単価が全モデル $10/$50 だった誤り**を実単価に修正
+  （opus-5/4.8=$5/$25、sonnet-5=$2/$10、sonnet-4.6=$3/$15、haiku-4.5=$1/$5）＋ GPT-6 系 3 行を追加
+  （`scripts/models/catalog-fix-2026-09-24.cjs`）。これを直すまで Claude のコストは実際の 2〜5 倍で表示されていた。
+- **F-ANP-44 judge のスコア別ルーティング（実装済み 2026-09-24）**: 合格ラインを 80 → **85** に引き上げ、
+  `routeByJudgeScore(score, retryCount, limit)` で **85 以上=公開 / 70〜84=校閲 (anp.editor) / 69 以下=構成から
+  やり直し (pipeline.note.writer.outline)** に分岐（差し戻し上限 1 回は従来どおり、超えたら needs_human_review）。
+  低スコアは「文章の粗」ではなく「切り口の問題」なので校閲では直らない、という運営者の設計に合わせた。
+  outline/body は `feedback` と `retry_count` を受け取って judge まで持ち回る。
 - **F-ANP-16b 有料記事の自動公開（実装済み 2026-09-24）**: 運営者報告「有料記事がちゃんと投稿できていない／記事が有料に
   なっていない」。原因は KYC 未完了時代の安全弁が残っていたこと — judge が確定時に `paid=false` へ強制し、publish は
   `shouldBlockPaidPublish` で有料の実公開自体を止めていた。アカウント設定
@@ -409,6 +459,13 @@ ANP の機能は A2P の対応機能を note 向けに写像したもの。**太
   モーダルが出たら中断**（下書きは保存済み、メッセージで案内）→ 公開設定画面で価格欄（`input[name=price]` / `#price` /
   `input[type=number]` / placeholder・aria-label に「価格」「円」）に価格を入力し、入力値を読み戻して一致を確認してから
   「投稿する」。価格欄が見つからない場合も中断する（0 円・誤価格での公開防止）。OFF の間は従来どおり無料公開＋価格は提案として保存。
+  **note 側の実測 (2026-09-24, READ-ONLY 偵察 `scripts/anp/note-kyc-recon.sh`)**: 有料販売の前提は note の
+  「設定 › お支払先 › お支払い口座」の登録で、2 アカウント（`note-acc-1` / `cmu9z5oqy0000pk0lncwogh3n`）とも
+  **お支払い口座＝未登録**。この状態ではエディタで有料を選ぶと「本人情報の登録」モーダルが出るため、トグルを ON にしても
+  publish は `kyc_required` で中断して下書きを残す（＝データを壊さない）。登録状況の確認 URL は `https://note.com/settings/fee`
+  （`/dashboard/transfers` はパスワード再認証が必要、`/sitesettings/*` は 404 で `/dashboard` 系に移行済み）。
+  既存記事（両アカウント計 19 本）は旧安全弁で `paid=false` かつ `paywall_line_pos=null` に確定済みなので、
+  さかのぼって有料化はできない（有料ラインを引くには再執筆が必要）。トグル ON 後に新規作成する記事から有料で公開される。
 - **F-ANP-14b アイキャッチの画風バリエーション（実装済み 2026-09-24）**: 運営者指摘「AI 副業アカウントの記事のサムネがすべて
   一緒」「サムネが AI 感が強すぎる」。原因は単一の汎用プロンプトで、gpt-image が毎回「明るい部屋でノート PC を見る人物＋青く
   光る脳/回路のホログラム」に収束していたこと。`packages/agents/src/anp/eyecatch-style.ts` に 8 種の画風レシピ
@@ -750,7 +807,7 @@ note.theme.generate (アカウント別・手動起動。UI の「テーマ生�
 | `pipeline.note.writer.outline` | `{ note_article_id, job_id }` | note Writer/Outline (role=`anp.outline`) がリード文+見出し構成 (2〜12) を生成。`NoteArticle.lead` 確定、`status='writing'` | `pipeline.note.writer.body` を自動 enqueue（`lead`/`headings` は子 Job の `payload_json` で forward — `NoteArticle` に永続列を持たないため） |
 | `pipeline.note.writer.body` | `{ note_article_id, job_id, lead, headings, feedback? }` | note Writer/Body (role=`anp.writer`) が本文 (目標 4,000 字) を執筆。有料記事は本文中に `<<<PAYWALL>>>` マーカーを 1 回挿入させ、呼出側でマーカー位置を `paywall_line_pos` として抽出・除去。`NoteArticle.body_md`/`paywall_line_pos` 確定、`status='editing'` | `pipeline.note.editor` を自動 enqueue |
 | `pipeline.note.editor` | `{ note_article_id, job_id, feedback?, retry_count? }` | note Editor (role=`anp.editor`) が短段落・リード文中心に校閲。`paywall_line_pos` 指定時はマーカーを再挿入して LLM に渡し「保持したまま校閲」を指示、新しい位置を再抽出。`status='eyecatch'` | `pipeline.note.eyecatch` を自動 enqueue（`retry_count` を forward） |
-| `pipeline.note.eyecatch` | `{ note_article_id, job_id, retry_count? }` | note Eyecatch (`@a2p/agents/anp/eyecatch`, role=`anp.eyecatch`) が **文字を含まない**挿絵を gpt-image で生成（note 側 UI がタイトルを別途表示するため、A2P のような日本語タイポグラフィ合成レイヤーは Phase 1 では持たない）。R2 `note/{note_article_id}/eyecatch.jpg` に保存、`NoteArticle.eyecatch_r2_key` 確定、`status='judging'`。**`retry_count > 0` かつ既に `eyecatch_r2_key` が設定済みなら再生成をスキップ**（judge 差し戻しは本文のみ変わるため、画像コストの重複を避ける） | `pipeline.note.judge` を自動 enqueue（`retry_count` を forward） |
+| `pipeline.note.eyecatch` | `{ note_article_id, job_id, retry_count? }` | **(F-ANP-42) まず note 内 SEO** (`anp.seo`) を best-effort で実行し、タイトル/リード/見出し/ハッシュタグ/アイキャッチのコピーを確定 (`note-seo-step.ts`。失敗しても続行)。続いて note Eyecatch (`@a2p/agents/anp/eyecatch`, role=`anp.eyecatch` = 既定 Nano Banana 2) が **文字を含まない**挿絵を生成し、`composeNoteEyecatch` でキャッチコピーを Noto Sans JP のアウトラインとして焼き込む (F-ANP-41)。R2 `note/{note_article_id}/eyecatch.jpg` に保存、`NoteArticle.eyecatch_r2_key` 確定、`status='judging'`。**`retry_count > 0` かつ既に `eyecatch_r2_key` が設定済みなら再生成をスキップ**（judge 差し戻しは本文のみ変わるため、画像コストの重複を避ける） | `pipeline.note.judge` を自動 enqueue（`retry_count` を forward） |
 | `pipeline.note.judge` | `{ note_article_id, job_id, retry_count }` | note Judge (role=`anp.judge`) が 4 軸 (フック強度/可読性/有料転換見込み/検索流入見込み) で採点。`NoteArticle.quality_score` に最終スコアを保持（内訳/コメントは `Job.result_json`） | 合格 (>=80): `status='ready'`。不合格 かつ `retry_count < 1`: `pipeline.note.editor` へ差し戻し (`retry_count+1` を payload に forward、`status='editing'`)。不合格 かつ `retry_count >= 1`: `status='needs_human_review'` |
 
 ### 排他制御・冪等性・エラー方針
