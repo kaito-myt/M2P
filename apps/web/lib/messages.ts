@@ -76,6 +76,7 @@ export const messages = {
     itemContentReview: '本文承認',
     itemThumbnails: 'サムネ承認',
     itemKdpChecklist: 'KDP 入稿',
+    itemPaperback: 'ペーパーバック',
     itemBwChecklist: 'BOOK☆WALKER入稿',
     itemKoboChecklist: '楽天Kobo入稿',
     itemBoothChecklist: 'Booth入稿',
@@ -2889,6 +2890,37 @@ export const messages = {
       sessionSavedNoDate: 'ログインセッション: 保存済み',
       sessionMissing:
         'ログインセッションが未保存です。ローカルで手動ログイン後、bash scripts/bookwalker/bw-session-push.sh を実行してください',
+    },
+  },
+  // F-097: ペーパーバック出版 (S-031)
+  paperback: {
+    pageTitle: 'ペーパーバック',
+    breadcrumbHome: 'ホーム',
+    breadcrumbPipeline: 'パイプライン',
+    description:
+      'Kindle で出版済みの本を、ペーパーバックでも出版するためのキューです。実際の入稿は KDP の再認証があるためローカル実行 (pb-auto.sh) が行い、結果がここに反映されます。',
+    coverageLabel: 'ペーパーバック化',
+    runHint: '未対応の本は毎日 06:10 に自動でキューへ入ります。入稿は bash scripts/paperback/pb-env.sh bash scripts/paperback/pb-auto.sh all',
+    queue: 'キューに追加',
+    unqueue: 'キューから外す',
+    queuedBadge: 'キュー登録済み',
+    queueAll: (n: number) => `未対応 ${n} 冊をまとめてキューに追加`,
+    queueSuccess: (n: number) => `${n} 冊をキューに追加しました`,
+    unqueueSuccess: (n: number) => `${n} 冊をキューから外しました`,
+    status: {
+      unlisted: '未対応',
+      drafted: '下書き作成済み',
+      submitted: '出版申請中',
+      published: '出版済み',
+      failed: '失敗',
+    },
+    empty: {
+      title: 'Kindle 出版済みの本がありません',
+      body: 'KDP で出版済みになった本がここに並びます。',
+    },
+    errors: {
+      validation: '入力内容に誤りがあります',
+      unknown: 'キューの操作に失敗しました。時間を空けて再試行してください',
     },
   },
   bwSubmit: {

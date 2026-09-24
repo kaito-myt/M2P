@@ -44,6 +44,10 @@ import { KDP_SUBMIT_DISPATCHER_TASK_NAME, kdpSubmitDispatcherTask } from './task
 import { BW_SUBMIT_TASK_NAME, bwSubmitTask } from './tasks/bw-submit.js';
 import { BW_SUBMIT_DISPATCHER_TASK_NAME, bwSubmitDispatcherTask } from './tasks/bw-submit-dispatcher.js';
 import { BW_RETAG_TASK_NAME, bwRetagTask } from './tasks/bw-retag.js';
+import {
+  PAPERBACK_QUEUE_SWEEP_TASK_NAME,
+  paperbackQueueSweepTask,
+} from './tasks/paperback-queue-sweep.js';
 import { LOCKS_SWEEP_TASK_NAME, locksSweepTask } from './tasks/locks-sweep.js';
 import {
   OPTIMIZER_PROMPT_GENERATE_TASK_NAME,
@@ -312,6 +316,7 @@ export function buildTaskList(): TaskList {
     [BW_SUBMIT_TASK_NAME]: bwSubmitTask,
     [BW_SUBMIT_DISPATCHER_TASK_NAME]: bwSubmitDispatcherTask,
     [BW_RETAG_TASK_NAME]: bwRetagTask,
+    [PAPERBACK_QUEUE_SWEEP_TASK_NAME]: paperbackQueueSweepTask,
     [KDP_ASIN_FETCH_TASK_NAME]: kdpAsinFetchTask,
     [KDP_PUBLISH_STATUS_SYNC_TASK_NAME]: kdpPublishStatusSyncTask,
     [ALERT_COST_CHECK_TASK_NAME]: alertCostCheckTask,

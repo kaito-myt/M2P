@@ -193,7 +193,7 @@ describe(NOTE_ACCOUNT_PROFILE_TASK_NAME, () => {
     const generateEditorial = vi.fn(async (_input: unknown) => ({
       target_reader: '30代会社員',
       tone: 'です・ます調',
-      sections: { themes: '・副業の最初の1万円まで', format: '・冒頭で悩みを言い当てる', style_rules: '', cta: '・末尾にフォロー依頼', quality: '1) 出典なしの数字は減点', other: '' },
+      sections: { themes: '・副業の最初の1万円まで', format: '・冒頭で悩みを言い当てる', style_rules: '', cta: '・末尾にフォロー依頼', quality: '1) 出典なしの数字は減点', seo: '', other: '' },
       rationale: 'r',
     }));
     const d = deps(prisma, { generateEditorial });

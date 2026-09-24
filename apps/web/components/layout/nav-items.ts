@@ -52,6 +52,7 @@ export const navSections: readonly NavSection[] = [
       { key: 'content-review', label: m.itemContentReview, href: '/content-review', enabled: true },
       { key: 'thumbnails', label: m.itemThumbnails, href: '/covers', enabled: true },
       { key: 'kdp', label: m.itemKdpChecklist, href: '/kdp/checklist', enabled: true },
+      { key: 'paperback', label: m.itemPaperback, href: '/paperback', enabled: true },
       { key: 'bookwalker', label: m.itemBwChecklist, href: '/bookwalker', enabled: true },
       { key: 'kobo', label: m.itemKoboChecklist, href: '/kobo', enabled: true },
       { key: 'booth', label: m.itemBoothChecklist, href: '/booth', enabled: true },

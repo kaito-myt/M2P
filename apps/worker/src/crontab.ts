@@ -14,6 +14,7 @@ import { KDP_PUBLISH_STATUS_SYNC_TASK_NAME } from './tasks/kdp-publish-status-sy
 import { PIPELINE_THEME_AUTO_TASK_NAME } from './tasks/pipeline-theme-auto.js';
 import { KDP_SUBMIT_DISPATCHER_TASK_NAME } from './tasks/kdp-submit-dispatcher.js';
 import { BW_SUBMIT_DISPATCHER_TASK_NAME } from './tasks/bw-submit-dispatcher.js';
+import { PAPERBACK_QUEUE_SWEEP_TASK_NAME } from './tasks/paperback-queue-sweep.js';
 import { BW_RETAG_TASK_NAME } from './tasks/bw-retag.js';
 import { PROMOTION_DISPATCH_TASK_NAME } from './tasks/promotion-dispatch.js';
 import { PROMOTION_REVIEW_DAILY_TASK_NAME } from './tasks/promotion-review-daily.js';
@@ -272,6 +273,13 @@ export const BW_SUBMIT_DISPATCHER_CRON_ITEM: CronItem = {
 // F-094b: 却下書籍の自動再申請 tick。日次 05:00 JST(20:00 UTC)。タスク側で bw_retag_enabled を
 // 見て自己ゲートするため静的 cron でよい(無効/セッション無しなら本棚を開く前に即 return)。
 export const BW_RETAG_CRON = '0 20 * * *';
+
+/**
+ * F-097: ペーパーバック化キューのスイープ。日次 06:10 JST (21:10 UTC)。
+ * 「Kindle は出したのにペーパーバックが未対応」の本に `pb_publish_queued` を立てるだけの
+ * 軽い処理なので静的 cron でよい (実際の入稿はローカルアシストが本キューを読む)。
+ */
+export const PAPERBACK_QUEUE_SWEEP_CRON = '10 21 * * *';
 
 /**
  * docs/11-anp-design.md §7 Phase2: note サーバー自動公開ディスパッチャの既定 cron (30分毎)。
@@ -634,6 +642,12 @@ export const CRON_ITEMS: CronItem[] = [
     match: ADS_SPEND_FETCH_CRON,
     identifier: 'ads-spend-fetch-daily',
     // payload 不要 (creds は env AMAZON_ADS_* を内部で読む。未設定なら no-op)
+  },
+  {
+    // F-097: ペーパーバック化キューのスイープ (paperback.queue.sweep)。
+    task: PAPERBACK_QUEUE_SWEEP_TASK_NAME,
+    match: PAPERBACK_QUEUE_SWEEP_CRON,
+    identifier: 'paperback-queue-sweep-daily',
   },
   {
     // F-094b: 却下書籍の自動再申請(bw.retag.tick)。bw_retag_enabled=false なら即 no-op。

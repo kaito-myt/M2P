@@ -1930,6 +1930,33 @@ export const KdpSubmitPayload = z.object({
 
 **自動運用**: `AppSettings.kdp_auto_submit_enabled=true`＋dispatcher（`kdp.submit.dispatch`, 例 30 分毎）が `kdp_publish_queued=true AND publish_status<>'published'` の本を 1 冊ずつ `kdp.submit` へ enqueue（同時 1 冊。`org.kdp.screen` 合格→queue と連携）。`AMAZON_EMAIL`/`AMAZON_PASSWORD` 未設定時は起動しない。
 
+#### 5.3.15b-2 ペーパーバック化の恒常運用（F-097, 2026-09-24）
+
+運営者指摘「ペーパーバックが結構売れてるから、**確実に**出版した本はペーパーバックも出版されるように」。
+
+**実態調査 (2026-09-24)**: ペーパーバックの進捗はローカルのテキスト台帳
+(`scripts/paperback/pb-published.txt` / `pb-drafted.txt`) にしか無く、書籍のライフサイクルと
+繋がっていなかった。対象リストも静的な `plan.json` 由来だったため、**新刊は永久に対象外**になり、
+Kindle 出版済み **93 冊中 12 冊 (13%)** しかペーパーバックが出ていなかった。
+
+**対応**: 状態を DB に持たせ、キューを自動で埋める。
+- `books` に `pb_publish_status` (unlisted|drafted|submitted|published|failed) /
+  `pb_publish_queued` / `pb_publish_queued_at` / `pb_drafted_at` / `pb_submitted_at` /
+  `pb_submit_cooldown_until` / `pb_title_id` / `pb_last_error` を追加
+  (migration `20260924100000_book_paperback_queue`)。旧テキスト台帳は
+  `scripts/paperback/pb-backfill-state.cjs` で移行済み (published 12 / drafted 7)。
+- **`paperback.queue.sweep`** (cron 日次 06:10 JST): `publish_status='published'` かつ
+  `pb_publish_status IN ('unlisted','failed')` かつクールダウン外の本に `pb_publish_queued=true` を立てる。
+  LLM も外部 API も使わない軽い処理。
+- 実際の入稿・出版は **KDP の再認証壁**によりサーバーからは行えないため、ローカルアシスト
+  `bash scripts/paperback/pb-env.sh bash scripts/paperback/pb-auto.sh all` が
+  DB キューを読んで `pb-plan → build-wrap-cover → pb-pilot (下書き) → pb-complete (出版)` を回し、
+  各ステップの結果を `pb-state.cjs` 経由で DB に書き戻す。KDP の作成数制限に当たったら 20h の
+  クールダウンを置いて翌日再開する。原稿は Amazon 側の変換待ちがあるため、出版フェーズは
+  下書き作成から 3 時間以上経ったものだけを対象にする。
+- UI: **S-031 `/paperback`** (パイプライン > ペーパーバック) でカバレッジ (出版済み/Kindle 出版済み) と
+  本ごとの状態を一覧し、キューへの追加/取消ができる。
+
 #### 5.3.15b ペーパーバック展開（2026-09-02 着手・設計確定/ウィザード未検証）
 
 全 Kindle 出品本にペーパーバック版を追加する（ユーザー指示）。狙いは紙の直接売上よりも

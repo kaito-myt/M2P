@@ -2,7 +2,11 @@ import { describe, expect, it, vi } from 'vitest';
 
 import type { NoteSeoOutput } from '@a2p/contracts/agents/anp';
 
-import { runNoteSeoStep, type NoteSeoStepPrisma } from '../src/tasks/lib/note-seo-step.js';
+import {
+  runNoteSeoStep,
+  type NoteSeoStepDeps,
+  type NoteSeoStepPrisma,
+} from '../src/tasks/lib/note-seo-step.js';
 import { readSeoHashtags } from '../src/tasks/pipeline-note-publish.js';
 
 const SEO: NoteSeoOutput = {
@@ -99,7 +103,7 @@ describe('runNoteSeoStep (F-ANP-42)', () => {
 
     const res = await runNoteSeoStep(prisma, INPUT, {
       generateSeo,
-      logger: { warn } as unknown as Parameters<typeof runNoteSeoStep>[2]['logger'],
+      logger: { warn } as unknown as NoteSeoStepDeps['logger'],
     });
 
     expect(res).toMatchObject({ applied: false, title: '仮題', eyecatchCopy: null });

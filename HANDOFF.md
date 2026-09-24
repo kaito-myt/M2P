@@ -28,6 +28,18 @@
 - **F-ANP-44 judge ルーティング**: 合格 85 点 / 70〜84 は校閲へ / 69 以下は構成 (writer.outline) からやり直し。
 - 本番反映済み: migration `20260924000000_model_effort_and_note_seo`、prompts (`anp.seo` v2 / `anp.theme` v2)、model_assignments 8 件、model_catalog 8 行。
 
+### F-097 ペーパーバックを確実に出す（2026-09-24）
+- 調査結果: **Kindle 出版済み 93 冊に対しペーパーバックは 12 冊だけ**だった。原因は進捗がローカルのテキスト台帳にしか無く、
+  対象リストも静的 plan.json 由来で新刊が永久に対象外だったこと。
+- `books.pb_*` に状態を移し (migration `20260924100000_book_paperback_queue` 本番適用済み・旧台帳はバックフィル済み)、
+  日次 cron `paperback.queue.sweep` が「Kindle 済み・PB 未対応」を自動でキューに積むようにした。
+- ローカル実行: `bash scripts/paperback/pb-env.sh bash scripts/paperback/pb-auto.sh all`
+  (draft → 表紙生成 → 下書き作成、publish → 変換済みの下書きを出版。結果は DB に書き戻る)。
+  KDP 作成数制限に当たると自動で 20h クールダウン。
+- UI: A2P の パイプライン > **ペーパーバック** (`/paperback`) でカバレッジと本ごとの状態を確認・キュー操作。
+- 積み残し: 旧台帳から移行した下書き 7 冊は KDP の title id が不明 (`pb_last_error` に明記)。KDP 本棚で下書きを開いて
+  `books.pb_title_id` を入れると出版フェーズが拾う。
+
 ## 2026-09-21（本機）で実施したこと
 運営者の依頼 5 件（Amazon Ads のパフォーマンス/コスト取込 / ANP の仕上げ / ANP メニューをサイドバーに / ANP ロゴ差し替え /
 ANP のアカウント戦略を AI に相談しながら策定）を実施。main に push 済み・本番デプロイ済み（下記「デプロイ結果」参照）。
