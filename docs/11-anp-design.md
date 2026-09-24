@@ -419,7 +419,9 @@ ANP の機能は A2P の対応機能を note 向けに写像したもの。**太
     リード（120 字前後）、primary_keyword、keywords、hashtags 5 個、見出し改善（完全一致置換のみ）、
     アイキャッチのコピー/サブ/alt、内部リンク（提示候補の URL だけ許可＝捏造防止）。
   - 反映: `title` / `lead` / `body_md`（`applyHeadingFixes` + `appendInternalLinks`）/ `seo_json` /
-    `eyecatch_copy|sub|alt`。公開時は `seo_json.hashtags` を **note の公開設定画面**で入力する
+    `eyecatch_copy|sub|alt`。**有料記事は見出し置換で `paywall_line_pos`（codepoint オフセット）が
+    ズレるため、無料部分と有料部分を切り分けてから置換し、無料部分の新しい長さで位置を再計算する**
+    （これを怠ると有料ラインが本文の途中に食い込む）。公開時は `seo_json.hashtags` を **note の公開設定画面**で入力する
     （`input[placeholder="ハッシュタグを追加する"]`、2026-09-24 実 DOM 確認。失敗しても投稿は続行）。
   - **note の仕様（実地確認）**: meta description は編集できない → **リード文が検索結果の説明文**になるので
     リードも SEO の担当範囲。公開設定で設定できるのはハッシュタグのみ。記事 URL は note 採番でスラッグ最適化不可。

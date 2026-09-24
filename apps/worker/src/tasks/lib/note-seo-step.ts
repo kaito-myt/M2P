@@ -83,10 +83,12 @@ export async function runNoteSeoStep(
 
   const row = await prisma.noteArticle.findUnique({
     where: { id: input.noteArticleId },
-    select: { body_md: true, lead: true },
+    select: { body_md: true, lead: true, paid: true, paywall_line_pos: true },
   });
   const bodyMd = asString(row?.body_md);
   if (!bodyMd) return fallback;
+  const paid = row?.paid === true;
+  const paywallPos = typeof row?.paywall_line_pos === 'number' ? row.paywall_line_pos : null;
 
   // 内部リンク候補 = 同じアカウントの公開済み記事 (note は URL を貼ると記事カードになる)。
   const published = await prisma.noteArticle
@@ -139,7 +141,20 @@ export async function runNoteSeoStep(
     return fallback;
   }
 
-  const nextBody = appendInternalLinks(applyHeadingFixes(bodyMd, seo.headings), seo.internal_links);
+  // 有料記事は `paywall_line_pos` が本文の codepoint オフセットなので、見出しを置換すると
+  // 位置がズレて有料ラインが本文の途中に食い込む。無料部分と有料部分を先に切り分けて
+  // それぞれに適用し、無料部分の新しい長さから位置を計算し直す。
+  let nextBody: string;
+  let nextPaywallPos: number | null = paywallPos;
+  if (paid && paywallPos !== null) {
+    const chars = [...bodyMd];
+    const free = applyHeadingFixes(chars.slice(0, paywallPos).join(''), seo.headings);
+    const rest = applyHeadingFixes(chars.slice(paywallPos).join(''), seo.headings);
+    nextPaywallPos = [...free].length;
+    nextBody = appendInternalLinks(`${free}${rest}`, seo.internal_links);
+  } else {
+    nextBody = appendInternalLinks(applyHeadingFixes(bodyMd, seo.headings), seo.internal_links);
+  }
 
   await prisma.noteArticle.update({
     where: { id: input.noteArticleId },
@@ -147,6 +162,7 @@ export async function runNoteSeoStep(
       title: seo.title,
       lead: seo.lead,
       body_md: nextBody,
+      ...(paid && paywallPos !== null ? { paywall_line_pos: nextPaywallPos } : {}),
       seo_json: {
         primary_keyword: seo.primary_keyword,
         keywords: seo.keywords,

@@ -24,11 +24,19 @@ const SEO: NoteSeoOutput = {
   rationale: 'キーワードを前半に',
 };
 
-function buildPrisma(body: string | null) {
+function buildPrisma(body: string | null, paid?: { paywall_line_pos: number }) {
   const updates: Array<{ where: { id: string }; data: Record<string, unknown> }> = [];
   const prisma: NoteSeoStepPrisma = {
     noteArticle: {
-      findUnique: async () => (body === null ? { body_md: null, lead: null } : { body_md: body, lead: 'リード' }),
+      findUnique: async () =>
+        body === null
+          ? { body_md: null, lead: null, paid: false, paywall_line_pos: null }
+          : {
+              body_md: body,
+              lead: 'リード',
+              paid: Boolean(paid),
+              paywall_line_pos: paid ? paid.paywall_line_pos : null,
+            },
       findMany: async (args) => {
         const select = args.select as Record<string, true>;
         if (select.note_url) return [{ title: '過去記事', note_url: 'https://note.com/x/n/n1' }];
@@ -84,6 +92,36 @@ describe('runNoteSeoStep (F-ANP-42)', () => {
         recent_titles: ['直近タイトル'],
       }),
     );
+  });
+
+  it('有料記事は見出し置換で有料ラインがズレないように位置を再計算する', async () => {
+    // 無料部分に「## 見方」(4 文字) があり、「## 馬場バイアスの見方」(11 文字) に伸びるケース。
+    const free = ['# T', '', '## 見方', '無料の本文。', ''].join('\n');
+    const restBody = ['## 有料', '有料の本文。'].join('\n');
+    const { prisma, updates } = buildPrisma(free + restBody, { paywall_line_pos: [...free].length });
+    const generateSeo = vi.fn().mockResolvedValue({
+      ...SEO,
+      headings: [{ original: '見方', improved: '馬場バイアスの見方' }],
+      internal_links: [],
+    });
+
+    await runNoteSeoStep(prisma, INPUT, { generateSeo });
+
+    const data = updates[0]!.data;
+    const nextBody = String(data.body_md);
+    const pos = data.paywall_line_pos as number;
+    // 再計算後の位置で切ると、無料部分に有料本文が混ざらない。
+    const freeAfter = [...nextBody].slice(0, pos).join('');
+    expect(freeAfter).toContain('## 馬場バイアスの見方');
+    expect(freeAfter).not.toContain('有料の本文');
+    expect([...nextBody].slice(pos).join('')).toContain('有料の本文');
+  });
+
+  it('無料記事では paywall_line_pos を触らない', async () => {
+    const { prisma, updates } = buildPrisma(['## 見方', '本文'].join('\n'));
+    const generateSeo = vi.fn().mockResolvedValue({ ...SEO, internal_links: [] });
+    await runNoteSeoStep(prisma, INPUT, { generateSeo });
+    expect(updates[0]!.data).not.toHaveProperty('paywall_line_pos');
   });
 
   it('本文がまだ無ければ何もしない', async () => {
