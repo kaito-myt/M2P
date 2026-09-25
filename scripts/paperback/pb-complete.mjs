@@ -172,16 +172,26 @@ if (prevOpened) {
   }
   console.log('プレビュー承認クリック(trusted):', approved);
   if (!approved) console.log('★ 承認ボタンを押せず — pricing で blocked_prior_page になる見込み');
-  if (approved) await page.waitForTimeout(8000);
-  // 承認後も残っていれば終了を押す(承認が遷移を伴う場合は空振りで良い)
-  const exitBtn = page.locator('button, a, [role=button]').filter({ hasText: '印刷プレビューアーを終了' }).first();
-  const exited = await exitBtn.click({ force: true, timeout: 15000 }).then(() => true).catch(() => false);
-  console.log('プレビューアー終了クリック(trusted):', exited);
-  await page.waitForTimeout(8000);
-  // 終了確認モーダル(あれば)も信頼済みクリックで承諾
-  const confirmBtn = page.locator('[role=dialog] button, .a-popover button').filter({ hasText: /終了|はい|OK|確認|承認/ }).first();
-  if (await confirmBtn.count().catch(() => 0)) { console.log('終了確認モーダル→承諾(trusted)'); await confirmBtn.click({ force: true, timeout: 8000 }).catch(() => {}); }
-  await page.waitForTimeout(8000);
+  // [2026-09-25] **承認の直後に「印刷プレビューアーを終了」を押さない**。
+  // 実測: 9 冊中、終了クリックが失敗した 1 冊だけ「承認 記録済み ✓」になり、
+  // 終了クリックが成功した本はすべて承認が記録されず blocked_prior_page になった。
+  // 承認は非同期保存らしく、直後に終了すると取り消される。十分待ってから
+  // content へ直接 goto して抜ける (= 終了ボタンを押さずにプレビューアーを離れる)。
+  if (approved) {
+    await page.waitForTimeout(15000);
+    await page.goto(`https://kdp.amazon.co.jp/print-setup/paperback/${titleId}/content`, { waitUntil: 'domcontentloaded' }).catch(() => {});
+    await page.waitForTimeout(6000);
+    await passReauth('after-approve');
+  } else {
+    // 承認できていない場合だけ、従来どおり終了を押して抜ける。
+    const exitBtn = page.locator('button, a, [role=button]').filter({ hasText: '印刷プレビューアーを終了' }).first();
+    const exited = await exitBtn.click({ force: true, timeout: 15000 }).then(() => true).catch(() => false);
+    console.log('プレビューアー終了クリック(trusted):', exited);
+    await page.waitForTimeout(8000);
+    const confirmBtn = page.locator('[role=dialog] button, .a-popover button').filter({ hasText: /終了|はい|OK|確認|承認/ }).first();
+    if (await confirmBtn.count().catch(() => 0)) { console.log('終了確認モーダル→承諾(trusted)'); await confirmBtn.click({ force: true, timeout: 8000 }).catch(() => {}); }
+    await page.waitForTimeout(8000);
+  }
   console.log('previewer後URL:', page.url());
   await shot('after-exit');
 }
@@ -225,12 +235,13 @@ for (let retry = 1; retry <= 3; retry++) {
   }
   console.log(`  再試行: total=${t || '?'} — 描画待ち30秒`);
   await page.waitForTimeout(30000);
-  console.log('  承認クリック:', await clickVisible(/^\s*承認\s*$/));
-  await page.waitForTimeout(10000);
-  if (/print-preview/.test(page.url()) || (await page.locator('a,button').filter({ hasText: '印刷プレビューアーを終了' }).count().catch(() => 0))) {
-    console.log('  終了クリック:', await clickVisible(/印刷プレビューアーを終了/));
-    await page.waitForTimeout(8000);
-  }
+  const reApproved = await clickVisible(/^\s*承認\s*$/);
+  console.log('  承認クリック:', reApproved);
+  // 終了ボタンは押さない (押すと承認が取り消される。上のコメント参照)。十分待ってから content へ戻る。
+  await page.waitForTimeout(15000);
+  await page.goto(`https://kdp.amazon.co.jp/print-setup/paperback/${titleId}/content`, { waitUntil: 'domcontentloaded' }).catch(() => {});
+  await page.waitForTimeout(6000);
+  await passReauth('retry-after-approve');
 }
 
 // content に戻っているはず → 保存して続行
