@@ -29,22 +29,60 @@ const ctx = await chromium.launchPersistentContext(USERDATA, { headless: false, 
 ctx.setDefaultTimeout(60000);
 const page = ctx.pages()[0] ?? (await ctx.newPage());
 const shot = (n) => page.screenshot({ path: path.join(OUT, `pbc-${n}.png`), fullPage: true }).catch(() => {});
+/**
+ * 再認証ウォール(max_auth_age=0)を通す。
+ *
+ * 2026-09-25: ここで `page.$()` がナビゲーション中に実行されて
+ * 「Execution context was destroyed」で **プロセスごと落ちていた**（9 冊とも同じ場所で失敗）。
+ * サインイン送信はページ遷移を伴うので、遷移待ちを明示し、DOM 参照は全て catch する。
+ */
 async function passReauth(label) {
   if (!/\/ap\/signin/.test(page.url())) return true;
   console.log(`再認証(${label})`);
-  const pf = await page.waitForSelector('#ap_password', { timeout: 20000 }).catch(() => null);
-  if (!pf || !AMZ_PW) return false;
-  await pf.click({ force: true }).catch(() => {}); await pf.fill('').catch(() => {}); await pf.type(AMZ_PW, { delay: 35 });
-  await page.check('#auth-remember-me').catch(() => {});
-  await page.click('#signInSubmit'); await page.waitForTimeout(9000);
-  const otp = await page.$('#auth-mfa-otpcode');
-  if (otp && TOTP) { const { authenticator } = req('otplib'); await otp.type(authenticator.generate(TOTP), { delay: 35 }); await page.check('#auth-mfa-remember-device').catch(() => {}); await page.click('#auth-signin-button').catch(() => page.keyboard.press('Enter')); await page.waitForTimeout(9000); }
-  return !/\/ap\/signin/.test(page.url());
+  try {
+    const pf = await page.waitForSelector('#ap_password', { timeout: 20000 }).catch(() => null);
+    if (!pf || !AMZ_PW) return false;
+    await pf.click({ force: true }).catch(() => {});
+    await pf.fill('').catch(() => {});
+    await pf.type(AMZ_PW, { delay: 35 });
+    await page.check('#auth-remember-me').catch(() => {});
+    await Promise.all([
+      page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 40000 }).catch(() => null),
+      page.click('#signInSubmit').catch(() => {}),
+    ]);
+    await page.waitForLoadState('domcontentloaded').catch(() => {});
+    await page.waitForTimeout(5000);
+
+    const otp = await page.$('#auth-mfa-otpcode').catch(() => null);
+    if (otp && TOTP) {
+      const { authenticator } = req('otplib');
+      await otp.type(authenticator.generate(TOTP), { delay: 35 }).catch(() => {});
+      await page.check('#auth-mfa-remember-device').catch(() => {});
+      await Promise.all([
+        page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 40000 }).catch(() => null),
+        page.click('#auth-signin-button').catch(() => page.keyboard.press('Enter').catch(() => {})),
+      ]);
+      await page.waitForLoadState('domcontentloaded').catch(() => {});
+      await page.waitForTimeout(5000);
+    }
+    const ok = !/\/ap\/signin/.test(page.url());
+    console.log(`  再認証後: ${ok ? 'OK' : 'NG'} ${page.url().slice(0, 80)}`);
+    return ok;
+  } catch (e) {
+    console.log('再認証で例外:', String(e.message || e).slice(0, 120));
+    return !/\/ap\/signin/.test(page.url());
+  }
 }
 async function gotoWithReauth(url, tag) {
-  await page.goto(url, { waitUntil: 'domcontentloaded' }); await page.waitForTimeout(7000);
+  await page.goto(url, { waitUntil: 'domcontentloaded' }).catch(() => {});
+  await page.waitForTimeout(7000);
   await passReauth(tag);
-  if (!page.url().includes(url.split('/').pop())) { await page.goto(url, { waitUntil: 'domcontentloaded' }); await page.waitForTimeout(7000); }
+  if (!page.url().includes(url.split('/').pop())) {
+    await page.goto(url, { waitUntil: 'domcontentloaded' }).catch(() => {});
+    await page.waitForTimeout(7000);
+    // 2 回目も再認証を求められることがある(セッション反映待ち)。
+    await passReauth(`${tag}-retry`);
+  }
 }
 
 // ---- STEP 0: 詳細(STEP1)を保存し直して前段を確定させる ----

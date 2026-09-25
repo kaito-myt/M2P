@@ -1877,6 +1877,11 @@ export const SalesFetchPayload = z.object({ account_id: z.string(), year_month: 
    分からないので、1 点だけを狙うこの設計では空いた瞬間を拾えず、**5 日連続 0 冊**になっていた。
    → `creationLimitPauseUntil()` を追加し、**6 時間バックオフ** (次の JST 0 時がそれより近ければそちら) に変更。
    制限に当たった試行は枠を消費しない (作成されずモーダルが出るだけ) ので、空き次第すぐ拾える。
+4. **ペーパーバックの出版スクリプトが再認証中に落ちていた (2026-09-25)**: `pb-complete.mjs` の
+   `passReauth` で、サインイン送信直後の遷移中に `page.$('#auth-mfa-otpcode')` を評価して
+   `Execution context was destroyed` で **プロセスごと異常終了**していた (9 冊すべて同じ箇所)。
+   遷移を `waitForNavigation` で待ち、DOM 参照を全て catch する形に修正。これにより本棚に残っていた
+   **ペーパーバック下書き 9 冊** (作成枠を消費しないで出版できる分) が処理できるようになった。
 3. **再認証ウォールは Kindle だけでなくペーパーバックの `title-setup` にも掛かる** (2026-09-25 実測:
    `/ap/signin?openid.pape.max_auth_age=0` へリダイレクト)。本棚の閲覧は保存済みセッションで通るが、
    作成/編集画面は毎回パスワード + OTP が要る。`kdp.submit` は元々これを通す実装 (実際に詳細フォームまで到達している)。
