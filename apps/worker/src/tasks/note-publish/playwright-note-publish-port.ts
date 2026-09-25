@@ -24,7 +24,9 @@
  *      「公開に進む」前に `blocked` で中断する。有料エリア指定マーカーの挿入に失敗した場合も中断する
  *      (有料本文が無料公開される経路を塞ぐ)。有料公開の手順は
  *      記事タイプ `#paid` を trusted click → 本人確認 (KYC) モーダルが出たら中断 → 公開設定画面で
- *      価格入力欄に `priceJpy` を入力 → 「投稿する」。価格欄が見つからない場合も中断する(0円/誤価格防止)。
+ *      価格入力欄に `priceJpy` を入力 → 「投稿する」。**有料を選ぶと主ボタンが「有料エリア設定」に
+ *      変わる**ため、投稿ボタンが無ければ「有料エリア設定」を押してから再度探す(2026-09-25 実測)。
+ *      価格欄が見つからない場合は中断する(0円/誤価格防止)。
  *   6. 記事タイプ(`#free`/`#paid` name=is_paid)のラジオは視覚的に隠された `<input>` で
  *      **synthetic click (`el.click()`) では note の React ハンドラが切り替わらない**
  *      （BW の非表示チェックボックスと同型の罠、2026-09-15 実証）。祖先 `<label>` の
@@ -50,6 +52,8 @@ const NEW_NOTE_URL = 'https://note.com/notes/new';
  * 有料を選ぶと「更新する」がすぐには出ず、いったん「有料エリア設定」を挟む。
  */
 const UPDATE_LABELS = ['更新する', '投稿する', '公開する', '有料エリアを設定して更新', '設定して更新する'];
+/** 新規公開時の確定ボタン候補 (「投稿する」を先に見る以外は UPDATE_LABELS と同じ)。 */
+const POST_LABELS = ['投稿する', '公開する', '更新する', '有料エリアを設定して投稿', '設定して投稿する'];
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 type Page = any;
@@ -375,10 +379,26 @@ async function publishOne(args: NotePublishArgs): Promise<NotePublishResult> {
       await screenshot(page, stageDir, `${a.id}-hashtags`);
     }
 
-    const posted = await clickByText(page, '投稿する');
+    // 有料記事は「投稿する」がすぐには出ず、主ボタンが **「有料エリア設定」** になり、
+    // その先の画面 (「ラインをこの場所に変更」が並ぶ) の「更新する」で確定する
+    // (2026-09-25 実測。これが F-ANP-16b の有料公開が一度も成功していなかった原因)。
+    let posted = await clickAnyText(page, POST_LABELS);
+    if (!posted && (await clickByText(page, '有料エリア設定'))) {
+      await page.waitForTimeout(6000);
+      await screenshot(page, stageDir, `${a.id}-paid-area`);
+      const labels = await visibleButtonLabels(page);
+      log.info({ articleId: a.id, labels }, '有料エリア設定画面のボタン');
+      posted = await clickAnyText(page, POST_LABELS);
+    }
     if (!posted) {
       await screenshot(page, stageDir, `${a.id}-no-post-button`);
-      return { ok: false, reason: 'blocked', message: '「投稿する」ボタンが見つかりません', noteUrl: draftEditUrl };
+      const labels = await visibleButtonLabels(page);
+      return {
+        ok: false,
+        reason: 'blocked',
+        message: `投稿ボタンが見つかりません (buttons=${labels.join('/')})`,
+        noteUrl: draftEditUrl,
+      };
     }
     await page.waitForTimeout(6000);
     await screenshot(page, stageDir, `${a.id}-after-post`);
