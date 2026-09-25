@@ -13,6 +13,7 @@
 import sharp from 'sharp';
 
 import {
+  advanceWidth,
   escapeXml,
   fitText,
   linePathLeft,
@@ -97,7 +98,7 @@ function drawCopyLine(
       `<path d="${d}" fill="none" stroke="#05070b" stroke-width="${(size * 0.12).toFixed(1)}" stroke-linejoin="round" opacity="0.55"/>`,
     );
     fill.push(`<path d="${d}" fill="${r.num ? accent : '#ffffff'}"/>`);
-    cx += bold.getAdvanceWidth(r.text, size);
+    cx += advanceWidth(bold, r.text, size);
   }
   return [...halo, ...fill].join('');
 }
@@ -179,7 +180,7 @@ export async function composeNoteEyecatch(
     const bSize = 26;
     const padX = 20;
     const bH = 50;
-    const bW = bold.getAdvanceWidth(badge, bSize) + padX * 2;
+    const bW = advanceWidth(bold, badge, bSize) + padX * 2;
     parts.push(
       `<rect x="${M}" y="44" width="${bW.toFixed(0)}" height="${bH}" rx="${bH / 2}" fill="${accent}"/>`,
     );

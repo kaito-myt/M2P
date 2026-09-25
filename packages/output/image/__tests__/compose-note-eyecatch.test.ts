@@ -85,3 +85,35 @@ describe('NaN 座標でテキストが途中で消える問題 (2026-09-25 実�
     expect((await sharp(out).metadata()).width).toBe(NOTE_EYECATCH_WIDTH);
   });
 });
+
+describe('フォントに無い文字 (矢印・記号) の豆腐対策 (2026-09-25 実測)', () => {
+  it('→ はベクターで描き、豆腐にも欠落にもしない', async () => {
+    const { loadFonts, linePathLeft, advanceWidth } = await import('../src/text-layout.js');
+    const { bold } = loadFonts();
+    // 同梱の Noto Sans JP サブセットに → は無い (グリフ index 0)。
+    expect(bold.charToGlyphIndex('→')).toBe(0);
+    const withArrow = linePathLeft(bold, '13%→27%', 60, 0, 100);
+    const without = linePathLeft(bold, '13%27%', 60, 0, 100);
+    expect(withArrow.length).toBeGreaterThan(without.length);
+    expect(withArrow).not.toContain('NaN');
+    // 送り幅も矢印分だけ広い (レイアウトがずれない)。
+    expect(advanceWidth(bold, '13%→27%', 60)).toBeGreaterThan(advanceWidth(bold, '13%27%', 60));
+  });
+
+  it('丸数字などは代替文字に置き換える', async () => {
+    const { loadFonts, linePathLeft } = await import('../src/text-layout.js');
+    const { bold } = loadFonts();
+    const d = linePathLeft(bold, '①案', 40, 0, 100);
+    expect(d).not.toContain('NaN');
+    expect(d.length).toBeGreaterThan(100);
+  });
+
+  it('矢印入りのコピーを合成できる', async () => {
+    const out = await composeNoteEyecatch(await flatBg(), {
+      copy: '返信率約13%→約27%',
+      sub: '提案文を直した前後15件ずつの記録',
+      badge: '副業×AI活用',
+    });
+    expect((await sharp(out).metadata()).width).toBe(NOTE_EYECATCH_WIDTH);
+  });
+});
