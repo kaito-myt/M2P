@@ -249,11 +249,14 @@ export async function runKdpSubmit(deps: KdpSubmitDeps): Promise<KdpSubmitResult
     if (result.reason === 'creation_limit') {
       // 日次作成上限に到達 = 今日はこれ以上どの本も作れない。他の本で 7 分×CREATE を繰り返して
       // 枠を浪費しないよう、**全体を翌 JST 0 時まで停止**する（グローバル・バックオフ）。
-      const pausedUntil = nextJstMidnightUtc(new Date());
+      const pausedUntil = creationLimitPauseUntil(new Date());
       await prisma.appSettings
         .update({ where: { id: 'singleton' }, data: { kdp_creation_paused_until: pausedUntil } })
         .catch((err) => log.warn({ err: errMsg(err) }, 'kdp_creation_paused_until 設定失敗(無視)'));
-      log.warn({ pausedUntil: pausedUntil.toISOString() }, 'KDP日次作成上限に到達 — 翌JST0時まで自動入稿を全体停止');
+      log.warn(
+        { pausedUntil: pausedUntil.toISOString() },
+        'KDP作成数制限に到達 — 一定時間だけ全体停止して再挑戦する',
+      );
     }
   } else {
     await pushLine(`⚠️ A2P: 「${row.title}」のKDP自動入稿に失敗 (${result.reason}). スクショ確認要。`).catch(() => {});
@@ -263,6 +266,25 @@ export async function runKdpSubmit(deps: KdpSubmitDeps): Promise<KdpSubmitResult
 
 function errMsg(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
+}
+
+/**
+ * [2026-09-25] 作成数制限に当たったときの全体バックオフ。
+ *
+ * 以前は「翌 JST 0 時まで」停止していたが、実測で **5 日連続 0 冊**になっていた:
+ * 停止が明ける JST 0:07 に 1 冊だけ試す → `本の作成数制限を超えました` → また翌日まで停止、
+ * の繰り返しで **1 日 1 回しか試さない**。Amazon 側の枠がいつ空くか (リセット境界) は外から
+ * 分からないので、1 点だけを狙うこの設計では枠が空いても拾えない。
+ *
+ * 制限に当たった試行は枠を消費しない (モーダルが出るだけで作成されない) ため、
+ * **6 時間ごとに再挑戦**して空いた瞬間に拾えるようにする。次の JST 0 時がそれより早ければそちらを使う。
+ */
+export const CREATION_LIMIT_BACKOFF_MS = 6 * 60 * 60 * 1000;
+
+export function creationLimitPauseUntil(now: Date): Date {
+  const backoff = new Date(now.getTime() + CREATION_LIMIT_BACKOFF_MS);
+  const midnight = nextJstMidnightUtc(now);
+  return midnight < backoff ? midnight : backoff;
 }
 
 /** 次の JST 0:00（= 15:00 UTC）を返す。KDP 日次作成枠のリセット境界（JP アカウント基準）。 */

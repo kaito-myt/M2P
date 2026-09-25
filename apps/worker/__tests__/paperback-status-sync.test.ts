@@ -34,7 +34,7 @@ function buildPrisma(books: BookRow[], hasSession = true) {
         return {};
       },
     },
-  } as unknown as Parameters<typeof runPaperbackStatusSync>[0]['prisma'];
+  } as unknown as NonNullable<Parameters<typeof runPaperbackStatusSync>[0]>['prisma'];
   return { prisma, updates };
 }
 

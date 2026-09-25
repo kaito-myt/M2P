@@ -1,0 +1,25 @@
+import { createRequire } from 'module';
+import path from 'path';
+import crypto from 'crypto';
+const REPO = 'C:/DEV/M2P';
+const req = createRequire(path.join(REPO, 'apps/worker/package.json'));
+const reqRoot = createRequire(path.join(REPO, 'package.json'));
+const { chromium } = req('playwright');
+const { Client } = reqRoot(path.join(REPO, 'node_modules/.pnpm/pg@8.21.0/node_modules/pg'));
+function dec(b64, k){const raw=Buffer.from(b64,'base64');const d=crypto.createDecipheriv('aes-256-gcm',Buffer.from(k,'hex'),raw.subarray(0,12));d.setAuthTag(raw.subarray(12,28));return Buffer.concat([d.update(raw.subarray(28)),d.final()]).toString('utf8');}
+const c=new Client({connectionString:process.env.DBURL,ssl:{rejectUnauthorized:false}});await c.connect();
+const {rows}=await c.query("select kdp_session_state_enc from accounts where status='active' and kdp_session_state_enc is not null limit 1");await c.end();
+const state=JSON.parse(dec(rows[0].kdp_session_state_enc,process.env.KDP_CRED_KEY));
+const b=await chromium.launch({headless:true,args:['--disable-blink-features=AutomationControlled']});
+const ctx=await b.newContext({storageState:state,locale:'ja-JP',viewport:{width:1500,height:1200}});
+await ctx.addInitScript({content:'globalThis.__name=globalThis.__name||function(f){return f;};'});
+const page=await ctx.newPage();page.setDefaultTimeout(45000);
+await page.goto(`https://kdp.amazon.co.jp/ja_JP/title-setup/paperback/${process.argv[2]}/details`,{waitUntil:'domcontentloaded'}).catch(()=>{});
+await page.waitForTimeout(7000);
+console.log('url:', page.url());
+console.log('title tag:', await page.title());
+const inputs = await page.evaluate(() => [...document.querySelectorAll('input[type=text],textarea')].slice(0,8).map(e=>({id:e.id,name:e.getAttribute('name'),val:(e.value||'').slice(0,50)})));
+console.log('inputs:', JSON.stringify(inputs, null, 1));
+const heads = await page.evaluate(() => [...document.querySelectorAll('h1,h2,h3')].map(e=>(e.textContent||'').trim()).filter(Boolean).slice(0,8));
+console.log('headings:', JSON.stringify(heads));
+await b.close();
