@@ -86,7 +86,14 @@ export function fitText(
   return { size, lines };
 }
 
-/** 左揃え 1 行分のグリフパス。 */
+/**
+ * 左揃え 1 行分のグリフパス。
+ *
+ * **1 文字ずつ整数 x で生成する**。opentype.js に文字列をまとめて渡すと、累積 advance が
+ * 小数になったところで `MNaN 596.11` のような **NaN 座標**を吐くことがあり、librsvg は
+ * それ以降の描画を黙って捨てる (2026-09-25 実測: 「10点出品・7日間の反応を記録」が
+ * サムネ上で「10⊥」だけになっていた)。文字単位＋整数座標にすると NaN は出ない。
+ */
 export function linePathLeft(
   font: opentype.Font,
   text: string,
@@ -94,8 +101,17 @@ export function linePathLeft(
   x: number,
   baseline: number,
 ): string {
-  // opentype.js は非整数 baseline で稀に NaN 座標のパスを吐く (librsvg が黙って描画を落とす)。
-  return font.getPath(text, Math.round(x), Math.round(baseline), Math.round(size)).toPathData(2);
+  const s = Math.round(size);
+  const y = Math.round(baseline);
+  let cx = x;
+  const parts: string[] = [];
+  for (const ch of Array.from(text)) {
+    const d = font.getPath(ch, Math.round(cx), y, s).toPathData(2);
+    // 念のため: それでも NaN が出た文字は飛ばす (1 文字欠けても以降は描画される)。
+    if (!d.includes('NaN')) parts.push(d);
+    cx += font.getAdvanceWidth(ch, s);
+  }
+  return parts.join(' ');
 }
 
 const NUM_RE = /([0-9０-９]+(?:[.,．][0-9０-９]+)?[万億円%％割倍位個歳日年月週時間分秒人本冊点]*)/;

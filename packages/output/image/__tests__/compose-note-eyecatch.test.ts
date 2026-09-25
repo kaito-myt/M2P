@@ -64,3 +64,24 @@ describe('accentForNiche / defaultEyecatchAlt', () => {
     expect(alt.length).toBeLessThanOrEqual(120);
   });
 });
+
+describe('NaN 座標でテキストが途中で消える問題 (2026-09-25 実測)', () => {
+  it('「10点出品・7日間の反応を記録」が NaN 無しで描画される', async () => {
+    // opentype.js に文字列をまとめて渡すと累積 advance が小数になった箇所で NaN 座標を吐き、
+    // librsvg がそれ以降を黙って捨てていた (サムネ上で「10⊥」だけになる)。
+    const { loadFonts, linePathLeft } = await import('../src/text-layout.js');
+    const { regular } = loadFonts();
+    const d = linePathLeft(regular, '10点出品・7日間の反応を記録', 30, 64, 616);
+    expect(d).not.toContain('NaN');
+    expect(d.length).toBeGreaterThan(5000);
+  });
+
+  it('合成しても落ちない (サブコピー全体が入る)', async () => {
+    const out = await composeNoteEyecatch(await flatBg(), {
+      copy: '売上0円でも閲覧84回',
+      sub: '10点出品・7日間の反応を記録',
+      badge: '副業×AI活用',
+    });
+    expect((await sharp(out).metadata()).width).toBe(NOTE_EYECATCH_WIDTH);
+  });
+});

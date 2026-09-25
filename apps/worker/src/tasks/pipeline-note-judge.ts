@@ -366,19 +366,27 @@ export async function runPipelineNoteJudge(
 }
 
 /**
- * F-ANP-16: judge の有料化提案から「保存する price_jpy」を決める。
- * 有料化を推奨しない(false)場合は null にクリアする — theme 生成時点の推奨が残っていても、
- * 最終コンテンツを見た judge の判断を優先する。
+ * F-ANP-16 / F-ANP-45: 記事を有料で出すかと価格を決める。
+ *
+ * **有料/無料はテーマ企画時 (アカウントの収益化方針 + `note_themes.recommend_paid`) で決まる。**
+ * judge にできるのは「無料 → 有料への格上げ提案」と「価格の提案」だけで、**格下げはさせない**。
+ *
+ * 2026-09-25 の実害: judge (gpt-6-sol) が全記事に recommend_paid=false を返し、企画時に有料と
+ * 決めた記事がすべて無料で公開されていた (運営者報告「有料記事がすべて無料で掲載されています」)。
+ * さらに paid=false になった時点で `paywall_line_pos` も消えるため、後から有料に戻すこともできなかった。
+ * 品質が低い記事は「無料で出す」ではなく needs_human_review で止めるのが本来の設計。
  */
-function resolveFinalPricing(
+export function resolveFinalPricing(
   article: { paid: boolean; price_jpy: number | null; paywall_line_pos?: number | null },
   judged: NoteJudgeOutput,
   paidAllowed: boolean,
 ): { paid: boolean; price_jpy: number | null } {
-  const recommendPaid = judged.recommend_paid ?? article.paid;
-  if (!recommendPaid) return { paid: false, price_jpy: null };
+  // 企画時に有料なら有料のまま。無料でも judge が有料を勧めるなら格上げは許す。
+  const plannedPaid = article.paid || judged.recommend_paid === true;
+  if (!plannedPaid) return { paid: false, price_jpy: null };
   const price = judged.suggested_price_jpy ?? article.price_jpy ?? null;
   // 有料にできるのは「アカウントが許可」かつ「有料ラインが本文にある」かつ「価格が決まっている」ときだけ。
+  // (有料ラインが無いまま paid にすると publish 時に本文が丸ごと有料側へ入ってしまう)
   const canPaid = paidAllowed && price !== null && price > 0 && (article.paywall_line_pos ?? null) !== null;
   return { paid: canPaid, price_jpy: price };
 }

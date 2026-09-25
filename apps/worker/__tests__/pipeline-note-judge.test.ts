@@ -6,6 +6,7 @@ import type { NoteJudgeOutput } from '@a2p/contracts/agents/anp';
 
 import {
   PIPELINE_NOTE_JUDGE_TASK_NAME,
+  resolveFinalPricing,
   runPipelineNoteJudge,
   type AddJobLike,
   type PipelineNoteJudgePrisma,
@@ -197,7 +198,7 @@ describe('pipeline.note.judge', () => {
     expect(articleUpdates[0]!.data).toMatchObject({ status: 'ready', paid: false, price_jpy: 500 });
   });
 
-  it('F-ANP-16: judge が有料化を推奨しない場合は price_jpy を null にクリアする', async () => {
+  it('F-ANP-45: 企画時に有料の記事は judge が無料を勧めても有料のまま (ただし有料ラインが無いので価格だけ残る)', async () => {
     const { prisma, articleUpdates } = buildPrisma({
       jobs: [{ id: 'job1', status: 'queued' }],
       articles: [makeArticle({ paid: true, price_jpy: 300 })],
@@ -212,7 +213,9 @@ describe('pipeline.note.judge', () => {
       { prisma, logger: makeLogger(), judgeArticle, acquireLock: vi.fn().mockResolvedValue(undefined), releaseLock: vi.fn().mockResolvedValue(undefined) },
     );
 
-    expect(articleUpdates[0]!.data).toMatchObject({ status: 'ready', paid: false, price_jpy: null });
+    // 有料ラインが無い記事なので paid にはできないが、**価格の提案は消さない**
+    // (judge の格下げで price_jpy まで消えると、後から有料化する手がかりが失われる)。
+    expect(articleUpdates[0]!.data).toMatchObject({ status: 'ready', paid: false, price_jpy: 300 });
   });
 
   it('低スコア (69 以下) + retry_count=0 — 構成 (writer.outline) からやり直し (F-ANP-44)', async () => {
@@ -311,5 +314,41 @@ describe('pipeline.note.judge', () => {
 
   it('タスク名が docs/11 §7 と一致する', () => {
     expect(PIPELINE_NOTE_JUDGE_TASK_NAME).toBe('pipeline.note.judge');
+  });
+});
+
+describe('resolveFinalPricing (F-ANP-45: judge に有料→無料の格下げをさせない)', () => {
+  const judgedFree = { recommend_paid: false, suggested_price_jpy: null } as never;
+  const judgedSilent = {} as never;
+
+  it('企画時に有料なら judge が false でも有料のまま', () => {
+    const r = resolveFinalPricing({ paid: true, price_jpy: 500, paywall_line_pos: 1200 }, judgedFree, true);
+    expect(r).toEqual({ paid: true, price_jpy: 500 });
+  });
+
+  it('judge が何も言わなくても企画の有料を維持する', () => {
+    const r = resolveFinalPricing({ paid: true, price_jpy: 680, paywall_line_pos: 900 }, judgedSilent, true);
+    expect(r).toEqual({ paid: true, price_jpy: 680 });
+  });
+
+  it('無料企画でも judge が有料を勧めれば格上げする', () => {
+    const judged = { recommend_paid: true, suggested_price_jpy: 500 } as never;
+    const r = resolveFinalPricing({ paid: false, price_jpy: null, paywall_line_pos: 800 }, judged, true);
+    expect(r).toEqual({ paid: true, price_jpy: 500 });
+  });
+
+  it('アカウントが有料公開を許可していなければ価格提案だけ残して無料で出す', () => {
+    const r = resolveFinalPricing({ paid: true, price_jpy: 500, paywall_line_pos: 1200 }, judgedSilent, false);
+    expect(r).toEqual({ paid: false, price_jpy: 500 });
+  });
+
+  it('有料ラインが無ければ有料にしない (本文が丸ごと有料側に入る事故を防ぐ)', () => {
+    const r = resolveFinalPricing({ paid: true, price_jpy: 500, paywall_line_pos: null }, judgedSilent, true);
+    expect(r).toEqual({ paid: false, price_jpy: 500 });
+  });
+
+  it('企画も judge も無料なら価格はクリアする', () => {
+    const r = resolveFinalPricing({ paid: false, price_jpy: 500, paywall_line_pos: null }, judgedFree, true);
+    expect(r).toEqual({ paid: false, price_jpy: null });
   });
 });

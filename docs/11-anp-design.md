@@ -400,6 +400,21 @@ ANP の機能は A2P の対応機能を note 向けに写像したもの。**太
   が連結して保存（旧形式 `editorial_policy` 文字列の応答も `parseEditorialPolicy` で正規化）。`anp.judge` は
   【品質判定項目】がある場合「運営者の減点/差し戻し基準。該当すれば該当軸を減点し feedback に項目番号と理由」を明示注入。
   Vitest `packages/contracts/__tests__/anp-editorial.test.ts`。
+- **F-ANP-45 有料/無料の決定権を企画側に戻す（2026-09-25）**: 運営者報告「ANP の方が有料記事がすべて
+  無料で掲載されています」。原因は `resolveFinalPricing` が `judged.recommend_paid ?? article.paid` で
+  **judge に格下げ権を渡していた**こと。judge を gpt-6-sol に変えた直後から全記事 `recommend_paid=false` が
+  返り、企画時に有料と決めた記事がすべて無料で公開されていた。さらに paid=false になると
+  `paywall_line_pos` も消える実装だったため、後から有料に戻すこともできなくなっていた。
+  → **有料/無料はテーマ企画時（アカウントの収益化方針 + `note_themes.recommend_paid`）で決まり、
+  judge にできるのは「無料→有料の格上げ提案」と「価格提案」だけ**に変更。品質が低い記事は
+  「無料で出す」のではなく needs_human_review で止めるのが本来の設計。
+  なお judge が格下げした記事でも `price_jpy` の提案は消さない（後から有料化する手がかりを残す）。
+- **F-ANP-46 サムネの文字が途中で消える（2026-09-25）**: 運営者報告「サムネが文字化け」。
+  opentype.js に文字列をまとめて渡すと累積 advance が小数になった位置で `MNaN 596.11` のような
+  **NaN 座標**を吐き、librsvg がそれ以降の描画を黙って捨てていた（「10点出品・7日間の反応を記録」が
+  「10⊥」だけになる）。`linePathLeft` を **1 文字ずつ整数 x で生成**する実装に変更して解消。
+  (同じ罠は compose-cover / compose-promo にも潜在するため、テキスト合成を足すときは必ず
+  `text-layout.ts` の `linePathLeft` を使うこと)
 - **F-ANP-41 アイキャッチのコピー焼き込み＋Nano Banana 2（実装済み 2026-09-24）**: 運営者指摘「タイトルとアイキャッチが
   読者の目を引くようなものではないからもっと工夫して」。絵だけでは小さなサムネイルで記事の中身が伝わらないため、
   A2P の表紙と同じ **「絵は AI・文字は実フォント」** に切り替えた。
