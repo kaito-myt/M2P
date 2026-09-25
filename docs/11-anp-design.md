@@ -400,6 +400,28 @@ ANP の機能は A2P の対応機能を note 向けに写像したもの。**太
   が連結して保存（旧形式 `editorial_policy` 文字列の応答も `parseEditorialPolicy` で正規化）。`anp.judge` は
   【品質判定項目】がある場合「運営者の減点/差し戻し基準。該当すれば該当軸を減点し feedback に項目番号と理由」を明示注入。
   Vitest `packages/contracts/__tests__/anp-editorial.test.ts`。
+- **F-ANP-47 公開済み記事の有料化（2026-09-25）**: 運営者指示「有料化機能作って」。F-ANP-45 で
+  無料公開されてしまった既存記事を、note 上で**後から**有料に切り替える経路を作った。
+  `pipeline.note.monetize`（§7）が note エディタを開き、アカウントの `free_ratio` に沿った
+  段落境界（`computePaywallSplit`、`apps/worker/src/tasks/note-publish/paywall-split.ts`）に
+  「有料エリア指定」を挿入 → 公開設定で有料を選択 → 価格を入力 →「更新する」。
+  - 執筆時と違い本文に有料マーカーが残っていないため、**本文の文字数ではなく段落境界**で切る
+    （note の有料エリアは段落の境目にしか置けない）。見出し直前が同点候補なら見出し側を優先する。
+  - **二重ゲート**: 実更新はアカウント設定 `paid_publish_enabled` が ON かつグローバル
+    `AppSettings.anp_publish_dry_run` が OFF のときだけ。どちらかを満たさない場合は自動的に
+    ドライラン（有料選択＋価格入力まで進めて「更新する」を押さない）に落ちるので、**記事は
+    無料のまま公開され続ける**。ドライランはそのまま「note の本人確認(KYC)が通るか」の
+    確認手段になる（KYC 未完了なら `kyc_required` で中断し LINE 通知）。
+  - 成功時に `NoteArticle.paid=true` / `price_jpy` / `paywall_line_pos` を DB に書き戻すので、
+    以後の売上集計・分析が有料記事として扱う。価格は「運営者指定 → judge の提案価格 →
+    アカウント価格帯の下限 → 500 円」の順に決まり 10 円単位に丸める（`resolveMonetizePrice`）。
+  - UI: 記事詳細 `/articles/[id]` に「有料化」セクション（価格入力＋「有料化を試す」/「有料化する」）。
+    公開済みかつ無料かつ `note_url` を持つ記事にだけ出す。一括処理は
+    `bash scripts/paperback/pb-env.sh node scripts/anp/monetize-published.cjs [--apply] [--real]`。
+  - 実装メモ: `insertPaywallMarker(page, pressEnter)` の第 2 引数を追加した（執筆時は改行して
+    続きを打つが、既存本文への後付けでは改行すると空段落が残る）。段落先頭へのカーソル移動は
+    ProseMirror 相手なので `page.mouse.click(x, y)` の trusted click ＋ `Home` キーで行う
+    （`el.click()` では選択位置が動かない、§2.1 の記事タイプラジオと同型の罠）。
 - **F-ANP-45 有料/無料の決定権を企画側に戻す（2026-09-25）**: 運営者報告「ANP の方が有料記事がすべて
   無料で掲載されています」。原因は `resolveFinalPricing` が `judged.recommend_paid ?? article.paid` で
   **judge に格下げ権を渡していた**こと。judge を gpt-6-sol に変えた直後から全記事 `recommend_paid=false` が
@@ -608,7 +630,7 @@ ANP の機能は A2P の対応機能を note 向けに写像したもの。**太
 - **F-ANP-41 コスト/トークン可観測性**: 全 LLM/画像生成呼び出しを `token_usage` に記録（A2P ルール #5 準拠。ANP 分は `tool='anp'` 等で識別）。
 - **F-ANP-42 ホーム（ミッションコントロール）**: A2P の S-002 再実装版を流用。当月純利益/売上/コスト/公開記事数/アカウント別成長を集約。**仕上げ実装済み(2026-09-21)**: `apps/anp/app/(app)/page.tsx` が RSC で当月の公開記事数/総ビュー/総売上/AIコスト(token_usage role LIKE 'anp.%')/純利益、アカウント別 KPI(フォロワー/公開数(累計・30日)/当月売上・コスト・純利益)、今日のパイプライン(実行中/待機中ジョブと直近24hの失敗)、セッション要再取込アラート、直近公開記事5件を表示する。集計ロジックは `apps/anp/lib/home-core.ts`(`computeAccountKpis`/`jstMonthRange`)に純関数化しユニットテスト済み。
   **アカウント別コストの近似**: `token_usage` にアカウント紐付け列が無いため(§6 実装時の発見と同じ制約)、当月コストは `note_articles.cost_jpy_total`(当月作成分)の合計をアカウント単位の近似値として使う(記事単位の集計は `applyNoteArticleCostFromJob` で既に確定しているため厳密には token_usage 合計と一致するが、月をまたぐ編集ジョブがある場合はわずかにズレうる)。
-  **記事の全件横断ビューを新規実装(2026-09-21, F-ANP-42 関連)**: `/articles`(全記事一覧。運営者要望「作成中、公開前、公開中の記事が全部一覧化」に合わせ **段階タブ = すべて/作成中/公開前/公開中/失敗・非公開**（件数バッジ付き。定義は `apps/anp/lib/article-stage.ts`: 作成中=queued/writing/editing/eyecatch/judging、公開前=ready/needs_human_review（+公開同期前の status=published & publish_status=draft）、公開中=publish_status=published、失敗・非公開=failed/cancelled/unlisted）＋アカウント/有料提案でフィルタ、note 記事リンクと更新/公開日時列。サイドバーの項目名は「記事一覧」)・`/articles/[id]`(記事詳細: 本文整形表示・アイキャッチ・品質判定内訳・コスト・ジョブ履歴・売上・告知投稿・公開/再審査操作)を追加した。本文の Markdown 相当表示は新規パーサ依存を増やさず `apps/anp/lib/note-markdown.ts`(`parseNoteMarkdown`)の自前実装で見出し/箇条書き/段落に整形する。ジョブ履歴は `Job.book_id` が常に null なため `Job.payload_json` の JSON path クエリ(`path:['note_article_id'], equals:<id>`、`alert-cost-check.ts` と同じ Prisma パターン)で突合する。
+  **記事の全件横断ビューを新規実装(2026-09-21, F-ANP-42 関連)**: `/articles`(全記事一覧。運営者要望「作成中、公開前、公開中の記事が全部一覧化」に合わせ **段階タブ = すべて/作成中/公開前/公開中/失敗・非公開**（件数バッジ付き。定義は `apps/anp/lib/article-stage.ts`: 作成中=queued/writing/editing/eyecatch/judging、公開前=ready/needs_human_review（+公開同期前の status=published & publish_status=draft）、公開中=publish_status=published、失敗・非公開=failed/cancelled/unlisted）＋アカウント/有料提案でフィルタ、note 記事リンクと更新/公開日時列。サイドバーの項目名は「記事一覧」)・`/articles/[id]`(記事詳細: 本文整形表示・アイキャッチ・品質判定内訳・コスト・ジョブ履歴・売上・告知投稿・公開/再審査操作、**公開済みの無料記事には「有料化」セクション**(F-ANP-47: 価格入力＋「有料化を試す」(ドライラン)/「有料化する」。`monetize-article-button.tsx` → `app/actions/monetize.ts`))を追加した。本文の Markdown 相当表示は新規パーサ依存を増やさず `apps/anp/lib/note-markdown.ts`(`parseNoteMarkdown`)の自前実装で見出し/箇条書き/段落に整形する。ジョブ履歴は `Job.book_id` が常に null なため `Job.payload_json` の JSON path クエリ(`path:['note_article_id'], equals:<id>`、`alert-cost-check.ts` と同じ Prisma パターン)で突合する。
 - **F-ANP-40/41 ダッシュボード UI（実装済み 2026-09-21）**: 運営者要望「売上ダッシュボードとコストダッシュボードも
   作りましょうか。A2P と同じように、分析メニューの配下に」。サイドメニューに「分析」節を追加し
   **S-ANP-11 `/analytics/sales`**（当月 KPI: 売上/ビュー/スキ/購入者/MRR と前月比、6 か月推移テーブル＋バー、アカウント別
@@ -848,6 +870,7 @@ note.theme.generate (アカウント別・手動起動。UI の「テーマ生�
 | タスク名 | ペイロード | 処理概要 | 完了後の遷移/状態 |
 |---|---|---|---|
 | `pipeline.note.publish` | `{ note_article_id, job_id, dry_run? }` | `NoteArticle(status='ready')` を Playwright ヘッドレスで note へ送信（`apps/worker/src/tasks/note-publish/playwright-note-publish-port.ts`）。①**毎回 `note.com/notes/new` で新規下書きを作成**して noteId を採番(resume はしない。理由は下記「本文重複バグ」参照)、失敗しても即 `NoteArticle.note_url` に保存。②タイトル/本文(`buildNoteBlocks` で見出し/箇条書き/段落+有料ラインに分解)/見出し画像を流し込み(見出し/箇条書き/画像/有料エリア指定は必ず「+」挿入メニューを開いてから項目クリック — 下記参照)。③「下書き保存」必須(dry_run はここで終了、`publish_status='draft'`)。④`dry_run=false`: **有料記事(`paid=true`)はこの時点で必ず `blocked` にして中断**(価格/有料ライン設定 UI 未実装、`shouldBlockPaidPublish`。有料エリア指定マーカーの挿入自体に失敗した場合も同様に中断し有料本文の誤・無料公開を防ぐ)。無料記事のみ「公開に進む」→ 公開設定画面 →「投稿する」→ 完了確認は「URL遷移」または「『記事が公開されました』モーダルのテキスト検知」のいずれか(`waitForPublishConfirmation`。note は本文ページへ遷移せずモーダルを重ねて表示するため、2026-09-18 発見。§2.1 参照)。公開 URL は note 公開API (`GET /api/v3/notes/<noteId>`、認証不要)の `status`/`user.urlname` から確定(`resolvePublishedUrl`。URL遷移監視はフォールバック)。各段で R2 `debug/note-publish/<article>-<step>-<ts>.png` にスクショ保存 | 成功(公開): `status='published'`, `publish_status='published'`, `published_at`, `note_url`確定 + LINE通知(アカウント`display_name`込み)。成功(dry-run): `publish_status='draft'`のみ。`not_logged_in`: `NoteAccount.status='paused'`+LINE通知、記事は`ready`のまま保持。`blocked`/`error`: 記事は`ready`のまま、`note_url`は保持し次回再試行可能(ただし次回も新規下書きになるため note 上に下書きが積み残る — 運営者が適宜整理) |
+| `pipeline.note.monetize` | `{ note_article_id, job_id, dry_run?, price_jpy? }` | **(F-ANP-47) 公開済みの無料記事を後から有料化する**。①対象は `status='published'` かつ `paid=false` かつ `note_url` あり(それ以外は `not_published`/`already_paid` で skip)。②`computePaywallSplit(body_md, free_ratio)` がアカウントの `monetization_policy_json.free_ratio` に最も近い**段落境界**を選ぶ(見出し直前を同点優先。段落が 2 つ未満なら `no_paywall_slot` で skip)。③`NotePublishPort.monetizeOne` が `https://editor.note.com/notes/<noteId>/edit/` を開き、指定段落の先頭を trusted click →「+」メニュー →「有料エリア指定」→「公開に進む」→ 記事タイプ `#paid` を trusted click(本人情報モーダルが出たら `kyc_required` で中断) → 価格入力 →「更新する」。④価格は `resolveMonetizePrice`(運営者指定 → 記事の `price_jpy` → 価格帯下限 → 500円、10円単位)。**実更新の二重ゲート**: アカウント `paid_publish_enabled` が ON かつ `AppSettings.anp_publish_dry_run` が OFF のときのみ。どちらか欠ければ強制ドライラン(有料選択+価格入力まで進めて更新は押さない = KYC 確認手段)。各段で R2 `debug/note-publish/<article>-monetize-<step>-<ts>.png` にスクショ | 成功: `paid=true`, `price_jpy`, `paywall_line_pos` を保存 + LINE通知。ドライラン: `dry_run_ready`(DB 変更なし)。`kyc_required`: LINE通知して記事は無料のまま。`not_logged_in`: `NoteAccount.status='paused'`+LINE通知。いずれの失敗でも**記事を非公開化・削除はしない** |
 | `note.publish.dispatch` | (cron, payload無し) | `AppSettings.anp_auto_publish_enabled=true` のとき、`note_articles.status='ready' AND publish_status='draft' AND paid=false` をアカウントごとに1件(`note_accounts.status='active'`のみ)選び `pipeline.note.publish` を enqueue(`dry_run=AppSettings.anp_publish_dry_run`)。1 tick 最大3件。`job_key='note-publish-<article_id>'`で重複防止。**`paid=false` に限定**(有料記事は価格 UI 未実装のため自動運用対象外 — 手動 dry-run のみ) | 対象記事があるアカウント分だけ enqueue。次回tickまで待機 |
 | `note.publish.status.sync` | (cron, payload無し) | READ-ONLY。`publish_status='published'`の記事の`note_url`を開き、404/非公開文言を検知したら`unlisted`に降格。セッション失効検知時はそのアカウントを`paused`+LINE通知して走査打ち切り(dispatcher と同じ扱い) | `publish_status='unlisted'`への降格 or 変更なし |
 
@@ -1024,8 +1047,8 @@ re-export している。
 - **Phase 0（設計・雛形）**: 本ドキュメント／`apps/anp` スキャフォールド（SSO で起動する骨格＋ホーム骨格）／portal タイル（済）。
 - **Phase 1（MVP・実装済み）**: 単一〜複数アカウントで theme→outline→writer.body→editor→eyecatch→judge→**status='ready' (下書き相当)** まで自動連結。`apps/anp` に `/accounts`・`/accounts/[id]` UI（アカウント作成・テーマ生成/承認/却下・記事一覧）を実装。note 公開はアシスト手動（Phase 2）。売上手入力。
 - **Phase 2（一部実装済み・2026-09-15）**: note 公開オートメーション（`pipeline.note.publish`/`note.publish.dispatch`/`note.publish.status.sync`、§7）＋マルチアカウント別セッション（`note_accounts.session_state_enc`、移行/取込スクリプト）を実装。**未実装・要フォロー**: 有料記事の価格/有料ライン設定 UI 自動化（note の KYC 要件により本人確認完了後に追加実装が必要、§2.1 参照）、~~認証リレー(`note_auth_requests`＋LINE)~~ → **Phase 7 で解消**、~~売上スクレイプ(`note.sales.fetch`)~~ → Phase 3 で解消、価格自動決定(F-ANP-16)。
-- **Phase 3（一部実装済み・2026-09-16）**: SNS 自動販促（`promotion.note.article`、§7）／売上・KPI取得（`note.sales.fetch`/`note.sales.fetch.dispatch`、§7）／相互流入 F-ANP-31 最小版（note 本文への関連書籍紹介、§3.4）／ホーム集約 F-ANP-42 最小版（`apps/anp/app/page.tsx`）を実装。**未実装・要フォロー**: メンバーシップ運用そのもの（運用アカウント無しのため §2.2 のスクレイプ未検証）、org 自律連携（note 出版本部/note 販促本部）、有料記事の価格/有料ライン設定 UI（Phase 2 から継続）。
-- **Phase 4（一部実装済み・2026-09-18）**: 日次自動運転(F-ANP-17: `note.theme.auto` — テーマ自動生成＋自動採用＋パイプライン自動起動、§7)／価格・有料の自動提案(F-ANP-16 続き: judge が有料化提案、paid は KYC 未完了のため常に false 強制、§3.2/§7)／`needs_human_review` 再審査 UI(申し送り6 解消)／`note_accounts.handle` 編集 UI＋公開成功時の自動保存(申し送り13 解消)／A2P⇄note 相互送客の拡充(書籍LP→note 導線、F-ANP-31 最小版、§3.4)を実装。**未実装・要フォロー**: note→書籍化などクロスツール収益最適化、~~アカウント別のパイプライン自動パス設定(現状 `anp_auto_theme_enabled` 等はグローバル1設定)~~ → **Phase 7 で解消**、org 自律連携(F-ANP-43、運営者指示によりスコープ外)、有料記事の価格/有料ライン設定 UI(Phase 2 から継続、KYC 完了待ち)、メンバーシップ運用実データ検証(Phase 3 から継続)。
+- **Phase 3（一部実装済み・2026-09-16）**: SNS 自動販促（`promotion.note.article`、§7）／売上・KPI取得（`note.sales.fetch`/`note.sales.fetch.dispatch`、§7）／相互流入 F-ANP-31 最小版（note 本文への関連書籍紹介、§3.4）／ホーム集約 F-ANP-42 最小版（`apps/anp/app/page.tsx`）を実装。**未実装・要フォロー**: メンバーシップ運用そのもの（運用アカウント無しのため §2.2 のスクレイプ未検証）、org 自律連携（note 出版本部/note 販促本部）、~~有料記事の価格/有料ライン設定 UI（Phase 2 から継続）~~ → **F-ANP-16b/47 で解消**（公開時の有料設定 = `pipeline.note.publish`、公開後の有料化 = `pipeline.note.monetize`）。
+- **Phase 4（一部実装済み・2026-09-18）**: 日次自動運転(F-ANP-17: `note.theme.auto` — テーマ自動生成＋自動採用＋パイプライン自動起動、§7)／価格・有料の自動提案(F-ANP-16 続き: judge が有料化提案、paid は KYC 未完了のため常に false 強制、§3.2/§7)／`needs_human_review` 再審査 UI(申し送り6 解消)／`note_accounts.handle` 編集 UI＋公開成功時の自動保存(申し送り13 解消)／A2P⇄note 相互送客の拡充(書籍LP→note 導線、F-ANP-31 最小版、§3.4)を実装。**未実装・要フォロー**: note→書籍化などクロスツール収益最適化、~~アカウント別のパイプライン自動パス設定(現状 `anp_auto_theme_enabled` 等はグローバル1設定)~~ → **Phase 7 で解消**、org 自律連携(F-ANP-43、運営者指示によりスコープ外)、~~有料記事の価格/有料ライン設定 UI(Phase 2 から継続、KYC 完了待ち)~~ → **F-ANP-16b/47 で解消**(実運用の可否は note 側 KYC の完了次第。未完了なら `kyc_required` で安全に止まる)、メンバーシップ運用実データ検証(Phase 3 から継続)。
 - **Phase 5（実装済み・2026-09-18）**: note アカウント設計 UI (F-ANP-01/03: `/accounts/design`
   ブリーフ入力→`anp.strategist`が設計案生成→編集/画像生成/フィードバック再生成/採用・却下、
   `note_accounts.status='pending_session'` 新設、§3.1/§6/§7)を実装。**未適用・要フォロー**:

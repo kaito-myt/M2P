@@ -1,4 +1,4 @@
-# A2P/M2P 作業引き継ぎ（2026-09-21 時点）
+# A2P/M2P 作業引き継ぎ（2026-09-25 時点）
 
 別端末で続きを作業するための現況・残タスク・発見した制約のまとめ。
 起動後はまず本書＋`CLAUDE.md`＋`.claude-handoff/memory/*.md` を読むこと。
@@ -14,6 +14,33 @@
 4. ブラウザ自動化のログイン状態（`scripts/.kdp-userdata`, `scripts/.note-userdata*`）は gitignore。
    KDP は初回 OTP 再認証（LINE リレー or `kdp_auth_requests` 行を手動 fulfilled）。
    BW/Kobo/note のセッションは DB（app_settings / promotion_channel_settings）に暗号化保存済みなので端末非依存。
+
+## 2026-09-25 ANP（有料記事の復旧・サムネ・有料化機能）
+- **F-ANP-45 有料記事が全部無料で出ていた**: `resolveFinalPricing` が judge に格下げ権を渡していた
+  (`judged.recommend_paid ?? article.paid`)。judge を gpt-6-sol に替えた直後から全記事
+  `recommend_paid=false` が返り、企画時に有料と決めた記事が無料公開されていた。
+  → **有料/無料はテーマ企画時に決まり、judge は「無料→有料の格上げ提案」と「価格提案」だけ**。
+- **F-ANP-46 サムネの文字が途中で消える**: opentype.js に文字列をまとめて渡すと累積 advance が
+  小数になった位置で `MNaN ...` を吐き、librsvg が以降の描画を黙って捨てていた
+  （「10点出品・7日間の反応を記録」→「10⊥」）。`linePathLeft` を **1 文字ずつ整数 x** に変更。
+  同梱フォントに無い矢印 (`→`) は**ベクターで自前描画**、丸数字/★/✓/≒ は代替文字に置換。
+- **F-ANP-47 公開済み記事の有料化（運営者指示「有料化機能作って」）**:
+  - 新タスク **`pipeline.note.monetize`**（`apps/worker/src/tasks/pipeline-note-monetize.ts`）。
+    note エディタを開き、アカウントの `free_ratio` に最も近い**段落境界**（`paywall-split.ts` の
+    `computePaywallSplit`）に「有料エリア指定」を挿入 → 公開設定で有料 → 価格 →「更新する」。
+  - **実更新の二重ゲート**: アカウント `paid_publish_enabled` が ON かつ `AppSettings.anp_publish_dry_run`
+    が OFF のときだけ。欠ければ自動でドライラン（有料選択＋価格入力まで進めて更新しない）に落ち、
+    記事は無料のまま。**ドライランがそのまま note 側 KYC の確認手段**になる
+    （未完了なら `kyc_required` で中断＋LINE通知）。
+  - UI: 記事詳細 `/articles/[id]` の「有料化」セクション（価格入力＋「有料化を試す」/「有料化する」）。
+    一括は `bash scripts/paperback/pb-env.sh node scripts/anp/monetize-published.cjs [--apply] [--real]`
+    （`--real` なしは全件ドライラン投入。まず 1 件で KYC を確認してから `--real` を付ける）。
+  - 成功時に `note_articles.paid/price_jpy/paywall_line_pos` を書き戻すので売上集計が有料扱いになる。
+  - 既知の未検証点: note が公開済み記事の編集を**オートセーブ**するかは未確認。ドライランは
+    「更新する」を押さないだけなので、万一オートセーブがあると有料ラインだけが下書き側に残り得る
+    （公開中の本文は `更新する` を押すまで変わらない前提）。初回実行後に note 上の表示を目視確認すること。
+  - note の `/settings/fee`（お支払い口座＝KYC 状態）はパスワード再入力を要求するようになったため、
+    外部から KYC 済みかを読めない。`kyc_required` の発生で判断する。
 
 ## 2026-09-24 追加（タイトル/アイキャッチ/note SEO/モデル構成）
 - **F-ANP-41 アイキャッチ刷新**: 画像モデルを **Nano Banana 2 (google/gemini-3.1-flash-image)** に切替 (role=`anp.eyecatch` の割当で変更可)。

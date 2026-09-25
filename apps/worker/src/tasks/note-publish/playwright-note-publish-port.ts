@@ -81,6 +81,35 @@ export interface NoteArticleInput {
   hashtags?: string[];
 }
 
+/**
+ * [F-ANP-47] 公開済みの無料記事を**後から有料に切り替える**ための引数。
+ *
+ * 執筆時と違って本文に有料マーカーが残っていないので、note エディタ上で
+ * 「有料エリア指定」を指定段落の先頭に挿入し直してから公開設定で有料に切り替える。
+ */
+export interface NoteMonetizeArgs {
+  /** 対象記事 (ログ用)。 */
+  articleId: string;
+  /** 既存の note 記事 URL (https://note.com/<handle>/n/<noteId>)。 */
+  noteUrl: string;
+  /** 無料側に残す段落数 = 有料エリアを挿入する段落 index。 */
+  freeBlockCount: number;
+  priceJpy: number;
+  sessionState: string;
+  /** true = 公開設定まで進めて「更新」は押さない。 */
+  dryRun: boolean;
+  stageDir: string;
+}
+
+export type NoteMonetizeResult =
+  | { ok: true; status: 'monetized' | 'dry_run_ready'; noteUrl: string }
+  | {
+      ok: false;
+      reason: 'not_logged_in' | 'kyc_required' | 'no_note_id' | 'no_paywall_slot' | 'blocked' | 'error';
+      message: string;
+      noteUrl?: string;
+    };
+
 export interface NotePublishArgs {
   article: NoteArticleInput;
   /** 復号済み storageState (JSON文字列)。 */
@@ -113,10 +142,18 @@ export type NoteCheckPublishedResult =
 export interface NotePublishPort {
   publishOne(args: NotePublishArgs): Promise<NotePublishResult>;
   checkPublished(args: NoteCheckPublishedArgs): Promise<NoteCheckPublishedResult>;
+  /** [F-ANP-47] 公開済みの無料記事を有料へ切り替える。 */
+  monetizeOne(args: NoteMonetizeArgs): Promise<NoteMonetizeResult>;
 }
 
 export function createPlaywrightNotePublishPort(): NotePublishPort {
-  return { publishOne, checkPublished };
+  return { publishOne, checkPublished, monetizeOne };
+}
+
+/** note 記事 URL から noteId (nXXXXXXXX) を取り出す。 */
+export function extractNoteId(noteUrl: string): string | null {
+  const m = noteUrl.match(/\/n\/(n[0-9a-z]+)/i) ?? noteUrl.match(/notes\/(n[0-9a-z]+)/i);
+  return m ? m[1]! : null;
 }
 
 /**
@@ -366,6 +403,168 @@ async function publishOne(args: NotePublishArgs): Promise<NotePublishResult> {
   }
 }
 
+/**
+ * [F-ANP-47] 公開済みの無料記事を有料に切り替える。
+ *
+ * 手順:
+ *   1. `https://editor.note.com/notes/<noteId>/edit/` を開く (公開済み記事もここで編集できる)
+ *   2. 本文 (`div.ProseMirror`) の `freeBlockCount` 番目の段落の先頭をクリックしてカーソルを置く
+ *   3. 「+」メニュー → 「有料エリア指定」で有料ラインを挿入 (`insertPaywallMarker`)
+ *   4. 「公開に進む」→ 記事タイプ `#paid` を trusted click → **本人情報(KYC)モーダルが出たら中断**
+ *   5. 価格を入力 → 「更新する」(公開済み記事は「投稿する」ではなく更新ボタン)
+ *
+ * 途中で失敗しても記事は無料のまま公開され続ける (中断するだけで非公開化・削除はしない)。
+ */
+async function monetizeOne(args: NoteMonetizeArgs): Promise<NoteMonetizeResult> {
+  const noteId = extractNoteId(args.noteUrl);
+  if (!noteId) return { ok: false, reason: 'no_note_id', message: `note URL から noteId を取れません: ${args.noteUrl}` };
+
+  let storageStateObj: unknown;
+  try {
+    storageStateObj = JSON.parse(args.sessionState);
+  } catch {
+    return { ok: false, reason: 'error', message: 'session state is not valid JSON' };
+  }
+
+  let chromium: typeof import('playwright').chromium;
+  try {
+    ({ chromium } = await import('playwright'));
+  } catch (err) {
+    return { ok: false, reason: 'error', message: `playwright unavailable: ${errMsg(err)}` };
+  }
+
+  const browser = await chromium.launch({ headless: true, args: LAUNCH_ARGS });
+  try {
+    const context = await browser.newContext({
+      storageState: storageStateObj as Awaited<ReturnType<import('playwright').BrowserContext['storageState']>>,
+      locale: 'ja-JP',
+      userAgent: UA,
+      viewport: { width: 1500, height: 1300 },
+    });
+    await context.addInitScript({
+      content: 'globalThis.__name = globalThis.__name || function (f) { return f; };',
+    });
+    const page: Page = await context.newPage();
+    page.setDefaultTimeout(45000);
+
+    await page
+      .goto(`https://editor.note.com/notes/${noteId}/edit/`, { waitUntil: 'domcontentloaded' })
+      .catch(() => {});
+    await page.waitForTimeout(6000);
+    if (/\/login\b|\/signin\b/i.test(page.url()) || (await page.$('input[type=password]').catch(() => null))) {
+      await screenshot(page, args.stageDir, `${args.articleId}-monetize-not-logged-in`);
+      return { ok: false, reason: 'not_logged_in', message: `セッション失効 (url=${page.url().slice(0, 90)})` };
+    }
+
+    const hasBody = await page
+      .locator('div.ProseMirror[contenteditable="true"]')
+      .first()
+      .count()
+      .catch(() => 0);
+    if (!hasBody) {
+      await screenshot(page, args.stageDir, `${args.articleId}-monetize-no-body`);
+      return { ok: false, reason: 'blocked', message: '本文エディタが見つかりません', noteUrl: args.noteUrl };
+    }
+
+    // 既に有料ラインがある記事には二重挿入しない (公開設定だけやり直す)。
+    const already = await page
+      .evaluate(() => {
+        const root = document.querySelector('div.ProseMirror[contenteditable="true"]');
+        if (!root) return false;
+        if (root.querySelector('[class*="paywall" i],[class*="paid" i],[data-paid-area]')) return true;
+        return /ここから先は/.test(root.textContent ?? '');
+      })
+      .catch(() => false);
+    log.info({ articleId: args.articleId, noteId, already }, 'note monetize: editor opened');
+
+    if (!already) {
+      // 指定段落の先頭にカーソルを置く (ProseMirror は trusted click でないと反応しない)。
+      const spot = await page
+        .evaluate((index: number) => {
+          const root = document.querySelector('div.ProseMirror[contenteditable="true"]');
+          if (!root) return null;
+          const children = [...root.children].filter((el) => (el.textContent ?? '').trim().length > 0);
+          if (children.length < 2) return null;
+          const at = Math.min(Math.max(index, 1), children.length - 1);
+          const target = children[at] as HTMLElement;
+          target.scrollIntoView({ block: 'center' });
+          const r = target.getBoundingClientRect();
+          return { x: r.x + 6, y: r.y + Math.min(10, r.height / 2), at, count: children.length };
+        }, args.freeBlockCount)
+        .catch(() => null);
+      if (!spot) {
+        await screenshot(page, args.stageDir, `${args.articleId}-monetize-no-slot`);
+        return {
+          ok: false,
+          reason: 'no_paywall_slot',
+          message: '有料ラインを置ける段落が見つかりません(段落が 2 つ未満)',
+          noteUrl: args.noteUrl,
+        };
+      }
+      log.info({ articleId: args.articleId, ...spot }, 'note monetize: paywall slot');
+      await page.mouse.click(spot.x, spot.y);
+      await page.waitForTimeout(800);
+      await page.keyboard.press('Home').catch(() => {}); // 段落の先頭へ寄せる
+      await page.waitForTimeout(300);
+
+      const inserted = await insertPaywallMarker(page, false);
+      await screenshot(page, args.stageDir, `${args.articleId}-monetize-paywall`);
+      if (!inserted) {
+        return {
+          ok: false,
+          reason: 'no_paywall_slot',
+          message: '「有料エリア指定」を挿入できませんでした',
+          noteUrl: args.noteUrl,
+        };
+      }
+      await page.waitForTimeout(2000);
+    }
+
+    if (!(await clickByText(page, '公開に進む'))) {
+      await screenshot(page, args.stageDir, `${args.articleId}-monetize-no-proceed`);
+      return { ok: false, reason: 'blocked', message: '「公開に進む」が見つかりません', noteUrl: args.noteUrl };
+    }
+    await page.waitForTimeout(5000);
+
+    const kyc = await selectPaidAndCheckKyc(page).catch(() => false);
+    await screenshot(page, args.stageDir, `${args.articleId}-monetize-paid`);
+    if (kyc) {
+      return {
+        ok: false,
+        reason: 'kyc_required',
+        message:
+          'note の本人情報登録(KYC)が未完了のため有料に切り替えられません。note の「設定 › お支払先」を登録後に再実行してください(記事は無料のまま公開され続けます)',
+        noteUrl: args.noteUrl,
+      };
+    }
+
+    if (!(await fillPaidPrice(page, args.priceJpy).catch(() => false))) {
+      await screenshot(page, args.stageDir, `${args.articleId}-monetize-no-price`);
+      return {
+        ok: false,
+        reason: 'blocked',
+        message: '価格入力欄が見つかりません(0円/誤価格での公開を防ぐため中断)',
+        noteUrl: args.noteUrl,
+      };
+    }
+
+    if (args.dryRun) return { ok: true, status: 'dry_run_ready', noteUrl: args.noteUrl };
+
+    // 公開済み記事の更新ボタンは「更新する」。表記ゆれに備え「投稿する」もフォールバックで見る。
+    if (!(await clickByText(page, '更新する')) && !(await clickByText(page, '投稿する'))) {
+      await screenshot(page, args.stageDir, `${args.articleId}-monetize-no-update`);
+      return { ok: false, reason: 'blocked', message: '「更新する」ボタンが見つかりません', noteUrl: args.noteUrl };
+    }
+    await page.waitForTimeout(8000);
+    await screenshot(page, args.stageDir, `${args.articleId}-monetize-after`);
+    return { ok: true, status: 'monetized', noteUrl: args.noteUrl };
+  } catch (err) {
+    return { ok: false, reason: 'error', message: errMsg(err), noteUrl: args.noteUrl };
+  } finally {
+    await browser.close().catch(() => {});
+  }
+}
+
 async function checkPublished(args: NoteCheckPublishedArgs): Promise<NoteCheckPublishedResult> {
   let storageStateObj: unknown;
   try {
@@ -476,7 +675,7 @@ async function typeBlock(page: Page, block: NotePublishBlock, articleId: string)
  * 本文ツールバーの「+」挿入メニューから「有料エリア指定」をクリックしてカーソル位置に区切りを
  * 挿む。成功可否を返す(失敗時は呼出側が有料本文の入力を中断する)。
  */
-async function insertPaywallMarker(page: Page): Promise<boolean> {
+async function insertPaywallMarker(page: Page, pressEnter = true): Promise<boolean> {
   await openPlusMenu(page);
   const clicked = await clickByText(page, '有料エリア指定');
   if (!clicked) {
@@ -484,7 +683,9 @@ async function insertPaywallMarker(page: Page): Promise<boolean> {
     return false;
   }
   await page.waitForTimeout(300);
-  await page.keyboard.press('Enter');
+  // 執筆時は続けて本文を打つため改行する。既存本文への後付け(F-ANP-47)では
+  // 余計な空段落を作らないよう改行しない。
+  if (pressEnter) await page.keyboard.press('Enter');
   return true;
 }
 

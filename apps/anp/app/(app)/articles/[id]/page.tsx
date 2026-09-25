@@ -16,6 +16,8 @@ import { parseNoteMarkdown } from '@/lib/note-markdown';
 import { ArticleReviewActions } from '../../accounts/[id]/article-review-actions';
 import { PublishArticleButton } from '../../accounts/[id]/publish-article-button';
 
+import { MonetizeArticleButton } from './monetize-article-button';
+
 function yen(n: number): string {
   return `¥${n.toLocaleString('ja-JP')}`;
 }
@@ -168,6 +170,15 @@ export default async function ArticleDetailPage({
           {article.status === 'needs_human_review' && <ArticleReviewActions articleId={article.id} />}
         </div>
       </header>
+
+      {/* F-ANP-47: 公開済みの無料記事は後から有料に切り替えられる。 */}
+      {article.status === 'published' && !article.paid && article.note_url && (
+        <MonetizeArticleButton
+          articleId={article.id}
+          suggestedPriceJpy={article.price_jpy}
+          globalDryRunEnabled={globalDryRunEnabled}
+        />
+      )}
 
       {eyecatchUrl && (
         <section className="mt-space-loose">

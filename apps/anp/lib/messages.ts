@@ -710,6 +710,24 @@ export const messages = {
       promotionLabel: '告知投稿',
       promotionEmpty: 'まだ告知投稿がありません。',
       promotionColumns: { channel: 'チャンネル', status: '状態', scheduledFor: '予定日時' },
+      // F-ANP-47: 公開済みの無料記事を後から有料に切り替える。
+      monetize: {
+        title: '有料化',
+        description:
+          '公開済みのこの無料記事に有料ラインを引き直し、価格を設定して note を更新します。無料で読ませる分量はアカウントの収益化設定に従います。',
+        priceLabel: '価格 (円)',
+        pricePlaceholder: '自動',
+        priceHint: (suggested: number | null) =>
+          suggested != null ? `空欄なら判定時の提案価格 ¥${suggested.toLocaleString('ja-JP')} を使います。` : '空欄なら価格帯の下限 (無ければ ¥500) を使います。',
+        dryRun: '有料化を試す',
+        run: '有料化する',
+        dryRunHint: '「試す」は note の有料設定と価格入力まで進めて更新は押しません (本人確認が済んでいるかの確認に使えます)。',
+        started: '有料化ジョブを投入しました。結果は下のジョブ履歴に出ます。',
+        errors: {
+          failed: '有料化の起動に失敗しました',
+          notEligible: '有料化できるのは note に公開済みの無料記事だけです',
+        },
+      },
     },
   },
   settings: {

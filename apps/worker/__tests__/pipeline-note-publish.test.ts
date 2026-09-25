@@ -119,6 +119,7 @@ function makePort(result: NotePublishResult): NotePublishPort {
   return {
     publishOne: vi.fn().mockResolvedValue(result),
     checkPublished: vi.fn(),
+    monetizeOne: vi.fn(),
   };
 }
 
