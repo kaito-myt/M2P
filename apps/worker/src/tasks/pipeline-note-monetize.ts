@@ -276,6 +276,7 @@ export async function runPipelineNoteMonetize(
         articleId,
         noteUrl: article.note_url,
         freeBlockCount: split.freeBlockCount,
+        anchorText: split.anchorText,
         priceJpy,
         sessionState,
         dryRun: effectiveDryRun,

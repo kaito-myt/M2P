@@ -92,8 +92,13 @@ export interface NoteMonetizeArgs {
   articleId: string;
   /** 既存の note 記事 URL (https://note.com/<handle>/n/<noteId>)。 */
   noteUrl: string;
-  /** 無料側に残す段落数 = 有料エリアを挿入する段落 index。 */
+  /** 無料側に残すブロック数 (テキスト一致で見つからなかったときのフォールバック index)。 */
   freeBlockCount: number;
+  /**
+   * 有料側の先頭ブロックの文字列。note エディタのブロック構造は Markdown の段落と
+   * 1:1 対応しないため、**まずこのテキストでブロックを特定**し、無ければ index を使う。
+   */
+  anchorText?: string;
   priceJpy: number;
   sessionState: string;
   /** true = 公開設定まで進めて「更新」は押さない。 */
@@ -467,44 +472,65 @@ async function monetizeOne(args: NoteMonetizeArgs): Promise<NoteMonetizeResult> 
     }
 
     // 既に有料ラインがある記事には二重挿入しない (公開設定だけやり直す)。
+    // 有料エリアは **`<paywall-line>` というカスタム要素**として本文に入る
+    // (2026-09-25 `scripts/anp/note-paywall-recon.mjs` で実測)。本文の文字列
+    // (「ここから先は」等) で判定すると記事本文の言い回しに誤反応するので使わない。
     const already = await page
-      .evaluate(() => {
-        const root = document.querySelector('div.ProseMirror[contenteditable="true"]');
-        if (!root) return false;
-        if (root.querySelector('[class*="paywall" i],[class*="paid" i],[data-paid-area]')) return true;
-        return /ここから先は/.test(root.textContent ?? '');
-      })
+      .evaluate(() => !!document.querySelector('div.ProseMirror[contenteditable="true"] paywall-line'))
       .catch(() => false);
     log.info({ articleId: args.articleId, noteId, already }, 'note monetize: editor opened');
 
     if (!already) {
-      // 指定段落の先頭にカーソルを置く (ProseMirror は trusted click でないと反応しない)。
-      const spot = await page
-        .evaluate((index: number) => {
-          const root = document.querySelector('div.ProseMirror[contenteditable="true"]');
-          if (!root) return null;
-          const children = [...root.children].filter((el) => (el.textContent ?? '').trim().length > 0);
-          if (children.length < 2) return null;
-          const at = Math.min(Math.max(index, 1), children.length - 1);
-          const target = children[at] as HTMLElement;
-          target.scrollIntoView({ block: 'center' });
-          const r = target.getBoundingClientRect();
-          return { x: r.x + 6, y: r.y + Math.min(10, r.height / 2), at, count: children.length };
-        }, args.freeBlockCount)
+      // 有料側の先頭にするブロックを特定する。
+      // **Markdown の段落 index は当てにできない** (note エディタは複数段落を 1 つの `<p>` に
+      // 束ねることがある。2026-09-25 実測) ため、まず `anchorText` のテキスト一致で探し、
+      // 見つからないときだけ index にフォールバックする。
+      const slot = await page
+        .evaluate(
+          ({ index, anchor }: { index: number; anchor: string }) => {
+            const root = document.querySelector('div.ProseMirror[contenteditable="true"]');
+            if (!root) return null;
+            const kids = [...root.children] as HTMLElement[];
+            const norm = (t: string) => t.replace(/\s+/g, '');
+            const target = norm(anchor ?? '');
+            // 本文ブロック (空要素・画像 figure を除く) の一覧。
+            const content = kids
+              .map((el, i) => ({ el, i }))
+              .filter(({ el }) => el.tagName !== 'FIGURE' && (el.textContent ?? '').trim().length > 0);
+            if (content.length < 2) return null;
+
+            if (target.length >= 4) {
+              const hit = content.find(({ el }) => norm(el.textContent ?? '').startsWith(target));
+              if (hit && hit !== content[0]) {
+                return { childIndex: hit.i, matched: true, tag: hit.el.tagName, count: content.length };
+              }
+            }
+            const at = Math.min(Math.max(index, 1), content.length - 1);
+            const fallback = content[at]!;
+            return { childIndex: fallback.i, matched: false, tag: fallback.el.tagName, count: content.length };
+          },
+          { index: args.freeBlockCount, anchor: args.anchorText ?? '' },
+        )
         .catch(() => null);
-      if (!spot) {
+      if (!slot) {
         await screenshot(page, args.stageDir, `${args.articleId}-monetize-no-slot`);
         return {
           ok: false,
           reason: 'no_paywall_slot',
-          message: '有料ラインを置ける段落が見つかりません(段落が 2 つ未満)',
+          message: '有料ラインを置けるブロックが見つかりません(本文ブロックが 2 つ未満)',
           noteUrl: args.noteUrl,
         };
       }
-      log.info({ articleId: args.articleId, ...spot }, 'note monetize: paywall slot');
-      await page.mouse.click(spot.x, spot.y);
+      log.info({ articleId: args.articleId, ...slot, anchor: args.anchorText }, 'note monetize: paywall slot');
+
+      // locator クリックで trusted click する (`page.mouse.click` だと自前スクロールが必要で、
+      // 画面外の座標を叩いてカーソルが先頭のまま = 記事の冒頭に有料ラインが入る事故になる。
+      // 2026-09-25 実測)。
+      const block = page.locator('div.ProseMirror[contenteditable="true"] > *').nth(slot.childIndex);
+      await block.scrollIntoViewIfNeeded({ timeout: 10000 }).catch(() => {});
+      await block.click({ position: { x: 6, y: 6 }, timeout: 15000 }).catch(() => {});
       await page.waitForTimeout(800);
-      await page.keyboard.press('Home').catch(() => {}); // 段落の先頭へ寄せる
+      await page.keyboard.press('Home').catch(() => {}); // ブロックの先頭へ寄せる
       await page.waitForTimeout(300);
 
       const inserted = await insertPaywallMarker(page, false);
@@ -518,6 +544,42 @@ async function monetizeOne(args: NoteMonetizeArgs): Promise<NoteMonetizeResult> 
         };
       }
       await page.waitForTimeout(2000);
+
+      // 実際に `<paywall-line>` が入ったか、どの位置に入ったかを確認する
+      // (無料部分が 0 だと記事全体が有料になってしまうので、先頭付近なら中断)。
+      const placed = await page
+        .evaluate(() => {
+          const root = document.querySelector('div.ProseMirror[contenteditable="true"]');
+          const line = root?.querySelector('paywall-line');
+          if (!root || !line) return null;
+          const kids = [...root.children];
+          const at = kids.indexOf(line as Element);
+          const freeText = kids
+            .slice(0, at)
+            .map((el) => el.textContent ?? '')
+            .join('')
+            .replace(/\s+/g, '');
+          const allText = (root.textContent ?? '').replace(/\s+/g, '');
+          return { at, freeChars: freeText.length, totalChars: allText.length };
+        })
+        .catch(() => null);
+      log.info({ articleId: args.articleId, placed }, 'note monetize: paywall placed');
+      if (!placed) {
+        return {
+          ok: false,
+          reason: 'no_paywall_slot',
+          message: '有料ラインの挿入を確認できませんでした',
+          noteUrl: args.noteUrl,
+        };
+      }
+      if (placed.totalChars > 0 && placed.freeChars / placed.totalChars < 0.05) {
+        return {
+          ok: false,
+          reason: 'no_paywall_slot',
+          message: `有料ラインが本文の先頭付近(無料 ${placed.freeChars}/${placed.totalChars} 字)に入ったため中断しました(記事全体が有料になるのを防ぐため)`,
+          noteUrl: args.noteUrl,
+        };
+      }
     }
 
     if (!(await clickByText(page, '公開に進む'))) {

@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import type { Logger } from '@a2p/contracts/logger';
 
-import { computePaywallSplit } from '../src/tasks/note-publish/paywall-split.js';
+import { computePaywallSplit, toAnchorText } from '../src/tasks/note-publish/paywall-split.js';
 import type {
   NoteMonetizeArgs,
   NoteMonetizeResult,
@@ -15,6 +15,9 @@ import {
   runPipelineNoteMonetize,
   type PipelineNoteMonetizePrisma,
 } from '../src/tasks/pipeline-note-monetize.js';
+
+const LF = String.fromCharCode(10);
+const PARA_SEP = LF + LF;
 
 function makeLogger(): Logger {
   return { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() } as unknown as Logger;
@@ -131,18 +134,33 @@ const BASE_DEPS = {
 };
 
 describe('computePaywallSplit (F-ANP-47)', () => {
-  it('free_ratio の位置に近い段落境界で切り、無料側にも有料側にも段落を残す', () => {
+  it('free_ratio の位置に近いブロック境界で切り、無料側にも有料側にも中身を残す', () => {
     const split = computePaywallSplit(BODY, 0.3);
     expect(split).not.toBeNull();
     expect(split!.freeBlockCount).toBeGreaterThanOrEqual(1);
     expect(split!.pos).toBeGreaterThan(0);
     expect(split!.pos).toBeLessThan(split!.totalChars);
-    // 無料側はおおむね 3 割 (段落境界に丸めるのでぴったりではない)。
+    // 無料側はおおむね 3 割 (ブロック境界に丸めるのでぴったりではない)。
     expect(split!.freeChars / split!.totalChars).toBeGreaterThan(0.1);
     expect(split!.freeChars / split!.totalChars).toBeLessThan(0.6);
   });
 
-  it('段落が 1 つしかない本文では引けない (null)', () => {
+  it('見出しがあるときは必ず見出しの直前で切り、その見出し文をアンカーにする', () => {
+    const split = computePaywallSplit(BODY, 0.3)!;
+    expect(split.anchorIsHeading).toBe(true);
+    // `#` は落とし、エディタ上の表示テキストと突き合わせられる形にする。
+    expect(split.anchorText.startsWith('#')).toBe(false);
+    expect(['無料パート', '有料パート']).toContain(split.anchorText);
+  });
+
+  it('見出しが無い本文では段落境界を使う', () => {
+    const noHeadings = ['一段落目です。', '二段落目です。', '三段落目です。'].join(PARA_SEP);
+    const split = computePaywallSplit(noHeadings, 0.4)!;
+    expect(split.anchorIsHeading).toBe(false);
+    expect(split.anchorText.length).toBeGreaterThan(0);
+  });
+
+  it('ブロックが 1 つしかない本文では引けない (null)', () => {
     expect(computePaywallSplit('一段落しかない本文です。', 0.3)).toBeNull();
     expect(computePaywallSplit('', 0.3)).toBeNull();
   });
@@ -151,6 +169,14 @@ describe('computePaywallSplit (F-ANP-47)', () => {
     const low = computePaywallSplit(BODY, 0.2)!;
     const high = computePaywallSplit(BODY, 0.8)!;
     expect(high.pos).toBeGreaterThan(low.pos);
+  });
+});
+
+describe('toAnchorText', () => {
+  it('見出し記号・箇条書き記号を落として 40 字までに切る', () => {
+    expect(toAnchorText(`## 有料パート${LF}本文`)).toBe('有料パート');
+    expect(toAnchorText('- 箇条書き')).toBe('箇条書き');
+    expect(toAnchorText('あ'.repeat(60)).length).toBe(40);
   });
 });
 
@@ -199,6 +225,8 @@ describe('pipeline.note.monetize', () => {
     expect(articleUpdates[0]!.paywall_line_pos).toBeGreaterThan(0);
     expect(calls[0]).toMatchObject({ dryRun: false, priceJpy: 480 });
     expect(calls[0]!.freeBlockCount).toBeGreaterThanOrEqual(1);
+    // note エディタ上で位置を特定するためのアンカー (見出し文) が渡る。
+    expect(calls[0]!.anchorText).toBeTruthy();
     expect(jobUpdates.at(-1)).toMatchObject({ status: 'done' });
   });
 
