@@ -68,3 +68,4 @@ scripts/kobo/*.png
 # note (ANP) セッション取り込み — 秘密情報 / 偵察スクショ (railway up のアップロード肥大防止)
 scripts/.note-userdata*/
 scripts/anp/out/
+scripts/paperback/.auto.lock
