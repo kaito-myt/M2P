@@ -385,9 +385,11 @@ async function publishOne(args: NotePublishArgs): Promise<NotePublishResult> {
     let posted = await clickAnyText(page, POST_LABELS);
     if (!posted && (await clickByText(page, '有料エリア設定'))) {
       await page.waitForTimeout(6000);
-      await screenshot(page, stageDir, `${a.id}-paid-area`);
       const labels = await visibleButtonLabels(page);
       log.info({ articleId: a.id, labels }, '有料エリア設定画面のボタン');
+      // 本文へのマーカー挿入が効かなかった場合でも、ここでラインを選べば有料公開できる。
+      await ensurePaidAreaLine(page, a.freeBlocks.length);
+      await screenshot(page, stageDir, `${a.id}-paid-area`);
       posted = await clickAnyText(page, POST_LABELS);
     }
     if (!posted) {
@@ -645,9 +647,10 @@ async function monetizeOne(args: NoteMonetizeArgs): Promise<NoteMonetizeResult> 
     if (!(await clickAnyText(page, UPDATE_LABELS))) {
       if (await clickByText(page, '有料エリア設定')) {
         await page.waitForTimeout(6000);
-        await screenshot(page, args.stageDir, `${args.articleId}-monetize-paidarea`);
         const labels2 = await visibleButtonLabels(page);
         log.info({ articleId: args.articleId, labels: labels2 }, 'note monetize: paid area screen buttons');
+        await ensurePaidAreaLine(page, args.freeBlockCount);
+        await screenshot(page, args.stageDir, `${args.articleId}-monetize-paidarea`);
         if (!(await clickAnyText(page, UPDATE_LABELS))) {
           return {
             ok: false,
@@ -723,6 +726,37 @@ async function checkPublished(args: NoteCheckPublishedArgs): Promise<NoteCheckPu
 // ---------------------------------------------------------------------------
 
 /** 本文ツールバー/挿入メニューのボタンを textContent で特定してクリックする(aria-label 無しの物が多い)。 */
+/**
+ * [F-ANP-16b/47] 「有料エリア設定」画面で有料ラインを確定する。
+ *
+ * この画面はブロックの間に「ラインをこの場所に変更」ボタンが並ぶ。本文にまだ有料ラインが
+ * 無い状態だと、ここで場所を選ばない限り「投稿する」が効かない (2026-09-25 実測。押しても
+ * 画面が変わらないまま = 有料公開が一度も成功しなかった原因)。
+ *
+ * `freeBlockCount` 番目のボタン (= 無料ブロックの直後) を押す。既にラインが設定済みなら
+ * 何もしない。戻り値は「ラインが設定されている状態になったか」。
+ */
+async function ensurePaidAreaLine(page: Page, freeBlockCount: number): Promise<boolean> {
+  const alreadySet = await page
+    .evaluate(() => /ここから先は/.test(document.querySelector('paywall-line')?.textContent ?? ''))
+    .catch(() => false);
+  if (alreadySet) return true;
+
+  const buttons = page.locator('button', { hasText: 'ラインをこの場所に変更' });
+  const count = await buttons.count().catch(() => 0);
+  if (count === 0) {
+    // ボタンが無い = この画面ではラインを選べない (既に設定済みか画面構成が変わった)。
+    return await page.evaluate(() => !!document.querySelector('paywall-line')).catch(() => false);
+  }
+  const at = Math.min(Math.max(freeBlockCount, 1), count) - 1;
+  const target = buttons.nth(at);
+  await target.scrollIntoViewIfNeeded({ timeout: 10000 }).catch(() => {});
+  await target.click({ timeout: 15000 }).catch(() => {});
+  await page.waitForTimeout(2500);
+  log.info({ freeBlockCount, buttonCount: count, clicked: at }, '有料エリアのラインを選択');
+  return true;
+}
+
 /** 候補ラベルを順に試して最初に押せたものでtrue。 */
 async function clickAnyText(page: Page, labels: readonly string[]): Promise<boolean> {
   for (const label of labels) {
