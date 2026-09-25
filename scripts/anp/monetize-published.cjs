@@ -13,6 +13,9 @@
  *   --real           実際に「更新する」を押す (省略時は有料設定+価格入力まで進めて更新しない)。
  *                    実更新はアカウント設定 `paid_publish_enabled` が ON かつグローバルの
  *                    ドライランが OFF のときだけ worker 側で実行される。
+ *   --all            価格提案が無い記事も対象にする。**既定では judge が価格を提案した記事
+ *                    (`price_jpy > 0`) だけ**を対象にする — 企画時から無料のつもりの記事まで
+ *                    有料にすると回遊用の無料記事が無くなるため。
  *   --account=<id>   対象アカウントを絞る。
  *   --limit=<n>      投入件数の上限 (既定 0 = 全件)。
  *   --price=<jpy>    価格を明示する (省略時は記事の提案価格 → 価格帯下限 → 500 円)。
@@ -32,6 +35,7 @@ const arg = (name) => {
   const hit = argv.find((a) => a.startsWith(`--${name}=`));
   return hit ? hit.slice(name.length + 3) : null;
 };
+const ALL = argv.includes('--all');
 const ACCOUNT = arg('account');
 const LIMIT = Number(arg('limit') ?? 0) || 0;
 const PRICE = arg('price') ? Number(arg('price')) : null;
@@ -42,6 +46,7 @@ const PRICE = arg('price') ? Number(arg('price')) : null;
   try {
     const params = [];
     let where = "a.status='published' AND a.paid=false AND a.note_url IS NOT NULL";
+    if (!ALL) where += ' AND a.price_jpy > 0';
     if (ACCOUNT) {
       params.push(ACCOUNT);
       where += ` AND a.note_account_id = $${params.length}`;
@@ -58,7 +63,9 @@ const PRICE = arg('price') ? Number(arg('price')) : null;
     const global = await c.query("SELECT anp_publish_dry_run FROM app_settings WHERE id='singleton'");
     const globalDry = global.rows[0]?.anp_publish_dry_run ?? true;
 
-    console.log(`有料化候補 (公開済み・無料): ${rows.length} 件 / グローバルdry_run=${globalDry}`);
+    console.log(
+      `有料化候補 (公開済み・無料${ALL ? '・価格提案なしも含む' : '・価格提案ありのみ'}): ${rows.length} 件 / グローバルdry_run=${globalDry}`,
+    );
     for (const r of rows) {
       console.log(
         `- ${r.display_name} [提案¥${r.price_jpy ?? '-'} / ${r.chars}字 / paid_publish=${r.paid_enabled ?? 'unset'}] ${r.title}`,

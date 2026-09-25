@@ -151,7 +151,9 @@ export function resolveMonetizePrice(
 ): number {
   const band = (monetizationPolicyJson as { price_band?: unknown } | null | undefined)?.price_band;
   const bandMin = Array.isArray(band) && typeof band[0] === 'number' && band[0] >= 100 ? Math.round(band[0]) : null;
-  const raw = requested ?? articlePrice ?? bandMin ?? DEFAULT_MONETIZE_PRICE_JPY;
+  // 0 や負値 (judge が値を落とした記事) は「未設定」として次の候補へ送る。
+  const positive = (v: number | null | undefined): number | null => (typeof v === 'number' && v > 0 ? v : null);
+  const raw = positive(requested) ?? positive(articlePrice) ?? bandMin ?? DEFAULT_MONETIZE_PRICE_JPY;
   const clamped = Math.min(50000, Math.max(100, Math.round(raw)));
   return Math.round(clamped / 10) * 10;
 }

@@ -163,7 +163,13 @@ describe('resolveMonetizePrice / readFreeRatio', () => {
   });
 
   it('note の下限 100 円を下回らない', () => {
+    expect(resolveMonetizePrice(null, 150, null)).toBe(150);
     expect(resolveMonetizePrice(null, 10, null)).toBe(100);
+  });
+
+  it('提案価格が 0 の記事 (judge が値を落とした) は未設定扱いにして次の候補を使う', () => {
+    expect(resolveMonetizePrice(null, 0, { price_band: [380, 1200] })).toBe(380);
+    expect(resolveMonetizePrice(null, 0, null)).toBe(500);
   });
 
   it('free_ratio は 0<x<1 の数値のみ採用し、それ以外は既定 0.3', () => {
