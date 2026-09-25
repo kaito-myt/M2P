@@ -38,8 +38,16 @@ import { PIPELINE_NOTE_WRITER_OUTLINE_TASK_NAME } from './pipeline-note-writer-o
 
 export const PIPELINE_NOTE_JUDGE_TASK_NAME = 'pipeline.note.judge';
 
-/** judge 不合格時に editor へ差し戻す最大回数 (A2P と同じ 1 回)。 */
-const RETRY_LIMIT = 1;
+/**
+ * judge 不合格時に自動で差し戻す最大回数。
+ *
+ * 2026-09-25: 合格ライン 85 + judge を gpt-6-sol(high) に上げた直後の実測で、前夜に生成した
+ * 10 本が **すべて 1 回の差し戻しでは 85 に届かず** needs_human_review に溜まった (平均 75)。
+ * 「修正は自動でやってほしい」という運営者の意図に合わせ、自動リトライを 2 回に増やす
+ * (1 回目=スコア帯に応じて校閲 or 構成から、2 回目=同じ経路でもう一度)。
+ * それでも届かなければ従来どおり人手 (UI から再判定/校閲やり直し/強制公開が選べる)。
+ */
+const RETRY_LIMIT = 2;
 
 export const PipelineNoteJudgePayloadSchema = z.object({
   note_article_id: z.string().min(1),

@@ -264,7 +264,27 @@ describe('pipeline.note.judge', () => {
     );
   });
 
-  it('不合格 + retry_count=1 (上限到達) — needs_human_review', async () => {
+  it('不合格 + retry_count=1 — まだ自動で直す (2026-09-25: 自動リトライ 2 回)', async () => {
+    const { prisma, articleUpdates, jobCreates } = buildPrisma({
+      jobs: [{ id: 'job1', status: 'queued' }],
+      articles: [makeArticle()],
+      accounts: [{ id: 'acc1', niche: '副業', target_reader: null }],
+    });
+    const addJob: AddJobLike = vi.fn();
+    const judgeArticle = vi.fn().mockResolvedValue({ ...FAIL_OUTPUT, score_total: 78 });
+
+    await runPipelineNoteJudge(
+      { note_article_id: 'art1', job_id: 'job1', retry_count: 1 },
+      addJob,
+      { prisma, logger: makeLogger(), judgeArticle, acquireLock: vi.fn().mockResolvedValue(undefined), releaseLock: vi.fn().mockResolvedValue(undefined) },
+    );
+
+    expect(articleUpdates[0]!.data).toMatchObject({ status: 'editing' });
+    expect(jobCreates[0]!.data).toMatchObject({ kind: PIPELINE_NOTE_EDITOR_TASK_NAME });
+    expect((jobCreates[0]!.data.payload_json as { retry_count: number }).retry_count).toBe(2);
+  });
+
+  it('不合格 + retry_count=2 (上限到達) — needs_human_review', async () => {
     const { prisma, articleUpdates, jobCreates } = buildPrisma({
       jobs: [{ id: 'job1', status: 'queued' }],
       articles: [makeArticle()],
@@ -274,7 +294,7 @@ describe('pipeline.note.judge', () => {
     const judgeArticle = vi.fn().mockResolvedValue(FAIL_OUTPUT);
 
     await runPipelineNoteJudge(
-      { note_article_id: 'art1', job_id: 'job1', retry_count: 1 },
+      { note_article_id: 'art1', job_id: 'job1', retry_count: 2 },
       addJob,
       { prisma, logger: makeLogger(), judgeArticle, acquireLock: vi.fn().mockResolvedValue(undefined), releaseLock: vi.fn().mockResolvedValue(undefined) },
     );

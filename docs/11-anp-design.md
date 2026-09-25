@@ -452,6 +452,11 @@ ANP の機能は A2P の対応機能を note 向けに写像したもの。**太
   やり直し (pipeline.note.writer.outline)** に分岐（差し戻し上限 1 回は従来どおり、超えたら needs_human_review）。
   低スコアは「文章の粗」ではなく「切り口の問題」なので校閲では直らない、という運営者の設計に合わせた。
   outline/body は `feedback` と `retry_count` を受け取って judge まで持ち回る。
+  **自動リトライ回数 (2026-09-25 実測を受けて 1→2)**: 合格ライン 85 + judge=gpt-6-sol(high) にした直後の
+  夜間生成 10 本が **1 回の差し戻しでは全滅** (平均 75 / 最高 82 / 最低 56) し、全部 needs_human_review に
+  溜まった。「修正は自動でやってほしい」という運営者の意図に合わせ `RETRY_LIMIT=2` に引き上げた。
+  それでも届かない記事は従来どおり needs_human_review で止まり、UI から「再判定 / 校閲からやり直し /
+  強制的に公開可」を選べる (`app/actions/review.ts`)。
 - **F-ANP-16b 有料記事の自動公開（実装済み 2026-09-24）**: 運営者報告「有料記事がちゃんと投稿できていない／記事が有料に
   なっていない」。原因は KYC 未完了時代の安全弁が残っていたこと — judge が確定時に `paid=false` へ強制し、publish は
   `shouldBlockPaidPublish` で有料の実公開自体を止めていた。アカウント設定
