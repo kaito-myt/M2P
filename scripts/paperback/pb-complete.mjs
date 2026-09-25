@@ -25,7 +25,22 @@ const price = paperbackPrice(pages);
 console.log(priceSummary(pages));
 
 const AMZ_PW = process.env.AMAZON_PASSWORD, TOTP = (process.env.AMAZON_TOTP_SECRET || '').replace(/[\s-]/g, '');
-const ctx = await chromium.launchPersistentContext(USERDATA, { headless: false, channel: 'chrome', locale: 'ja-JP', viewport: { width: 1760, height: 1200 }, args: ['--disable-blink-features=AutomationControlled'] });
+// [2026-09-25] 実行端末のメモリが逼迫していると Chrome が起動直後に落ち
+// (`Target page, context or browser has been closed`)、9 冊のバッチが途中で全滅した。
+// 併用しているブラウザを閉じずに回せるよう、メモリを食う機能を切って起動する。
+const ctx = await chromium.launchPersistentContext(USERDATA, {
+  headless: false,
+  channel: 'chrome',
+  locale: 'ja-JP',
+  viewport: { width: 1760, height: 1200 },
+  args: [
+    '--disable-blink-features=AutomationControlled',
+    '--disable-dev-shm-usage',
+    '--disable-extensions',
+    '--disable-background-networking',
+    '--renderer-process-limit=4',
+  ],
+});
 ctx.setDefaultTimeout(60000);
 const page = ctx.pages()[0] ?? (await ctx.newPage());
 const shot = (n) => page.screenshot({ path: path.join(OUT, `pbc-${n}.png`), fullPage: true }).catch(() => {});

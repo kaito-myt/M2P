@@ -44,6 +44,16 @@
 - **F-098b コード変更要求の実装**: `bash scripts/org/apply-code-requests.sh` (ローカル)。ceo/<id> ブランチを切って
   Claude Code CLI に実装させ、typecheck とテストが通ったときだけコミットする。main へのマージ/push はしない。
 
+### 2026-09-25 ペーパーバック出版の実地デバッグ（3 つの罠）
+1. **再認証中のナビゲーション競合**: `pb-complete.mjs` の `passReauth` で送信直後に `page.$()` を評価し
+   `Execution context was destroyed` → **プロセスごと異常終了**（9 冊とも同じ場所）。遷移待ちと catch を追加して解消。
+2. **承認直後に「印刷プレビューアーを終了」を押すと承認が取り消される**: 終了クリックが失敗した 1 冊だけ
+   「承認 記録済み ✓」になり、成功した本は全て `blocked_prior_page`。→ 承認後は終了を押さず content へ goto。
+3. **実行端末のメモリ不足で Chrome が起動直後に落ちる**: 空き 0.5〜1.3GB では `Target page, context or browser
+   has been closed` で即死する（バッチが途中で全滅した主因）。**Chrome のタブ / Docker Desktop / Notion を閉じて
+   2GB 以上空けてから**  `bash scripts/paperback/pb-env.sh bash scripts/paperback/pb-auto.sh publish` を実行する。
+   pb-complete 側にも `--disable-dev-shm-usage` 等のメモリ節約フラグを追加済み。
+
 ### F-097 ペーパーバックを確実に出す（2026-09-24）
 - 調査結果: **Kindle 出版済み 93 冊に対しペーパーバックは 12 冊だけ**だった。原因は進捗がローカルのテキスト台帳にしか無く、
   対象リストも静的 plan.json 由来で新刊が永久に対象外だったこと。
