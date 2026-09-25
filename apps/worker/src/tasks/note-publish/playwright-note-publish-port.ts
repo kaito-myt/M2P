@@ -976,11 +976,16 @@ async function fillPaidPrice(page: Page, priceJpy: number): Promise<boolean> {
  */
 async function waitForPublishConfirmation(page: Page, noteId: string): Promise<boolean> {
   const urlPattern = new RegExp(`note\\.com/[^/]+/n/${noteId}\\b`, 'i');
-  for (let i = 0; i < 6; i++) {
+  for (let i = 0; i < 8; i++) {
     if (urlPattern.test(page.url())) return true;
     const bodyText: string = await page.locator('body').innerText().catch(() => '');
     if (/記事が公開されました/.test(bodyText)) return true;
-    await page.waitForTimeout(1500);
+    // **有料記事は「有料エリア設定」画面から投稿するため URL 遷移もモーダルも出ない**
+    // (2026-09-25 実測。実際には公開されているのに blocked 扱いになっていた)。
+    // 公開 API が `published` を返すことが最も確実な確認。
+    const api = await fetchNotePublicApi(page, noteId);
+    if (api?.status === 'published') return true;
+    await page.waitForTimeout(2000);
   }
   return false;
 }
