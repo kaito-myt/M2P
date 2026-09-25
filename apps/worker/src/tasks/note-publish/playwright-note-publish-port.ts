@@ -45,6 +45,12 @@ const log = createLogger('worker.note-publish.playwright');
 
 const NEW_NOTE_URL = 'https://note.com/notes/new';
 
+/**
+ * [F-ANP-47] 公開済み記事を更新するときの確定ボタン候補 (note の表記ゆれ対策)。
+ * 有料を選ぶと「更新する」がすぐには出ず、いったん「有料エリア設定」を挟む。
+ */
+const UPDATE_LABELS = ['更新する', '投稿する', '公開する', '有料エリアを設定して更新', '設定して更新する'];
+
 /* eslint-disable @typescript-eslint/no-explicit-any */
 type Page = any;
 
@@ -107,7 +113,7 @@ export interface NoteMonetizeArgs {
 }
 
 export type NoteMonetizeResult =
-  | { ok: true; status: 'monetized' | 'dry_run_ready'; noteUrl: string }
+  | { ok: true; status: 'monetized' | 'dry_run_ready'; noteUrl: string; buttons?: string[] }
   | {
       ok: false;
       reason: 'not_logged_in' | 'kyc_required' | 'no_note_id' | 'no_paywall_slot' | 'blocked' | 'error';
@@ -610,14 +616,37 @@ async function monetizeOne(args: NoteMonetizeArgs): Promise<NoteMonetizeResult> 
       };
     }
 
-    if (args.dryRun) return { ok: true, status: 'dry_run_ready', noteUrl: args.noteUrl };
+    const labels = await visibleButtonLabels(page);
+    log.info({ articleId: args.articleId, labels }, 'note monetize: publish settings buttons');
+    if (args.dryRun) return { ok: true, status: 'dry_run_ready', noteUrl: args.noteUrl, buttons: labels };
 
-    // 公開済み記事の更新ボタンは「更新する」。表記ゆれに備え「投稿する」もフォールバックで見る。
-    if (!(await clickByText(page, '更新する')) && !(await clickByText(page, '投稿する'))) {
-      await screenshot(page, args.stageDir, `${args.articleId}-monetize-no-update`);
-      return { ok: false, reason: 'blocked', message: '「更新する」ボタンが見つかりません', noteUrl: args.noteUrl };
+    // 有料を選ぶと公開設定画面の主ボタンが「更新する」ではなく **「有料エリア設定」** になり、
+    // その先の画面で確定する (2026-09-25 実測)。表記ゆれに備えて候補を順に試す。
+    if (!(await clickAnyText(page, UPDATE_LABELS))) {
+      if (await clickByText(page, '有料エリア設定')) {
+        await page.waitForTimeout(6000);
+        await screenshot(page, args.stageDir, `${args.articleId}-monetize-paidarea`);
+        const labels2 = await visibleButtonLabels(page);
+        log.info({ articleId: args.articleId, labels: labels2 }, 'note monetize: paid area screen buttons');
+        if (!(await clickAnyText(page, UPDATE_LABELS))) {
+          return {
+            ok: false,
+            reason: 'blocked',
+            message: `有料エリア設定画面で更新ボタンが見つかりません (buttons=${labels2.join('/')})`,
+            noteUrl: args.noteUrl,
+          };
+        }
+      } else {
+        await screenshot(page, args.stageDir, `${args.articleId}-monetize-no-update`);
+        return {
+          ok: false,
+          reason: 'blocked',
+          message: `更新ボタンが見つかりません (buttons=${labels.join('/')})`,
+          noteUrl: args.noteUrl,
+        };
+      }
     }
-    await page.waitForTimeout(8000);
+    await page.waitForTimeout(9000);
     await screenshot(page, args.stageDir, `${args.articleId}-monetize-after`);
     return { ok: true, status: 'monetized', noteUrl: args.noteUrl };
   } catch (err) {
@@ -674,6 +703,26 @@ async function checkPublished(args: NoteCheckPublishedArgs): Promise<NoteCheckPu
 // ---------------------------------------------------------------------------
 
 /** 本文ツールバー/挿入メニューのボタンを textContent で特定してクリックする(aria-label 無しの物が多い)。 */
+/** 候補ラベルを順に試して最初に押せたものでtrue。 */
+async function clickAnyText(page: Page, labels: readonly string[]): Promise<boolean> {
+  for (const label of labels) {
+    if (await clickByText(page, label)) return true;
+  }
+  return false;
+}
+
+/** 画面上の押せるボタンのラベル一覧 (ラベル変更を検知するための観測用)。 */
+async function visibleButtonLabels(page: Page): Promise<string[]> {
+  return page
+    .evaluate(() =>
+      [...document.querySelectorAll('button,[role=button]')]
+        .filter((x) => (x as HTMLElement).offsetWidth || (x as HTMLElement).offsetHeight)
+        .map((x) => (x.textContent || '').trim())
+        .filter((t) => t.length > 0 && t.length < 24),
+    )
+    .catch(() => [] as string[]);
+}
+
 async function clickByText(page: Page, text: string): Promise<boolean> {
   return page
     .evaluate((t: string) => {
