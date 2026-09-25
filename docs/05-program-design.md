@@ -2005,6 +2005,17 @@ Kindle 出版済み **93 冊中 12 冊 (13%)** しかペーパーバックが出
   下書き作成から 3 時間以上経ったものだけを対象にする。
 - UI: **S-031 `/paperback`** (パイプライン > ペーパーバック) でカバレッジ (出版済み/Kindle 出版済み) と
   本ごとの状態を一覧し、キューへの追加/取消ができる。
+- **F-097d サーバー側出版 (`paperback.submit` / `paperback.submit.dispatch`, cron 30 分毎・同時 1 冊, 2026-09-25)**:
+  運営者要望「ペーパーバックの出版もローカルからじゃなくて Railway からできないの？」。ローカル専用だった
+  `pb-complete.mjs` の実績フローを worker に移植した (`paperback-submit/playwright-paperback-port.ts`)。
+  `kdp.submit` と同じく保存済みセッション + パスワード/TOTP で `max_auth_age=0` の再認証を突破する。
+  対象は `pb_publish_status='drafted'` かつ `pb_title_id` を持つ本 (= KDP 側に下書きがある)。
+  **下書きの完成は KDP の作成数枠を消費しない**ので、Kindle 側が作成上限で止まっていても出版が進む。
+  フローは details 保存 → content でプレビューアー起動 → 総頁数 (`#max_page_label`) 待ち → 可視の
+  「承認」を trusted click → **終了ボタンは押さず** content へ goto → 警告文が消えたか検証 (最大 4 周) →
+  保存して続行 → pricing で `#price-input-jpy` に定価 (総頁数から算出) → 「ペーパーバック本を出版」。
+  失敗理由ごとにクールダウン (blocked_prior_page/not_approved=6h, no_previewer/no_price_field=24h, reauth=3h)。
+  **新規下書きの作成 (pb-pilot 相当) は引き続きローカル** (`pb-auto.sh draft`) — カテゴリ選択等 UI 依存が大きいため。
 - **F-097b 販売状態の同期 (`paperback.status.sync`, cron 日次 07:40 JST)**: アシスト実行は「投稿できた」時点で
   `published` にするだけで Amazon の審査結果までは分からないため、KDP 本棚を READ-ONLY で巡回して同期する。
   実 DOM (2026-09-24 実測): 本棚は 1 タイトルのカードに「Kindle 本」行と「ペーパーバック」行を並べ、各行は

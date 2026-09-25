@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import { PAPERBACK_QUEUE_SWEEP_TASK_NAME } from '../src/tasks/paperback-queue-sweep.js';
 import { PAPERBACK_STATUS_SYNC_TASK_NAME } from '../src/tasks/paperback-status-sync.js';
+import { PAPERBACK_SUBMIT_DISPATCHER_TASK_NAME } from '../src/tasks/paperback-submit-dispatcher.js';
 
 import {
   ALERT_COST_CHECK_CRON,
@@ -98,8 +99,8 @@ describe('crontab.ts', () => {
     expect(KDP_PUBLISH_STATUS_SYNC_CRON).toBe('0 */6 * * *');
   });
 
-  it('CRON_ITEMS は archive.db.backup / fx.fetch / ads.spend.fetch / bw.retag.tick / catalog.fetch / batch_plan.dispatcher / alert.cost.check / archive.jobs / kdp.publish.status.sync / promotion.playbook.refresh / promotion.metrics.fetch / org.promo.tick / kdp.publish.digest / promotion.growth.todo / promotion.x.engage / promotion.sns.engage / note.engage / promotion.growth.loop / recurring.cost.refresh / model.health.probe / note.publish.status.sync / note.sales.fetch.dispatch / paperback.queue.sweep / paperback.status.sync の 24 件', () => {
-    expect(CRON_ITEMS).toHaveLength(24);
+  it('CRON_ITEMS は archive.db.backup / fx.fetch / ads.spend.fetch / bw.retag.tick / catalog.fetch / batch_plan.dispatcher / alert.cost.check / archive.jobs / kdp.publish.status.sync / promotion.playbook.refresh / promotion.metrics.fetch / org.promo.tick / kdp.publish.digest / promotion.growth.todo / promotion.x.engage / promotion.sns.engage / note.engage / promotion.growth.loop / recurring.cost.refresh / model.health.probe / note.publish.status.sync / note.sales.fetch.dispatch / paperback.queue.sweep / paperback.status.sync / paperback.submit.dispatch の 25 件', () => {
+    expect(CRON_ITEMS).toHaveLength(25);
 
     // F-097b: ペーパーバックの販売状態同期 (日次)。
     const pbSync = CRON_ITEMS.find((c) => c.task === PAPERBACK_STATUS_SYNC_TASK_NAME);
@@ -216,7 +217,7 @@ describe('crontab.ts', () => {
 
   it('buildParsedCronItems は graphile-worker の parseCronItems に通る', () => {
     const parsed = buildParsedCronItems();
-    expect(parsed).toHaveLength(24);
+    expect(parsed).toHaveLength(25);
     const tasks = parsed.map((p) => p.task).sort();
     expect(tasks).toEqual(
       [
@@ -244,6 +245,7 @@ describe('crontab.ts', () => {
         'bw.retag.tick',
         PAPERBACK_QUEUE_SWEEP_TASK_NAME,
         PAPERBACK_STATUS_SYNC_TASK_NAME,
+        PAPERBACK_SUBMIT_DISPATCHER_TASK_NAME,
       ].sort(),
     );
   });
@@ -275,14 +277,14 @@ describe('crontab.ts', () => {
 
   it('buildCronItemsWithSettings({ sales_auto_fetch_enabled: false }) は sales.fetch.dispatch を含まない', () => {
     const items = buildCronItemsWithSettings({ sales_auto_fetch_enabled: false });
-    expect(items).toHaveLength(24); // 静的 CRON_ITEMS と同数
+    expect(items).toHaveLength(25); // 静的 CRON_ITEMS と同数
     const dispatch = items.find((c) => c.task === SALES_FETCH_DISPATCHER_TASK_NAME);
     expect(dispatch).toBeUndefined();
   });
 
   it('buildCronItemsWithSettings({ sales_auto_fetch_enabled: true }) は sales.fetch.dispatch を含む', () => {
     const items = buildCronItemsWithSettings({ sales_auto_fetch_enabled: true });
-    expect(items).toHaveLength(25); // 静的 24 件 + dispatch 1 件
+    expect(items).toHaveLength(26); // 静的 25 件 + dispatch 1 件
     const dispatch = items.find((c) => c.task === SALES_FETCH_DISPATCHER_TASK_NAME);
     expect(dispatch).toBeDefined();
     expect(dispatch!.identifier).toBe('sales-fetch-dispatch-daily');
@@ -314,10 +316,10 @@ describe('crontab.ts', () => {
     expect(CRON_ITEMS).toHaveLength(beforeLength);
   });
 
-  it('buildParsedCronItems(buildCronItemsWithSettings(enabled=true)) は 25 件の ParsedCronItem を返す', () => {
+  it('buildParsedCronItems(buildCronItemsWithSettings(enabled=true)) は 26 件の ParsedCronItem を返す', () => {
     const items = buildCronItemsWithSettings({ sales_auto_fetch_enabled: true });
     const parsed = buildParsedCronItems(items);
-    expect(parsed).toHaveLength(25);
+    expect(parsed).toHaveLength(26);
     const tasks = parsed.map((p) => p.task).sort();
     expect(tasks).toContain(SALES_FETCH_DISPATCHER_TASK_NAME);
   });
@@ -359,12 +361,12 @@ describe('crontab.ts', () => {
     expect(promo!.match).toBe('0 */2 * * *');
   });
 
-  it('sales と promo の両方 ON なら静的 24 + 2 件', () => {
+  it('sales と promo の両方 ON なら静的 25 + 2 件', () => {
     const items = buildCronItemsWithSettings({
       sales_auto_fetch_enabled: true,
       promo_auto_post_enabled: true,
     });
-    expect(items).toHaveLength(26);
+    expect(items).toHaveLength(27);
     expect(items.find((c) => c.task === SALES_FETCH_DISPATCHER_TASK_NAME)).toBeDefined();
     expect(items.find((c) => c.task === PROMOTION_DISPATCH_TASK_NAME)).toBeDefined();
   });
