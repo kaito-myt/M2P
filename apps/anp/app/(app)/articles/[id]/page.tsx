@@ -267,7 +267,19 @@ export default async function ArticleDetailPage({
                   </div>
                 );
               }
-              return <p key={i}>{b.text}</p>;
+              if (b.type === 'rule') return <hr key={i} className="border-border-warm" />;
+              if (b.type === 'code') {
+                return (
+                  <pre key={i} className="overflow-x-auto rounded-card bg-cream-light p-space-snug text-caption">
+                    <code>{b.text}</code>
+                  </pre>
+                );
+              }
+              return (
+                <p key={i}>
+                  {b.runs.map((run, j) => (run.bold ? <strong key={j}>{run.text}</strong> : <span key={j}>{run.text}</span>))}
+                </p>
+              );
             })}
           </div>
         )}

@@ -12,7 +12,50 @@ export type NoteMarkdownBlock =
   // [F-ANP-48] Markdown の表。note 側には表機能が無いので公開時は画像にするが、
   // ANP の記事詳細では普通の <table> として見せる (パイプ記号のまま見せない)。
   | { type: 'table'; header: string[]; rows: string[][]; align: Array<'left' | 'right'> }
-  | { type: 'paragraph'; text: string };
+  // [F-ANP-48] 区切り線 (`---`) / コードブロック (``` で囲まれた部分)。
+  | { type: 'rule' }
+  | { type: 'code'; text: string }
+  | { type: 'paragraph'; text: string; runs: InlineRun[] };
+
+/** [F-ANP-48] `**太字**` の分割 (note 公開時も Ctrl+B で本物の太字にする)。 */
+export interface InlineRun {
+  text: string;
+  bold: boolean;
+}
+
+/**
+ * インライン記法を表示用に開く (note 公開時の `normalizeInline` と同じ考え方)。
+ * `[文字](URL)` は「文字 (URL)」、`` `x` `` はバッククォートを外す。
+ */
+function normalizeInlineText(text: string): string {
+  return text
+    .replace(/\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g, '$1 ($2)')
+    .replace(/\[([^\]]+)\]\([^)]*\)/g, '$1')
+    .replace(/`([^`]+)`/g, '$1');
+}
+
+/** `**太字**` で分割する (対応の取れていない `*` は落とす)。 */
+export function splitInlineRuns(text: string): InlineRun[] {
+  const runs: InlineRun[] = [];
+  const re = /\*\*([^*]+)\*\*/g;
+  let last = 0;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(text)) !== null) {
+    if (m.index > last) runs.push({ text: text.slice(last, m.index), bold: false });
+    runs.push({ text: m[1]!, bold: true });
+    last = m.index + m[0].length;
+  }
+  if (last < text.length) runs.push({ text: text.slice(last), bold: false });
+  const cleaned = runs
+    .map((r) => (r.bold ? r : { ...r, text: r.text.replace(/\*/g, '') }))
+    .filter((r) => r.text.length > 0);
+  return cleaned.length > 0 ? cleaned : [{ text: text.replace(/\*/g, ''), bold: false }];
+}
+
+/** 区切り線だけの行か。 */
+function isRuleLine(line: string): boolean {
+  return /^\s*(-{3,}|\*{3,}|_{3,})\s*$/.test(line);
+}
 
 /** `| a | b |` 行をセル配列へ (先頭/末尾のパイプは任意)。 */
 function splitTableRow(line: string): string[] {
@@ -60,14 +103,17 @@ export function parseNoteMarkdown(bodyMd: string): NoteMarkdownBlock[] {
 
   const flushParagraph = () => {
     if (paragraphBuf.length > 0) {
-      const text = paragraphBuf.join('\n').trim();
-      if (text) blocks.push({ type: 'paragraph', text });
+      const raw = paragraphBuf.join('\n').trim();
+      if (raw) {
+        const runs = splitInlineRuns(normalizeInlineText(raw));
+        blocks.push({ type: 'paragraph', text: runs.map((r) => r.text).join(''), runs });
+      }
       paragraphBuf = [];
     }
   };
   const flushList = () => {
     if (listBuf.length > 0) {
-      blocks.push({ type: 'list', items: [...listBuf] });
+      blocks.push({ type: 'list', items: listBuf.map((v) => normalizeInlineText(v).replace(/\*\*/g, '')) });
       listBuf = [];
     }
   };
@@ -82,13 +128,37 @@ export function parseNoteMarkdown(bodyMd: string): NoteMarkdownBlock[] {
       continue;
     }
 
+    // コードブロック。
+    if (/^\s*```/.test(trimmed)) {
+      flushParagraph();
+      flushList();
+      const body: string[] = [];
+      let j = i + 1;
+      while (j < lines.length && !/^\s*```/.test(lines[j]!)) {
+        body.push(lines[j]!);
+        j += 1;
+      }
+      const code = body.join(String.fromCharCode(10)).trim();
+      if (code.length > 0) blocks.push({ type: 'code', text: code });
+      i = j;
+      continue;
+    }
+
+    // 区切り線。
+    if (isRuleLine(trimmed)) {
+      flushParagraph();
+      flushList();
+      blocks.push({ type: 'rule' });
+      continue;
+    }
+
     const h3 = /^###\s+(.*)$/.exec(trimmed);
     const h2 = /^##\s+(.*)$/.exec(trimmed);
     const h1 = /^#\s+(.*)$/.exec(trimmed);
     if (h3 || h2 || h1) {
       flushParagraph();
       flushList();
-      const text = (h3?.[1] ?? h2?.[1] ?? h1?.[1] ?? '').trim();
+      const text = normalizeInlineText((h3?.[1] ?? h2?.[1] ?? h1?.[1] ?? '').trim()).replace(/\*\*/g, '');
       blocks.push({ type: 'heading', level: h3 ? 3 : 2, text });
       continue;
     }

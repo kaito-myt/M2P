@@ -15,6 +15,7 @@
  *   --real           実際に「更新する」を押す (省略時は差し替えるだけで更新しない。
  *                    note は公開中の本文を「更新する」まで変えないので安全)。
  *   --account=<id>   対象アカウントを絞る。
+ *   --free-only      無料記事だけ / --paid-only 有料記事だけ (有料は更新時に有料エリア設定を挟む)。
  *   --limit=<n>      投入件数の上限 (既定 0 = 全件)。
  *   --article=<id>   特定の記事だけ投入する (検証用)。
  */
@@ -34,6 +35,8 @@ const arg = (name) => {
   return hit ? hit.slice(name.length + 3) : null;
 };
 const ACCOUNT = arg('account');
+const FREE_ONLY = argv.includes('--free-only');
+const PAID_ONLY = argv.includes('--paid-only');
 const ARTICLE = arg('article');
 const LIMIT = Number(arg('limit') ?? 0) || 0;
 
@@ -76,6 +79,8 @@ function countJunk(md) {
       params.push(ARTICLE);
       where += ` AND a.id = $${params.length}`;
     }
+    if (FREE_ONLY) where += ' AND a.paid = false';
+    if (PAID_ONLY) where += ' AND a.paid = true';
     const { rows } = await c.query(
       `SELECT a.id, left(a.title, 34) AS title, a.paid, a.note_url, a.body_md, acc.display_name
          FROM note_articles a JOIN note_accounts acc ON acc.id = a.note_account_id
