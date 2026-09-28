@@ -38,3 +38,37 @@ describe('parseNoteMarkdown', () => {
     ]);
   });
 });
+
+/**
+ * [F-ANP-48] note には表機能が無いので公開時は画像にするが、ANP の記事詳細では
+ * <table> として見せる (パイプ記号のまま見せない)。
+ */
+describe('Markdown の表 (F-ANP-48)', () => {
+  const LF = String.fromCharCode(10);
+  const TABLE = [
+    '| 頭数帯 | レース数 | 単勝回収率 |',
+    '|---|---:|---:|',
+    '| 7〜9頭 | 1,842 | 89.7% |',
+    '| 10〜12頭 | 2,915 | 92.3% |',
+  ].join(LF);
+
+  it('ヘッダ・行・寄せを読み取る', () => {
+    const blocks = parseNoteMarkdown(['## 集計', '', TABLE, '', 'あとがき'].join(LF));
+    expect(blocks.map((b) => b.type)).toEqual(['heading', 'table', 'paragraph']);
+    const table = blocks[1] as Extract<ReturnType<typeof parseNoteMarkdown>[number], { type: 'table' }>;
+    expect(table.header).toEqual(['頭数帯', 'レース数', '単勝回収率']);
+    expect(table.rows).toHaveLength(2);
+    expect(table.align).toEqual(['left', 'right', 'right']);
+  });
+
+  it('表の行が段落として残らない', () => {
+    const blocks = parseNoteMarkdown(TABLE);
+    const texts = blocks.filter((b) => b.type === 'paragraph').map((b) => (b as { text: string }).text);
+    expect(texts.join('')).not.toContain('|');
+  });
+
+  it('区切り行だけで本文行が無ければ表にしない', () => {
+    const blocks = parseNoteMarkdown(['| a | b | c |', '|---|---|---|'].join(LF));
+    expect(blocks.some((b) => b.type === 'table')).toBe(false);
+  });
+});

@@ -400,6 +400,48 @@ ANP の機能は A2P の対応機能を note 向けに写像したもの。**太
   が連結して保存（旧形式 `editorial_policy` 文字列の応答も `parseEditorialPolicy` で正規化）。`anp.judge` は
   【品質判定項目】がある場合「運営者の減点/差し戻し基準。該当すれば該当軸を減点し feedback に項目番号と理由」を明示注入。
   Vitest `packages/contracts/__tests__/anp-editorial.test.ts`。
+- **F-ANP-48 本文の表を画像で出す（2026-09-28）**: 運営者報告「表がこんな感じで表示されてるから
+  ちゃんと表で出力されるようにして」（公開記事に `| 頭数帯 | レース数 |` というパイプ記号の羅列が出ていた）。
+  - **note のエディタには表を作る機能が無い**（2026-09-28 調査。note 上の解説記事を複数当たっても
+    「画像化する」「数式ブロックに TeX で書く」「GitHub Gist を埋め込む」の 3 つしか手段が無い）。
+    → **表は画像にして本文へ挿入する**方式に決めた。
+  - `renderTableImage`（`packages/output/image/src/render-table-image.ts`）が Markdown の表を PNG に描く。
+    文字は **Noto Sans JP のアウトライン**（A2P の表紙・アイキャッチと同じ「絵と文字は別レイヤー」方針。
+    librsvg のフォント設定に依存せず日本語が崩れない）。ヘッダ帯＋ゼブラ＋ヘアライン、数値だけの列は
+    自動で右寄せ、列幅は自然幅→最大幅に収まるよう広い列から削る。画像幅は 700〜1280px
+    （note は本文カラム幅 約 620px に縮小表示するため、幅を欲張ると文字が小さくなる）。
+  - `buildNoteBlocks` が表を `table` ブロックとして切り出す（`splitTableSegments`。**空行が無くても**
+    ヘッダ行＋区切り行の並びで検出する）。`pipeline.note.publish` が `attachTableImages` で PNG を
+    tmp に書き出し、publish port が「+」メニュー →「画像」→ filechooser で本文に挿入する。
+  - **画像挿入後はキャプション欄にフォーカスが移る**ため、`moveCaretToBodyEnd` で本文（ProseMirror）の
+    末尾へキャレットを戻してから続きを打つ（戻さないと以降の本文がキャプションに入る）。
+  - 画像化に失敗した場合は `tableToPlainText` の「見出し：値 / 値」というテキストに開く。
+    **パイプ記号のまま打ち込むことだけは絶対にしない**。
+  - 既に公開済みの記事（2026-09-28 時点で 22 本）は `pipeline.note.fix-tables`（§7）で後追い修正する。
+    パイプ段落だけを選択して消し、同じ位置に表画像を挿す。**本文全体は打ち直さない**ので失敗しても
+    被害が局所で済む（note は公開中の本文を「更新する」まで変えないので、更新前に失敗すれば無傷）。
+    UI は記事詳細の「表の表示を直す」セクション、一括は `scripts/anp/fix-tables.cjs`。
+  - ANP 側の記事詳細（`/articles/[id]`）も `parseNoteMarkdown` に `table` ブロックを足して
+    HTML の `<table>` で表示する（プレビューでもパイプ記号を見せない）。
+- **F-ANP-49 サムネイルの作法を参考記事に合わせる（2026-09-28）**: 運営者指示「noteのサムネについて
+  下記を参考にして出力するようにして」 <https://note.com/dandy_clam132/n/nd2fbe6c407eb>。
+  同記事の作法をそのまま `composeNoteEyecatch` のレイアウト規則に落とした。
+  - **文字サイズは 2 種類だけ**（主役＋補足）。3 種類以上混ぜない／全部同じにしない。
+    主役は**文字数で決める**（6 字以内=100 / 7〜12 字=80 / 13 字以上=70、`copySizeForLength`）。
+    補足は主役の 6 割（`subSizeFor`）。**48px を下回らない**（参考記事「40 以下はスマホで読めない」）。
+    バッジも補足と同じサイズにして、画面上の文字サイズを 2 種類に保つ。
+  - **配色は 3 色構成**（ベース 70% / メイン 25% / アクセント 5%）。参考記事の推奨 5 パターン
+    （青×白×オレンジ / 黒×ゴールド×白 / ブルー×ホワイト×グレー / オレンジ×ベージュ×ブラウン /
+    ネイビー×ゴールド×ホワイト）を `NOTE_EYECATCH_SCHEMES` として持ち、**ニッチのハッシュで固定**する
+    （`schemeForNiche`）。同じアカウントのサムネは常に同じ配色 = 統一感で「あの人のサムネ」と認識させる。
+    **絵柄は記事ごとに変える（F-ANP-14b）／文字レイヤーはアカウントで固定する**、と役割を分けた。
+  - **文字を載せる帯は暗くするだけでなくぼかす**（`blurTextArea`。下端ほど強く効くマスクを掛けるので
+    絵の主題＝上 2/3 は鮮明なまま）。参考記事「画像を暗くするかぼかしを入れて文字を浮かす」。
+  - 画像プロンプト（`buildPrompt`）に「読者は 3 秒で決める・主題は 1〜2 個」「色数は 3 色以内」
+    「背景がごちゃつくと文字が読めない。奥はぼかすか単純な面に」を追加。
+  - `anp.seo` のプロンプト（DB が正本・`scripts/anp/apply-seo-prompts.cjs`）を改訂し、
+    `eyecatch_copy` は **6〜12 字**（理想 6〜8 字）・体言止め、`eyecatch_sub` は **10〜16 字**にした
+    （長いコピーは自動縮小で小さくなり、タイムラインで読めなくなるため）。
 - **F-ANP-47 公開済み記事の有料化（2026-09-25）**: 運営者指示「有料化機能作って」。F-ANP-45 で
   無料公開されてしまった既存記事を、note 上で**後から**有料に切り替える経路を作った。
   `pipeline.note.monetize`（§7）が note エディタを開き、アカウントの `free_ratio` に沿った
@@ -454,6 +496,12 @@ ANP の機能は A2P の対応機能を note 向けに写像したもの。**太
     7. note は公開済み記事のエディタ編集を**オートセーブ**するが、**公開中の本文は「更新する」を
        押すまで変わらない**（ドライラン後に公開 API `GET /api/v3/notes/<noteId>` が `price=0` の
        ままであることを確認済み）。つまりドライランは公開記事に影響しない。
+    8. **note のエディタには表を作る機能が無い**（2026-09-28 調査、F-ANP-48）。「+」メニューにあるのは
+       見出し/箇条書き/画像/埋め込み/区切り線/有料エリア指定などで、表は無い。note 上の解説記事でも
+       回避策は「画像化」「数式ブロックに TeX」「Gist 埋め込み」の 3 つだけ。ANP は**画像化**を採る。
+    9. **本文に画像を挿入するとキャプション入力欄にフォーカスが移る**（2026-09-28、F-ANP-48）。
+       そのまま打ち続けると本文がキャプションに入るので、`moveCaretToBodyEnd` で ProseMirror の
+       末尾へキャレットを戻してから続きを打つ。
   - 2026-09-25 実績: **公開済みの無料記事 9 本を有料化**（¥500〜¥780、所要 ~35 秒/本。
     公開 API で `price` と `can_read=false` を確認）。価格提案が無い記事（企画時から無料の
     もの）は回遊用に無料のまま残している。あわせて **有料記事の新規公開も初めて成功**
@@ -911,6 +959,7 @@ note.theme.generate (アカウント別・手動起動。UI の「テーマ生�
 |---|---|---|---|
 | `pipeline.note.publish` | `{ note_article_id, job_id, dry_run? }` | `NoteArticle(status='ready')` を Playwright ヘッドレスで note へ送信（`apps/worker/src/tasks/note-publish/playwright-note-publish-port.ts`）。①**毎回 `note.com/notes/new` で新規下書きを作成**して noteId を採番(resume はしない。理由は下記「本文重複バグ」参照)、失敗しても即 `NoteArticle.note_url` に保存。②タイトル/本文(`buildNoteBlocks` で見出し/箇条書き/段落+有料ラインに分解)/見出し画像を流し込み(見出し/箇条書き/画像/有料エリア指定は必ず「+」挿入メニューを開いてから項目クリック — 下記参照)。③「下書き保存」必須(dry_run はここで終了、`publish_status='draft'`)。④`dry_run=false`: **有料記事(`paid=true`)はこの時点で必ず `blocked` にして中断**(価格/有料ライン設定 UI 未実装、`shouldBlockPaidPublish`。有料エリア指定マーカーの挿入自体に失敗した場合も同様に中断し有料本文の誤・無料公開を防ぐ)。無料記事のみ「公開に進む」→ 公開設定画面 →「投稿する」→ 完了確認は「URL遷移」または「『記事が公開されました』モーダルのテキスト検知」のいずれか(`waitForPublishConfirmation`。note は本文ページへ遷移せずモーダルを重ねて表示するため、2026-09-18 発見。§2.1 参照)。公開 URL は note 公開API (`GET /api/v3/notes/<noteId>`、認証不要)の `status`/`user.urlname` から確定(`resolvePublishedUrl`。URL遷移監視はフォールバック)。各段で R2 `debug/note-publish/<article>-<step>-<ts>.png` にスクショ保存 | 成功(公開): `status='published'`, `publish_status='published'`, `published_at`, `note_url`確定 + LINE通知(アカウント`display_name`込み)。成功(dry-run): `publish_status='draft'`のみ。`not_logged_in`: `NoteAccount.status='paused'`+LINE通知、記事は`ready`のまま保持。`blocked`/`error`: 記事は`ready`のまま、`note_url`は保持し次回再試行可能(ただし次回も新規下書きになるため note 上に下書きが積み残る — 運営者が適宜整理) |
 | `pipeline.note.monetize` | `{ note_article_id, job_id, dry_run?, price_jpy? }` | **(F-ANP-47) 公開済みの無料記事を後から有料化する**。①対象は `status='published'` かつ `paid=false` かつ `note_url` あり(それ以外は `not_published`/`already_paid` で skip)。②`computePaywallSplit(body_md, free_ratio)` がアカウントの `monetization_policy_json.free_ratio` に最も近い**段落境界**を選ぶ(見出し直前を同点優先。段落が 2 つ未満なら `no_paywall_slot` で skip)。③`NotePublishPort.monetizeOne` が `https://editor.note.com/notes/<noteId>/edit/` を開き、指定段落の先頭を trusted click →「+」メニュー →「有料エリア指定」→「公開に進む」→ 記事タイプ `#paid` を trusted click(本人情報モーダルが出たら `kyc_required` で中断) → 価格入力 →「更新する」。④価格は `resolveMonetizePrice`(運営者指定 → 記事の `price_jpy` → 価格帯下限 → 500円、10円単位)。**実更新の二重ゲート**: アカウント `paid_publish_enabled` が ON かつ `AppSettings.anp_publish_dry_run` が OFF のときのみ。どちらか欠ければ強制ドライラン(有料選択+価格入力まで進めて更新は押さない = KYC 確認手段)。各段で R2 `debug/note-publish/<article>-monetize-<step>-<ts>.png` にスクショ | 成功: `paid=true`, `price_jpy`, `paywall_line_pos` を保存 + LINE通知。ドライラン: `dry_run_ready`(DB 変更なし)。`kyc_required`: LINE通知して記事は無料のまま。`not_logged_in`: `NoteAccount.status='paused'`+LINE通知。いずれの失敗でも**記事を非公開化・削除はしない** |
+| `pipeline.note.fix-tables` | `{ note_article_id, job_id, dry_run? }` | **(F-ANP-48) 公開済み記事に残った Markdown の表を表画像へ差し替える**。①対象は `status='published'` かつ `note_url` あり。②`body_md` の表を `attachTableImages` で PNG 化（アカウントの配色 = `schemeForNiche(niche)` のベース色をヘッダ帯に使う）。③`NotePublishPort.fixTablesOne` がエディタを開き、**パイプ行が連続している範囲だけ**を選択して削除し (`findFirstPipeGroup`: パイプで始まり終わる行が 2 行以上連続し、そのどれかが `|---|` である範囲のみ) 同じ位置に画像を挿入 →「公開に進む」→「更新する」(有料記事は「有料エリア設定」を挟む)。④`dry_run`(既定 true) は差し替えるだけで更新を押さない。グローバル `anp_publish_dry_run` が ON なら強制ドライラン | 成功: `fixed`(replaced/remaining を `result_json` に記録)+LINE通知。ドライラン: `dry_run_ready`。表が無ければ `no_tables`。`not_logged_in`: `NoteAccount.status='paused'`+LINE通知 |
 | `note.publish.dispatch` | (cron, payload無し) | `AppSettings.anp_auto_publish_enabled=true` のとき、`note_articles.status='ready' AND publish_status='draft' AND paid=false` をアカウントごとに1件(`note_accounts.status='active'`のみ)選び `pipeline.note.publish` を enqueue(`dry_run=AppSettings.anp_publish_dry_run`)。1 tick 最大3件。`job_key='note-publish-<article_id>'`で重複防止。**`paid=false` に限定**(有料記事は価格 UI 未実装のため自動運用対象外 — 手動 dry-run のみ) | 対象記事があるアカウント分だけ enqueue。次回tickまで待機 |
 | `note.publish.status.sync` | (cron, payload無し) | READ-ONLY。`publish_status='published'`の記事の`note_url`を開き、404/非公開文言を検知したら`unlisted`に降格。セッション失効検知時はそのアカウントを`paused`+LINE通知して走査打ち切り(dispatcher と同じ扱い) | `publish_status='unlisted'`への降格 or 変更なし |
 

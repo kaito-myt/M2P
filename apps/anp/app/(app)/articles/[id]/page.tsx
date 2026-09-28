@@ -16,6 +16,7 @@ import { parseNoteMarkdown } from '@/lib/note-markdown';
 import { ArticleReviewActions } from '../../accounts/[id]/article-review-actions';
 import { PublishArticleButton } from '../../accounts/[id]/publish-article-button';
 
+import { FixTablesButton } from './fix-tables-button';
 import { MonetizeArticleButton } from './monetize-article-button';
 
 function yen(n: number): string {
@@ -122,6 +123,8 @@ export default async function ArticleDetailPage({
     messages.accountDetail.publishStatus[article.publish_status as keyof typeof messages.accountDetail.publishStatus] ??
     article.publish_status;
   const blocks = parseNoteMarkdown(article.body_md ?? '');
+  // [F-ANP-48] note には表機能が無い。本文に Markdown の表があれば差し替え導線を出す。
+  const markdownTableCount = blocks.filter((b) => b.type === 'table').length;
 
   return (
     <div className="mx-auto flex max-w-4xl flex-col">
@@ -180,6 +183,15 @@ export default async function ArticleDetailPage({
         />
       )}
 
+      {/* F-ANP-48: note には表機能が無いので、初期の記事に残ったパイプ記号の表を画像に差し替える。 */}
+      {article.status === 'published' && article.note_url && markdownTableCount > 0 && (
+        <FixTablesButton
+          articleId={article.id}
+          tableCount={markdownTableCount}
+          globalDryRunEnabled={globalDryRunEnabled}
+        />
+      )}
+
       {eyecatchUrl && (
         <section className="mt-space-loose">
           <h2 className="text-section-title text-charcoal">{dm.eyecatchLabel}</h2>
@@ -215,6 +227,44 @@ export default async function ArticleDetailPage({
                       <li key={j}>{item}</li>
                     ))}
                   </ul>
+                );
+              }
+              if (b.type === 'table') {
+                return (
+                  <div key={i} className="overflow-x-auto">
+                    <table className="w-full border-collapse text-body">
+                      <thead>
+                        <tr>
+                          {b.header.map((h, j) => (
+                            <th
+                              key={j}
+                              className={`border-b border-border-warm bg-cream-light px-2 py-1.5 text-caption font-medium text-charcoal ${
+                                b.align[j] === 'right' ? 'text-right' : 'text-left'
+                              }`}
+                            >
+                              {h}
+                            </th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {b.rows.map((row, j) => (
+                          <tr key={j}>
+                            {row.map((cell, k) => (
+                              <td
+                                key={k}
+                                className={`border-b border-border-warm px-2 py-1.5 ${
+                                  b.align[k] === 'right' ? 'text-right' : 'text-left'
+                                }`}
+                              >
+                                {cell}
+                              </td>
+                            ))}
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
                 );
               }
               return <p key={i}>{b.text}</p>;

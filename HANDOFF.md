@@ -1,4 +1,4 @@
-# A2P/M2P 作業引き継ぎ（2026-09-25 時点）
+# A2P/M2P 作業引き継ぎ（2026-09-28 時点）
 
 別端末で続きを作業するための現況・残タスク・発見した制約のまとめ。
 起動後はまず本書＋`CLAUDE.md`＋`.claude-handoff/memory/*.md` を読むこと。
@@ -14,6 +14,33 @@
 4. ブラウザ自動化のログイン状態（`scripts/.kdp-userdata`, `scripts/.note-userdata*`）は gitignore。
    KDP は初回 OTP 再認証（LINE リレー or `kdp_auth_requests` 行を手動 fulfilled）。
    BW/Kobo/note のセッションは DB（app_settings / promotion_channel_settings）に暗号化保存済みなので端末非依存。
+
+## 2026-09-28 ANP（本文の表を画像で出す・サムネの作法）
+
+### F-ANP-48 note の本文に表を出す
+- **note のエディタには表を作る機能が無い**（2026-09-28 調査）。Markdown の表をそのまま流し込んで
+  いたため、公開記事に `| 頭数帯 | レース数 |` というパイプ記号の羅列が出ていた（運営者報告）。
+  note 上の解説記事でも回避策は「画像化」「数式ブロックに TeX」「Gist 埋め込み」の 3 つだけ。
+- 対策: **表を PNG に描いて本文へ挿入する**（`renderTableImage`。文字は Noto Sans JP のアウトライン
+  なのでフォント環境に依存しない）。`buildNoteBlocks` が表を `table` ブロックとして切り出し、
+  `pipeline.note.publish` が画像化して「+」メニュー →「画像」→ filechooser で挿入する。
+- **画像を挿入するとキャプション欄にフォーカスが移る**ので、`moveCaretToBodyEnd` で本文末尾に
+  キャレットを戻さないと以降の本文がキャプションに入る。
+- 画像化に失敗したら「見出し：値」のテキストに開く。**パイプ記号のままは絶対に打ち込まない**。
+- 公開済みの記事（22 本）は `pipeline.note.fix-tables` で後追い修正する。パイプ段落だけを
+  選択して消し、同じ位置に画像を挿す（本文全体は打ち直さない）。
+  UI = 記事詳細の「表の表示を直す」／一括 = `bash scripts/paperback/pb-env.sh node scripts/anp/fix-tables.cjs --apply --real`。
+- ANP の記事詳細も `<table>` で表示するようにした（プレビューでもパイプを見せない）。
+
+### F-ANP-49 サムネイルの作法（運営者指定の参考記事に合わせる）
+参考 <https://note.com/dandy_clam132/n/nd2fbe6c407eb>。
+- 文字サイズは **2 種類だけ**（主役＋補足）。主役は文字数で決める（6 字以内=100 / 7〜12 字=80 /
+  13 字以上=70）、**48px を下回らない**。補足は主役の 6 割。バッジも補足と同じサイズ。
+- 配色は **3 色構成**（ベース/メイン/アクセント）を推奨 5 パターンから**ニッチごとに固定**。
+  同じアカウントのサムネは常に同じ配色（統一感）。**絵柄は記事ごとに変える**（F-ANP-14b）まま。
+- 文字を載せる帯は**暗くする＋ぼかす**。画像プロンプトにも「主題は 1〜2 個」「色数 3 色以内」を追加。
+- `anp.seo` のプロンプトを改訂（`eyecatch_copy` 6〜12 字 / `eyecatch_sub` 10〜16 字）。
+  **プロンプトの正本は DB** なので `bash scripts/paperback/pb-env.sh node scripts/anp/apply-seo-prompts.cjs --apply` で反映する。
 
 ## 2026-09-25 ANP（有料記事の復旧・サムネ・有料化機能）
 - **F-ANP-45 有料記事が全部無料で出ていた**: `resolveFinalPricing` が judge に格下げ権を渡していた
