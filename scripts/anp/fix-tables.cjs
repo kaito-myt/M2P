@@ -1,5 +1,6 @@
 /**
- * 公開済み記事に残った Markdown の表を表画像へ差し替える (F-ANP-48、運営者報告 2026-09-28
+ * 公開済み記事に残った Markdown (表・`**`・バッククォート・`---`・リンク記法) を直す
+ * (F-ANP-48、運営者報告 2026-09-28
  * 「表がこんな感じで表示されてるからちゃんと表で出力されるようにして」)。
  *
  *   bash scripts/paperback/pb-env.sh node scripts/anp/fix-tables.cjs                     # 対象一覧 (dry)
@@ -50,6 +51,17 @@ function countTables(md) {
   return n;
 }
 
+/** 公開記事に出てしまう Markdown 記号の数 (`**` / バッククォート / `[文字](URL)` / 単独行の `---`)。 */
+function countJunk(md) {
+  const b = String(md || '');
+  return (
+    (b.match(/\*\*/g) || []).length +
+    (b.match(/`/g) || []).length +
+    (b.match(/\[[^\]]+\]\([^)]*\)/g) || []).length +
+    (b.match(/^\s*(-{3,}|\*{3,}|_{3,})\s*$/gm) || []).length
+  );
+}
+
 (async () => {
   const c = new Client({ connectionString: process.env.DBURL, ssl: { rejectUnauthorized: false } });
   await c.connect();
@@ -72,15 +84,19 @@ function countTables(md) {
       params,
     );
     const withTables = rows
-      .map((r) => ({ ...r, tables: countTables(r.body_md) }))
-      .filter((r) => r.tables > 0);
+      .map((r) => ({ ...r, tables: countTables(r.body_md), junk: countJunk(r.body_md) }))
+      .filter((r) => r.tables > 0 || r.junk > 0);
 
     const global = await c.query("SELECT anp_publish_dry_run FROM app_settings WHERE id='singleton'");
     const globalDry = global.rows[0]?.anp_publish_dry_run ?? true;
 
-    console.log(`表が残っている公開記事: ${withTables.length} 件 / 公開記事 ${rows.length} 件 / グローバルdry_run=${globalDry}`);
+    console.log(
+      `Markdown が残っている公開記事: ${withTables.length} 件 / 公開記事 ${rows.length} 件 / グローバルdry_run=${globalDry}`,
+    );
     for (const r of withTables) {
-      console.log(`- ${r.display_name} [表${r.tables}個 / ${r.paid ? '有料' : '無料'}] ${r.title}  ${r.note_url}`);
+      console.log(
+        `- ${r.display_name} [表${r.tables}個 記号${r.junk}個 / ${r.paid ? '有料' : '無料'}] ${r.title}  ${r.note_url}`,
+      );
     }
     const targets = LIMIT > 0 ? withTables.slice(0, LIMIT) : withTables;
     if (!APPLY) {

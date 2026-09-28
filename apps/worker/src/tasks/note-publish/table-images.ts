@@ -74,3 +74,16 @@ export async function attachTableImages(
 
   return { blocks: out, rendered, nextIndex: index };
 }
+
+/**
+ * [F-ANP-48] 本文にまだ「note にそのまま出てしまう Markdown 記号」が残っているか。
+ * 公開済み記事の修正が必要かどうかの判定に使う (表・`**`・バッククォート・リンク記法・区切り線)。
+ */
+export function countMarkdownJunk(bodyMd: string | null | undefined): number {
+  const b = bodyMd ?? '';
+  const bold = b.match(/\*\*/g)?.length ?? 0;
+  const code = b.match(/`/g)?.length ?? 0;
+  const link = b.match(/\[[^\]]+\]\([^)]*\)/g)?.length ?? 0;
+  const rule = b.match(/^\s*(-{3,}|\*{3,}|_{3,})\s*$/gm)?.length ?? 0;
+  return bold + code + link + rule;
+}

@@ -38,7 +38,7 @@ import { prisma as defaultPrisma } from '@a2p/db';
 import { pushLine } from './lib/line-auth-relay.js';
 import { notifyNoteSessionExpired, type NoteAuthRelayPrisma } from './lib/note-auth-relay.js';
 import { buildNoteBlocks } from './note-publish/build-blocks.js';
-import { attachTableImages } from './note-publish/table-images.js';
+import { attachTableImages, countMarkdownJunk } from './note-publish/table-images.js';
 import type { NoteFixTablesResult, NotePublishPort } from './note-publish/playwright-note-publish-port.js';
 
 export const PIPELINE_NOTE_FIX_TABLES_TASK_NAME = 'pipeline.note.fix-tables';
@@ -118,6 +118,8 @@ export interface PipelineNoteFixTablesResult {
   reason?: string;
   replaced?: number;
   remaining?: number;
+  /** 取り除いた Markdown 記号の数。 */
+  cleaned?: number;
 }
 
 export async function runPipelineNoteFixTables(
@@ -210,12 +212,7 @@ export async function runPipelineNoteFixTables(
       .filter((b) => b.kind === 'table' && b.imagePath)
       .map((b) => b.imagePath!);
 
-    if (tableImages.length === 0) {
-      log.info({ articleId }, '本文に表が無い — skip');
-      await finishJob(prisma, jobId, now(), { status: 'no_tables' });
-      return { ok: true, status: 'no_tables', replaced: 0 };
-    }
-
+    // 表が無くても、本文に残った Markdown の記号 (`**` 等) を掃除するために続行する。
     const settings = await prisma.appSettings.findUnique({
       where: { id: 'singleton' },
       select: { anp_publish_dry_run: true },
@@ -237,6 +234,9 @@ export async function runPipelineNoteFixTables(
         freeBlockCount: freeStage.blocks.length,
         sessionState,
         dryRun: effectiveDryRun,
+        // DB の本文にまだ Markdown が残っている = 公開中の本文は直っていないので、
+        // エディタ上が既にきれいでも「更新する」を押して公開へ反映する (オートセーブ対策)。
+        forceUpdate: tableImages.length > 0 || countMarkdownJunk(article.body_md) > 0,
         stageDir,
       });
     } catch (err) {

@@ -47,6 +47,9 @@ const log = createLogger('worker.note-publish.playwright');
 
 const NEW_NOTE_URL = 'https://note.com/notes/new';
 
+/** [F-ANP-48] 公開済み記事から取り除く Markdown 記号の最大個数 (暴走防止)。 */
+const MAX_JUNK_CLEANUPS = 300;
+
 /**
  * [F-ANP-47] 公開済み記事を更新するときの確定ボタン候補 (note の表記ゆれ対策)。
  * 有料を選ぶと「更新する」がすぐには出ず、いったん「有料エリア設定」を挟む。
@@ -62,9 +65,20 @@ type Page = any;
 // 公開型
 // ---------------------------------------------------------------------------
 
-export interface NotePublishBlock {
-  kind: 'h1' | 'h2' | 'bullet' | 'paragraph' | 'table';
+/** [F-ANP-48] `**太字**` を本物の太字にするための分割。 */
+export interface InlineRun {
   text: string;
+  bold: boolean;
+}
+
+export interface NotePublishBlock {
+  kind: 'h1' | 'h2' | 'bullet' | 'paragraph' | 'table' | 'code' | 'hr';
+  text: string;
+  /**
+   * [F-ANP-48] 太字を含む行はここに分割済みの run が入る。`typeBlock` が bold の run だけ
+   * Ctrl+B で囲んで打つ (note は Markdown を解釈しないので `**` を素で打つと記号が出る)。
+   */
+  runs?: InlineRun[];
   /**
    * [F-ANP-48] `kind==='table'` のとき、表を描画した PNG のローカルパス。
    * note のエディタには表を作る機能が無いため、画像として本文に挿入する。
@@ -153,6 +167,12 @@ export interface NoteFixTablesArgs {
   sessionState: string;
   /** true = 差し替えるところまでで「更新する」は押さない (公開中の本文は変わらない)。 */
   dryRun: boolean;
+  /**
+   * DB の本文にまだ Markdown が残っている = **公開中の本文は直っていない**ことが分かっている場合に true。
+   * note はエディタの編集をオートセーブするので、ドライランの後は「エディタ上は直っているが
+   * 公開中の本文は古いまま」という状態になりうる。その場合でも「更新する」を押して公開へ反映する。
+   */
+  forceUpdate?: boolean;
   stageDir: string;
 }
 
@@ -165,6 +185,8 @@ export type NoteFixTablesResult =
       replaced: number;
       /** 差し替え後に残っているパイプ行の数 (0 が正常)。 */
       remaining: number;
+      /** 取り除いた Markdown 記号の数 (`**` / バッククォート / `[` `]` / `---`)。 */
+      cleaned?: number;
       buttons?: string[];
     }
   | {
@@ -859,6 +881,28 @@ async function openPlusMenu(page: Page): Promise<boolean> {
   return opened;
 }
 
+/**
+ * [F-ANP-48] 1 行を打つ。`**太字**` は Ctrl+B を挟んで**本物の太字**にする
+ * (note は Markdown を解釈しないので、記号のまま打つと公開記事に `**` が出る)。
+ */
+async function typeRuns(page: Page, block: NotePublishBlock, fallbackText?: string): Promise<void> {
+  const runs = block.runs;
+  if (!runs || runs.length === 0) {
+    await page.keyboard.type(fallbackText ?? block.text, { delay: 5 });
+    return;
+  }
+  for (const run of runs) {
+    if (run.text.length === 0) continue;
+    if (run.bold) {
+      await page.keyboard.press('Control+b').catch(() => {});
+      await page.keyboard.type(run.text, { delay: 5 });
+      await page.keyboard.press('Control+b').catch(() => {});
+    } else {
+      await page.keyboard.type(run.text, { delay: 5 });
+    }
+  }
+}
+
 async function typeBlock(page: Page, block: NotePublishBlock, articleId: string): Promise<void> {
   if (block.kind === 'table') {
     // [F-ANP-48] note には表機能が無いので画像として挿入する。
@@ -885,13 +929,41 @@ async function typeBlock(page: Page, block: NotePublishBlock, articleId: string)
     await page.waitForTimeout(150);
     return;
   }
+  if (block.kind === 'hr') {
+    // 区切り線。「+」メニューに無ければ**何も打たない**(`---` を素で打つと記号が出る)。
+    await openPlusMenu(page);
+    const clicked = await clickAnyText(page, ['区切り線', '水平線']);
+    if (clicked) {
+      await page.waitForTimeout(400);
+    } else {
+      log.warn({ articleId }, '区切り線ボタンが見つかりません — 区切り線を省略');
+      await page.keyboard.press('Escape').catch(() => {});
+    }
+    return;
+  }
+  if (block.kind === 'code') {
+    await openPlusMenu(page);
+    const clicked = await clickAnyText(page, ['コード', 'コードブロック']);
+    if (!clicked) log.warn({ articleId, block: 'code' }, 'コードボタンが見つかりません — プレーンテキストとして続行');
+    await page.waitForTimeout(250);
+    const lines = block.text.split('\n');
+    for (let i = 0; i < lines.length; i += 1) {
+      await page.keyboard.type(lines[i]!, { delay: 5 });
+      if (i < lines.length - 1) await page.keyboard.press('Enter');
+    }
+    // コードブロックを抜ける (ProseMirror は末尾で下矢印 → Enter で新しい段落になる)。
+    await page.keyboard.press('ArrowDown').catch(() => {});
+    await page.keyboard.press('Enter').catch(() => {});
+    await page.waitForTimeout(200);
+    return;
+  }
   if (block.kind === 'h1' || block.kind === 'h2') {
     await openPlusMenu(page);
     const label = block.kind === 'h1' ? '大見出し' : '小見出し';
     const clicked = await clickByText(page, label);
     if (!clicked) log.warn({ articleId, block: label }, '見出しボタンが見つかりません — プレーンテキストとして続行');
     await page.waitForTimeout(200);
-    await page.keyboard.type(block.text, { delay: 5 });
+    await typeRuns(page, block);
     await page.keyboard.press('Enter');
   } else if (block.kind === 'bullet') {
     await openPlusMenu(page);
@@ -906,7 +978,7 @@ async function typeBlock(page: Page, block: NotePublishBlock, articleId: string)
     // 空行で Enter するとリストを抜ける(ProseMirror の一般的挙動)。
     await page.keyboard.press('Enter');
   } else {
-    await page.keyboard.type(block.text, { delay: 5 });
+    await typeRuns(page, block);
     await page.keyboard.press('Enter');
   }
   await page.waitForTimeout(150);
@@ -1221,34 +1293,28 @@ async function fixTablesOne(args: NoteFixTablesArgs): Promise<NoteFixTablesResul
       return { ok: false, reason: 'blocked', message: '本文エディタが見つかりません', noteUrl: args.noteUrl };
     }
 
-    const before = await countPipeGroups(page);
-    log.info({ articleId: args.articleId, noteId, groups: before, images: args.tableImages.length }, 'note fix-tables: editor opened');
-    if (before === 0) {
-      return { ok: true, status: 'no_tables', noteUrl: args.noteUrl, replaced: 0, remaining: 0 };
-    }
-
+    const before = (await findTableRuns(page, false)).runs;
+    log.info(
+      { articleId: args.articleId, noteId, runs: before, images: args.tableImages.length },
+      'note fix-tables: editor opened',
+    );
     let replaced = 0;
     for (let i = 0; i < args.tableImages.length; i += 1) {
-      const group = await findFirstPipeGroup(page);
-      if (!group) break;
       const image = args.tableImages[i]!;
 
-      // 1. 先頭ブロックの行頭にキャレットを置く (locator クリック = trusted click。
-      //    evaluate 内の座標計算は画面外になりがちで空振りする — F-ANP-47 の教訓)。
-      const block = page.locator('div.ProseMirror[contenteditable="true"] > *').nth(group.start);
-      await block.scrollIntoViewIfNeeded({ timeout: 10000 }).catch(() => {});
-      await block.click({ position: { x: 6, y: 6 }, timeout: 15000 }).catch(() => {});
-      await page.waitForTimeout(500);
-      await page.keyboard.press('Home').catch(() => {});
+      // 1. 表になっている行の範囲を選択する (ブロック単位ではなく `<br>` 区切りの行単位。
+      //    note エディタは表の行を独立した段落にしない — 2026-09-28 実測)。
+      const found = await findTableRuns(page, true);
+      if (!found.selected) break;
+      log.info(
+        { articleId: args.articleId, index: i, ...found.selected, runsLeft: found.runs },
+        'note fix-tables: 表の範囲を選択',
+      );
+      await page.waitForTimeout(400);
 
-      // 2. 表の最終行の行末まで選択して削除する。
-      for (let k = 1; k < group.count; k += 1) {
-        await page.keyboard.press('Shift+ArrowDown').catch(() => {});
-      }
-      await page.keyboard.press('Shift+End').catch(() => {});
-      await page.waitForTimeout(300);
+      // 2. 選択範囲を削除する (ProseMirror に処理させるため実キー入力で消す)。
       await page.keyboard.press('Backspace').catch(() => {});
-      await page.waitForTimeout(800);
+      await page.waitForTimeout(900);
 
       // 3. 空いた位置に表画像を挿入する。
       const inserted = await insertImage(page, image).catch((err) => {
@@ -1265,12 +1331,32 @@ async function fixTablesOne(args: NoteFixTablesArgs): Promise<NoteFixTablesResul
         };
       }
       replaced += 1;
-      await page.waitForTimeout(1200);
+      await page.waitForTimeout(1500);
     }
 
-    const remaining = await countPipeGroups(page);
+    const remaining = (await findTableRuns(page, false)).runs;
+
+    // 表以外に残っている Markdown の記号 (`**` / バッククォート / `[` `]` / 単独行の `---`) も掃除する。
+    // 記号だけを選択して消すので文章は変わらない。
+    let cleaned = 0;
+    for (let i = 0; i < MAX_JUNK_CLEANUPS; i += 1) {
+      const junk = await selectEditorJunk(page);
+      if (!junk) break;
+      await page.waitForTimeout(120);
+      await page.keyboard.press('Backspace').catch(() => {});
+      await page.waitForTimeout(160);
+      cleaned += 1;
+      if (i === 0) log.info({ articleId: args.articleId, junk }, 'note fix-tables: Markdown 記号を掃除');
+    }
+
     await screenshot(page, args.stageDir, `${args.articleId}-fixtables-body`);
-    log.info({ articleId: args.articleId, replaced, remaining }, 'note fix-tables: 差し替え完了');
+    log.info({ articleId: args.articleId, replaced, remaining, cleaned }, 'note fix-tables: 差し替え完了');
+
+    // 直す対象が何も無ければ「更新する」を押さずに終わる (無駄な更新で公開日時を動かさない)。
+    // ただし DB の本文に Markdown が残っている場合は、オートセーブ済みの下書きを公開へ反映するため更新する。
+    if (replaced === 0 && cleaned === 0 && !args.forceUpdate) {
+      return { ok: true, status: 'no_tables', noteUrl: args.noteUrl, replaced: 0, remaining, cleaned: 0 };
+    }
 
     if (!(await clickByText(page, '公開に進む'))) {
       await screenshot(page, args.stageDir, `${args.articleId}-fixtables-no-proceed`);
@@ -1282,7 +1368,7 @@ async function fixTablesOne(args: NoteFixTablesArgs): Promise<NoteFixTablesResul
     log.info({ articleId: args.articleId, labels }, 'note fix-tables: publish settings buttons');
     if (args.dryRun) {
       await screenshot(page, args.stageDir, `${args.articleId}-fixtables-dryrun`);
-      return { ok: true, status: 'dry_run_ready', noteUrl: args.noteUrl, replaced, remaining, buttons: labels };
+      return { ok: true, status: 'dry_run_ready', noteUrl: args.noteUrl, replaced, remaining, cleaned, buttons: labels };
     }
 
     // 有料記事は「更新する」の代わりに「有料エリア設定」を挟む (F-ANP-47 で判明した note の仕様)。
@@ -1312,7 +1398,7 @@ async function fixTablesOne(args: NoteFixTablesArgs): Promise<NoteFixTablesResul
     }
     await page.waitForTimeout(9000);
     await screenshot(page, args.stageDir, `${args.articleId}-fixtables-after`);
-    return { ok: true, status: 'fixed', noteUrl: args.noteUrl, replaced, remaining };
+    return { ok: true, status: 'fixed', noteUrl: args.noteUrl, replaced, remaining, cleaned };
   } catch (err) {
     return { ok: false, reason: 'error', message: errMsg(err), noteUrl: args.noteUrl };
   } finally {
@@ -1321,67 +1407,151 @@ async function fixTablesOne(args: NoteFixTablesArgs): Promise<NoteFixTablesResul
 }
 
 /**
- * 本文の直下ブロックのうち「Markdown の表の行」が連続している最初の範囲を返す。
+ * [F-ANP-48] 公開済み記事に残っている **Markdown の記号**（`**` / バッククォート / `[` `]` /
+ * 単独行の `---` や ```` ``` ````）を 1 つ見つけて選択する。
  *
- * 判定は厳しめにする: パイプで始まり・パイプで終わる行が 2 行以上連続し、そのどれかが
- * `|---|` の区切り行であること。本文中でたまたまパイプを使っただけの段落は拾わない。
+ * note は Markdown を解釈しないので、初期の実装が打ち込んだ記号がそのまま公開記事に出ている。
+ * 文章そのものは触らず、**記号だけを選択して消す**（= 純粋な削除なので事故が起きにくい）。
+ *
+ * @returns 選択できたら何を選んだか。見つからなければ null。
  */
-async function findFirstPipeGroup(page: Page): Promise<{ start: number; count: number } | null> {
+async function selectEditorJunk(page: Page): Promise<{ kind: string; preview: string } | null> {
   return page
     .evaluate(() => {
       const root = document.querySelector('div.ProseMirror[contenteditable="true"]');
       if (!root) return null;
-      const kids = [...root.children] as HTMLElement[];
-      const isRow = (el: HTMLElement): boolean => {
-        if (el.tagName === 'FIGURE') return false;
-        const t = (el.textContent ?? '').trim();
-        return /^\|.*\|$/.test(t) && (t.match(/\|/g) ?? []).length >= 3;
-      };
-      const isSep = (el: HTMLElement): boolean => {
-        const t = (el.textContent ?? '').trim();
-        return /^\|?[\s:|-]+$/.test(t) && t.includes('-') && t.includes('|');
-      };
-      for (let i = 0; i < kids.length; i += 1) {
-        if (!isRow(kids[i]!)) continue;
-        let j = i;
-        while (j < kids.length && isRow(kids[j]!)) j += 1;
-        const group = kids.slice(i, j);
-        if (group.length >= 2 && group.some(isSep)) return { start: i, count: group.length };
-        i = j - 1;
+      const sel = window.getSelection();
+      if (!sel) return null;
+
+      const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+      let node: Node | null;
+      while ((node = walker.nextNode()) !== null) {
+        const text = node.nodeValue ?? '';
+        if (text.length === 0) continue;
+
+        // 1) 行まるごとが区切り線/コードフェンスなら、直前の `<br>` ごと消す。
+        if (/^\s*(-{3,}|`{3,}|\*{3,}|_{3,})\s*$/.test(text)) {
+          const range = document.createRange();
+          range.setStartBefore(node);
+          range.setEndAfter(node);
+          const prev = node.previousSibling;
+          if (prev && prev.nodeName === 'BR') range.setStartBefore(prev);
+          sel.removeAllRanges();
+          sel.addRange(range);
+          return { kind: 'rule', preview: text.trim().slice(0, 20) };
+        }
+
+        // 2) 行の中の記号だけを消す。
+        const patterns: Array<{ kind: string; re: RegExp }> = [
+          { kind: 'bold', re: /\*\*/ },
+          { kind: 'code', re: /`/ },
+          { kind: 'bracket', re: /[[\]]/ },
+        ];
+        for (const { kind, re } of patterns) {
+          const m = re.exec(text);
+          if (!m) continue;
+          const range = document.createRange();
+          range.setStart(node, m.index);
+          range.setEnd(node, m.index + m[0].length);
+          sel.removeAllRanges();
+          sel.addRange(range);
+          return { kind, preview: text.slice(Math.max(0, m.index - 8), m.index + 12) };
+        }
       }
       return null;
     })
     .catch(() => null);
 }
 
-/** 本文に残っている表 (パイプ行の連続) の数。 */
-async function countPipeGroups(page: Page): Promise<number> {
+/**
+ * [F-ANP-48] 本文から「Markdown の表になっている行の連なり」を探す。必要ならその範囲を選択する。
+ *
+ * **note エディタでは表の行が独立した段落にならない**（2026-09-28 実測
+ * `scripts/anp/note-table-recon.mjs`）。`page.keyboard.type()` の改行は `<br>` のソフト改行に
+ * なるため、直前の文と表が 1 つの `<p>` にまとまっている。そのため「ブロック単位」ではなく
+ * **`<br>` で区切った行単位**で走査し、範囲を DOM Range で選択する（ProseMirror は
+ * selectionchange を拾って内部状態を同期するので、この後 Backspace を押せば消える）。
+ *
+ * @param select true なら最初の表の範囲を選択する（false は数えるだけ）
+ * @returns runs = 表の数 / selected = 選択できたときの情報
+ */
+async function findTableRuns(
+  page: Page,
+  select: boolean,
+): Promise<{ runs: number; selected: { lines: number; preview: string } | null }> {
   return page
-    .evaluate(() => {
+    .evaluate((doSelect: boolean) => {
       const root = document.querySelector('div.ProseMirror[contenteditable="true"]');
-      if (!root) return 0;
-      const kids = [...root.children] as HTMLElement[];
-      const isRow = (el: HTMLElement): boolean => {
-        if (el.tagName === 'FIGURE') return false;
-        const t = (el.textContent ?? '').trim();
-        return /^\|.*\|$/.test(t) && (t.match(/\|/g) ?? []).length >= 3;
+      if (!root) return { runs: 0, selected: null };
+
+      const isRow = (t: string): boolean =>
+        /^\s*\|.*\|\s*$/.test(t) && (t.match(/\|/g) ?? []).length >= 3;
+      const isSep = (t: string): boolean => {
+        const s = t.trim();
+        return /^\|?[\s:|-]+$/.test(s) && s.includes('-') && s.includes('|');
       };
-      const isSep = (el: HTMLElement): boolean => {
-        const t = (el.textContent ?? '').trim();
-        return /^\|?[\s:|-]+$/.test(t) && t.includes('-') && t.includes('|');
-      };
-      let n = 0;
-      for (let i = 0; i < kids.length; i += 1) {
-        if (!isRow(kids[i]!)) continue;
+
+      // 1) `<br>` で区切った「行」を集める (ブロックをまたいで 1 本の配列にする)。
+      interface Line {
+        block: Element;
+        nodes: ChildNode[];
+        text: string;
+      }
+      const lines: Line[] = [];
+      for (const block of [...root.children]) {
+        if (block.tagName === 'FIGURE') continue;
+        let cur: Line | null = null;
+        for (const node of [...block.childNodes]) {
+          if (node.nodeName === 'BR') {
+            lines.push(cur ?? { block, nodes: [], text: '' });
+            cur = null;
+            continue;
+          }
+          if (!cur) cur = { block, nodes: [], text: '' };
+          cur.nodes.push(node);
+          cur.text += node.textContent ?? '';
+        }
+        lines.push(cur ?? { block, nodes: [], text: block.textContent ?? '' });
+      }
+
+      // 2) 表になっている行の連なりを数える (区切り行 `|---|` を含むものだけ)。
+      const runs: Array<{ start: number; end: number }> = [];
+      for (let i = 0; i < lines.length; i += 1) {
+        if (!isRow(lines[i]!.text)) continue;
         let j = i;
-        while (j < kids.length && isRow(kids[j]!)) j += 1;
-        const group = kids.slice(i, j);
-        if (group.length >= 2 && group.some(isSep)) n += 1;
+        while (j < lines.length && isRow(lines[j]!.text)) j += 1;
+        const run = lines.slice(i, j);
+        if (run.length >= 2 && run.some((l) => isSep(l.text))) runs.push({ start: i, end: j - 1 });
         i = j - 1;
       }
-      return n;
-    })
-    .catch(() => 0);
+      if (!doSelect || runs.length === 0) return { runs: runs.length, selected: null };
+
+      // 3) 最初の表を選択する。
+      const { start, end } = runs[0]!;
+      const first = lines[start]!;
+      const last = lines[end]!;
+      const range = document.createRange();
+      const firstNode = first.nodes[0];
+      const lastNode = last.nodes[last.nodes.length - 1];
+      if (firstNode) range.setStartBefore(firstNode);
+      else range.setStartBefore(first.block);
+      if (lastNode) range.setEndAfter(lastNode);
+      else range.setEndAfter(last.block);
+      // 直前が `<br>` ならそれも含める (表を消したあとに空行を残さない)。
+      const anchor = firstNode ?? first.block;
+      const prev = anchor.previousSibling;
+      if (prev && prev.nodeName === 'BR') range.setStartBefore(prev);
+
+      const sel = window.getSelection();
+      if (!sel) return { runs: runs.length, selected: null };
+      sel.removeAllRanges();
+      sel.addRange(range);
+      return {
+        runs: runs.length,
+        selected: { lines: end - start + 1, preview: first.text.trim().slice(0, 40) },
+      };
+    }, select)
+    .catch(() => ({ runs: 0, selected: null }));
 }
 
 function errMsg(err: unknown): string {

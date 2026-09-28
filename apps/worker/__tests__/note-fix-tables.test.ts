@@ -173,14 +173,16 @@ describe(PIPELINE_NOTE_FIX_TABLES_TASK_NAME, () => {
     expect(calls[0]!.dryRun).toBe(true);
   });
 
-  it('本文に表が無ければ port を呼ばない', async () => {
-    const { prisma } = buildPrisma({ body_md: ['## 見出し', '本文だけ。'].join(PARA_SEP) });
+  // 表が無くても本文に `**` などの記号が残っていることがあるので、port は呼んで掃除させる。
+  it('本文に表が無くても port を呼ぶ (Markdown 記号の掃除のため)', async () => {
+    const { prisma } = buildPrisma({ body_md: ['## 見出し', 'これは**太字**です。'].join(PARA_SEP) });
     const { port, calls } = makePort({
       ok: true,
       status: 'no_tables',
       noteUrl: 'https://note.com/x/n/n1',
       replaced: 0,
       remaining: 0,
+      cleaned: 0,
     });
 
     const res = await runPipelineNoteFixTables(
@@ -189,7 +191,8 @@ describe(PIPELINE_NOTE_FIX_TABLES_TASK_NAME, () => {
     );
 
     expect(res).toMatchObject({ ok: true, status: 'no_tables' });
-    expect(calls).toHaveLength(0);
+    expect(calls).toHaveLength(1);
+    expect(calls[0]!.tableImages).toHaveLength(0);
   });
 
   it('未公開の記事は対象外', async () => {

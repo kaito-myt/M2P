@@ -4,20 +4,102 @@
  * 箇条書き、それ以外は段落として扱う。`paywallLinePos` (codepoint index, body_md 内のオフセット)
  * が指定されていれば free/paid の 2 系列に分割する。
  *
- * [F-ANP-48] Markdown の表は **`table` ブロック**として切り出す。note のエディタには表を作る
- * 機能が無く、`| 頭数帯 | レース数 |` をそのまま打ち込むとパイプ記号の羅列が公開されてしまう
- * ため (運営者報告 2026-09-28)、呼出側で表を画像化して `imagePath` を添える。
+ * [F-ANP-48] **Markdown の記法をそのまま打ち込まない**。note のエディタは Markdown を解釈しない
+ * ので、`|表|`・`**太字**`・```` ```コード``` ````・`---`・`[文字](URL)` を素で打つと記号が
+ * そのまま公開記事に出る (2026-09-28 運営者報告「表がこんな感じで表示されてる」)。ここで
+ *   - 表      → `table` ブロック (呼出側が画像化して挿入)
+ *   - コード  → `code` ブロック (+メニューの「コード」)
+ *   - 区切り線 → `hr` ブロック (+メニューの「区切り線」)
+ *   - 太字    → `runs` (typeBlock が Ctrl+B で本物の太字にする)
+ *   - リンク  → 「文字」＋ URL を別行に (note は単独行の URL を自動でリンク/埋め込みにする)
+ * に変換する。
  */
 import { splitTableSegments } from '@a2p/output-image';
 
-import type { NotePublishBlock } from './playwright-note-publish-port.js';
+import type { InlineRun, NotePublishBlock } from './playwright-note-publish-port.js';
 
 export interface BuildNoteBlocksResult {
   freeBlocks: NotePublishBlock[];
   paidBlocks: NotePublishBlock[];
 }
 
-/** 表を含まないテキストを見出し/箇条書き/段落に分解する。 */
+/** 区切り線だけの行か (`---` / `***` / `___`)。 */
+function isHorizontalRule(line: string): boolean {
+  return /^\s*(-{3,}|\*{3,}|_{3,})\s*$/.test(line);
+}
+
+/**
+ * インライン記法を note 向けに開く。
+ * - `[文字](URL)` → `文字` の後ろに改行して URL を単独行に置く (note が自動でリンクにする)。
+ * - `` `コード` `` → バッククォートを外す。
+ */
+export function normalizeInline(text: string): string {
+  return text
+    .replace(/\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g, (_m, label: string, url: string) => `${label}\n${url}`)
+    .replace(/\[([^\]]+)\]\([^)]*\)/g, '$1')
+    .replace(/`([^`]+)`/g, '$1');
+}
+
+/**
+ * `**太字**` で分割する。`typeBlock` が bold=true の run だけ Ctrl+B で囲んで打つ。
+ * 対応が取れていない `**` はただの文字として残さず落とす (記号が公開記事に出ないように)。
+ */
+export function splitInlineRuns(text: string): InlineRun[] {
+  const runs: InlineRun[] = [];
+  const re = /\*\*([^*]+)\*\*/g;
+  let last = 0;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(text)) !== null) {
+    if (m.index > last) runs.push({ text: text.slice(last, m.index), bold: false });
+    runs.push({ text: m[1]!, bold: true });
+    last = m.index + m[0].length;
+  }
+  if (last < text.length) runs.push({ text: text.slice(last), bold: false });
+  const cleaned = runs
+    .map((r) => (r.bold ? r : { ...r, text: r.text.replace(/\*\*/g, '').replace(/(?<!\*)\*(?!\*)/g, '') }))
+    .filter((r) => r.text.length > 0);
+  return cleaned.length > 0 ? cleaned : [{ text: text.replace(/\*/g, ''), bold: false }];
+}
+
+/** 段落テキストからブロックを作る (太字の run を添える)。 */
+function paragraphBlock(kind: 'paragraph' | 'bullet' | 'h1' | 'h2', text: string): NotePublishBlock {
+  const normalized = normalizeInline(text);
+  const runs = splitInlineRuns(normalized);
+  const plain = runs.map((r) => r.text).join('');
+  return runs.some((r) => r.bold) ? { kind, text: plain, runs } : { kind, text: plain };
+}
+
+/** ```` ``` ```` で囲まれたコードブロックを切り出す。 */
+export function splitFencedSegments(text: string): Array<{ kind: 'text' | 'code'; text: string }> {
+  const lines = text.split('\n');
+  const out: Array<{ kind: 'text' | 'code'; text: string }> = [];
+  let buf: string[] = [];
+  const flush = (): void => {
+    const joined = buf.join('\n').trim();
+    if (joined.length > 0) out.push({ kind: 'text', text: joined });
+    buf = [];
+  };
+  for (let i = 0; i < lines.length; i += 1) {
+    if (/^\s*```/.test(lines[i]!)) {
+      const body: string[] = [];
+      let j = i + 1;
+      while (j < lines.length && !/^\s*```/.test(lines[j]!)) {
+        body.push(lines[j]!);
+        j += 1;
+      }
+      flush();
+      const code = body.join('\n').trim();
+      if (code.length > 0) out.push({ kind: 'code', text: code });
+      i = j;
+      continue;
+    }
+    buf.push(lines[i]!);
+  }
+  flush();
+  return out;
+}
+
+/** 表・コードを含まないテキストを見出し/箇条書き/区切り線/段落に分解する。 */
 function toTextBlocks(text: string): NotePublishBlock[] {
   const paragraphs = text
     .split(/\n{2,}/)
@@ -26,20 +108,36 @@ function toTextBlocks(text: string): NotePublishBlock[] {
 
   const blocks: NotePublishBlock[] = [];
   for (const para of paragraphs) {
-    const lines = para.split('\n').map((l) => l.trim());
-    if (/^##\s+/.test(lines[0] ?? '')) {
-      blocks.push({ kind: 'h2', text: lines[0]!.replace(/^##\s+/, '') });
+    const lines = para
+      .split('\n')
+      .map((l) => l.trim())
+      .filter((l) => l.length > 0);
+    if (lines.length === 0) continue;
+
+    // 区切り線だけの塊。
+    if (lines.every(isHorizontalRule)) {
+      blocks.push({ kind: 'hr', text: '' });
       continue;
     }
-    if (/^#\s+/.test(lines[0] ?? '')) {
-      blocks.push({ kind: 'h1', text: lines[0]!.replace(/^#\s+/, '') });
+    if (/^##\s+/.test(lines[0]!)) {
+      blocks.push(paragraphBlock('h2', lines[0]!.replace(/^#{2,6}\s+/, '')));
       continue;
     }
-    if (lines.every((l) => /^[-・]\s*/.test(l) || l.length === 0)) {
-      blocks.push({ kind: 'bullet', text: lines.filter((l) => l.length > 0).join('\n') });
+    if (/^#\s+/.test(lines[0]!)) {
+      blocks.push(paragraphBlock('h1', lines[0]!.replace(/^#\s+/, '')));
       continue;
     }
-    blocks.push({ kind: 'paragraph', text: para });
+    // 区切り線が混ざっている場合は落としてから判定する。
+    const body = lines.filter((l) => !isHorizontalRule(l));
+    if (body.length === 0) {
+      blocks.push({ kind: 'hr', text: '' });
+      continue;
+    }
+    if (body.every((l) => /^[-・]\s*/.test(l))) {
+      blocks.push(paragraphBlock('bullet', body.join('\n')));
+      continue;
+    }
+    blocks.push(paragraphBlock('paragraph', body.join('\n')));
   }
   return blocks;
 }
@@ -49,8 +147,11 @@ function toBlocks(text: string): NotePublishBlock[] {
   for (const seg of splitTableSegments(text)) {
     if (seg.kind === 'table') {
       blocks.push({ kind: 'table', text: seg.text });
-    } else {
-      blocks.push(...toTextBlocks(seg.text));
+      continue;
+    }
+    for (const fenced of splitFencedSegments(seg.text)) {
+      if (fenced.kind === 'code') blocks.push({ kind: 'code', text: fenced.text });
+      else blocks.push(...toTextBlocks(fenced.text));
     }
   }
   return blocks;

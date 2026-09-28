@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest';
 
-import { buildNoteBlocks } from '../src/tasks/note-publish/build-blocks.js';
+import {
+  buildNoteBlocks,
+  normalizeInline,
+  splitFencedSegments,
+  splitInlineRuns,
+} from '../src/tasks/note-publish/build-blocks.js';
 
 describe('buildNoteBlocks', () => {
   it('見出し/箇条書き/段落を分類する', () => {
@@ -68,5 +73,76 @@ describe('Markdown の表を table ブロックに切り出す (F-ANP-48)', () =
     const { freeBlocks, paidBlocks } = buildNoteBlocks(md, pos);
     expect(freeBlocks.map((b) => b.kind)).toEqual(['paragraph']);
     expect(paidBlocks.map((b) => b.kind)).toEqual(['table']);
+  });
+});
+
+/**
+ * [F-ANP-48] note は Markdown を解釈しない。記号をそのまま打つと公開記事に `**` や
+ * ``` や `---` や `[文字](URL)` が出る (2026-09-28 実測)。
+ */
+describe('Markdown 記法を note 向けに開く (F-ANP-48)', () => {
+  const LF = String.fromCharCode(10);
+  const PARA = LF + LF;
+
+  it('太字は run に分割して記号を残さない', () => {
+    const runs = splitInlineRuns('ここが**重要**です');
+    expect(runs).toEqual([
+      { text: 'ここが', bold: false },
+      { text: '重要', bold: true },
+      { text: 'です', bold: false },
+    ]);
+    expect(runs.map((r) => r.text).join('')).not.toContain('*');
+  });
+
+  it('対応の取れていない * は落とす', () => {
+    const runs = splitInlineRuns('半端な**記号');
+    expect(runs.map((r) => r.text).join('')).toBe('半端な記号');
+  });
+
+  it('段落ブロックに runs が付き、text には記号が残らない', () => {
+    const { freeBlocks } = buildNoteBlocks('これは**太字**の段落です。', null);
+    expect(freeBlocks[0]!.kind).toBe('paragraph');
+    expect(freeBlocks[0]!.text).toBe('これは太字の段落です。');
+    expect(freeBlocks[0]!.runs?.some((r) => r.bold)).toBe(true);
+  });
+
+  it('リンクは文字と URL の別行にする (note が自動でリンクにする)', () => {
+    expect(normalizeInline('関連記事：[詳しくはこちら](https://note.com/a/n/nb1)')).toBe(
+      '関連記事：詳しくはこちら' + LF + 'https://note.com/a/n/nb1',
+    );
+  });
+
+  it('インラインコードのバッククォートを外す', () => {
+    expect(normalizeInline('`npm run build` を実行')).toBe('npm run build を実行');
+  });
+
+  it('コードフェンスは code ブロックにする', () => {
+    const segs = splitFencedSegments(['前置き', '```', 'const a = 1;', '```', 'あとがき'].join(LF));
+    expect(segs.map((x) => x.kind)).toEqual(['text', 'code', 'text']);
+    expect(segs[1]!.text).toBe('const a = 1;');
+  });
+
+  it('区切り線は hr ブロックにする (`---` を素で打たない)', () => {
+    const { freeBlocks } = buildNoteBlocks(['本文A', '', '---', '', '本文B'].join(LF), null);
+    expect(freeBlocks.map((b) => b.kind)).toEqual(['paragraph', 'hr', 'paragraph']);
+  });
+
+  it('本文にバッククォート/アスタリスク/パイプを残さない', () => {
+    const md = [
+      '## 見出し**強調**',
+      '`code` を含む段落と[リンク](https://note.com/x/n/n1)。',
+      '```',
+      'raw code',
+      '```',
+      '---',
+      '| a | b |' + LF + '|---|---|' + LF + '| 1 | 2 |',
+    ].join(PARA);
+    const { freeBlocks } = buildNoteBlocks(md, null);
+    for (const b of freeBlocks) {
+      if (b.kind === 'table' || b.kind === 'code') continue;
+      expect(b.text).not.toContain('`');
+      expect(b.text).not.toContain('**');
+      expect(b.text).not.toContain('|');
+    }
   });
 });
