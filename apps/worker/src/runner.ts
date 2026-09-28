@@ -215,6 +215,7 @@ import { PIPELINE_NOTE_EDITOR_TASK_NAME, pipelineNoteEditorTask } from './tasks/
 import { PIPELINE_NOTE_EYECATCH_TASK_NAME, pipelineNoteEyecatchTask } from './tasks/pipeline-note-eyecatch.js';
 import { PIPELINE_NOTE_JUDGE_TASK_NAME, pipelineNoteJudgeTask } from './tasks/pipeline-note-judge.js';
 import { PIPELINE_NOTE_MONETIZE_TASK_NAME, pipelineNoteMonetizeTask } from './tasks/pipeline-note-monetize.js';
+import { PIPELINE_NOTE_FIX_TABLES_TASK_NAME, pipelineNoteFixTablesTask } from './tasks/pipeline-note-fix-tables.js';
 import { PIPELINE_NOTE_PUBLISH_TASK_NAME, pipelineNotePublishTask } from './tasks/pipeline-note-publish.js';
 import {
   NOTE_PUBLISH_DISPATCHER_TASK_NAME,
@@ -366,6 +367,7 @@ export function buildTaskList(): TaskList {
     [PIPELINE_NOTE_JUDGE_TASK_NAME]: pipelineNoteJudgeTask,
     [PIPELINE_NOTE_PUBLISH_TASK_NAME]: pipelineNotePublishTask,
     [PIPELINE_NOTE_MONETIZE_TASK_NAME]: pipelineNoteMonetizeTask,
+    [PIPELINE_NOTE_FIX_TABLES_TASK_NAME]: pipelineNoteFixTablesTask,
     [NOTE_PUBLISH_DISPATCHER_TASK_NAME]: notePublishDispatcherTask,
     [NOTE_PUBLISH_STATUS_SYNC_TASK_NAME]: notePublishStatusSyncTask,
     // docs/11-anp-design.md §7 Phase3 — SNS 販促 (F-ANP-30) / 売上・KPI 取得 (F-ANP-40)。

@@ -56,6 +56,7 @@ describe('note.publish.status.sync', () => {
       publishOne: vi.fn(),
       checkPublished: vi.fn().mockResolvedValue({ ok: true, status: 'live' }),
       monetizeOne: vi.fn(),
+    fixTablesOne: vi.fn(),
     };
     const res = await runNotePublishStatusSync({ prisma, publishPort, decryptSession: () => '{}' });
     expect(res).toEqual({ checked: 1, unlisted: 0 });
@@ -73,6 +74,7 @@ describe('note.publish.status.sync', () => {
       publishOne: vi.fn(),
       checkPublished: vi.fn().mockResolvedValue({ ok: true, status: 'unlisted' }),
       monetizeOne: vi.fn(),
+    fixTablesOne: vi.fn(),
     };
     const res = await runNotePublishStatusSync({ prisma, publishPort, decryptSession: () => '{}' });
     expect(res).toEqual({ checked: 1, unlisted: 1 });
@@ -93,6 +95,7 @@ describe('note.publish.status.sync', () => {
       publishOne: vi.fn(),
       checkPublished: vi.fn().mockResolvedValue({ ok: false, reason: 'not_logged_in', message: 'x' }),
       monetizeOne: vi.fn(),
+    fixTablesOne: vi.fn(),
     };
     const notify = vi.fn().mockResolvedValue(true);
     const res = await runNotePublishStatusSync({ prisma, publishPort, decryptSession: () => '{}', notify });
@@ -104,7 +107,8 @@ describe('note.publish.status.sync', () => {
 
   it('セッション未設定アカウントはスキップ', async () => {
     const { prisma } = buildPrisma({ accounts: [], articlesByAccount: {} });
-    const publishPort: NotePublishPort = { publishOne: vi.fn(), checkPublished: vi.fn(), monetizeOne: vi.fn() };
+    const publishPort: NotePublishPort = { publishOne: vi.fn(), checkPublished: vi.fn(), monetizeOne: vi.fn(),
+    fixTablesOne: vi.fn() };
     const res = await runNotePublishStatusSync({ prisma, publishPort });
     expect(res).toEqual({ checked: 0, unlisted: 0 });
   });

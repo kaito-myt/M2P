@@ -120,6 +120,7 @@ function makePort(result: NotePublishResult): NotePublishPort {
     publishOne: vi.fn().mockResolvedValue(result),
     checkPublished: vi.fn(),
     monetizeOne: vi.fn(),
+    fixTablesOne: vi.fn(),
   };
 }
 

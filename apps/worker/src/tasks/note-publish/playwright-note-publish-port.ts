@@ -63,8 +63,16 @@ type Page = any;
 // ---------------------------------------------------------------------------
 
 export interface NotePublishBlock {
-  kind: 'h1' | 'h2' | 'bullet' | 'paragraph';
+  kind: 'h1' | 'h2' | 'bullet' | 'paragraph' | 'table';
   text: string;
+  /**
+   * [F-ANP-48] `kind==='table'` のとき、表を描画した PNG のローカルパス。
+   * note のエディタには表を作る機能が無いため、画像として本文に挿入する。
+   * 未設定/挿入失敗時は `fallbackText` (パイプ記号を含まない箇条書き) を打ち込む。
+   */
+  imagePath?: string | null;
+  /** 画像にできなかった場合に打ち込むテキスト (表を「見出し：値」の行に開いたもの)。 */
+  fallbackText?: string | null;
 }
 
 export interface NoteArticleInput {
@@ -125,6 +133,47 @@ export type NoteMonetizeResult =
       noteUrl?: string;
     };
 
+/**
+ * [F-ANP-48] 公開済み記事の本文に残っている **Markdown の表 (パイプ記号の羅列)** を
+ * 表画像に差し替えるための引数。
+ *
+ * note のエディタには表機能が無いため、初期の記事は `| 頭数帯 | レース数 |` がそのまま
+ * 公開されている (2026-09-28 運営者報告)。該当する段落だけを選択して消し、同じ位置に
+ * 表を描いた画像を挿し込む。**本文全体を打ち直さない**ので、失敗しても被害が局所で済む。
+ */
+export interface NoteFixTablesArgs {
+  articleId: string;
+  noteUrl: string;
+  /** 本文の表を描画した PNG のローカルパス (本文での出現順)。 */
+  tableImages: string[];
+  /** 有料記事か (更新時に「有料エリア設定」を挟む必要がある)。 */
+  paid: boolean;
+  /** 有料エリア設定画面でラインを選び直すときのフォールバック index。 */
+  freeBlockCount: number;
+  sessionState: string;
+  /** true = 差し替えるところまでで「更新する」は押さない (公開中の本文は変わらない)。 */
+  dryRun: boolean;
+  stageDir: string;
+}
+
+export type NoteFixTablesResult =
+  | {
+      ok: true;
+      status: 'fixed' | 'dry_run_ready' | 'no_tables';
+      noteUrl: string;
+      /** 画像に差し替えた表の数。 */
+      replaced: number;
+      /** 差し替え後に残っているパイプ行の数 (0 が正常)。 */
+      remaining: number;
+      buttons?: string[];
+    }
+  | {
+      ok: false;
+      reason: 'not_logged_in' | 'no_note_id' | 'blocked' | 'error';
+      message: string;
+      noteUrl?: string;
+    };
+
 export interface NotePublishArgs {
   article: NoteArticleInput;
   /** 復号済み storageState (JSON文字列)。 */
@@ -159,10 +208,12 @@ export interface NotePublishPort {
   checkPublished(args: NoteCheckPublishedArgs): Promise<NoteCheckPublishedResult>;
   /** [F-ANP-47] 公開済みの無料記事を有料へ切り替える。 */
   monetizeOne(args: NoteMonetizeArgs): Promise<NoteMonetizeResult>;
+  /** [F-ANP-48] 公開済み記事に残った Markdown の表を表画像へ差し替える。 */
+  fixTablesOne(args: NoteFixTablesArgs): Promise<NoteFixTablesResult>;
 }
 
 export function createPlaywrightNotePublishPort(): NotePublishPort {
-  return { publishOne, checkPublished, monetizeOne };
+  return { publishOne, checkPublished, monetizeOne, fixTablesOne };
 }
 
 /** note 記事 URL から noteId (nXXXXXXXX) を取り出す。 */
@@ -809,6 +860,31 @@ async function openPlusMenu(page: Page): Promise<boolean> {
 }
 
 async function typeBlock(page: Page, block: NotePublishBlock, articleId: string): Promise<void> {
+  if (block.kind === 'table') {
+    // [F-ANP-48] note には表機能が無いので画像として挿入する。
+    if (block.imagePath) {
+      const ok = await insertImage(page, block.imagePath).catch((err) => {
+        log.warn({ err: errMsg(err), articleId }, '表画像の挿入で例外 — テキストで代替');
+        return false;
+      });
+      if (ok) {
+        await moveCaretToBodyEnd(page);
+        await page.waitForTimeout(200);
+        return;
+      }
+      log.warn({ articleId }, '表画像を挿入できませんでした — テキストで代替');
+    }
+    // 代替テキスト。**パイプ記号のまま打ち込むことだけは絶対に避ける**。
+    const fallback = (block.fallbackText ?? '').trim();
+    if (fallback.length === 0) return;
+    for (const line of fallback.split('\n')) {
+      if (line.trim().length === 0) continue;
+      await page.keyboard.type(line, { delay: 5 });
+      await page.keyboard.press('Enter');
+    }
+    await page.waitForTimeout(150);
+    return;
+  }
   if (block.kind === 'h1' || block.kind === 'h2') {
     await openPlusMenu(page);
     const label = block.kind === 'h1' ? '大見出し' : '小見出し';
@@ -854,8 +930,8 @@ async function insertPaywallMarker(page: Page, pressEnter = true): Promise<boole
   return true;
 }
 
-/** 見出し画像を「+」挿入メニュー→「画像」ボタン→filechooser で投入。 */
-async function insertEyecatch(page: Page, eyecatchPath: string): Promise<boolean> {
+/** 画像を「+」挿入メニュー→「画像」ボタン→filechooser で投入。 */
+async function insertImage(page: Page, imagePath: string): Promise<boolean> {
   const chooserPromise = page.waitForEvent('filechooser', { timeout: 8000 }).catch(() => null);
   await openPlusMenu(page);
   const clicked = await clickByText(page, '画像');
@@ -865,9 +941,37 @@ async function insertEyecatch(page: Page, eyecatchPath: string): Promise<boolean
   }
   const chooser = await chooserPromise;
   if (!chooser) return false;
-  await chooser.setFiles(eyecatchPath);
+  await chooser.setFiles(imagePath);
   await page.waitForTimeout(3000);
   return true;
+}
+
+/** 見出し画像を投入 (本文先頭の画像 = note の見出し画像になる)。 */
+async function insertEyecatch(page: Page, eyecatchPath: string): Promise<boolean> {
+  return insertImage(page, eyecatchPath);
+}
+
+/**
+ * [F-ANP-48] 画像を挿入すると**キャプション入力欄にフォーカスが移る**ため、そのまま
+ * 本文を打ち続けるとキャプションに入ってしまう。本文 (ProseMirror) の末尾にキャレットを
+ * 戻してから続きを打つ。ProseMirror は DOM の selectionchange を拾って内部状態を同期する。
+ */
+async function moveCaretToBodyEnd(page: Page): Promise<boolean> {
+  return page
+    .evaluate(() => {
+      const el = document.querySelector('div.ProseMirror[contenteditable="true"]') as HTMLElement | null;
+      if (!el) return false;
+      el.focus();
+      const range = document.createRange();
+      range.selectNodeContents(el);
+      range.collapse(false);
+      const sel = window.getSelection();
+      if (!sel) return false;
+      sel.removeAllRanges();
+      sel.addRange(range);
+      return document.activeElement === el || el.contains(document.activeElement);
+    })
+    .catch(() => false);
 }
 
 /**
@@ -1053,6 +1157,231 @@ async function screenshot(page: Page, stage: string, name: string): Promise<void
       /* best-effort R2 */
     }
   }
+}
+
+/**
+ * [F-ANP-48] 公開済み記事に残った「Markdown の表」を表画像に差し替える。
+ *
+ * note のエディタには表を作る機能が無く、初期の実装は表の行をそのまま段落として打ち込んで
+ * いたため、公開記事に `| 頭数帯 | レース数 |` が並んでしまっていた (2026-09-28 運営者報告)。
+ *
+ * 方針: **本文全体は打ち直さない**。パイプ行が連続している範囲だけを選択して削除し、同じ
+ * 位置に表画像を挿入する。note は公開済み記事のエディタ編集をオートセーブするが、
+ * **公開中の本文は「更新する」を押すまで変わらない** (2026-09-25 実測) ため、途中で失敗
+ * しても公開記事は壊れない。
+ */
+async function fixTablesOne(args: NoteFixTablesArgs): Promise<NoteFixTablesResult> {
+  const noteId = extractNoteId(args.noteUrl);
+  if (!noteId) return { ok: false, reason: 'no_note_id', message: `note URL から noteId を取れません: ${args.noteUrl}` };
+
+  let storageStateObj: unknown;
+  try {
+    storageStateObj = JSON.parse(args.sessionState);
+  } catch {
+    return { ok: false, reason: 'error', message: 'session state is not valid JSON' };
+  }
+
+  let chromium: typeof import('playwright').chromium;
+  try {
+    ({ chromium } = await import('playwright'));
+  } catch (err) {
+    return { ok: false, reason: 'error', message: `playwright unavailable: ${errMsg(err)}` };
+  }
+
+  const browser = await chromium.launch({ headless: true, args: LAUNCH_ARGS });
+  try {
+    const context = await browser.newContext({
+      storageState: storageStateObj as Awaited<ReturnType<import('playwright').BrowserContext['storageState']>>,
+      locale: 'ja-JP',
+      userAgent: UA,
+      viewport: { width: 1500, height: 1300 },
+    });
+    await context.addInitScript({
+      content: 'globalThis.__name = globalThis.__name || function (f) { return f; };',
+    });
+    const page: Page = await context.newPage();
+    page.setDefaultTimeout(45000);
+
+    await page
+      .goto(`https://editor.note.com/notes/${noteId}/edit/`, { waitUntil: 'domcontentloaded' })
+      .catch(() => {});
+    await page.waitForTimeout(6000);
+    if (/\/login\b|\/signin\b/i.test(page.url()) || (await page.$('input[type=password]').catch(() => null))) {
+      await screenshot(page, args.stageDir, `${args.articleId}-fixtables-not-logged-in`);
+      return { ok: false, reason: 'not_logged_in', message: `セッション失効 (url=${page.url().slice(0, 90)})` };
+    }
+
+    const hasBody = await page
+      .locator('div.ProseMirror[contenteditable="true"]')
+      .first()
+      .count()
+      .catch(() => 0);
+    if (!hasBody) {
+      await screenshot(page, args.stageDir, `${args.articleId}-fixtables-no-body`);
+      return { ok: false, reason: 'blocked', message: '本文エディタが見つかりません', noteUrl: args.noteUrl };
+    }
+
+    const before = await countPipeGroups(page);
+    log.info({ articleId: args.articleId, noteId, groups: before, images: args.tableImages.length }, 'note fix-tables: editor opened');
+    if (before === 0) {
+      return { ok: true, status: 'no_tables', noteUrl: args.noteUrl, replaced: 0, remaining: 0 };
+    }
+
+    let replaced = 0;
+    for (let i = 0; i < args.tableImages.length; i += 1) {
+      const group = await findFirstPipeGroup(page);
+      if (!group) break;
+      const image = args.tableImages[i]!;
+
+      // 1. 先頭ブロックの行頭にキャレットを置く (locator クリック = trusted click。
+      //    evaluate 内の座標計算は画面外になりがちで空振りする — F-ANP-47 の教訓)。
+      const block = page.locator('div.ProseMirror[contenteditable="true"] > *').nth(group.start);
+      await block.scrollIntoViewIfNeeded({ timeout: 10000 }).catch(() => {});
+      await block.click({ position: { x: 6, y: 6 }, timeout: 15000 }).catch(() => {});
+      await page.waitForTimeout(500);
+      await page.keyboard.press('Home').catch(() => {});
+
+      // 2. 表の最終行の行末まで選択して削除する。
+      for (let k = 1; k < group.count; k += 1) {
+        await page.keyboard.press('Shift+ArrowDown').catch(() => {});
+      }
+      await page.keyboard.press('Shift+End').catch(() => {});
+      await page.waitForTimeout(300);
+      await page.keyboard.press('Backspace').catch(() => {});
+      await page.waitForTimeout(800);
+
+      // 3. 空いた位置に表画像を挿入する。
+      const inserted = await insertImage(page, image).catch((err) => {
+        log.warn({ err: errMsg(err), articleId: args.articleId }, 'note fix-tables: 画像挿入で例外');
+        return false;
+      });
+      if (!inserted) {
+        await screenshot(page, args.stageDir, `${args.articleId}-fixtables-insert-failed`);
+        return {
+          ok: false,
+          reason: 'blocked',
+          message: `表画像を挿入できませんでした (${String(replaced)} 個目まで差し替え済み・更新は押していません)`,
+          noteUrl: args.noteUrl,
+        };
+      }
+      replaced += 1;
+      await page.waitForTimeout(1200);
+    }
+
+    const remaining = await countPipeGroups(page);
+    await screenshot(page, args.stageDir, `${args.articleId}-fixtables-body`);
+    log.info({ articleId: args.articleId, replaced, remaining }, 'note fix-tables: 差し替え完了');
+
+    if (!(await clickByText(page, '公開に進む'))) {
+      await screenshot(page, args.stageDir, `${args.articleId}-fixtables-no-proceed`);
+      return { ok: false, reason: 'blocked', message: '「公開に進む」が見つかりません', noteUrl: args.noteUrl };
+    }
+    await page.waitForTimeout(5000);
+
+    const labels = await visibleButtonLabels(page);
+    log.info({ articleId: args.articleId, labels }, 'note fix-tables: publish settings buttons');
+    if (args.dryRun) {
+      await screenshot(page, args.stageDir, `${args.articleId}-fixtables-dryrun`);
+      return { ok: true, status: 'dry_run_ready', noteUrl: args.noteUrl, replaced, remaining, buttons: labels };
+    }
+
+    // 有料記事は「更新する」の代わりに「有料エリア設定」を挟む (F-ANP-47 で判明した note の仕様)。
+    if (!(await clickAnyText(page, UPDATE_LABELS))) {
+      if (await clickByText(page, '有料エリア設定')) {
+        await page.waitForTimeout(6000);
+        const labels2 = await visibleButtonLabels(page);
+        await ensurePaidAreaLine(page, args.freeBlockCount);
+        await screenshot(page, args.stageDir, `${args.articleId}-fixtables-paidarea`);
+        if (!(await clickAnyText(page, UPDATE_LABELS))) {
+          return {
+            ok: false,
+            reason: 'blocked',
+            message: `有料エリア設定画面で更新ボタンが見つかりません (buttons=${labels2.join('/')})`,
+            noteUrl: args.noteUrl,
+          };
+        }
+      } else {
+        await screenshot(page, args.stageDir, `${args.articleId}-fixtables-no-update`);
+        return {
+          ok: false,
+          reason: 'blocked',
+          message: `更新ボタンが見つかりません (buttons=${labels.join('/')})`,
+          noteUrl: args.noteUrl,
+        };
+      }
+    }
+    await page.waitForTimeout(9000);
+    await screenshot(page, args.stageDir, `${args.articleId}-fixtables-after`);
+    return { ok: true, status: 'fixed', noteUrl: args.noteUrl, replaced, remaining };
+  } catch (err) {
+    return { ok: false, reason: 'error', message: errMsg(err), noteUrl: args.noteUrl };
+  } finally {
+    await browser.close().catch(() => {});
+  }
+}
+
+/**
+ * 本文の直下ブロックのうち「Markdown の表の行」が連続している最初の範囲を返す。
+ *
+ * 判定は厳しめにする: パイプで始まり・パイプで終わる行が 2 行以上連続し、そのどれかが
+ * `|---|` の区切り行であること。本文中でたまたまパイプを使っただけの段落は拾わない。
+ */
+async function findFirstPipeGroup(page: Page): Promise<{ start: number; count: number } | null> {
+  return page
+    .evaluate(() => {
+      const root = document.querySelector('div.ProseMirror[contenteditable="true"]');
+      if (!root) return null;
+      const kids = [...root.children] as HTMLElement[];
+      const isRow = (el: HTMLElement): boolean => {
+        if (el.tagName === 'FIGURE') return false;
+        const t = (el.textContent ?? '').trim();
+        return /^\|.*\|$/.test(t) && (t.match(/\|/g) ?? []).length >= 3;
+      };
+      const isSep = (el: HTMLElement): boolean => {
+        const t = (el.textContent ?? '').trim();
+        return /^\|?[\s:|-]+$/.test(t) && t.includes('-') && t.includes('|');
+      };
+      for (let i = 0; i < kids.length; i += 1) {
+        if (!isRow(kids[i]!)) continue;
+        let j = i;
+        while (j < kids.length && isRow(kids[j]!)) j += 1;
+        const group = kids.slice(i, j);
+        if (group.length >= 2 && group.some(isSep)) return { start: i, count: group.length };
+        i = j - 1;
+      }
+      return null;
+    })
+    .catch(() => null);
+}
+
+/** 本文に残っている表 (パイプ行の連続) の数。 */
+async function countPipeGroups(page: Page): Promise<number> {
+  return page
+    .evaluate(() => {
+      const root = document.querySelector('div.ProseMirror[contenteditable="true"]');
+      if (!root) return 0;
+      const kids = [...root.children] as HTMLElement[];
+      const isRow = (el: HTMLElement): boolean => {
+        if (el.tagName === 'FIGURE') return false;
+        const t = (el.textContent ?? '').trim();
+        return /^\|.*\|$/.test(t) && (t.match(/\|/g) ?? []).length >= 3;
+      };
+      const isSep = (el: HTMLElement): boolean => {
+        const t = (el.textContent ?? '').trim();
+        return /^\|?[\s:|-]+$/.test(t) && t.includes('-') && t.includes('|');
+      };
+      let n = 0;
+      for (let i = 0; i < kids.length; i += 1) {
+        if (!isRow(kids[i]!)) continue;
+        let j = i;
+        while (j < kids.length && isRow(kids[j]!)) j += 1;
+        const group = kids.slice(i, j);
+        if (group.length >= 2 && group.some(isSep)) n += 1;
+        i = j - 1;
+      }
+      return n;
+    })
+    .catch(() => 0);
 }
 
 function errMsg(err: unknown): string {

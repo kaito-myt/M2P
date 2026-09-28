@@ -34,6 +34,7 @@ import { downloadBuffer } from '@a2p/storage';
 import { pushLine } from './lib/line-auth-relay.js';
 import { notifyNoteSessionExpired, type NoteAuthRelayPrisma } from './lib/note-auth-relay.js';
 import { buildNoteBlocks } from './note-publish/build-blocks.js';
+import { attachTableImages } from './note-publish/table-images.js';
 import type { NoteArticleInput, NotePublishPort, NotePublishResult } from './note-publish/playwright-note-publish-port.js';
 
 export const PIPELINE_NOTE_PUBLISH_TASK_NAME = 'pipeline.note.publish';
@@ -72,6 +73,8 @@ interface NoteAccountRow {
   handle: string | null;
   /** [F-ANP-16b] `NoteAccountSettingsSchema` (paid_publish_enabled 等)。旧テストでは未設定。 */
   settings_json?: unknown;
+  /** [F-ANP-48] 表画像の配色をアカウントで揃えるために使う。旧テストでは未設定。 */
+  niche?: string | null;
 }
 
 export interface PipelineNotePublishPrisma {
@@ -246,7 +249,26 @@ export async function runPipelineNotePublish(
       }
     }
 
-    const { freeBlocks, paidBlocks } = buildNoteBlocks(article.body_md ?? '', article.paywall_line_pos);
+    const built = buildNoteBlocks(article.body_md ?? '', article.paywall_line_pos);
+    // [F-ANP-48] note には表機能が無いので、Markdown の表は画像に描き起こして差し込む。
+    const freeStage = await attachTableImages(built.freeBlocks, {
+      articleId,
+      stageDir,
+      niche: account.niche ?? null,
+    });
+    const paidStage = await attachTableImages(
+      built.paidBlocks,
+      { articleId, stageDir, niche: account.niche ?? null },
+      freeStage.nextIndex,
+    );
+    const freeBlocks = freeStage.blocks;
+    const paidBlocks = paidStage.blocks;
+    if (freeStage.rendered + paidStage.rendered > 0) {
+      log.info(
+        { articleId, tables: freeStage.rendered + paidStage.rendered },
+        '本文の表を画像化しました (note は表機能が無いため)',
+      );
+    }
     const input: NoteArticleInput = {
       id: article.id,
       title: article.title,

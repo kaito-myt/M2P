@@ -15,9 +15,26 @@ export {
 export {
   composeNoteEyecatch,
   accentForNiche,
+  schemeForNiche,
+  copySizeForLength,
+  subSizeFor,
+  fitCopy,
   defaultEyecatchAlt,
   NOTE_EYECATCH_WIDTH,
   NOTE_EYECATCH_HEIGHT,
+  NOTE_EYECATCH_SCHEMES,
   type NoteEyecatchText,
   type NoteEyecatchOptions,
+  type NoteEyecatchScheme,
 } from './compose-note-eyecatch.js';
+export {
+  parseMarkdownTable,
+  renderTableImage,
+  splitTableSegments,
+  tableToPlainText,
+  tableImageAlt,
+  isTableRow,
+  isTableSeparator,
+  type MarkdownTable,
+  type TableImageOptions,
+} from './render-table-image.js';

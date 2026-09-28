@@ -21,9 +21,9 @@
  */
 import { noteArticleEyecatch } from '@a2p/storage/keys';
 import {
-  accentForNiche,
   composeNoteEyecatch,
   defaultEyecatchAlt,
+  schemeForNiche,
   NOTE_EYECATCH_HEIGHT,
   NOTE_EYECATCH_WIDTH,
 } from '@a2p/output-image';
@@ -113,11 +113,13 @@ export function buildPrompt(input: GenerateNoteEyecatchInput, style: EyecatchSty
     `- 配色: ${style.palette}`,
     '',
     '【内容の作り方】',
+    '- **読者は 3 秒で読むか決める**。要素を詰め込まず、主題は 1〜2 個に絞る。',
     '- タイトルの中身を「具体的なモノ・場面」に翻訳して描く (抽象的な概念の比喩に逃げない)。',
-    '- 要素は最大 3 つまで。小さなサムネイルでも何の記事か一目で分かる大きさにする。',
     '- 主題は画面の上 2/3 に大きく置く。**下 1/3 はキャッチコピーを載せるので、',
     '  細かい描き込みを避けて色数を抑えた落ち着いた面にする** (背景色・影・床・空など)。',
+    '- **色数は 3 色以内** (地の色 + 主役の色 + 差し色 1 色)。差し色は画面のごく一部だけに使う。',
     '- コントラストを強く、色は大胆に。小さく表示されても遠目で目を引くこと。',
+    '- 背景がごちゃつくと文字が読めなくなる。奥はぼかすか単純な面にする。',
     '- 人物は原則描かない。必要な場合も顔は写さず、手元や後ろ姿など部分的に留める。',
     '',
     '【禁止 (これらが写ると失敗)】',
@@ -201,6 +203,7 @@ export async function generateNoteEyecatch(
   let finalImage = image;
   let composedText = false;
   if (copy.length > 0) {
+    // [F-ANP-49] 配色はニッチごとに固定 (同じアカウントのサムネは常に同じ 3 色構成 = 統一感)。
     finalImage = await compose(
       image,
       {
@@ -208,7 +211,7 @@ export async function generateNoteEyecatch(
         sub: input.eyecatchSub ?? null,
         badge: input.niche,
       },
-      { accent: accentForNiche(input.niche) },
+      { scheme: schemeForNiche(input.niche) },
     );
     composedText = true;
   }

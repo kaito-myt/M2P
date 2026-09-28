@@ -116,6 +116,9 @@ function makePort(result: NoteMonetizeResult): { port: NotePublishPort; calls: N
       checkPublished: async () => {
         throw new Error('checkPublished should not be called');
       },
+      fixTablesOne: async () => {
+        throw new Error('fixTablesOne should not be called');
+      },
       monetizeOne: async (args: NoteMonetizeArgs) => {
         calls.push(args);
         return result;

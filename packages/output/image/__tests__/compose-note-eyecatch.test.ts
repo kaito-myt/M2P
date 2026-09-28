@@ -4,10 +4,16 @@ import sharp from 'sharp';
 import {
   accentForNiche,
   composeNoteEyecatch,
+  copySizeForLength,
   defaultEyecatchAlt,
+  fitCopy,
+  schemeForNiche,
+  subSizeFor,
   NOTE_EYECATCH_HEIGHT,
+  NOTE_EYECATCH_SCHEMES,
   NOTE_EYECATCH_WIDTH,
 } from '../src/compose-note-eyecatch.js';
+import { loadFonts } from '../src/text-layout.js';
 
 async function flatBg(): Promise<Buffer> {
   return sharp({
@@ -115,5 +121,67 @@ describe('フォントに無い文字 (矢印・記号) の豆腐対策 (2026-09
       badge: '副業×AI活用',
     });
     expect((await sharp(out).metadata()).width).toBe(NOTE_EYECATCH_WIDTH);
+  });
+});
+
+/**
+ * [F-ANP-49] 参考記事 (https://note.com/dandy_clam132/n/nd2fbe6c407eb) の作法。
+ * 文字サイズは 2 種類だけ・長さで決める・40 以下にしない・配色は 3 色でアカウント固定。
+ */
+describe('サムネイル作法 (F-ANP-49)', () => {
+  it('主役の文字サイズは文字数で決まる (6字以内=100 / 7〜12字=80 / 13字以上=70)', () => {
+    expect(copySizeForLength('見送りも戦略')).toBe(100);
+    // 半角数字も 1 文字として数える (「回収率112%」= 7 文字 → 80)。
+    expect(copySizeForLength('回収率112%')).toBe(80);
+    expect(copySizeForLength('買わない日を作る')).toBe(80);
+    expect(copySizeForLength('外枠は即消ししない')).toBe(80);
+    expect(copySizeForLength('外枠は即消ししない、人気別の複勝率')).toBe(70);
+    // 空白は字数に数えない (「回収率 112%」と「回収率112%」を同じ扱いにする)。
+    expect(copySizeForLength('回収率 112%')).toBe(copySizeForLength('回収率112%'));
+  });
+
+  it('補足は主役の 6 割・ただし 44 を下回らない (40 以下はスマホで読めない)', () => {
+    expect(subSizeFor(100)).toBe(60);
+    expect(subSizeFor(80)).toBe(48);
+    expect(subSizeFor(70)).toBe(44);
+    expect(subSizeFor(48)).toBe(44);
+  });
+
+  it('fitCopy は 2 行以内に収め、48px を下回らない', () => {
+    const { bold } = loadFonts();
+    const width = NOTE_EYECATCH_WIDTH - 128;
+    const short = fitCopy(bold, '見送りも戦略', width);
+    expect(short.size).toBe(100);
+    expect(short.lines).toHaveLength(1);
+
+    const long = fitCopy(bold, '外枠は即消ししない、過去5年の人気別複勝率', width);
+    expect(long.lines.length).toBeLessThanOrEqual(2);
+    expect(long.size).toBeGreaterThanOrEqual(48);
+
+    const absurd = fitCopy(bold, 'あ'.repeat(60), width);
+    expect(absurd.size).toBeGreaterThanOrEqual(48);
+  });
+
+  it('配色は 3 色構成でニッチごとに固定 (同じアカウントは常に同じ = 統一感)', () => {
+    expect(NOTE_EYECATCH_SCHEMES).toHaveLength(5);
+    expect(schemeForNiche('競馬予想').key).toBe(schemeForNiche('競馬予想').key);
+    expect(schemeForNiche('競馬予想').accent).toBe(accentForNiche('競馬予想'));
+    for (const s of NOTE_EYECATCH_SCHEMES) {
+      expect(s.base).toMatch(/^#[0-9a-f]{6}$/i);
+      expect(s.main).toMatch(/^#[0-9a-f]{6}$/i);
+      expect(s.accent).toMatch(/^#[0-9a-f]{6}$/i);
+      expect(s.onAccent).toMatch(/^#[0-9a-f]{6}$/i);
+    }
+  });
+
+  it('配色を指定しても note 推奨サイズの JPEG になる', async () => {
+    const out = await composeNoteEyecatch(
+      await flatBg(),
+      { copy: '買わない日を作る', sub: '見送り18件の判断基準', badge: '競馬予想' },
+      { scheme: schemeForNiche('競馬予想') },
+    );
+    const meta = await sharp(out).metadata();
+    expect(meta.width).toBe(NOTE_EYECATCH_WIDTH);
+    expect(meta.height).toBe(NOTE_EYECATCH_HEIGHT);
   });
 });
