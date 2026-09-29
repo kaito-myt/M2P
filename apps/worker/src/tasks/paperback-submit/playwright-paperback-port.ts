@@ -95,6 +95,14 @@ export interface PaperbackPublishArgs {
    * `not_approved` の正体だった。
    */
   coverPath?: string | null;
+  /**
+   * [F-097h] **KDP が数えた頁数**でラップカバーを作り直すコールバック。
+   *
+   * こちらの PDF の頁数と KDP 変換後の頁数は一致しない (2026-09-30 実測: 手元 137 頁 /
+   * KDP のプレビューは 144 頁)。背幅は頁数で決まるので、手元の頁数で作った表紙は
+   * KDP から見ると幅が合わず、差し替えても弾かれ続ける。
+   */
+  buildCoverForPages?: (pages: number) => Promise<string | null>;
 }
 
 export type PaperbackPublishResult =
@@ -363,11 +371,15 @@ async function publishDraft(args: PaperbackPublishArgs): Promise<PaperbackPublis
     let approvedOk = false;
     let lastPreviewErrors: string[] = [];
     let coverReplaced = false;
+    // 表紙を差し替えた直後は、警告文が消えていても**必ず承認をやり直す**
+    // (差し替え前の承認は新しいファイルには効かない)。
+    let forceReapprove = false;
     for (let round = 0; round < 4; round += 1) {
-      if (!(await needsPreview())) {
+      if (!forceReapprove && !(await needsPreview())) {
         approvedOk = true;
         break;
       }
+      forceReapprove = false;
       const r = await approveOnce();
       if (!r.opened) {
         return { ok: false, reason: 'no_previewer', message: 'プレビューアー起動ボタンが見つかりません' };
@@ -379,10 +391,22 @@ async function publishDraft(args: PaperbackPublishArgs): Promise<PaperbackPublis
       // 組み直した正しいラップカバーに差し替えて仕切り直す (文言に「表紙」が出ない
       // ケースもあるため、エラーの有無だけで判断する — 2026-09-29 実測)。
       const previewHasError = lastPreviewErrors.length > 0;
-      if (previewHasError && args.coverPath && !coverReplaced) {
-        log.warn({ titleId, previewErrors: lastPreviewErrors }, '表紙が KDP 判定で不適合 — 作り直した表紙に差し替える');
+      if (previewHasError && !coverReplaced) {
+        // **KDP が数えた頁数**で作り直す (手元の頁数とは一致しない)。
+        const kdpPages = r.pages ?? pages;
+        let file = args.coverPath ?? null;
+        if (args.buildCoverForPages && kdpPages) {
+          const rebuilt = await args.buildCoverForPages(kdpPages).catch(() => null);
+          if (rebuilt) file = rebuilt;
+        }
+        if (!file) break;
+        log.warn(
+          { titleId, kdpPages, previewErrors: lastPreviewErrors },
+          '表紙が KDP 判定で不適合 — KDP の頁数で作り直して差し替える',
+        );
         coverReplaced = true;
-        if (!(await replaceCover(args.coverPath))) {
+        forceReapprove = true;
+        if (!(await replaceCover(file))) {
           return {
             ok: false,
             reason: 'cover_rejected',

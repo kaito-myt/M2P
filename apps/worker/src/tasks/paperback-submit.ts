@@ -116,6 +116,8 @@ export async function runPaperbackSubmit(
   // ポート側がこれに差し替えて再プレビューする (古い下書きには Kindle 用 A4 表紙が
   // 上がっていて、承認ボタンが無効のままだった — 2026-09-29 実測)。
   let coverPath: string | null = null;
+  // [F-097h] KDP が数えた頁数で表紙を作り直すためのコールバック。
+  let buildCoverForPages: ((pages: number) => Promise<string | null>) | undefined;
   try {
     const { ensurePaperbackCover } = await import('./paperback-draft/build-cover.js');
     const { countPdfPages } = await import('./paperback-draft/plan.js');
@@ -162,6 +164,25 @@ export async function runPaperbackSubmit(
         writeFileSync(coverPath, cover.pdf);
         log.info({ bookId: book.id, pages, bytes: cover.pdf.length }, 'paperback wrap cover ready (差し替え用)');
       }
+      // KDP 変換後の頁数は手元の PDF と一致しないため、プレビューが報告した頁数で組み直す。
+      buildCoverForPages = async (kdpPages: number): Promise<string | null> => {
+        const rebuilt = await ensurePaperbackCover({
+          bookId: book.id,
+          title: book.title,
+          subtitle: book.subtitle,
+          description: meta?.description ?? null,
+          pages: kdpPages,
+          coverImageKey: coverRow.r2_key!,
+          fetchAsset,
+          putAsset: (key, buf, ct) => storage.uploadBuffer(key, buf, ct),
+          force: true,
+        });
+        if (!rebuilt.ok) return null;
+        const out = path.join(stageDir, `${book.id}-pb-cover-${String(kdpPages)}p.pdf`);
+        writeFileSync(out, rebuilt.pdf);
+        log.info({ bookId: book.id, kdpPages, bytes: rebuilt.pdf.length }, 'paperback wrap cover rebuilt (KDP 頁数)');
+        return out;
+      };
     }
   } catch (err) {
     log.warn({ bookId: book.id, err: err instanceof Error ? err.message : String(err) }, '表紙の事前生成に失敗 — 差し替えなしで続行');
@@ -176,6 +197,7 @@ export async function runPaperbackSubmit(
     priceFor: paperbackPrice,
     stageDir,
     coverPath,
+    buildCoverForPages,
   });
 
   if (result.ok && result.status === 'submitted') {
