@@ -432,7 +432,50 @@ async function publishDraft(args: PaperbackPublishArgs): Promise<PaperbackPublis
         return d ? (d.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 160) : null;
       })
       .catch(() => null);
-    if (blocked) return { ok: false, reason: 'blocked_prior_page', message: blocked };
+    if (blocked) {
+      // [F-097g] 表紙を差し替えると前段 (details/content) の確定が外れることがある。
+      // details → content の順に保存し直してから価格ページへ戻り、もう一度だけ試す。
+      log.warn({ titleId, blocked }, '以前のページに問題 — details/content を保存し直して再試行');
+      await shot(page, `${titleId}-blocked-prior-page`);
+      await gotoWithReauth(`${BASE}/print-setup/paperback/${titleId}/details`, 'details-retry');
+      const detailsResaved = await clickVisible(/保存して続行/);
+      await page.waitForTimeout(10000);
+      await passReauth('details-resave');
+      await gotoWithReauth(`${BASE}/print-setup/paperback/${titleId}/content`, 'content-retry');
+      const contentResaved = await clickVisible(/保存して続行/);
+      await page.waitForTimeout(12000);
+      await passReauth('content-resave');
+      log.info({ titleId, detailsResaved, contentResaved }, 'paperback 前段を保存し直した');
+
+      if (!/\/pricing/.test(page.url())) {
+        await gotoWithReauth(`${BASE}/print-setup/paperback/${titleId}/pricing`, 'pricing-retry');
+      }
+      const jp2 = await page.waitForSelector('#price-input-jpy', { timeout: 30000 }).catch(() => null);
+      if (!jp2) {
+        await shot(page, `${titleId}-no-price-field-retry`);
+        return { ok: false, reason: 'no_price_field', message: '再試行後も価格入力欄が見つかりません' };
+      }
+      await jp2.click({ force: true, timeout: 8000 }).catch(() => {});
+      await jp2.fill('').catch(() => {});
+      await jp2.type(String(priceJpy), { delay: 40 });
+      await page.keyboard.press('Tab');
+      await page.waitForTimeout(4000);
+
+      const stillBlocked = await page
+        .evaluate(() => {
+          const d = [...document.querySelectorAll('[role=dialog], .a-popover')].find(
+            (x) =>
+              ((x as HTMLElement).offsetWidth || (x as HTMLElement).offsetHeight) &&
+              /以前のページに問題/.test(x.textContent || ''),
+          );
+          return d ? (d.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 160) : null;
+        })
+        .catch(() => null);
+      if (stillBlocked) {
+        await shot(page, `${titleId}-blocked-prior-page-retry`);
+        return { ok: false, reason: 'blocked_prior_page', message: stillBlocked };
+      }
+    }
 
     if (args.dryRun) return { ok: true, status: 'dry_run_ready', pages, priceJpy };
 

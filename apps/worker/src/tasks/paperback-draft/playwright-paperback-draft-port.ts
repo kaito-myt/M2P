@@ -282,33 +282,49 @@ async function createDraft(args: PaperbackDraftArgs): Promise<PaperbackDraftResu
         .catch(() => 'absent' as const);
     };
 
-    /** 次のページへ。進めたら true。 */
-    const goNextPage = async (): Promise<boolean> => {
+    /** いま何行出ていて、ASIN が本文に含まれるか (診断用)。 */
+    const pageStats = async (): Promise<{ rows: number; hasAsin: boolean; pages: string }> => {
+      return page
+        .evaluate((asin: string) => {
+          const body = document.body.innerText || '';
+          const rows = (body.match(/ASIN:/g) ?? []).length;
+          const nums = [...document.querySelectorAll('a,button,li')]
+            .map((x) => (x.textContent ?? '').trim())
+            .filter((t) => /^\d{1,2}$/.test(t))
+            .slice(0, 15)
+            .join(',');
+          return { rows, hasAsin: body.includes(asin), pages: nums };
+        }, args.asin)
+        .catch(() => ({ rows: 0, hasAsin: false, pages: '' }));
+    };
+
+    /**
+     * 次のページへ。ページ番号のリンクを順に押す方式にする
+     * (「›」だけを見る方式は要素が一致せず 1 ページ目から進めなかった — 2026-09-29 実測)。
+     */
+    const goToPage = async (n: number): Promise<boolean> => {
       const moved = await page
-        .evaluate(() => {
-          const cands = [...document.querySelectorAll('a,button,li')].filter((x) => {
+        .evaluate((target: string) => {
+          const cands = [...document.querySelectorAll('a,button,li,span')].filter((x) => {
             const t = (x.textContent ?? '').trim();
-            return (
-              (t === '›' || t === '>' || t === '次へ' || /^次/.test(t)) &&
-              ((x as HTMLElement).offsetWidth || (x as HTMLElement).offsetHeight) &&
-              !(x as HTMLButtonElement).disabled &&
-              !/disabled/.test((x as HTMLElement).className || '')
-            );
+            return t === target && ((x as HTMLElement).offsetWidth || (x as HTMLElement).offsetHeight);
           }) as HTMLElement[];
           if (cands.length === 0) return false;
           cands[cands.length - 1]!.click();
           return true;
-        })
+        }, String(n))
         .catch(() => false);
-      if (moved) await page.waitForTimeout(5000);
+      if (moved) await page.waitForTimeout(6000);
       return moved;
     };
 
     let found: 'clicked' | 'exists' | 'absent' = 'absent';
-    for (let pageNo = 0; pageNo < 15; pageNo += 1) {
+    for (let pageNo = 1; pageNo <= 12; pageNo += 1) {
+      const stats = await pageStats();
+      log.info({ bookId: args.bookId, asin: args.asin, pageNo, ...stats }, 'paperback bookshelf scan');
       found = await clickCreateForAsin();
       if (found !== 'absent') break;
-      if (!(await goNextPage())) break;
+      if (!(await goToPage(pageNo + 1))) break;
     }
 
     if (found === 'exists') {
