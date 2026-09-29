@@ -265,6 +265,11 @@ async function publishDraft(args: PaperbackPublishArgs): Promise<PaperbackPublis
             let m: RegExpExecArray | null;
             while ((m = re.exec(txt)) !== null && out.length < 8) out.push(m[0].replace(/\s+/g, ' ').trim());
           }
+          // 左パネルのエラーボックス本文も拾う (上の決め打ちに当たらない文言のため)。
+          for (const box of [...document.querySelectorAll('[class*="error"], [class*="Error"]')]) {
+            const t = (box.textContent ?? '').replace(/\s+/g, ' ').trim();
+            if (t.length > 8 && t.length < 400 && out.length < 12 && !out.includes(t)) out.push(t);
+          }
           return out;
         })
         .catch(() => [] as string[]);
@@ -369,9 +374,12 @@ async function publishDraft(args: PaperbackPublishArgs): Promise<PaperbackPublis
       }
       pages = r.pages ?? pages;
 
-      // [F-097g] 表紙サイズ不適合なら承認ボタンが無効のままなので、上げ直して仕切り直す。
-      const coverBad = lastPreviewErrors.some((e) => /表紙/.test(e));
-      if (coverBad && args.coverPath && !coverReplaced) {
+      // [F-097g] プレビューにエラーがあると承認ボタンが無効のままになる。原因の大半は
+      // **表紙が Kindle 用の A4 縦のまま**なので、エラーが出ていたら一度だけ、こちらで
+      // 組み直した正しいラップカバーに差し替えて仕切り直す (文言に「表紙」が出ない
+      // ケースもあるため、エラーの有無だけで判断する — 2026-09-29 実測)。
+      const previewHasError = lastPreviewErrors.length > 0;
+      if (previewHasError && args.coverPath && !coverReplaced) {
         log.warn({ titleId, previewErrors: lastPreviewErrors }, '表紙が KDP 判定で不適合 — 作り直した表紙に差し替える');
         coverReplaced = true;
         if (!(await replaceCover(args.coverPath))) {
