@@ -259,6 +259,7 @@ export async function runPaperbackDraft(
       interiorPath,
       coverPath,
       sessionState,
+      email: env.AMAZON_EMAIL ?? null,
       password: env.AMAZON_PASSWORD ?? '',
       totpSecret: env.AMAZON_TOTP_SECRET ?? null,
     });

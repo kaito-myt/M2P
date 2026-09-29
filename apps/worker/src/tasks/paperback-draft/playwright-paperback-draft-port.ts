@@ -65,6 +65,8 @@ export interface PaperbackDraftArgs {
   coverPath: string;
   /** 復号済み storageState (JSON 文字列)。 */
   sessionState: string;
+  /** 再認証の 1 段目 (メールアドレス入力) 用。 */
+  email?: string | null;
   password: string;
   totpSecret?: string | null;
 }
@@ -166,11 +168,38 @@ async function createDraft(args: PaperbackDraftArgs): Promise<PaperbackDraftResu
       }
     };
 
-    /** 再認証ウォール (max_auth_age=0) を通す。 */
+    /**
+     * 再認証ウォール (max_auth_age=0) を通す。
+     *
+     * 本棚 (`/ja_JP/bookshelf`) から入ると、パスワードだけの壁ではなく
+     * **メールアドレス入力から始まる 2 段のサインイン**になることがある
+     * (2026-09-29 実測。`print-setup` 直行の出版側では出ない)。1 段目が出たら先に通す。
+     */
     const passReauth = async (label: string): Promise<boolean> => {
       if (!/\/ap\/signin/.test(page.url())) return true;
       log.info({ label, bookId: args.bookId }, 'kdp reauth wall');
       try {
+        // 1 段目: メールアドレス (パスワード欄がまだ無い場合のみ)。
+        const hasPassword = await page.$('#ap_password').catch(() => null);
+        if (!hasPassword) {
+          const ef = await page.$('#ap_email, #ap_email_login, input[type=email][name=email]').catch(() => null);
+          if (ef && args.email) {
+            await ef.click({ force: true }).catch(() => {});
+            await ef.fill('').catch(() => {});
+            await ef.type(args.email, { delay: 30 });
+            await Promise.all([
+              page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 40000 }).catch(() => null),
+              page
+                .click('#continue, input#continue, #continue-announce')
+                .catch(() => page.keyboard.press('Enter').catch(() => {})),
+            ]);
+            await page.waitForLoadState('domcontentloaded').catch(() => {});
+            await page.waitForTimeout(4000);
+          } else if (!ef) {
+            log.warn({ label }, 'サインイン画面だがメール欄もパスワード欄も見つかりません');
+          }
+        }
+
         const pf = await page.waitForSelector('#ap_password', { timeout: 20000 }).catch(() => null);
         if (!pf || !args.password) return false;
         await pf.click({ force: true }).catch(() => {});
