@@ -294,10 +294,16 @@ export const PAPERBACK_STATUS_SYNC_CRON = '40 22 * * *';
  * F-097d: サーバー側ペーパーバック出版のディスパッチャ (30 分毎・同時 1 冊)。
  * 下書きの完成は KDP の作成数枠を消費しないので、Kindle 側が上限で止まっていても進む。
  */
-export const PAPERBACK_SUBMIT_DISPATCHER_CRON = '*/30 * * * *';
+/** F-097d: ペーパーバックのサーバー側出版。積み残し解消のため 20 分毎。 */
+export const PAPERBACK_SUBMIT_DISPATCHER_CRON = '0,20,40 * * * *';
 
-/** F-097f: ペーパーバックのサーバー側**下書き作成** (30 分毎・出版側と 15 分ずらす)。 */
-export const PAPERBACK_DRAFT_DISPATCHER_CRON = '15,45 * * * *';
+/**
+ * F-097f: ペーパーバックのサーバー側**下書き作成**。
+ * 積み残しが 80 冊以上あり 30 分間隔では何日もかかるため 10 分毎にする
+ * (運営者指示 2026-09-30「どんどん進めて」)。同時実行は 1 冊のままなので
+ * ブラウザは 1 本しか立たない。出版側 (毎時 0/30 分) と重ならないよう 5 分ずらす。
+ */
+export const PAPERBACK_DRAFT_DISPATCHER_CRON = '5,15,25,35,45,55 * * * *';
 
 /**
  * docs/11-anp-design.md §7 Phase2: note サーバー自動公開ディスパッチャの既定 cron (30分毎)。

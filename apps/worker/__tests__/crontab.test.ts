@@ -107,7 +107,7 @@ describe('crontab.ts', () => {
     const pbDraft = CRON_ITEMS.find((c) => c.task === PAPERBACK_DRAFT_DISPATCHER_TASK_NAME);
     expect(pbDraft).toBeDefined();
     expect(pbDraft!.identifier).toBe('paperback-draft-dispatch');
-    expect(pbDraft!.match).toBe('15,45 * * * *');
+    expect(pbDraft!.match).toBe('5,15,25,35,45,55 * * * *');
 
     // F-097b: ペーパーバックの販売状態同期 (日次)。
     const pbSync = CRON_ITEMS.find((c) => c.task === PAPERBACK_STATUS_SYNC_TASK_NAME);

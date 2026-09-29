@@ -227,6 +227,27 @@ async function createDraft(args: PaperbackDraftArgs): Promise<PaperbackDraftResu
       return { ok: false, reason: 'not_logged_in', message: `未ログイン (url=${page.url().slice(0, 90)})` };
     }
 
+    // 表示ビューを「すべてのタイトル」にする。既定の「本」ビューには**一部の本しか出ない**
+    // (2026-09-29 実測: 2 ページ 114 行を走査しても対象 ASIN が 1 件も出てこなかった。
+    //  KDP 自身も「アーカイブ済みの本を検索結果に含めるには、すべてのタイトル ビューを
+    //  使用します」と案内している)。
+    const viewSwitched = await page
+      .evaluate(() => {
+        for (const sel of [...document.querySelectorAll('select')] as HTMLSelectElement[]) {
+          const opts = [...sel.options];
+          const all = opts.find((o) => /すべてのタイトル|All titles/i.test(o.textContent ?? ''));
+          if (!all) continue;
+          if (sel.value === all.value) return 'already';
+          sel.value = all.value;
+          sel.dispatchEvent(new Event('change', { bubbles: true }));
+          return (all.textContent ?? '').trim();
+        }
+        return null;
+      })
+      .catch(() => null);
+    if (viewSwitched) await page.waitForTimeout(7000);
+    log.info({ bookId: args.bookId, viewSwitched }, 'paperback bookshelf view');
+
     // 一覧を最大件数/ページにしてから、**ASIN でページを走査**する。
     // 検索窓は「タイトルで検索」で、DB のタイトルと KDP 上の表記が違うと 0 件になるため
     // 検索には頼らない (2026-09-29 実測)。
