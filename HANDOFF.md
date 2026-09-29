@@ -15,6 +15,30 @@
    KDP は初回 OTP 再認証（LINE リレー or `kdp_auth_requests` 行を手動 fulfilled）。
    BW/Kobo/note のセッションは DB（app_settings / promotion_channel_settings）に暗号化保存済みなので端末非依存。
 
+## 2026-09-29 ペーパーバックの下書き作成をサーバー側へ (F-097f)
+
+運営者指示「基本すべての作業をサーバー側でやってほしい」。出版 (F-097d) はサーバー側に
+してあったが、**下書き作成だけローカル (`pb-auto.sh draft`) に残っていた**ので移した。
+
+- `paperback.draft.dispatch` (cron 15,45分) → `paperback.draft` が 1 冊ずつ処理する。
+  本文PDFの頁数判定 → ラップカバーPDF生成 (R2 にキャッシュ) → KDP で下書き作成 → `pb_title_id` 保存。
+- 入力の正: 表紙 = `covers.status='adopted'` の最新 / 本文 = `artifacts.kind='pdf'` の最新。
+- **投入対象は 86 冊**（下書き未作成 130 冊のうち ASIN があり表紙と本文PDFが揃っているもの）。
+  残り 42 冊は Kindle 未出版で ASIN が無く、本棚に行が無いので対象外。
+- クールダウン: 作成数上限 20h / ノド余白・頁数レンジ NG 168h / その他 20h。
+- 失敗時は R2 `debug/paperback-draft/` にスクショ。
+
+### これでローカル専用に残るもの
+- note のセッション取り込み (ブラウザで人がログインする必要があるため原理的に手作業)。
+- `scripts/**/*-recon.mjs` などの調査用スクリプト (運用ではなく開発用)。
+
+### KDP (Kindle) が未出版のまま止まっている件
+- `kdp.submit` はサーバー側で動いているが、**「本の作成数上限に達しました」モーダル**で
+  `blocked` になる (実行時スクショで確認。リセットは日曜 00:00 UTC)。
+- 根本は **Kindle 側の下書き titleId を DB に持っていない**こと。`books` に列が無く、
+  ログも `target_title_id=null` なので毎回「新規作成」を試み、作成枠を消費してしまう。
+  本棚から既存下書きの titleId を引いて resume できれば枠を消費せずに出版できる（次の課題）。
+
 ## 2026-09-29 worker の無音停止と自動復旧 (F-ANP-50)
 
 - **2026-09-27 19:49Z を最後に worker のジョブ完了がゼロ**になっていた。原因は Railway の worker が
