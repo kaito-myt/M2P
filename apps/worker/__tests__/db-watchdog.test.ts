@@ -46,7 +46,7 @@ describe('startDbWatchdog', () => {
 
   it('連続失敗がしきい値に達したら通知して exit(1)', async () => {
     const exit = vi.fn();
-    const notify = vi.fn(async () => true);
+    const notify = vi.fn(async (_text: string) => true);
     const w = startDbWatchdog({
       ping: async () => {
         throw new Error("Can't reach database server at `postgres.railway.internal:5432`");
@@ -64,7 +64,7 @@ describe('startDbWatchdog', () => {
 
     await w.tick();
     expect(notify).toHaveBeenCalledTimes(1);
-    expect(String(notify.mock.calls[0]![0])).toContain('A2P-Worker');
+    expect(String(notify.mock.calls[0]?.[0] ?? '')).toContain('A2P-Worker');
     expect(exit).toHaveBeenCalledWith(1);
     w.stop();
   });

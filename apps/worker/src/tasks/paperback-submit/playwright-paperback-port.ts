@@ -30,6 +30,47 @@ const BASE = 'https://kdp.amazon.co.jp';
 /** content ページに残っていると保存が黙ってブロックされる警告文 (= プレビュー未承認)。 */
 const PREVIEW_WARN = '続行する前に、これらの変更をプレビューして確認してください';
 
+/**
+ * [F-097e] デバッグ用の画面キャプチャ (R2 `debug/paperback/`)。
+ *
+ * プレビュー承認が「押せているのに記録されない」(`not_approved`) という症状が続いたが、
+ * このポートは何も保存していなかったため原因が分からなかった (2026-09-29)。
+ * 各段の画面と、content ページの警告文まわりのテキストを残す。best-effort。
+ */
+async function shot(page: Page, name: string): Promise<void> {
+  let buf: Buffer | null = null;
+  try {
+    buf = await page.screenshot({ fullPage: true });
+  } catch {
+    return;
+  }
+  if (!buf) return;
+  try {
+    const mod = await import('@a2p/storage');
+    const key = `debug/paperback/${name}-${Date.now()}.png`;
+    await mod.uploadBuffer(key, buf, 'image/png');
+    log.info({ key }, 'saved paperback debug shot');
+  } catch {
+    /* best-effort */
+  }
+}
+
+/** content ページのプレビュー警告まわりのテキストを抜き出す (何が出ているかをログに残す)。 */
+async function previewStateText(page: Page): Promise<string> {
+  return page
+    .evaluate(() => {
+      const t = document.body.innerText || '';
+      const i = t.indexOf('プレビュー');
+      const around = i >= 0 ? t.slice(Math.max(0, i - 120), i + 260) : t.slice(0, 260);
+      const buttons = [...document.querySelectorAll('button,[role=button],a')]
+        .map((b) => (b.textContent || '').trim())
+        .filter((x) => x.length > 0 && x.length < 24)
+        .slice(0, 30);
+      return JSON.stringify({ around: around.replace(/\s+/g, ' '), buttons });
+    })
+    .catch(() => '');
+}
+
 export interface PaperbackPublishArgs {
   /** KDP のペーパーバック titleId。 */
   titleId: string;
@@ -205,6 +246,7 @@ async function publishDraft(args: PaperbackPublishArgs): Promise<PaperbackPublis
         if (!approved) await page.waitForTimeout(5000);
       }
       log.info({ titleId, pages, approved }, 'paperback preview approve clicked');
+      await shot(page, `${titleId}-preview-after-approve`);
       // [2026-09-25] 承認直後に終了ボタンを押すと承認が取り消される。押さずに離れる。
       await page.waitForTimeout(15000);
       await page.goto(`${BASE}/print-setup/paperback/${titleId}/content`, { waitUntil: 'domcontentloaded' }).catch(() => {});
@@ -218,7 +260,12 @@ async function publishDraft(args: PaperbackPublishArgs): Promise<PaperbackPublis
         await gotoWithReauth(`${BASE}/print-setup/paperback/${titleId}/content`, 'content-verify');
       }
       await page.waitForTimeout(4000);
-      return page.evaluate((w: string) => (document.body.innerText || '').includes(w), PREVIEW_WARN).catch(() => false);
+      const warned = await page
+        .evaluate((w: string) => (document.body.innerText || '').includes(w), PREVIEW_WARN)
+        .catch(() => false);
+      // 何が出ているのかを毎回残す (not_approved の原因切り分け用)。
+      log.info({ titleId, warned, state: await previewStateText(page) }, 'paperback content preview state');
+      return warned;
     };
 
     let pages: number | null = null;
@@ -235,6 +282,7 @@ async function publishDraft(args: PaperbackPublishArgs): Promise<PaperbackPublis
       pages = r.pages ?? pages;
     }
     if (!approvedOk) {
+      await shot(page, `${titleId}-not-approved`);
       return { ok: false, reason: 'not_approved', message: 'プレビュー承認が記録されませんでした (4 回試行)' };
     }
     log.info({ titleId, pages }, 'paperback preview approved');
@@ -253,6 +301,7 @@ async function publishDraft(args: PaperbackPublishArgs): Promise<PaperbackPublis
 
     const priceJpy = args.priceFor(pages ?? 200);
     const jp = await page.waitForSelector('#price-input-jpy', { timeout: 30000 }).catch(() => null);
+    if (!jp) await shot(page, `${titleId}-no-price-field`);
     if (!jp) return { ok: false, reason: 'no_price_field', message: '価格入力欄が見つかりません' };
     await jp.click({ force: true, timeout: 8000 }).catch(() => {});
     await jp.fill('').catch(() => {});
