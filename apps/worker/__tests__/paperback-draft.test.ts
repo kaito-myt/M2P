@@ -281,7 +281,8 @@ describe('paperback.draft.dispatch', () => {
     });
     expect(res).toMatchObject({ enabled: true, enqueued: 1, bookId: 'b1' });
     expect(addJob).toHaveBeenCalledTimes(1);
-    expect(seen[0]).toMatchObject({ pb_publish_status: 'unlisted', pb_title_id: null });
+    // 取り下げ済みの本は本棚に「ペーパーバックの作成」が出ないので対象から外す。
+    expect(seen[0]).toMatchObject({ pb_publish_status: 'unlisted', pb_title_id: null, publish_status: 'published' });
   });
 
   it('対象が無ければ投入しない', async () => {

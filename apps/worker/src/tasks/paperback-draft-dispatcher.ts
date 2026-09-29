@@ -68,11 +68,15 @@ export async function runPaperbackDraftDispatcher(
       pb_publish_status: 'unlisted',
       pb_title_id: null,
       asin: { not: null },
+      // **Kindle が販売中の本だけ**。取り下げ済み (retracted) は本棚に
+      // 「ペーパーバックの作成」が出ず、毎回 no_create_button で枠を潰していた
+      // (2026-09-30 実測。DB の ASIN が Amazon 上に存在しないものもあった)。
+      publish_status: 'published',
       OR: [{ pb_submit_cooldown_until: null }, { pb_submit_cooldown_until: { lte: now() } }],
     },
     select: { id: true, title: true },
-    // 出版済み Kindle の古い順 (= 先に出した本からペーパーバック化する)。
-    orderBy: { created_at: 'asc' },
+    // 新しい本から。直近に出した本ほど本棚の先頭にあり確実に見つかる。
+    orderBy: { published_at: 'desc' },
     take: 1,
   });
   if (books.length === 0) return { enabled: true, enqueued: 0, bookId: null };
