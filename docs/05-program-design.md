@@ -3916,3 +3916,26 @@ Instagram はカルーセル投稿にし、うち1枚は固定テンプレ（ブ
 2026-08-30〜09-01 と 2026-09-28〜29 の 2 回、復旧まで 1〜2 日気づけなかった。
 毎回の復旧手段は `railway redeploy --service A2P-Worker`(= プロセス再起動) だけだったので、
 それを自動化した。異常の切り分けは `graphile_worker._private_jobs.last_error` と Railway のログで行う。
+
+### ペーパーバックの下書き作成をサーバー側で行う (F-097f, 2026-09-29)
+
+運営者指示「ペーパーバックの下書き作成についてもローカルではなくてサーバー側でやって。
+基本すべての作業をサーバー側でやってほしい」。ローカル専用だった
+`scripts/paperback/pb-auto.sh draft`（plan → 表紙 PDF 生成 → `pb-pilot.mjs`）を worker に移した。
+出版側 (`paperback.submit`, F-097d) と合わせて**ペーパーバックの全工程が Railway で完結**する。
+
+| 追加 | 役割 |
+|---|---|
+| `paperback.draft.dispatch` (cron `15,45 * * * *`) | 下書き未作成の本を 1 冊だけ投入 (同時 1 冊 = ブラウザ 1 本) |
+| `paperback.draft` | 本文 PDF の頁数判定 → ラップカバー PDF 生成 → KDP で下書き作成 → `pb_title_id` を保存 |
+| `apps/worker/src/tasks/paperback-draft/plan.ts` | 頁数から背幅・ノド余白・頁数レンジを判定する純関数 (`pb-plan.cjs` の 1 冊分) |
+| `packages/output/pdf/src/paperback-cover.tsx` | ラップカバー PDF (`build-wrap-cover.mjs` の移植。DB/R2 アクセスは呼出側) |
+| `apps/worker/src/tasks/paperback-draft/playwright-paperback-draft-port.ts` | KDP のウィザード (`pb-pilot.mjs` の移植。storageState + 再認証) |
+
+- 入力の正は **`covers.status='adopted'` の最新** (表紙画像) と **`artifacts.kind='pdf'` の最新** (本文)。
+  `books` に列は無い (`pb-plan.cjs` と同じ取り方)。ラップカバーは R2 `books/{id}/paperback/cover.pdf`
+  にキャッシュする。
+- クールダウン: 作成数上限は 20 時間、ノド余白/頁数レンジ NG は 168 時間 (本文の組版を変えない限り
+  直らないため)、その他の失敗は 20 時間。
+- **出版はしない**（承認と出版は `paperback.submit` の担当）。
+- 失敗時は R2 `debug/paperback-draft/` にフルページのスクショを残す。

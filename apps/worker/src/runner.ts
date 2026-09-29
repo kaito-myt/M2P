@@ -57,6 +57,11 @@ import {
   PAPERBACK_SUBMIT_DISPATCHER_TASK_NAME,
   paperbackSubmitDispatcherTask,
 } from './tasks/paperback-submit-dispatcher.js';
+import { PAPERBACK_DRAFT_TASK_NAME, paperbackDraftTask } from './tasks/paperback-draft.js';
+import {
+  PAPERBACK_DRAFT_DISPATCHER_TASK_NAME,
+  paperbackDraftDispatcherTask,
+} from './tasks/paperback-draft-dispatcher.js';
 import { LOCKS_SWEEP_TASK_NAME, locksSweepTask } from './tasks/locks-sweep.js';
 import {
   OPTIMIZER_PROMPT_GENERATE_TASK_NAME,
@@ -331,6 +336,8 @@ export function buildTaskList(): TaskList {
     [PAPERBACK_STATUS_SYNC_TASK_NAME]: paperbackStatusSyncTask,
     [PAPERBACK_SUBMIT_TASK_NAME]: paperbackSubmitTask,
     [PAPERBACK_SUBMIT_DISPATCHER_TASK_NAME]: paperbackSubmitDispatcherTask,
+    [PAPERBACK_DRAFT_TASK_NAME]: paperbackDraftTask,
+    [PAPERBACK_DRAFT_DISPATCHER_TASK_NAME]: paperbackDraftDispatcherTask,
     [KDP_ASIN_FETCH_TASK_NAME]: kdpAsinFetchTask,
     [KDP_PUBLISH_STATUS_SYNC_TASK_NAME]: kdpPublishStatusSyncTask,
     [ALERT_COST_CHECK_TASK_NAME]: alertCostCheckTask,

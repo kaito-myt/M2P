@@ -17,6 +17,7 @@ import { BW_SUBMIT_DISPATCHER_TASK_NAME } from './tasks/bw-submit-dispatcher.js'
 import { PAPERBACK_QUEUE_SWEEP_TASK_NAME } from './tasks/paperback-queue-sweep.js';
 import { PAPERBACK_STATUS_SYNC_TASK_NAME } from './tasks/paperback-status-sync.js';
 import { PAPERBACK_SUBMIT_DISPATCHER_TASK_NAME } from './tasks/paperback-submit-dispatcher.js';
+import { PAPERBACK_DRAFT_DISPATCHER_TASK_NAME } from './tasks/paperback-draft-dispatcher.js';
 import { BW_RETAG_TASK_NAME } from './tasks/bw-retag.js';
 import { PROMOTION_DISPATCH_TASK_NAME } from './tasks/promotion-dispatch.js';
 import { PROMOTION_REVIEW_DAILY_TASK_NAME } from './tasks/promotion-review-daily.js';
@@ -294,6 +295,9 @@ export const PAPERBACK_STATUS_SYNC_CRON = '40 22 * * *';
  * 下書きの完成は KDP の作成数枠を消費しないので、Kindle 側が上限で止まっていても進む。
  */
 export const PAPERBACK_SUBMIT_DISPATCHER_CRON = '*/30 * * * *';
+
+/** F-097f: ペーパーバックのサーバー側**下書き作成** (30 分毎・出版側と 15 分ずらす)。 */
+export const PAPERBACK_DRAFT_DISPATCHER_CRON = '15,45 * * * *';
 
 /**
  * docs/11-anp-design.md §7 Phase2: note サーバー自動公開ディスパッチャの既定 cron (30分毎)。
@@ -668,6 +672,12 @@ export const CRON_ITEMS: CronItem[] = [
     task: PAPERBACK_SUBMIT_DISPATCHER_TASK_NAME,
     match: PAPERBACK_SUBMIT_DISPATCHER_CRON,
     identifier: 'paperback-submit-dispatch',
+  },
+  {
+    // F-097f: ペーパーバックのサーバー側下書き作成 (paperback.draft.dispatch)。
+    task: PAPERBACK_DRAFT_DISPATCHER_TASK_NAME,
+    match: PAPERBACK_DRAFT_DISPATCHER_CRON,
+    identifier: 'paperback-draft-dispatch',
   },
   {
     // F-097b: ペーパーバックの販売状態を KDP 本棚で確認 (paperback.status.sync)。
