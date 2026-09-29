@@ -227,54 +227,107 @@ async function createDraft(args: PaperbackDraftArgs): Promise<PaperbackDraftResu
       return { ok: false, reason: 'not_logged_in', message: `未ログイン (url=${page.url().slice(0, 90)})` };
     }
 
-    // 検索は**タイトル**で行う (ASIN では 0 件になる)。長すぎると表記ゆれで外すので先頭だけ使う。
-    const query = args.title.replace(/\s+/g, ' ').trim().slice(0, 24);
-    const searchBox = await page
-      .$('input[type="search"], input[aria-label*="検索"], input[placeholder*="検索"]')
+    // 一覧を最大件数/ページにしてから、**ASIN でページを走査**する。
+    // 検索窓は「タイトルで検索」で、DB のタイトルと KDP 上の表記が違うと 0 件になるため
+    // 検索には頼らない (2026-09-29 実測)。
+    await page
+      .evaluate(() => {
+        const sel = [...document.querySelectorAll('select')].find((x) =>
+          /冊\/ページ|per page/.test(x.options[x.selectedIndex]?.textContent ?? ''),
+        ) as HTMLSelectElement | undefined;
+        if (!sel) return null;
+        let best: { v: string; n: number } | null = null;
+        for (const o of sel.options) {
+          const n = Number((o.textContent ?? '').replace(/[^0-9]/g, ''));
+          if (Number.isFinite(n) && n > 0 && (!best || n > best.n)) best = { v: o.value, n };
+        }
+        if (!best) return null;
+        sel.value = best.v;
+        sel.dispatchEvent(new Event('change', { bubbles: true }));
+        return best.n;
+      })
       .catch(() => null);
-    if (searchBox && query.length > 0) {
-      await searchBox.fill(query).catch(() => {});
-      await page.keyboard.press('Enter').catch(() => {});
-      await page.waitForTimeout(5000);
-      const notFound = await page
-        .evaluate(() => /結果が見つかりません/.test(document.body.innerText || ''))
+    await page.waitForTimeout(6000);
+
+    /**
+     * 現在のページで ASIN の行を探し、「ペーパーバックの作成」を押す。
+     * 戻り値: 'clicked' | 'exists'(既にペーパーバックあり) | 'absent'(この頁に無い)
+     */
+    const clickCreateForAsin = async (): Promise<'clicked' | 'exists' | 'absent'> => {
+      return page
+        .evaluate((asin: string) => {
+          const nodes = [...document.querySelectorAll('*')].filter(
+            (el) => el.children.length === 0 && (el.textContent ?? '').includes(asin),
+          ) as HTMLElement[];
+          if (nodes.length === 0) return 'absent';
+          for (const node of nodes) {
+            // ASIN の表示から親を辿り、同じ行 (作成ボタンを含む塊) を探す。
+            let row: HTMLElement | null = node;
+            for (let i = 0; i < 12 && row; i += 1) {
+              row = row.parentElement;
+              if (!row) break;
+              const btn = [...row.querySelectorAll('a,button,span[role=button]')].find((x) =>
+                /ペーパーバックの作成/.test(x.textContent ?? ''),
+              ) as HTMLElement | undefined;
+              if (btn) {
+                btn.click();
+                return 'clicked';
+              }
+              // 作成済みの行 (設定の続行 / 著者用コピーを注文) に当たったらそこで打ち切る。
+              if (/ペーパーバックのアクション/.test(row.textContent ?? '')) return 'exists';
+            }
+          }
+          return 'absent';
+        }, args.asin)
+        .catch(() => 'absent' as const);
+    };
+
+    /** 次のページへ。進めたら true。 */
+    const goNextPage = async (): Promise<boolean> => {
+      const moved = await page
+        .evaluate(() => {
+          const cands = [...document.querySelectorAll('a,button,li')].filter((x) => {
+            const t = (x.textContent ?? '').trim();
+            return (
+              (t === '›' || t === '>' || t === '次へ' || /^次/.test(t)) &&
+              ((x as HTMLElement).offsetWidth || (x as HTMLElement).offsetHeight) &&
+              !(x as HTMLButtonElement).disabled &&
+              !/disabled/.test((x as HTMLElement).className || '')
+            );
+          }) as HTMLElement[];
+          if (cands.length === 0) return false;
+          cands[cands.length - 1]!.click();
+          return true;
+        })
         .catch(() => false);
-      if (notFound) {
-        // 検索で絞れなかったときは既定の一覧に戻して ASIN 照合で探す。
-        await searchBox.fill('').catch(() => {});
-        await page.keyboard.press('Enter').catch(() => {});
-        await page.waitForTimeout(5000);
-      }
+      if (moved) await page.waitForTimeout(5000);
+      return moved;
+    };
+
+    let found: 'clicked' | 'exists' | 'absent' = 'absent';
+    for (let pageNo = 0; pageNo < 15; pageNo += 1) {
+      found = await clickCreateForAsin();
+      if (found !== 'absent') break;
+      if (!(await goNextPage())) break;
     }
 
-    const clicked = await page
-      .evaluate((asin: string) => {
-        const cands = [...document.querySelectorAll('a,button,span[role=button]')].filter((el) =>
-          /ペーパーバックの作成/.test(el.textContent ?? ''),
-        );
-        for (const el of cands) {
-          let row: HTMLElement | null = el as HTMLElement;
-          for (let i = 0; i < 14 && row; i += 1) {
-            row = row.parentElement;
-            if ((row?.textContent ?? '').includes(asin)) break;
-          }
-          if ((row?.textContent ?? '').includes(asin) || cands.length === 1) {
-            (el as HTMLElement).click();
-            return true;
-          }
-        }
-        // ASIN 行を特定できないときは押さない (他書籍の PB を作る事故を防ぐ — 2026-09-03)。
-        return false;
-      }, args.asin)
-      .catch(() => false);
-    if (!clicked) {
+    if (found === 'exists') {
+      await shot('already-has-paperback');
+      return {
+        ok: false,
+        reason: 'no_create_button',
+        message: `ASIN=${args.asin} は既にペーパーバックが紐づいています (本棚に「ペーパーバックの作成」が無い)`,
+      };
+    }
+    if (found !== 'clicked') {
       await shot('no-create-button');
       return {
         ok: false,
         reason: 'no_create_button',
-        message: `本棚で「ペーパーバックの作成」を特定できませんでした (title=${query} asin=${args.asin})`,
+        message: `本棚で ASIN=${args.asin} の行を見つけられませんでした (title=${args.title.slice(0, 20)})`,
       };
     }
+
     await page.waitForTimeout(9000);
     if (await hitCreationLimit()) {
       await shot('creation-limit');
