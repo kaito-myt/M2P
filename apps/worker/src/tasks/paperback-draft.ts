@@ -32,8 +32,9 @@ import { NotFoundError, ValidationError } from '@a2p/contracts/errors';
 import { createLogger, type Logger } from '@a2p/contracts/logger';
 import { decryptKdpCredentials } from '@a2p/crypto';
 import { prisma as defaultPrisma } from '@a2p/db';
-import { buildPaperbackWrapCover, safeAreaPixels } from '@a2p/output-pdf';
+import { ensurePaperbackCover, paperbackCoverKey } from './paperback-draft/build-cover.js';
 
+export { paperbackCoverKey };
 import { computePaperbackPlan, countPdfPages } from './paperback-draft/plan.js';
 import type { PaperbackDraftPort, PaperbackDraftResult } from './paperback-draft/playwright-paperback-draft-port.js';
 
@@ -110,11 +111,6 @@ export interface PaperbackDraftResultSummary {
   status: string;
   titleId?: string | null;
   pages?: number;
-}
-
-/** R2 のラップカバー保存先。 */
-export function paperbackCoverKey(bookId: string): string {
-  return `books/${bookId}/paperback/cover.pdf`;
 }
 
 /** 本文 PDF の R2 キー。 */
@@ -204,34 +200,22 @@ export async function runPaperbackDraft(
   }
 
   // --- 2. ラップカバー PDF (無ければ作る) ---
-  const coverKey = paperbackCoverKey(bookId);
-  let coverPdf = await fetchAsset(coverKey);
   const meta = await prisma.kdpMetadata.findFirst({ where: { book_id: bookId }, orderBy: { created_at: 'desc' } });
-  if (!coverPdf) {
-    const coverImage = await fetchAsset(coverRow.r2_key);
-    if (!coverImage) {
-      return fail('no_cover_image', `表紙画像が R2 にありません (${coverRow.r2_key})`, PLAN_NG_COOLDOWN_HOURS);
-    }
-    const sharp = (await import('sharp')).default;
-    const stats = await sharp(coverImage).stats();
-    const [r, g, b] = stats.channels.map((ch) => Math.round(ch.mean));
-    const safe = safeAreaPixels();
-    const frontImagePng = await sharp(coverImage)
-      .resize(safe.width, safe.height, { fit: 'contain', kernel: 'lanczos3', background: { r: r!, g: g!, b: b! } })
-      .png()
-      .toBuffer();
-    coverPdf = await buildPaperbackWrapCover({
-      title: book.title,
-      subtitle: book.subtitle,
-      description: meta?.description ?? null,
-      pages,
-      coverImage,
-      frontImagePng,
-      averageColor: { r: r!, g: g!, b: b! },
-    });
-    await putAsset(coverKey, coverPdf, 'application/pdf');
-    log.info({ bookId, coverKey, bytes: coverPdf.length }, 'paperback wrap cover built');
+  const cover = await ensurePaperbackCover({
+    bookId,
+    title: book.title,
+    subtitle: book.subtitle,
+    description: meta?.description ?? null,
+    pages,
+    coverImageKey: coverRow.r2_key,
+    fetchAsset,
+    putAsset,
+  });
+  if (!cover.ok) {
+    return fail(cover.reason, cover.message, PLAN_NG_COOLDOWN_HOURS);
   }
+  const coverPdf = cover.pdf;
+  if (cover.rebuilt) log.info({ bookId, coverKey: cover.key, bytes: coverPdf.length }, 'paperback wrap cover built');
 
   // --- 3. KDP で下書きを作る ---
   // セッションは `accounts.kdp_session_state_enc` が正 (kdp.submit と同じ)。

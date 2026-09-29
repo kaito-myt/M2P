@@ -85,13 +85,31 @@ export interface PaperbackPublishArgs {
   priceFor: (pages: number) => number;
   /** デバッグ用スクショの保存先 (ローカル tmp)。 */
   stageDir?: string;
+  /**
+   * [F-097g] 正しいラップカバー PDF のローカルパス。プレビューが表紙サイズ不適合を
+   * 報告したとき、これを上げ直してから再プレビューする。
+   *
+   * 古いローカル実行で作られた下書きには **Kindle 用の表紙 (A4 縦) が上がっている**ことがあり、
+   * その場合 KDP は「適切な表紙のサイズは 12.000x8.520 ですが、提出されたファイル サイズは
+   * 8.264x11.694」と出して**承認ボタンを無効化**する (2026-09-29 実測)。これが
+   * `not_approved` の正体だった。
+   */
+  coverPath?: string | null;
 }
 
 export type PaperbackPublishResult =
   | { ok: true; status: 'submitted' | 'dry_run_ready'; pages: number | null; priceJpy: number | null }
   | {
       ok: false;
-      reason: 'reauth_failed' | 'no_previewer' | 'not_approved' | 'blocked_prior_page' | 'no_price_field' | 'uncertain' | 'error';
+      reason:
+        | 'reauth_failed'
+        | 'no_previewer'
+        | 'not_approved'
+        | 'cover_rejected'
+        | 'blocked_prior_page'
+        | 'no_price_field'
+        | 'uncertain'
+        | 'error';
       message: string;
     };
 
@@ -229,6 +247,72 @@ async function publishDraft(args: PaperbackPublishArgs): Promise<PaperbackPublis
       return Number.isFinite(n) && n >= 20 ? n : null;
     };
 
+    /**
+     * [F-097g] プレビューアーが出しているエラー文を読む。表紙サイズ不適合はここに出る
+     * (「適切な表紙のサイズは 12.000x8.520 ですが…」)。承認ボタンはこのとき無効になる。
+     */
+    const previewErrors = async (): Promise<string[]> => {
+      return page
+        .evaluate(() => {
+          const txt = document.body.innerText || '';
+          const out: string[] = [];
+          for (const re of [
+            /提出された表紙サイズが[^。]*。/g,
+            /適切な表紙のサイズは[^。]*。/g,
+            /判型が選択されていますが[^。]*。/g,
+            /エラーのある本は[^。]*。/g,
+          ]) {
+            let m: RegExpExecArray | null;
+            while ((m = re.exec(txt)) !== null && out.length < 8) out.push(m[0].replace(/\s+/g, ' ').trim());
+          }
+          return out;
+        })
+        .catch(() => [] as string[]);
+    };
+
+    /** 表紙ファイルだけを上げ直す (content ページ側のアップロードボタンを使う)。 */
+    const replaceCover = async (file: string): Promise<boolean> => {
+      await gotoWithReauth(`${BASE}/print-setup/paperback/${titleId}/content`, 'replace-cover');
+      await page.waitForTimeout(4000);
+      const [fc] = await Promise.all([
+        page.waitForEvent('filechooser', { timeout: 20000 }).catch(() => null),
+        page
+          .evaluate(() => {
+            const b = [...document.querySelectorAll('button,[role=button]')].find(
+              (x) =>
+                /表紙ファイルをアップロード|表紙をアップロード|表紙を置き換え/.test(x.textContent ?? '') &&
+                ((x as HTMLElement).offsetWidth || (x as HTMLElement).offsetHeight),
+            );
+            if (b) (b as HTMLElement).click();
+            return !!b;
+          })
+          .catch(() => false),
+      ]);
+      if (!fc) {
+        const inputs = await page.$$('input[type=file]').catch(() => []);
+        if (inputs.length > 1) {
+          await inputs[1].setInputFiles(file).catch(() => {});
+        } else {
+          log.warn({ titleId }, '表紙アップロードのボタンも input も見つかりません');
+          return false;
+        }
+      } else {
+        await fc.setFiles(file);
+      }
+      // 変換待ち (最大 10 分)。
+      for (let i = 0; i < 60; i += 1) {
+        await page.waitForTimeout(10000);
+        const t: string = await page.evaluate(() => document.body.textContent ?? '').catch(() => '');
+        if (/正常にアップロードしました|アップロードに成功|処理が完了しました/.test(t)) break;
+        if (/アップロードで問題|アップロードに失敗/.test(t)) {
+          log.warn({ titleId }, '表紙の再アップロードで KDP がエラーを報告');
+          return false;
+        }
+      }
+      log.info({ titleId }, 'paperback cover replaced');
+      return true;
+    };
+
     const approveOnce = async (): Promise<{ opened: boolean; pages: number | null }> => {
       const opened = await clickVisible(/プレビューアーを起動/);
       if (!opened) return { opened: false, pages: null };
@@ -245,8 +329,10 @@ async function publishDraft(args: PaperbackPublishArgs): Promise<PaperbackPublis
         approved = await clickVisible(/^\s*承認\s*$/);
         if (!approved) await page.waitForTimeout(5000);
       }
-      log.info({ titleId, pages, approved }, 'paperback preview approve clicked');
+      const errs = await previewErrors();
+      log.info({ titleId, pages, approved, previewErrors: errs }, 'paperback preview approve clicked');
       await shot(page, `${titleId}-preview-after-approve`);
+      lastPreviewErrors = errs;
       // [2026-09-25] 承認直後に終了ボタンを押すと承認が取り消される。押さずに離れる。
       await page.waitForTimeout(15000);
       await page.goto(`${BASE}/print-setup/paperback/${titleId}/content`, { waitUntil: 'domcontentloaded' }).catch(() => {});
@@ -270,6 +356,8 @@ async function publishDraft(args: PaperbackPublishArgs): Promise<PaperbackPublis
 
     let pages: number | null = null;
     let approvedOk = false;
+    let lastPreviewErrors: string[] = [];
+    let coverReplaced = false;
     for (let round = 0; round < 4; round += 1) {
       if (!(await needsPreview())) {
         approvedOk = true;
@@ -280,10 +368,27 @@ async function publishDraft(args: PaperbackPublishArgs): Promise<PaperbackPublis
         return { ok: false, reason: 'no_previewer', message: 'プレビューアー起動ボタンが見つかりません' };
       }
       pages = r.pages ?? pages;
+
+      // [F-097g] 表紙サイズ不適合なら承認ボタンが無効のままなので、上げ直して仕切り直す。
+      const coverBad = lastPreviewErrors.some((e) => /表紙/.test(e));
+      if (coverBad && args.coverPath && !coverReplaced) {
+        log.warn({ titleId, previewErrors: lastPreviewErrors }, '表紙が KDP 判定で不適合 — 作り直した表紙に差し替える');
+        coverReplaced = true;
+        if (!(await replaceCover(args.coverPath))) {
+          return {
+            ok: false,
+            reason: 'cover_rejected',
+            message: `表紙を差し替えられませんでした: ${lastPreviewErrors.join(' / ').slice(0, 200)}`,
+          };
+        }
+        continue;
+      }
     }
     if (!approvedOk) {
       await shot(page, `${titleId}-not-approved`);
-      return { ok: false, reason: 'not_approved', message: 'プレビュー承認が記録されませんでした (4 回試行)' };
+      const detail = lastPreviewErrors.length > 0 ? ` KDP の指摘: ${lastPreviewErrors.join(' / ').slice(0, 220)}` : '';
+      const reason = lastPreviewErrors.some((e) => /表紙/.test(e)) ? 'cover_rejected' : 'not_approved';
+      return { ok: false, reason, message: `プレビュー承認が記録されませんでした (4 回試行)。${detail}` };
     }
     log.info({ titleId, pages }, 'paperback preview approved');
 

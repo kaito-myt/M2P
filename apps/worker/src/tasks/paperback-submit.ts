@@ -10,7 +10,7 @@
  * **下書きの完成は KDP の作成数枠を消費しない**ので、作成上限に当たっていても出版できる。
  * 新規下書きの作成 (pb-pilot 相当) は引き続きローカル (`pb-auto.sh draft`)。
  */
-import { mkdtempSync } from 'node:fs';
+import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
@@ -71,7 +71,7 @@ export async function runPaperbackSubmit(
 
   const book = await prisma.book.findUnique({
     where: { id: parsed.book_id },
-    select: { id: true, title: true, pb_title_id: true, pb_publish_status: true },
+    select: { id: true, title: true, subtitle: true, pb_title_id: true, pb_publish_status: true },
   });
   if (!book) return { ok: false, status: 'not_found', bookId: parsed.book_id };
   if (!book.pb_title_id) {
@@ -112,6 +112,61 @@ export async function runPaperbackSubmit(
     ));
   const stageDir = mkdtempSync(path.join(tmpdir(), 'pb-submit-'));
 
+  // [F-097g] 正しいラップカバーを用意して渡す。プレビューが表紙サイズ不適合を出したら
+  // ポート側がこれに差し替えて再プレビューする (古い下書きには Kindle 用 A4 表紙が
+  // 上がっていて、承認ボタンが無効のままだった — 2026-09-29 実測)。
+  let coverPath: string | null = null;
+  try {
+    const { ensurePaperbackCover } = await import('./paperback-draft/build-cover.js');
+    const { countPdfPages } = await import('./paperback-draft/plan.js');
+    const storage = await import('@a2p/storage');
+    const fetchAsset = async (key: string): Promise<Buffer | null> => {
+      try {
+        return (await storage.downloadBuffer(key)) as Buffer | null;
+      } catch {
+        return null;
+      }
+    };
+    const coverRow = await prisma.cover.findFirst({
+      where: { book_id: book.id, status: 'adopted' },
+      orderBy: { created_at: 'desc' },
+      select: { r2_key: true },
+    });
+    const pdfArtifact = await prisma.artifact.findFirst({
+      where: { book_id: book.id, kind: 'pdf' },
+      orderBy: { created_at: 'desc' },
+      select: { r2_key: true },
+    });
+    const interior = pdfArtifact?.r2_key ? await fetchAsset(pdfArtifact.r2_key) : null;
+    if (coverRow?.r2_key && interior) {
+      const meta = await prisma.kdpMetadata.findFirst({
+        where: { book_id: book.id },
+        orderBy: { created_at: 'desc' },
+        select: { description: true },
+      });
+      const pages = await countPdfPages(interior);
+      const cover = await ensurePaperbackCover({
+        bookId: book.id,
+        title: book.title,
+        subtitle: book.subtitle,
+        description: meta?.description ?? null,
+        pages,
+        coverImageKey: coverRow.r2_key,
+        fetchAsset,
+        putAsset: (key, buf, ct) => storage.uploadBuffer(key, buf, ct),
+        // 下書き時と頁数が変わっていることがあるので必ず作り直す (背幅がずれると弾かれる)。
+        force: true,
+      });
+      if (cover.ok) {
+        coverPath = path.join(stageDir, `${book.id}-pb-cover.pdf`);
+        writeFileSync(coverPath, cover.pdf);
+        log.info({ bookId: book.id, pages, bytes: cover.pdf.length }, 'paperback wrap cover ready (差し替え用)');
+      }
+    }
+  } catch (err) {
+    log.warn({ bookId: book.id, err: err instanceof Error ? err.message : String(err) }, '表紙の事前生成に失敗 — 差し替えなしで続行');
+  }
+
   const result = await port.publishDraft({
     titleId: book.pb_title_id,
     sessionState,
@@ -120,6 +175,7 @@ export async function runPaperbackSubmit(
     dryRun: parsed.dry_run === true,
     priceFor: paperbackPrice,
     stageDir,
+    coverPath,
   });
 
   if (result.ok && result.status === 'submitted') {
