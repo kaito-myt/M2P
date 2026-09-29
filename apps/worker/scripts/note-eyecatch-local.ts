@@ -34,7 +34,7 @@ async function main(): Promise<void> {
   const c = new Client({ connectionString: process.env.DBURL, ssl: { rejectUnauthorized: false } });
   await c.connect();
   const { rows } = await c.query(
-    `select a.id, a.title, a.lead, a.seo_json, t.hook, acc.niche, acc.editorial_policy
+    `select a.id, a.title, a.lead, a.eyecatch_copy, a.eyecatch_sub, t.hook, acc.niche, acc.editorial_policy
        from note_articles a
        join note_accounts acc on acc.id = a.note_account_id
        left join note_themes t on t.id = a.theme_id
@@ -45,17 +45,21 @@ async function main(): Promise<void> {
   const row = rows[0];
   if (!row) throw new Error('記事が見つかりません');
 
-  const seo = (row.seo_json ?? {}) as { eyecatch_copy?: string; eyecatch_sub?: string };
+  // anp.seo の出力は `seo_json` ではなく **専用カラム** に入る (note-seo-step.ts)。
+  const copyArg = process.argv.find((a) => a.startsWith('--copy='));
+  const subArg = process.argv.find((a) => a.startsWith('--sub='));
+  const copy = copyArg ? copyArg.slice('--copy='.length) : ((row.eyecatch_copy as string | null) ?? null);
+  const sub = subArg ? subArg.slice('--sub='.length) : ((row.eyecatch_sub as string | null) ?? null);
   console.log('title:', row.title);
-  console.log('copy :', seo.eyecatch_copy, '/ sub:', seo.eyecatch_sub);
+  console.log('copy :', copy, '/ sub:', sub);
 
   const result = await generateNoteEyecatch({
     noteArticleId: String(row.id),
     title: String(row.title),
     hook: String(row.hook ?? row.lead ?? ''),
     niche: String(row.niche),
-    eyecatchCopy: seo.eyecatch_copy ?? null,
-    eyecatchSub: seo.eyecatch_sub ?? null,
+    eyecatchCopy: copy,
+    eyecatchSub: sub,
     editorialPolicy: (row.editorial_policy as string | null) ?? null,
   });
   console.log('r2Key:', result.r2Key, 'styleKey:', result.styleKey, 'composedText:', result.composedText);

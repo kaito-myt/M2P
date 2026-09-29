@@ -3904,3 +3904,15 @@ Instagram はカルーセル投稿にし、うち1枚は固定テンプレ（ブ
   `--channel=`/`--only=avatar,banner,template`/`--force` で対象を絞る)。DB/R2 env は
   `scripts/paperback/pb-env.sh` 経由、OpenAI キーのみ別途 `OPENAI_API_KEY` を要する。生成物は
   `<key>.bak-<ts>` に退避してから上書き。**実行は運営者判断**（本追記時点では未実行）。
+
+### worker の DB 死活監視 (2026-09-29 追加)
+
+`apps/worker/src/lib/db-watchdog.ts` が 60 秒ごとに `select 1` を撃ち、**5 回連続で失敗したら
+`process.exit(1)`** する (Railway がコンテナを再起動する)。落ちる直前に LINE へ通知する。
+
+理由: Railway の worker が `postgres.railway.internal` へ到達できなくなると graphile-worker の
+全タスクが `Can't reach database server` で失敗し続けるが、**`public.jobs` には何も記録されない**
+(DB に書けないため)。UI 上は「ジョブが増えも減りもしない」だけの**無音の停止**になり、
+2026-08-30〜09-01 と 2026-09-28〜29 の 2 回、復旧まで 1〜2 日気づけなかった。
+毎回の復旧手段は `railway redeploy --service A2P-Worker`(= プロセス再起動) だけだったので、
+それを自動化した。異常の切り分けは `graphile_worker._private_jobs.last_error` と Railway のログで行う。

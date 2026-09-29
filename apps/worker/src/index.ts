@@ -4,6 +4,8 @@ import { parseEnv } from '@a2p/contracts/env';
 import { createLogger } from '@a2p/contracts/logger';
 import { installServiceCredentialProviders, primeServiceCredentials } from '@a2p/credentials';
 
+import { startDbWatchdog } from './lib/db-watchdog.js';
+import { pushLine } from './tasks/lib/line-auth-relay.js';
 import { installGracefulShutdown, startRunner } from './runner.js';
 
 // LLM の長文生成 (例: 全章一括校閲 / 長い章本文) は、応答ヘッダ到達まで undici 既定の
@@ -65,6 +67,19 @@ export async function main(): Promise<void> {
   });
 
   installGracefulShutdown(runner, log);
+
+  // [F-ANP-50] DB 到達不能の無音停止対策。`postgres.railway.internal` へ繋がらなくなると
+  // 全タスクが失敗し続けるが public.jobs には何も残らないため気づけない (2026-08-30 / 09-28)。
+  // 一定時間続いたらプロセスを落とし、Railway のコンテナ再起動で復旧させる。
+  const { prisma } = await import('@a2p/db');
+  const watchdog = startDbWatchdog({
+    ping: () => prisma.$queryRaw`select 1`,
+    notify: (text) => pushLine(text),
+    logger: createLogger('worker.db-watchdog'),
+  });
+  const stopWatchdog = (): void => watchdog.stop();
+  process.on('SIGTERM', stopWatchdog);
+  process.on('SIGINT', stopWatchdog);
 
   try {
     await runner.promise;
