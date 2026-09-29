@@ -277,16 +277,21 @@ async function createDraft(args: PaperbackDraftArgs): Promise<PaperbackDraftResu
     const clickCreateForAsin = async (): Promise<'clicked' | 'exists' | 'absent'> => {
       return page
         .evaluate((asin: string) => {
-          const nodes = [...document.querySelectorAll('*')].filter(
-            (el) => el.children.length === 0 && (el.textContent ?? '').includes(asin),
-          ) as HTMLElement[];
-          if (nodes.length === 0) return 'absent';
-          for (const node of nodes) {
-            // ASIN の表示から親を辿り、同じ行 (作成ボタンを含む塊) を探す。
-            let row: HTMLElement | null = node;
-            for (let i = 0; i < 12 && row; i += 1) {
-              row = row.parentElement;
-              if (!row) break;
+          // ASIN を含む要素のうち**最も小さいもの**を起点にする。
+          // 葉要素だけを見る方式だと、テキストが入れ子になっている行を取りこぼす
+          // (2026-09-30 実測: 本棚に出ているのに absent になっていた)。
+          const holders = ([...document.querySelectorAll('*')] as HTMLElement[]).filter((el) =>
+            (el.textContent ?? '').includes(asin),
+          );
+          if (holders.length === 0) return 'absent';
+          holders.sort((a, b) => a.querySelectorAll('*').length - b.querySelectorAll('*').length);
+
+          for (const start of holders.slice(0, 5)) {
+            let row: HTMLElement | null = start;
+            for (let i = 0; i < 14 && row; i += 1) {
+              // **その行に ASIN が残っていること**を条件にして親を辿る。
+              // 条件を付けないと、隣の行のボタンを押してしまう。
+              if (!(row.textContent ?? '').includes(asin)) break;
               const btn = [...row.querySelectorAll('a,button,span[role=button]')].find((x) =>
                 /ペーパーバックの作成/.test(x.textContent ?? ''),
               ) as HTMLElement | undefined;
@@ -294,11 +299,11 @@ async function createDraft(args: PaperbackDraftArgs): Promise<PaperbackDraftResu
                 btn.click();
                 return 'clicked';
               }
-              // 作成済みの行 (設定の続行 / 著者用コピーを注文) に当たったらそこで打ち切る。
-              if (/ペーパーバックのアクション/.test(row.textContent ?? '')) return 'exists';
+              row = row.parentElement;
             }
           }
-          return 'absent';
+          // ASIN はあるが作成ボタンが無い = 既にペーパーバックが紐づいている。
+          return 'exists';
         }, args.asin)
         .catch(() => 'absent' as const);
     };
