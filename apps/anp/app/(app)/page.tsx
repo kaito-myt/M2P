@@ -12,6 +12,7 @@ import { prisma } from '@a2p/db';
 
 import { messages } from '@/lib/messages';
 import { computeAccountKpis, jstMonthRange, toNumber } from '@/lib/home-core';
+import { formatJstDate } from '@/lib/datetime';
 
 const NOTE_JOB_KIND_PREFIXES = ['pipeline.note.', 'note.', 'promotion.note.'];
 
@@ -242,7 +243,7 @@ export default async function AnpHomePage() {
                   {a.title}
                 </Link>
                 <span className="text-caption text-muted">
-                  {a.account.display_name} ・ {a.published_at ? a.published_at.toLocaleDateString('ja-JP') : ''}
+                  {a.account.display_name} ・ {a.published_at ? formatJstDate(a.published_at) : ''}
                 </span>
               </li>
             ))}

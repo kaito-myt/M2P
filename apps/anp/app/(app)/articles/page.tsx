@@ -19,6 +19,7 @@ import {
 import { AccountPills } from '@/components/account-pills';
 import { cn } from '@/lib/cn';
 import { messages } from '@/lib/messages';
+import { formatJstShort } from '@/lib/datetime';
 
 export default async function ArticlesPage({
   searchParams,
@@ -252,7 +253,7 @@ export default async function ArticlesPage({
                         )}
                       </td>
                       <td className="whitespace-nowrap px-3 py-2 text-caption text-muted tabular-nums">
-                        {(a.published_at ?? a.updated_at).toLocaleString('ja-JP', { dateStyle: 'short', timeStyle: 'short' })}
+                        {formatJstShort(a.published_at ?? a.updated_at)}
                       </td>
                     </tr>
                   );

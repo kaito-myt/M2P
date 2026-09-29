@@ -34,6 +34,7 @@ import {
 } from '@/components/ui/sheet';
 
 import { createComment, updateComment, deleteComment } from '@/app/actions/comments';
+import { formatJstDateTime } from '@/lib/datetime';
 
 const m = messages.comments.drawer;
 
@@ -164,7 +165,7 @@ function CommentRow({
           </Badge>
         </div>
         <span className="text-caption text-muted">
-          {new Date(comment.created_at).toLocaleString('ja-JP')}
+          {formatJstDateTime(comment.created_at)}
         </span>
       </div>
       <p className="whitespace-pre-wrap text-body text-charcoal" data-testid="comment-body">

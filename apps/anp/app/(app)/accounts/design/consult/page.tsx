@@ -8,6 +8,7 @@ import { prisma } from '@a2p/db';
 import { messages } from '@/lib/messages';
 
 import { StartConsultForm } from './start-consult-form';
+import { formatJstDate, formatJstDateTime } from '@/lib/datetime';
 
 export default async function AccountConsultListPage() {
   const rows = await prisma.noteAccountConsultation.findMany({
@@ -71,7 +72,7 @@ export default async function AccountConsultListPage() {
                     </span>
                   </div>
                   <p className="mt-1 text-caption text-muted">
-                    {cm.list.updatedAt}: {r.updated_at.toLocaleString('ja-JP')} ・ {r._count.messages} 通 ・{' '}
+                    {cm.list.updatedAt}: {formatJstDateTime(r.updated_at)} ・ {r._count.messages} 通 ・{' '}
                     {cm.list.designs}: {r._count.designs}
                   </p>
                 </Link>

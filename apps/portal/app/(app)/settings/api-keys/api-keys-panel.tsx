@@ -8,6 +8,7 @@ import { CheckCircle2, ExternalLink, KeyRound, Loader2, ShieldAlert, Trash2 } fr
 
 import { importApiKeyFromEnv, revokeApiKey, setApiKey, testApiKey } from '@/app/actions/settings';
 import type { ApiKeyTestResult, ApiProvider, ApiProviderMeta } from '@/lib/settings-core';
+import { formatJstDateTime } from '@/lib/datetime';
 
 export interface ApiKeyRowView {
   provider: ApiProvider;
@@ -22,7 +23,7 @@ export interface ApiKeyRowView {
 }
 
 function fmt(iso: string | null): string {
-  return iso ? new Date(iso).toLocaleString('ja-JP') : '—';
+  return iso ? formatJstDateTime(iso) : '—';
 }
 
 export function ApiKeysPanel({ rows }: { rows: ApiKeyRowView[] }) {

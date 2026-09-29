@@ -20,13 +20,14 @@ import { formatHashtags, type AccountPromotionState, type PromotionChannelSummar
 import type { ZernioAccountView } from '@/lib/zernio';
 
 import { LinkedAccountCard } from './linked-account-card';
+import { formatJstShort } from '@/lib/datetime';
 
 const POLL_MS = 3000;
 const ESTIMATE_SEC = 45;
 const m = messages.promotion;
 
 function fmt(iso: string | null): string {
-  return iso ? new Date(iso).toLocaleString('ja-JP', { dateStyle: 'short', timeStyle: 'short' }) : '—';
+  return iso ? formatJstShort(iso) : '—';
 }
 
 export function PromotionPanel({

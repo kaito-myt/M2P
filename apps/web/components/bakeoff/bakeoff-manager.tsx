@@ -11,6 +11,7 @@ import { GENRE_GROUPS, genreLabel } from '@a2p/contracts';
 import { startBakeoff } from '@/app/actions/bakeoff';
 import { messages } from '@/lib/messages';
 import { cn } from '@/lib/cn';
+import { formatJstDateTime } from '@/lib/datetime';
 import {
   BAKEOFF_ROLES,
   type BakeoffRunRow,
@@ -235,7 +236,7 @@ function RunCard({ run }: { run: BakeoffRunRow }) {
           <span className="truncate text-card-title font-medium text-charcoal">{run.inputLabel}</span>
           <span className="text-caption text-muted">
             {run.role}
-            {run.genre ? ` / ${genreLabel(run.genre) ?? run.genre}` : ''} · {run.createdAt ? new Date(run.createdAt).toLocaleString('ja-JP') : ''}
+            {run.genre ? ` / ${genreLabel(run.genre) ?? run.genre}` : ''} · {run.createdAt ? formatJstDateTime(run.createdAt) : ''}
           </span>
         </div>
         <span className={cn('rounded-pill px-2 py-0.5 text-caption', statusClass(run.status))}>{run.status}</span>

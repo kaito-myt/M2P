@@ -59,6 +59,12 @@ export interface PaperbackDraftArgs {
   bookId: string;
   /** 本棚で行を特定するための Kindle 版 ASIN。 */
   asin: string;
+  /**
+   * 本棚の検索窓は **「タイトルで検索」** で ASIN では引けない (2026-09-29 実測。
+   * ASIN を入れると「結果が見つかりません」になる)。検索はタイトルで行い、
+   * 行の特定は ASIN で照合する。
+   */
+  title: string;
   /** Kindle のカテゴリパス (「Kindle本 > ... 」形式)。最大 3 本流用する。 */
   categoryPaths: string[];
   /** 本文 PDF のローカルパス。 */
@@ -221,13 +227,24 @@ async function createDraft(args: PaperbackDraftArgs): Promise<PaperbackDraftResu
       return { ok: false, reason: 'not_logged_in', message: `未ログイン (url=${page.url().slice(0, 90)})` };
     }
 
+    // 検索は**タイトル**で行う (ASIN では 0 件になる)。長すぎると表記ゆれで外すので先頭だけ使う。
+    const query = args.title.replace(/\s+/g, ' ').trim().slice(0, 24);
     const searchBox = await page
       .$('input[type="search"], input[aria-label*="検索"], input[placeholder*="検索"]')
       .catch(() => null);
-    if (searchBox) {
-      await searchBox.fill(args.asin).catch(() => {});
+    if (searchBox && query.length > 0) {
+      await searchBox.fill(query).catch(() => {});
       await page.keyboard.press('Enter').catch(() => {});
       await page.waitForTimeout(5000);
+      const notFound = await page
+        .evaluate(() => /結果が見つかりません/.test(document.body.innerText || ''))
+        .catch(() => false);
+      if (notFound) {
+        // 検索で絞れなかったときは既定の一覧に戻して ASIN 照合で探す。
+        await searchBox.fill('').catch(() => {});
+        await page.keyboard.press('Enter').catch(() => {});
+        await page.waitForTimeout(5000);
+      }
     }
 
     const clicked = await page
@@ -255,7 +272,7 @@ async function createDraft(args: PaperbackDraftArgs): Promise<PaperbackDraftResu
       return {
         ok: false,
         reason: 'no_create_button',
-        message: `本棚で ASIN=${args.asin} の「ペーパーバックの作成」を特定できませんでした`,
+        message: `本棚で「ペーパーバックの作成」を特定できませんでした (title=${query} asin=${args.asin})`,
       };
     }
     await page.waitForTimeout(9000);

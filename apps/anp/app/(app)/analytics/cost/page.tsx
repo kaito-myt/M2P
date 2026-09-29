@@ -12,6 +12,7 @@ import { messages } from '@/lib/messages';
 import { anpRoleLabel } from '@/lib/model-settings-core';
 
 import { BarList, DailyBars, KpiCard } from '../dashboard-parts';
+import { formatJstDate } from '@/lib/datetime';
 
 export const dynamic = 'force-dynamic';
 
@@ -143,7 +144,7 @@ export default async function CostDashboardPage() {
               key: a.id,
               label: a.title,
               href: `/articles/${a.id}`,
-              sub: `${a.accountName} ・ ${messages.accountDetail.articleStatus[a.status as keyof typeof messages.accountDetail.articleStatus] ?? a.status} ・ ${new Date(a.created_at).toLocaleDateString('ja-JP')}`,
+              sub: `${a.accountName} ・ ${messages.accountDetail.articleStatus[a.status as keyof typeof messages.accountDetail.articleStatus] ?? a.status} ・ ${formatJstDate(a.created_at)}`,
               value: a.cost,
               display: yen(a.cost),
             }))}

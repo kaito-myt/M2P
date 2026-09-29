@@ -21,3 +21,34 @@ export function formatJstDateTime(input: Date | string | null | undefined): stri
   const p = Object.fromEntries(JST_DTF.formatToParts(d).map((x) => [x.type, x.value]));
   return `${p.year}-${p.month}-${p.day} ${p.hour}:${p.minute}`;
 }
+
+const JST_DATE = new Intl.DateTimeFormat('ja-JP', {
+  timeZone: 'Asia/Tokyo',
+  year: 'numeric',
+  month: '2-digit',
+  day: '2-digit',
+});
+
+/** Date | ISO文字列 → "YYYY-MM-DD" (JST)。null/不正は "-"。 */
+export function formatJstDate(input: Date | string | null | undefined): string {
+  if (!input) return '-';
+  const d = typeof input === 'string' ? new Date(input) : input;
+  if (Number.isNaN(d.getTime())) return '-';
+  const p = Object.fromEntries(JST_DATE.formatToParts(d).map((x) => [x.type, x.value]));
+  return `${p.year}-${p.month}-${p.day}`;
+}
+
+const JST_LONG_DATE = new Intl.DateTimeFormat('ja-JP', {
+  timeZone: 'Asia/Tokyo',
+  year: 'numeric',
+  month: 'long',
+  day: 'numeric',
+});
+
+/** Date | ISO文字列 → "2026年9月29日" (JST)。ブログの表示用。null/不正は ""。 */
+export function formatJstLongDate(input: Date | string | null | undefined): string {
+  if (!input) return '';
+  const d = typeof input === 'string' ? new Date(input) : input;
+  if (Number.isNaN(d.getTime())) return '';
+  return JST_LONG_DATE.format(d);
+}

@@ -11,6 +11,7 @@ import { computeSalesDashboard, percentChange, recentMonthKeys } from '@/lib/ana
 import { messages } from '@/lib/messages';
 
 import { BarList, KpiCard, TrendTable } from '../dashboard-parts';
+import { formatJstDate, formatJstDateTime } from '@/lib/datetime';
 
 export const dynamic = 'force-dynamic';
 
@@ -45,7 +46,7 @@ export default async function SalesDashboardPage() {
         <h1 className="text-sub-heading font-medium text-charcoal">{m.pageTitle}</h1>
         <p className="mt-1 text-body text-muted">
           {m.pageDescription(d.ym)}
-          {lastFetched ? ` ${m.lastFetched(lastFetched.fetched_at.toLocaleString('ja-JP'))}` : ` ${m.neverFetched}`}
+          {lastFetched ? ` ${m.lastFetched(formatJstDateTime(lastFetched.fetched_at))}` : ` ${m.neverFetched}`}
         </p>
       </header>
 

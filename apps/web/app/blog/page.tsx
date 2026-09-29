@@ -20,6 +20,7 @@ import { getSignedDownloadUrl } from '@a2p/storage';
 import { PseudoCover, RelatedNoteArticles, SectionHeading, SiteFooter, SiteHeader } from '@/components/storefront/chrome';
 import { loadRelatedNoteArticles } from '@/lib/related-note-articles';
 import { STOREFRONT_URL } from '@/lib/site';
+import { formatJstLongDate } from '@/lib/datetime';
 
 export const dynamic = 'force-dynamic';
 
@@ -92,7 +93,7 @@ async function loadPosts(): Promise<PostView[]> {
 }
 
 function fmtDate(d: Date | null): string {
-  return d ? new Date(d).toLocaleDateString('ja-JP', { year: 'numeric', month: 'long', day: 'numeric' }) : '';
+  return formatJstLongDate(d);
 }
 
 /**

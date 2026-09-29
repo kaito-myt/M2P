@@ -15,6 +15,7 @@ import { messages } from '@/lib/messages';
 import type { LinkedPromotionAccountView } from '@/lib/promotion-accounts-core';
 import type { NotePromotionChannel } from '@/lib/promotion-view';
 import type { ZernioAccountView } from '@/lib/zernio';
+import { formatJstShort } from '@/lib/datetime';
 
 const m = messages.promotion.link;
 
@@ -179,7 +180,7 @@ export function LinkedAccountCard({
             <dt className="text-muted">{m.lastTest}</dt>
             <dd className={state.last_test.ok ? 'text-emerald-700' : 'text-red-600'}>
               {state.last_test.message}
-              {state.last_test.at ? ` (${new Date(state.last_test.at).toLocaleString('ja-JP', { dateStyle: 'short', timeStyle: 'short' })})` : ''}
+              {state.last_test.at ? ` (${formatJstShort(state.last_test.at)})` : ''}
             </dd>
           </>
         )}

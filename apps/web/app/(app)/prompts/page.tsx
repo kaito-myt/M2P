@@ -28,6 +28,7 @@ import {
   TabsContent,
 } from '@/components/ui/tabs';
 import { AbDistributionForm } from '@/components/prompts/ab-distribution-form';
+import { formatJstDate } from '@/lib/datetime';
 
 export const metadata: Metadata = {
   title: `${messages.prompts.pageTitle} | ${messages.brand.appName}`,
@@ -267,7 +268,7 @@ export default async function PromptsPage({ searchParams }: PageProps) {
                                 <td className="px-3 py-2 text-muted">{v.created_by}</td>
                                 <td className="px-3 py-2 text-muted">
                                   {v.activated_at
-                                    ? new Date(v.activated_at).toLocaleDateString('ja-JP')
+                                    ? formatJstDate(v.activated_at)
                                     : m.history.noDate}
                                 </td>
                               </tr>

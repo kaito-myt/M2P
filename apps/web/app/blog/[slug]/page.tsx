@@ -16,6 +16,7 @@ import { getSignedDownloadUrl } from '@a2p/storage';
 
 import { PseudoCover, SiteFooter, SiteHeader } from '@/components/storefront/chrome';
 import { STOREFRONT_URL } from '@/lib/site';
+import { formatJstLongDate } from '@/lib/datetime';
 
 export const dynamic = 'force-dynamic';
 
@@ -28,7 +29,7 @@ function plain(md: string, n = 140): string {
 }
 
 function fmtDate(d: Date | null): string {
-  return d ? new Date(d).toLocaleDateString('ja-JP', { year: 'numeric', month: 'long', day: 'numeric' }) : '';
+  return formatJstLongDate(d);
 }
 
 const HEADER_NAV = [

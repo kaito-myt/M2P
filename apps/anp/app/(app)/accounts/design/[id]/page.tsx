@@ -13,6 +13,7 @@ import { messages } from '@/lib/messages';
 import { DesignForm } from './design-form';
 import { FeedbackForm } from './feedback-form';
 import { DesignGeneratingIndicator } from './generating-indicator';
+import { formatJstDate, formatJstDateTime } from '@/lib/datetime';
 
 export default async function AccountDesignDetailPage({
   params,
@@ -77,7 +78,7 @@ export default async function AccountDesignDetailPage({
         <div>
           <h1 className="text-sub-heading font-medium text-charcoal">{idea || dm.pageTitle}</h1>
           <p className="mt-1 text-body text-muted">
-            {statusLabel} ・ {row.created_at.toLocaleString('ja-JP')}
+            {statusLabel} ・ {formatJstDateTime(row.created_at)}
             {row.consultation_id && (
               <>
                 {' ・ '}

@@ -9,6 +9,7 @@ import { CheckCircle2, ExternalLink, Loader2, Plug, ShieldAlert, Trash2 } from '
 
 import { importServiceCredentialsFromEnv, revokeServiceCredentials, setServiceCredentials, testServiceCredentials } from '@/app/actions/settings';
 import type { ApiKeyTestResult, ServiceFields, ServiceProvider, ServiceProviderMeta } from '@/lib/settings-core';
+import { formatJstDateTime } from '@/lib/datetime';
 
 export interface ServiceCredentialRowView {
   provider: ServiceProvider;
@@ -25,7 +26,7 @@ export interface ServiceCredentialRowView {
 }
 
 function fmt(iso: string | null): string {
-  return iso ? new Date(iso).toLocaleString('ja-JP') : '—';
+  return iso ? formatJstDateTime(iso) : '—';
 }
 
 export function ServiceCredentialsPanel({ rows }: { rows: ServiceCredentialRowView[] }) {

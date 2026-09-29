@@ -21,6 +21,7 @@ import {
 } from '@/app/actions/account-consult';
 import type { ConsultationStateView, ConsultMessageView } from '@/lib/account-consult-core';
 import { messages } from '@/lib/messages';
+import { formatJstDate, formatJstDateTime } from '@/lib/datetime';
 
 const POLL_MS = 2500;
 const cm = messages.accountConsult;
@@ -261,7 +262,7 @@ export function ConsultWorkspace({ initial, designHrefFor }: ConsultWorkspacePro
               {state.designs.map((d) => (
                 <li key={d.id} className="flex items-center justify-between gap-2 text-caption">
                   <span className="text-muted">
-                    {new Date(d.created_at).toLocaleString('ja-JP')} ・{' '}
+                    {formatJstDateTime(d.created_at)} ・{' '}
                     {messages.accountDesign.statusLabel[d.status as keyof typeof messages.accountDesign.statusLabel] ??
                       d.status}
                   </span>

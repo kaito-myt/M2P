@@ -17,6 +17,7 @@ import { useState, useMemo } from 'react';
 import Link from 'next/link';
 import { ChevronUp, ChevronDown, ChevronsUpDown } from 'lucide-react';
 
+import { formatJstDate } from '@/lib/datetime';
 import { messages } from '@/lib/messages';
 import {
   formatJpy,
@@ -210,7 +211,7 @@ export function BooksKpiTable({ books }: BooksKpiTableProps) {
                 {/* Published */}
                 <td className="whitespace-nowrap px-space-relaxed py-space-snug text-muted">
                   {book.published_at
-                    ? new Date(book.published_at).toLocaleDateString('ja-JP', { year: 'numeric', month: '2-digit', day: '2-digit' })
+                    ? formatJstDate(book.published_at)
                     : '—'}
                 </td>
 

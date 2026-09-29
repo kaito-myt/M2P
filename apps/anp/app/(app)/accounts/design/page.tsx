@@ -8,6 +8,7 @@ import { prisma } from '@a2p/db';
 import { messages } from '@/lib/messages';
 
 import { BriefForm } from './brief-form';
+import { formatJstDate, formatJstDateTime } from '@/lib/datetime';
 
 export default async function AccountDesignPage() {
   const designs = await prisma.noteAccountDesign.findMany({
@@ -76,7 +77,7 @@ export default async function AccountDesignPage() {
                       </span>
                     </div>
                     <p className="mt-1 text-caption text-muted">
-                      {messages.accountDesign.createdAt}: {d.created_at.toLocaleString('ja-JP')}
+                      {messages.accountDesign.createdAt}: {formatJstDateTime(d.created_at)}
                     </p>
                   </Link>
                 </li>

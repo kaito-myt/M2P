@@ -9,6 +9,7 @@ import { Check, Loader2, ShieldAlert } from 'lucide-react';
 import { setAnpModelAssignment } from '@/app/actions/model-settings';
 import { messages } from '@/lib/messages';
 import type { AnpRoleAssignmentRow, CatalogOption, ModelProvider } from '@/lib/model-settings-core';
+import { formatJstDate, formatJstDateTime } from '@/lib/datetime';
 
 const PROVIDER_LABEL: Record<ModelProvider, string> = { anthropic: 'Anthropic', openai: 'OpenAI', google: 'Google' };
 const mm = messages.settings.models;
@@ -74,7 +75,7 @@ function RoleRow({ row, catalog }: { row: AnpRoleAssignmentRow; catalog: Record<
             <div className="font-mono text-caption text-charcoal">
               {PROVIDER_LABEL[current.provider ?? 'anthropic']} / {current.model}
             </div>
-            <div className="text-caption text-muted">{current.activated_at ? new Date(current.activated_at).toLocaleString('ja-JP') : ''}</div>
+            <div className="text-caption text-muted">{current.activated_at ? formatJstDateTime(current.activated_at) : ''}</div>
             {row.unavailable && current.model === row.model && (
               <div className="mt-0.5 inline-flex items-center gap-1 text-caption text-amber-700">
                 <ShieldAlert className="h-3 w-3" /> {mm.unavailableNotice}

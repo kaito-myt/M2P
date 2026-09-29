@@ -26,6 +26,7 @@ import {
 import { messages } from '@/lib/messages';
 import { cn } from '@/lib/cn';
 import { explainPromotionError } from '@/lib/promotion-error';
+import { formatJstDateTime } from '@/lib/datetime';
 import {
   PROMOTION_CHANNELS,
   type ChannelPostRow,
@@ -300,7 +301,7 @@ function StrategyCard({
 
           {strategy.updatedAt && (
             <p className="text-caption text-muted">
-              {s.updatedAt}: {new Date(strategy.updatedAt).toLocaleString('ja-JP')}
+              {s.updatedAt}: {formatJstDateTime(strategy.updatedAt)}
             </p>
           )}
         </div>
@@ -1062,7 +1063,7 @@ function PostRow({ post }: { post: ChannelPostRow }) {
         <span className="line-clamp-2 text-charcoal">{post.bookTitle}</span>
       </td>
       <td className="py-2 pr-3 whitespace-nowrap text-charcoal-82">
-        {post.scheduledFor ? new Date(post.scheduledFor).toLocaleString('ja-JP') : '—'}
+        {post.scheduledFor ? formatJstDateTime(post.scheduledFor) : '—'}
       </td>
       <td className="py-2 pr-3">
         <span className={cn('rounded-pill px-2 py-0.5 text-caption', statusClass(post.status))}>

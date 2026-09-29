@@ -10,6 +10,7 @@ import { useState, useTransition } from 'react';
 import { approveTheme, rejectTheme } from '@/app/actions/themes';
 import { cn } from '@/lib/cn';
 import { messages } from '@/lib/messages';
+import { formatJstShort } from '@/lib/datetime';
 
 export interface ThemeCardTheme {
   id: string;
@@ -51,7 +52,7 @@ export function ThemeCard({ theme, showAccount }: { theme: ThemeCardTheme; showA
             )}
             {theme.genre}
             {' ・ '}
-            {new Date(theme.created_at).toLocaleString('ja-JP', { dateStyle: 'short', timeStyle: 'short' })}
+            {formatJstShort(theme.created_at)}
           </p>
         </div>
         <span

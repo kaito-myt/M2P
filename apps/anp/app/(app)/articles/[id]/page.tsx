@@ -18,6 +18,7 @@ import { PublishArticleButton } from '../../accounts/[id]/publish-article-button
 
 import { FixTablesButton } from './fix-tables-button';
 import { MonetizeArticleButton } from './monetize-article-button';
+import { formatJstDate, formatJstDateTime } from '@/lib/datetime';
 
 function yen(n: number): string {
   return `¥${n.toLocaleString('ja-JP')}`;
@@ -138,7 +139,7 @@ export default async function ArticleDetailPage({
           <Link href={`/accounts/${article.account.id}`} className="text-charcoal no-underline hover:underline">
             {article.account.display_name}
           </Link>
-          {` ・ ${article.created_at.toLocaleString('ja-JP')}`}
+          {` ・ ${formatJstDateTime(article.created_at)}`}
         </p>
         <div className="mt-2 flex flex-wrap items-center gap-2 text-caption text-muted">
           <span className="rounded-pill border border-border-warm px-2 py-0.5">
@@ -354,7 +355,7 @@ export default async function ArticleDetailPage({
                     <td className="px-3 py-2 text-caption text-charcoal">{j.kind}</td>
                     <td className="px-3 py-2 text-caption text-muted">{j.status}</td>
                     <td className="px-3 py-2 text-caption text-muted">
-                      {j.finished_at ? j.finished_at.toLocaleString('ja-JP') : '—'}
+                      {j.finished_at ? formatJstDateTime(j.finished_at) : '—'}
                     </td>
                     <td className="px-3 py-2 text-caption text-red-600">{j.error ?? ''}</td>
                   </tr>
@@ -378,7 +379,7 @@ export default async function ArticleDetailPage({
               >
                 <span>{p.channel}</span>
                 <span className="text-caption text-muted">{p.status}</span>
-                <span className="text-caption text-muted">{p.scheduled_for.toLocaleString('ja-JP')}</span>
+                <span className="text-caption text-muted">{formatJstDateTime(p.scheduled_for)}</span>
               </li>
             ))}
           </ul>

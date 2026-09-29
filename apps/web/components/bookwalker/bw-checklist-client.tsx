@@ -11,6 +11,7 @@ import { CheckCircle, XCircle } from 'lucide-react';
 
 import { queueToBw, unqueueFromBw } from '@/app/actions/bw-submit';
 import { messages } from '@/lib/messages';
+import { formatJstDate } from '@/lib/datetime';
 
 const m = messages.bwChecklist;
 
@@ -126,7 +127,7 @@ export function BwChecklistClient({ books }: BwChecklistClientProps) {
                   {b.penName ?? '—'}
                   {b.subtitle ? ` ｜ ${b.subtitle}` : ''}
                   {b.bwSubmittedAt
-                    ? ` ｜ 申請 ${new Date(b.bwSubmittedAt).toLocaleDateString('ja-JP')}`
+                    ? ` ｜ 申請 ${formatJstDate(b.bwSubmittedAt)}`
                     : ''}
                 </p>
               </div>

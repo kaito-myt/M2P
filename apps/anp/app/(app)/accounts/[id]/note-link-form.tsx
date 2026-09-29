@@ -9,6 +9,7 @@ import { useState, useTransition } from 'react';
 
 import { linkNoteAccountSession } from '@/app/actions/accounts';
 import { messages } from '@/lib/messages';
+import { formatJstDate, formatJstDateTime } from '@/lib/datetime';
 
 const lm = messages.accounts.link;
 
@@ -37,7 +38,7 @@ export function NoteLinkForm(props: NoteLinkFormProps) {
     if (props.needsReauth) return { text: lm.statusExpired, tone: 'text-destructive' };
     if (props.hasSession && props.sessionLinkedAt && props.handle) {
       return {
-        text: lm.statusLinked(props.handle, new Date(props.sessionLinkedAt).toLocaleString('ja-JP')),
+        text: lm.statusLinked(props.handle, formatJstDateTime(props.sessionLinkedAt)),
         tone: 'text-emerald-700',
       };
     }

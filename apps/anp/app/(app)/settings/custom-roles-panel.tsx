@@ -11,6 +11,7 @@ import { Loader2, Plus, Trash2 } from 'lucide-react';
 import { createAnpAgentRole, deleteAnpAgentRole } from '@/app/actions/model-settings';
 import { messages } from '@/lib/messages';
 import type { CatalogOption, CustomRoleMeta, ModelProvider } from '@/lib/model-settings-core';
+import { formatJstDate, formatJstDateTime } from '@/lib/datetime';
 
 const PROVIDER_LABEL: Record<ModelProvider, string> = { anthropic: 'Anthropic', openai: 'OpenAI', google: 'Google' };
 const m = messages.settings.customRoles;
@@ -75,7 +76,7 @@ export function CustomRolesPanel({ roles, catalog }: { roles: CustomRoleMeta[]; 
                   {r.label} <code className="ml-1 text-caption text-muted">{r.role}</code>
                 </p>
                 {r.description && <p className="mt-0.5 text-caption text-muted">{r.description}</p>}
-                <p className="mt-0.5 text-caption text-muted">{m.createdAt(new Date(r.created_at).toLocaleString('ja-JP'))}</p>
+                <p className="mt-0.5 text-caption text-muted">{m.createdAt(formatJstDateTime(r.created_at))}</p>
               </div>
               <button
                 type="button"

@@ -193,6 +193,8 @@ describe('paperback.draft', () => {
 
     expect(res).toMatchObject({ ok: true, status: 'drafted', titleId: 'ABC123', pages: 120 });
     expect(calls).toHaveLength(1);
+    // 本棚の検索は ASIN ではなく**タイトル**で行うので、タイトルを渡していること。
+    expect(calls[0]).toMatchObject({ asin: 'B0TEST0001', title: 'テスト本' });
     expect(updates.at(-1)).toMatchObject({ pb_publish_status: 'drafted', pb_title_id: 'ABC123' });
   });
 

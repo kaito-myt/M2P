@@ -274,6 +274,7 @@ export async function runPaperbackDraft(
     result = await deps.port.createDraft({
       bookId,
       asin: book.asin,
+      title: book.title,
       categoryPaths: readCategoryPaths(meta?.categories),
       interiorPath,
       coverPath,
