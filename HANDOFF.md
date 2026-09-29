@@ -1,4 +1,4 @@
-# A2P/M2P 作業引き継ぎ（2026-09-28 時点）
+# A2P/M2P 作業引き継ぎ（2026-09-29 時点）
 
 別端末で続きを作業するための現況・残タスク・発見した制約のまとめ。
 起動後はまず本書＋`CLAUDE.md`＋`.claude-handoff/memory/*.md` を読むこと。
@@ -14,6 +14,25 @@
 4. ブラウザ自動化のログイン状態（`scripts/.kdp-userdata`, `scripts/.note-userdata*`）は gitignore。
    KDP は初回 OTP 再認証（LINE リレー or `kdp_auth_requests` 行を手動 fulfilled）。
    BW/Kobo/note のセッションは DB（app_settings / promotion_channel_settings）に暗号化保存済みなので端末非依存。
+
+## 2026-09-29 worker の無音停止と自動復旧 (F-ANP-50)
+
+- **2026-09-27 19:49Z を最後に worker のジョブ完了がゼロ**になっていた。原因は Railway の worker が
+  `postgres.railway.internal` に到達できない状態 (2026-08-30 と同じ障害。`reference_worker_db_outage`)。
+  `public.jobs` には何も残らず、`graphile_worker._private_jobs` の待ち行列だけが膨らむ
+  (`batch_plan.dispatcher` 493 件)。ANP の日次テーマ生成・公開ディスパッチ・売上取得が丸 1 日停止していた。
+- 復旧は従来どおり `railway redeploy --service A2P-Worker --yes`(無出力・exit 0)。
+- **再発防止**: `apps/worker/src/lib/db-watchdog.ts` を追加。60 秒ごとに `select 1`、
+  5 回連続失敗で LINE 通知 → `process.exit(1)` → Railway がコンテナ再起動。
+- 調べ方: `select t.identifier, count(*), max(j.attempts), max(j.last_error) from
+  graphile_worker._private_jobs j join graphile_worker._private_tasks t on t.id=j.task_id group by 1`。
+  `public.jobs` が静かなのに待ち行列が伸びていたら本障害を疑う。
+
+### アイキャッチの確認で分かったこと
+- `anp.seo` が決めるコピーは **`note_articles.eyecatch_copy` 列**に入る (`seo_json` ではない)。
+  25/39 記事にあり。`seo_json` には hashtags/keywords/internal_links などが入る。
+- F-ANP-49 の新デザインは実画像で確認済み (`apps/worker/scripts/note-eyecatch-local.ts`)。
+  文字サイズ 2 種・ニッチ固定の 3 色・下帯のぼかしが効いている。
 
 ## 2026-09-28 ANP（本文の表を画像で出す・サムネの作法）
 
