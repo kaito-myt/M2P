@@ -465,7 +465,12 @@ ANP の機能は A2P の対応機能を note 向けに写像したもの。**太
     「背景がごちゃつくと文字が読めない。奥はぼかすか単純な面に」を追加。
   - `anp.seo` のプロンプト（DB が正本・`scripts/anp/apply-seo-prompts.cjs`）を改訂し、
     `eyecatch_copy` は **6〜12 字**（理想 6〜8 字）・体言止め、`eyecatch_sub` は **10〜16 字**にした
-    （長いコピーは自動縮小で小さくなり、タイムラインで読めなくなるため）。
+    （長いコピーは自動縮小で小さくなり、タイムラインで読めなくなるため）。**2026-09-29 に v3 を
+    投入済み**。直後に生成された記事のコピーは「12件で1件受注」「返信後3日の空白」「4項目で見送り」
+    のように 7〜9 字に収まっており、狙いどおり最大級の文字サイズで描画される。
+  - **コピーの保存先は `note_articles.eyecatch_copy` / `eyecatch_sub` 列**（`seo_json` ではない。
+    `seo_json` には hashtags/keywords/internal_links/primary_keyword/title_alternatives が入る）。
+    見た目の確認は `apps/worker/scripts/note-eyecatch-local.ts`（1 本だけ生成して R2 に保存）。
 - **F-ANP-47 公開済み記事の有料化（2026-09-25）**: 運営者指示「有料化機能作って」。F-ANP-45 で
   無料公開されてしまった既存記事を、note 上で**後から**有料に切り替える経路を作った。
   `pipeline.note.monetize`（§7）が note エディタを開き、アカウントの `free_ratio` に沿った
