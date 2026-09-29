@@ -86,7 +86,9 @@ export interface PaperbackDraftPrisma {
     }) => Promise<{ r2_key: string | null } | null>;
   };
   account: {
-    findFirst: (args: { where: Record<string, unknown> }) => Promise<{ kdp_credentials_enc: string | null } | null>;
+    findFirst: (args: {
+      where: Record<string, unknown>;
+    }) => Promise<{ kdp_session_state_enc: string | null; kdp_2fa_secret_enc: string | null } | null>;
   };
 }
 
@@ -232,17 +234,34 @@ export async function runPaperbackDraft(
   }
 
   // --- 3. KDP で下書きを作る ---
-  const account = await prisma.account.findFirst({ where: { kdp_credentials_enc: { not: null } } });
-  if (!account?.kdp_credentials_enc) {
-    return fail('no_session', 'KDP セッションが保存されていません', FAILURE_COOLDOWN_HOURS);
+  // セッションは `accounts.kdp_session_state_enc` が正 (kdp.submit と同じ)。
+  // `kdp_credentials_enc` は別物で、ここを読むと**未ログイン状態で KDP に入ってしまう**
+  // (2026-09-29 に実際にそれで `reauth_failed` になった)。
+  const account = await prisma.account.findFirst({ where: { kdp_session_state_enc: { not: null } } });
+  if (!account?.kdp_session_state_enc) {
+    return fail('no_session', 'KDP セッション (kdp_session_state_enc) が保存されていません', FAILURE_COOLDOWN_HOURS);
   }
   const decryptSession = deps.decryptSession ?? decryptKdpCredentials;
   let sessionState: string;
   try {
-    sessionState = decryptSession(account.kdp_credentials_enc);
+    sessionState = decryptSession(account.kdp_session_state_enc);
   } catch (err) {
     return fail('session_decrypt_failed', err instanceof Error ? err.message : String(err), FAILURE_COOLDOWN_HOURS);
   }
+  let totpSecret: string | null = null;
+  if (account.kdp_2fa_secret_enc) {
+    try {
+      totpSecret = decryptSession(account.kdp_2fa_secret_enc);
+    } catch {
+      totpSecret = null;
+    }
+  }
+  const { buildOtpProvider } = await import('./kdp-submit/totp.js');
+  const otp = buildOtpProvider({
+    prisma: prisma as never,
+    totpSecret,
+    purpose: 'paperback_draft_relogin',
+  });
 
   const stageDir = mkdtempSync(path.join(tmpdir(), 'pb-draft-'));
   const interiorPath = path.join(stageDir, `${bookId}-interior.pdf`);
@@ -261,7 +280,7 @@ export async function runPaperbackDraft(
       sessionState,
       email: env.AMAZON_EMAIL ?? null,
       password: env.AMAZON_PASSWORD ?? '',
-      totpSecret: env.AMAZON_TOTP_SECRET ?? null,
+      otp,
     });
   } catch (err) {
     return fail('error', err instanceof Error ? err.message : String(err), FAILURE_COOLDOWN_HOURS);

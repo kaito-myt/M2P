@@ -26,6 +26,8 @@
 import { createLogger } from '@a2p/contracts/logger';
 
 import { UA, LAUNCH_ARGS } from '../sales-fetch/playwright-browser-port.js';
+import { passKdpReauth } from '../kdp-submit/playwright-publish-port.js';
+import type { OtpProvider } from '../kdp-submit/totp.js';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 type Page = any;
@@ -65,10 +67,15 @@ export interface PaperbackDraftArgs {
   coverPath: string;
   /** 復号済み storageState (JSON 文字列)。 */
   sessionState: string;
-  /** 再認証の 1 段目 (メールアドレス入力) 用。 */
+  /** 再認証で使うアカウントのメールアドレス (アカウントピッカーの選択にも使う)。 */
   email?: string | null;
   password: string;
-  totpSecret?: string | null;
+  /**
+   * OTP プロバイダ (TOTP or LINE リレー)。`kdp.submit` と同じものを渡す。
+   * 本棚から入ると**メール入力から始まる完全サインイン**になることがあり、
+   * 生の TOTP だけでは通らない (2026-09-29 実測)。
+   */
+  otp: OtpProvider;
 }
 
 export type PaperbackDraftResult =
@@ -169,69 +176,20 @@ async function createDraft(args: PaperbackDraftArgs): Promise<PaperbackDraftResu
     };
 
     /**
-     * 再認証ウォール (max_auth_age=0) を通す。
-     *
-     * 本棚 (`/ja_JP/bookshelf`) から入ると、パスワードだけの壁ではなく
-     * **メールアドレス入力から始まる 2 段のサインイン**になることがある
-     * (2026-09-29 実測。`print-setup` 直行の出版側では出ない)。1 段目が出たら先に通す。
+     * 再認証ウォール。**`kdp.submit` の実績ある実装をそのまま使う**
+     * (アカウントピッカー → パスワード → OTP)。自前の簡易版は本棚から入ったときの
+     * 完全サインイン (メール入力から) に負け、`reauth_failed` で止まっていた
+     * — 2026-09-29 実測。スクショで「このEメールアドレスを持つアカウントが
+     * 見つかりません」を確認済み。
      */
     const passReauth = async (label: string): Promise<boolean> => {
-      if (!/\/ap\/signin/.test(page.url())) return true;
-      log.info({ label, bookId: args.bookId }, 'kdp reauth wall');
-      try {
-        // 1 段目: メールアドレス (パスワード欄がまだ無い場合のみ)。
-        const hasPassword = await page.$('#ap_password').catch(() => null);
-        if (!hasPassword) {
-          const ef = await page.$('#ap_email, #ap_email_login, input[type=email][name=email]').catch(() => null);
-          if (ef && args.email) {
-            await ef.click({ force: true }).catch(() => {});
-            await ef.fill('').catch(() => {});
-            await ef.type(args.email, { delay: 30 });
-            await Promise.all([
-              page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 40000 }).catch(() => null),
-              page
-                .click('#continue, input#continue, #continue-announce')
-                .catch(() => page.keyboard.press('Enter').catch(() => {})),
-            ]);
-            await page.waitForLoadState('domcontentloaded').catch(() => {});
-            await page.waitForTimeout(4000);
-          } else if (!ef) {
-            log.warn({ label }, 'サインイン画面だがメール欄もパスワード欄も見つかりません');
-          }
-        }
-
-        const pf = await page.waitForSelector('#ap_password', { timeout: 20000 }).catch(() => null);
-        if (!pf || !args.password) return false;
-        await pf.click({ force: true }).catch(() => {});
-        await pf.fill('').catch(() => {});
-        await pf.type(args.password, { delay: 35 });
-        await page.check('#auth-remember-me').catch(() => {});
-        await Promise.all([
-          page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 40000 }).catch(() => null),
-          page.click('#signInSubmit').catch(() => {}),
-        ]);
-        await page.waitForLoadState('domcontentloaded').catch(() => {});
-        await page.waitForTimeout(5000);
-
-        const otp = await page.$('#auth-mfa-otpcode').catch(() => null);
-        if (otp) {
-          const secret = (args.totpSecret ?? '').replace(/[\s-]/g, '');
-          if (!secret) return false;
-          const { authenticator } = await import('otplib');
-          await otp.type(authenticator.generate(secret), { delay: 35 }).catch(() => {});
-          await page.check('#auth-mfa-remember-device').catch(() => {});
-          await Promise.all([
-            page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 40000 }).catch(() => null),
-            page.click('#auth-signin-button').catch(() => page.keyboard.press('Enter').catch(() => {})),
-          ]);
-          await page.waitForLoadState('domcontentloaded').catch(() => {});
-          await page.waitForTimeout(5000);
-        }
-        return !/\/ap\/signin/.test(page.url());
-      } catch (err) {
-        log.warn({ err: errMsg(err), label }, 'reauth failed');
-        return !/\/ap\/signin/.test(page.url());
-      }
+      const ok = await passKdpReauth(page, {
+        amazonEmail: args.email ?? undefined,
+        amazonPassword: args.password,
+        otp: args.otp,
+      }).catch(() => false);
+      if (!ok) log.warn({ label, bookId: args.bookId, url: page.url().slice(0, 110) }, 'kdp reauth failed');
+      return ok;
     };
 
     /**

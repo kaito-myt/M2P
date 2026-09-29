@@ -129,7 +129,7 @@ function buildPrisma(overrides: Partial<BookState> = {}, opts: { cover?: boolean
     artifact: {
       findFirst: async () => ({ r2_key: opts.pdfKey === undefined ? 'books/b1/manuscript/final.pdf' : opts.pdfKey }),
     },
-    account: { findFirst: async () => ({ kdp_credentials_enc: 'enc' }) },
+    account: { findFirst: async () => ({ kdp_session_state_enc: 'enc', kdp_2fa_secret_enc: null }) },
   } as unknown as PaperbackDraftPrisma;
   return { prisma, updates, book };
 }

@@ -290,6 +290,18 @@ async function publishOne(args: KdpPublishArgs): Promise<KdpPublishResult> {
 // ---------------------------------------------------------------------------
 // 再認証 (account picker → password → OTP)
 // ---------------------------------------------------------------------------
+/**
+ * [F-097f] 他の KDP ポート (ペーパーバックの下書き作成) からも使えるよう公開する。
+ * アカウントピッカー → パスワード → OTP の順に粘る実績のある実装で、
+ * 自前の簡易版だと本棚から入ったときの**メール入力から始まる完全サインイン**に負ける。
+ */
+export async function passKdpReauth(
+  page: Page,
+  args: Pick<KdpPublishArgs, 'amazonEmail' | 'amazonPassword' | 'otp'>,
+): Promise<boolean> {
+  return passReauth(page, args as KdpPublishArgs);
+}
+
 async function passReauth(page: Page, args: KdpPublishArgs): Promise<boolean> {
   const authForm = async () =>
     page.$('#ap_password, input[type="password"][name="password"], #signInSubmit, #ap_email, ' + OTP_SEL).catch(() => null);
