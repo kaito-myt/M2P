@@ -14,6 +14,9 @@
  *     平均色で埋める（色は裁ち落としまで届くが、文字は安全域に入る）。
  *   - 裏表紙の右下 50.8×30.5mm はバーコード領域なので空けておく。
  */
+// worker 側 (tsx/esbuild) は classic runtime で JSX を変換するため、React の明示 import が要る
+// (`build-pdf.tsx` と同じ。無いと実行時に `React is not defined` になる — 2026-09-29 実測)。
+import React from 'react';
 import { Document, Image, Page, renderToBuffer, Text, View } from '@react-pdf/renderer';
 
 import { registerFonts } from './register-fonts.js';
