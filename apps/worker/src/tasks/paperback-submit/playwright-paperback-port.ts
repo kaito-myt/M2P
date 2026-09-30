@@ -103,6 +103,11 @@ export interface PaperbackPublishArgs {
    * KDP から見ると幅が合わず、差し替えても弾かれ続ける。
    */
   buildCoverForPages?: (pages: number) => Promise<string | null>;
+  /**
+   * [F-097j] 余白を広げたペーパーバック用の本文 PDF。プレビューが
+   * 「内側マージンが不十分です」を出したときに上げ直す。
+   */
+  interiorPath?: string | null;
 }
 
 export type PaperbackPublishResult =
@@ -283,6 +288,41 @@ async function publishDraft(args: PaperbackPublishArgs): Promise<PaperbackPublis
         .catch(() => [] as string[]);
     };
 
+    /** 本文ファイルを上げ直す (原稿のアップロードボタン)。 */
+    const replaceInterior = async (file: string): Promise<boolean> => {
+      await gotoWithReauth(`${BASE}/print-setup/paperback/${titleId}/content`, 'replace-interior');
+      await page.waitForTimeout(4000);
+      const [fc] = await Promise.all([
+        page.waitForEvent('filechooser', { timeout: 20000 }).catch(() => null),
+        page
+          .evaluate(() => {
+            const b = [...document.querySelectorAll('button,[role=button]')].find(
+              (x) =>
+                /原稿をアップロード|原稿を置き換え|本の原稿をアップロード/.test(x.textContent ?? '') &&
+                ((x as HTMLElement).offsetWidth || (x as HTMLElement).offsetHeight),
+            );
+            if (b) (b as HTMLElement).click();
+            return !!b;
+          })
+          .catch(() => false),
+      ]);
+      if (!fc) {
+        const inputs = await page.$$('input[type=file]').catch(() => []);
+        if (inputs.length > 0) await inputs[0].setInputFiles(file).catch(() => {});
+        else return false;
+      } else {
+        await fc.setFiles(file);
+      }
+      for (let i = 0; i < 90; i += 1) {
+        await page.waitForTimeout(10000);
+        const t: string = await page.evaluate(() => document.body.textContent ?? '').catch(() => '');
+        if (/正常にアップロードしました|アップロードに成功|処理が完了しました/.test(t)) break;
+        if (/アップロードで問題|アップロードに失敗/.test(t)) return false;
+      }
+      log.info({ titleId }, 'paperback interior replaced');
+      return true;
+    };
+
     /** 表紙ファイルだけを上げ直す (content ページ側のアップロードボタンを使う)。 */
     const replaceCover = async (file: string): Promise<boolean> => {
       await gotoWithReauth(`${BASE}/print-setup/paperback/${titleId}/content`, 'replace-cover');
@@ -371,6 +411,7 @@ async function publishDraft(args: PaperbackPublishArgs): Promise<PaperbackPublis
     let approvedOk = false;
     let lastPreviewErrors: string[] = [];
     let coverReplaced = false;
+    let interiorReplaced = false;
     // 表紙を差し替えた直後は、警告文が消えていても**必ず承認をやり直す**
     // (差し替え前の承認は新しいファイルには効かない)。
     let forceReapprove = false;
@@ -390,6 +431,22 @@ async function publishDraft(args: PaperbackPublishArgs): Promise<PaperbackPublis
       // **表紙が Kindle 用の A4 縦のまま**なので、エラーが出ていたら一度だけ、こちらで
       // 組み直した正しいラップカバーに差し替えて仕切り直す (文言に「表紙」が出ない
       // ケースもあるため、エラーの有無だけで判断する — 2026-09-29 実測)。
+      // [F-097j] 「内側マージンが不十分です」は本文 PDF の問題なので、余白を広げた本文に差し替える。
+      const marginBad = lastPreviewErrors.some((e) => /マージン/.test(e));
+      if (marginBad && args.interiorPath && !interiorReplaced) {
+        log.warn({ titleId, previewErrors: lastPreviewErrors }, '本文の余白不足 — 余白を広げた本文に差し替える');
+        interiorReplaced = true;
+        forceReapprove = true;
+        if (!(await replaceInterior(args.interiorPath))) {
+          return {
+            ok: false,
+            reason: 'cover_rejected',
+            message: `本文を差し替えられませんでした: ${lastPreviewErrors.join(' / ').slice(0, 200)}`,
+          };
+        }
+        continue;
+      }
+
       const previewHasError = lastPreviewErrors.length > 0;
       if (previewHasError && !coverReplaced) {
         // **KDP が数えた頁数**で作り直す (手元の頁数とは一致しない)。

@@ -118,6 +118,7 @@ export async function runPaperbackSubmit(
   let coverPath: string | null = null;
   // [F-097h] KDP が数えた頁数で表紙を作り直すためのコールバック。
   let buildCoverForPages: ((pages: number) => Promise<string | null>) | undefined;
+  let interiorPath: string | null = null;
   try {
     const { ensurePaperbackCover } = await import('./paperback-draft/build-cover.js');
     const { countPdfPages } = await import('./paperback-draft/plan.js');
@@ -140,6 +141,15 @@ export async function runPaperbackSubmit(
       select: { r2_key: true },
     });
     const interior = pdfArtifact?.r2_key ? await fetchAsset(pdfArtifact.r2_key) : null;
+    log.info(
+      {
+        bookId: book.id,
+        coverKey: coverRow?.r2_key ?? null,
+        pdfKey: pdfArtifact?.r2_key ?? null,
+        interiorBytes: interior?.length ?? 0,
+      },
+      'paperback 表紙生成の入力',
+    );
     if (coverRow?.r2_key && interior) {
       const meta = await prisma.kdpMetadata.findFirst({
         where: { book_id: book.id },
@@ -165,6 +175,39 @@ export async function runPaperbackSubmit(
         log.info({ bookId: book.id, pages, bytes: cover.pdf.length }, 'paperback wrap cover ready (差し替え用)');
       }
       // KDP 変換後の頁数は手元の PDF と一致しないため、プレビューが報告した頁数で組み直す。
+      // [F-097j] 余白を広げたペーパーバック用の本文も用意する。
+      try {
+        const { ensurePaperbackInterior } = await import('./paperback-draft/build-interior.js');
+        const chapters = await prisma.chapter.findMany({
+          where: { book_id: book.id },
+          select: { index: true, heading: true, body_md: true },
+          orderBy: { index: 'asc' },
+        });
+        const built = await ensurePaperbackInterior({
+          bookId: book.id,
+          title: book.title,
+          subtitle: book.subtitle,
+          chapters,
+          fetchAsset,
+          putAsset: (key, buf, ct) => storage.uploadBuffer(key, buf, ct),
+        });
+        if (built.ok) {
+          interiorPath = path.join(stageDir, `${book.id}-pb-interior.pdf`);
+          writeFileSync(interiorPath, built.pdf);
+          log.info(
+            { bookId: book.id, bytes: built.pdf.length, rebuilt: built.rebuilt },
+            'paperback 本文 (余白広め) 準備完了',
+          );
+        } else {
+          log.warn({ bookId: book.id, reason: built.reason }, 'ペーパーバック用本文を組めませんでした');
+        }
+      } catch (err) {
+        log.warn(
+          { bookId: book.id, err: err instanceof Error ? err.message : String(err) },
+          'ペーパーバック用本文の生成に失敗 — 差し替えなしで続行',
+        );
+      }
+
       buildCoverForPages = async (kdpPages: number): Promise<string | null> => {
         const rebuilt = await ensurePaperbackCover({
           bookId: book.id,
@@ -198,6 +241,7 @@ export async function runPaperbackSubmit(
     stageDir,
     coverPath,
     buildCoverForPages,
+    interiorPath,
   });
 
   if (result.ok && result.status === 'submitted') {
