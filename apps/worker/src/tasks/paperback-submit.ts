@@ -39,6 +39,8 @@ const COOLDOWN_HOURS: Record<string, number> = {
   no_previewer: 24,
   no_price_field: 24,
   draft_incomplete: 0,
+  // 自動では直せない (原稿が DB に無い)。運営者が気づけるよう長く寝かせる。
+  no_interior_source: 168,
   reauth_failed: 3,
   uncertain: 6,
   error: 6,

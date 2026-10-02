@@ -4037,3 +4037,8 @@ KDP のプレビューアーが報告する内容を正しく読めるかが、�
   正体がこれだった。`paperback.submit` は `draft_incomplete` を返し、タスク側が
   `pb_publish_status='unlisted'` に戻す (**`pb_title_id` は残す**) ことで、
   `paperback.draft` の再開経路 (`resumeTitleId`) が下書きを完成させる。
+- **原稿が DB に無い本は自動では直せない。** 手作業時代に PDF を直接アップロードした本などは
+  `chapters` も `artifacts(kind='pdf')` も無く、余白を直すための本文を組み直せない
+  (2026-10-02 時点で下書き候補 73 冊中 1 冊)。従来はこれが `cover_rejected` として
+  20 分おきに無限リトライされていた。余白エラーが出ているのに `interiorPath` が無い場合は
+  `no_interior_source` を返し、168 時間のクールダウンを置いて運営者が気づけるようにする。

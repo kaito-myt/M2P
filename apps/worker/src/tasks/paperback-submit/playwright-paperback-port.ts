@@ -145,6 +145,7 @@ export type PaperbackPublishResult =
         | 'reauth_failed'
         | 'no_previewer'
         | 'draft_incomplete'
+        | 'no_interior_source'
         | 'not_approved'
         | 'cover_rejected'
         | 'blocked_prior_page'
@@ -527,6 +528,18 @@ async function publishDraft(args: PaperbackPublishArgs): Promise<PaperbackPublis
       // [F-097j] 「内側マージンが不十分です」は本文 PDF の問題なので、余白を広げた本文に差し替える。
       const realErrors = lastPreviewErrors.filter(isRealPreviewError);
       const marginBad = realErrors.some((e) => /マージン/.test(e));
+      // [F-097k] 余白を直すには本文を組み直すしかないが、その元 (章 or 本文 PDF) が
+      // DB に無い本がある (手作業時代に PDF を直接アップロードした本など)。
+      // 直せないものを 20 分おきに試し続けても枠と時間を食うだけなので、理由を明示して止める。
+      if (marginBad && !args.interiorPath) {
+        await shot(page, `${titleId}-no-interior-source`);
+        return {
+          ok: false,
+          reason: 'no_interior_source',
+          message:
+            '本文の余白が足りませんが、組み直す元の原稿 (章 / 本文 PDF) が DB にないため自動では直せません',
+        };
+      }
       if (marginBad && args.interiorPath && !interiorReplaced) {
         log.warn({ titleId, previewErrors: lastPreviewErrors }, '本文の余白不足 — 余白を広げた本文に差し替える');
         interiorReplaced = true;
