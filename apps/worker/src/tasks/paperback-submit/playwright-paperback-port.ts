@@ -486,13 +486,25 @@ async function publishDraft(args: PaperbackPublishArgs): Promise<PaperbackPublis
      * 価格ページが「以前のページに問題が見つかりました」で固まる (2026-10-02 実測。
      * `no_price_field` / `blocked_prior_page` として延々リトライしていた本の正体)。
      * details/content を保存し直しても直らないので、下書き作成からやり直させる。
+     *
+     * 判定は**必ず content ページに居る状態で**行う。details の「保存して続行」直後は
+     * 遷移中で `evaluate` が例外になり、fail-open だと未完成を見逃す (最初の実装の誤り)。
      */
     const draftLooksComplete = async (): Promise<boolean> =>
       page
         .evaluate(() => /ページ数:\s*\d+/.test(document.body.innerText || ''))
-        .catch(() => true);
+        .catch(() => false);
 
-    if (!(await draftLooksComplete())) {
+    if (!/\/content/.test(page.url())) {
+      await gotoWithReauth(`${BASE}/print-setup/paperback/${titleId}/content`, 'content-completeness');
+    }
+    await page.waitForTimeout(5000);
+    let draftComplete = false;
+    for (let i = 0; i < 3 && !draftComplete; i += 1) {
+      draftComplete = await draftLooksComplete();
+      if (!draftComplete) await page.waitForTimeout(5000);
+    }
+    if (!draftComplete) {
       await shot(page, `${titleId}-draft-incomplete`);
       return {
         ok: false,
