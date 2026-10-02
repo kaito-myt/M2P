@@ -40,8 +40,15 @@ import type { PaperbackDraftPort, PaperbackDraftResult } from './paperback-draft
 
 export const PAPERBACK_DRAFT_TASK_NAME = 'paperback.draft';
 
-/** 作成数上限に当たったときのクールダウン (時間)。 */
-export const CREATION_LIMIT_COOLDOWN_HOURS = 20;
+/**
+ * 作成数上限に当たったときの**本側**のクールダウン (時間)。
+ *
+ * 上限は本の問題ではなくアカウント枠 (1 日 5 冊、Kindle 新刊と共通) なので、本を長く
+ * 眠らせる必要はない。実際の抑制は `app_settings.kdp_creation_paused_until` の
+ * グローバル停止が受け持つ。ここを長くすると、たまたま上限の瞬間に当たっただけの本が
+ * 翌日まで対象外になり待ち行列が痩せる。
+ */
+export const CREATION_LIMIT_COOLDOWN_HOURS = 1;
 /** 判定 NG (ノド余白/頁数レンジ) のクールダウン (時間)。 */
 export const PLAN_NG_COOLDOWN_HOURS = 168;
 /** その他の失敗のクールダウン (時間)。 */
@@ -62,6 +69,10 @@ interface DraftBookRow {
 }
 
 export interface PaperbackDraftPrisma {
+  /** KDP 日次作成上限のグローバル停止 (Kindle 新刊と共通の枠)。 */
+  appSettings?: {
+    update: (args: { where: { id: string }; data: Record<string, unknown> }) => Promise<unknown>;
+  };
   book: {
     findUnique: (args: { where: { id: string } }) => Promise<DraftBookRow | null>;
     update: (args: { where: { id: string }; data: Record<string, unknown> }) => Promise<unknown>;
@@ -283,8 +294,24 @@ export async function runPaperbackDraft(
   }
 
   if (!result.ok) {
-    const hours = result.reason === 'creation_limit' ? CREATION_LIMIT_COOLDOWN_HOURS : FAILURE_COOLDOWN_HOURS;
-    return fail(result.reason, result.message, hours);
+    if (result.reason === 'creation_limit') {
+      // [F-097k] KDP の作成枠は **Kindle 新刊と共通** (1 日 5 冊 / アカウント)。
+      // 到達したら他の本で 10 分×CREATE を繰り返しても無駄なので、`kdp.submit` と
+      // **同じグローバル停止**を立てる。これが無いと 10 分おきに別の本を試しては失敗し、
+      // その都度 20 時間クールダウンを刻んで**待ち行列を汚す**。
+      const { creationLimitPauseUntil } = await import('./kdp-submit.js');
+      const pausedUntil = creationLimitPauseUntil(now());
+      await prisma.appSettings
+        ?.update({ where: { id: 'singleton' }, data: { kdp_creation_paused_until: pausedUntil } })
+        .catch((err: unknown) =>
+          log.warn({ err: err instanceof Error ? err.message : String(err) }, 'kdp_creation_paused_until 設定失敗(無視)'),
+        );
+      log.warn({ bookId, pausedUntil: pausedUntil.toISOString() }, 'KDP作成数制限に到達 — 全体停止');
+      // 本そのものに問題は無いので、本側のクールダウンは短くする (全体停止が効いている間は
+      // どのみち投入されない)。
+      return fail(result.reason, result.message, CREATION_LIMIT_COOLDOWN_HOURS);
+    }
+    return fail(result.reason, result.message, FAILURE_COOLDOWN_HOURS);
   }
 
   // --- 4. DB へ書き戻す ---

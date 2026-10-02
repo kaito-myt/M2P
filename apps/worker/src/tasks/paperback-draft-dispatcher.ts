@@ -21,6 +21,12 @@ import type { AddJobLike } from './sales-fetch-dispatcher.js';
 export const PAPERBACK_DRAFT_DISPATCHER_TASK_NAME = 'paperback.draft.dispatch';
 
 export interface PaperbackDraftDispatcherPrisma {
+  appSettings?: {
+    findUnique(args: {
+      where: { id: string };
+      select: { kdp_creation_paused_until: true };
+    }): Promise<{ kdp_creation_paused_until: Date | null } | null>;
+  };
   book: {
     findMany(args: {
       where: Record<string, unknown>;
@@ -61,6 +67,17 @@ export async function runPaperbackDraftDispatcher(
   if (!hasCreds) {
     log.info('AMAZON_PASSWORD 未設定 — paperback.draft.dispatch skip');
     return { enabled: false, enqueued: 0, bookId: null };
+  }
+
+  // [F-097k] KDP の作成枠は Kindle 新刊と共通 (1 日 5 冊 / アカウント)。
+  // 到達して全体停止中なら何も投入しない (10 分おきに 10 分の CREATE を無駄撃ちしないため)。
+  const settings = await db.appSettings
+    ?.findUnique({ where: { id: 'singleton' }, select: { kdp_creation_paused_until: true } })
+    .catch(() => null);
+  const pausedUntil = settings?.kdp_creation_paused_until ?? null;
+  if (pausedUntil && pausedUntil.getTime() > now().getTime()) {
+    log.info({ pausedUntil: pausedUntil.toISOString() }, 'KDP日次作成上限で全体停止中 — draft dispatch skip');
+    return { enabled: true, enqueued: 0, bookId: null };
   }
 
   const books = await db.book.findMany({

@@ -4013,3 +4013,10 @@ KDP のプレビューアーが報告する内容を正しく読めるかが、�
   - `PaperbackDraftArgs.resumeTitleId` を渡すと本棚と詳細ページを飛ばし、その下書きの
     コンテンツページから再開する。`status='unlisted'` かつ `pb_title_id` あり = 再開対象。
   これに伴い `paperback.draft.dispatch` の絞り込みから `pb_title_id: null` を外した。
+- **KDP の作成枠は Kindle 新刊とペーパーバックで共通** (1 日 5 冊 / アカウント、リセットは JST 0 時)。
+  `kdp.submit` だけが `app_settings.kdp_creation_paused_until` を立てて全体停止していたため、
+  上限到達後も `paperback.draft` が 10 分おきに 10 分の CREATE を無駄撃ちし、失敗のたびに
+  別の本へ 20 時間クールダウンを刻んで**待ち行列を痩せさせる**状態だった。
+  `paperback.draft` も同じグローバル停止を立て・見るようにし、本側のクールダウンは
+  1 時間に短縮した (上限は本の問題ではないため)。
+  → **全部出すのにかかる日数**は概ね `(未出版 Kindle + 未作成ペーパーバック) ÷ 5`。

@@ -116,7 +116,14 @@ function buildPrisma(overrides: Partial<BookState> = {}, opts: { cover?: boolean
     ...overrides,
   };
   const updates: Array<Record<string, unknown>> = [];
+  const settingsUpdates: Array<Record<string, unknown>> = [];
   const prisma = {
+    appSettings: {
+      update: async (args: { data: Record<string, unknown> }) => {
+        settingsUpdates.push(args.data);
+        return {};
+      },
+    },
     book: {
       findUnique: async () => book,
       update: async (args: { data: Record<string, unknown> }) => {
@@ -135,7 +142,7 @@ function buildPrisma(overrides: Partial<BookState> = {}, opts: { cover?: boolean
     },
     account: { findFirst: async () => ({ kdp_session_state_enc: 'enc', kdp_2fa_secret_enc: null }) },
   } as unknown as PaperbackDraftPrisma;
-  return { prisma, updates, book };
+  return { prisma, updates, settingsUpdates, book };
 }
 
 function makePort(result: PaperbackDraftResult): { port: PaperbackDraftPort; calls: unknown[] } {
@@ -219,8 +226,10 @@ describe('paperback.draft', () => {
     expect(cooldown.getTime() - now.getTime()).toBe(PLAN_NG_COOLDOWN_HOURS * 3600_000);
   });
 
-  it('作成数上限なら 20 時間のクールダウン', async () => {
-    const { prisma, updates } = buildPrisma();
+  // 作成枠は Kindle 新刊と共通のアカウント枠 (1 日 5 冊)。本の問題ではないので本側の
+  // クールダウンは短くし、抑制は app_settings のグローバル停止が受け持つ。
+  it('作成数上限なら全体停止を立て、本側のクールダウンは短くする', async () => {
+    const { prisma, updates, settingsUpdates } = buildPrisma();
     const { port } = makePort({ ok: false, reason: 'creation_limit', message: '上限' });
     const pdf = await makePdf(120);
     const now = new Date('2026-09-29T00:00:00Z');
@@ -233,6 +242,10 @@ describe('paperback.draft', () => {
     expect(res).toMatchObject({ ok: false, status: 'creation_limit' });
     const cooldown = updates.at(-1)?.pb_submit_cooldown_until as Date;
     expect(cooldown.getTime() - now.getTime()).toBe(CREATION_LIMIT_COOLDOWN_HOURS * 3600_000);
+    // Kindle 側と同じグローバル停止が立つこと (立たないと 10 分おきに 10 分の CREATE を無駄撃ちする)
+    const paused = settingsUpdates.at(-1)?.kdp_creation_paused_until as Date | undefined;
+    expect(paused).toBeInstanceOf(Date);
+    expect(paused!.getTime()).toBeGreaterThan(now.getTime());
   });
 
   it('ASIN が無ければ対象外', async () => {
@@ -261,10 +274,16 @@ describe('paperback.draft', () => {
 });
 
 describe('paperback.draft.dispatch', () => {
-  function dispatcherPrisma(rows: Array<{ id: string; title: string }>) {
+  function dispatcherPrisma(
+    rows: Array<{ id: string; title: string }>,
+    pausedUntil: Date | null = null,
+  ) {
     const seen: Array<Record<string, unknown>> = [];
     const orderBys: Array<Record<string, unknown> | Array<Record<string, unknown>>> = [];
     const prisma = {
+      appSettings: {
+        findUnique: async () => ({ kdp_creation_paused_until: pausedUntil }),
+      },
       book: {
         findMany: async (args: {
           where: Record<string, unknown>;
@@ -352,6 +371,40 @@ describe('paperback.draft.dispatch', () => {
         expect(fields, `orderBy の ${key} は books に無い列`).toContain(key);
       }
     }
+  });
+
+  // KDP の作成枠は Kindle 新刊と共通 (1 日 5 冊 / アカウント)。到達して全体停止中に
+  // 投入し続けると、10 分おきに 10 分の CREATE を無駄撃ちし、失敗のたびに別の本へ
+  // クールダウンを刻んで待ち行列を汚す。
+  it('KDP 日次作成上限で全体停止中は投入しない', async () => {
+    const { prisma } = dispatcherPrisma(
+      [{ id: 'b1', title: '本' }],
+      new Date(Date.now() + 60 * 60 * 1000),
+    );
+    const addJob = vi.fn(async () => ({}));
+    const res = await runPaperbackDraftDispatcher({
+      prisma,
+      addJob: addJob as never,
+      logger: makeLogger(),
+      hasCreds: true,
+    });
+    expect(res).toMatchObject({ enabled: true, enqueued: 0, bookId: null });
+    expect(addJob).not.toHaveBeenCalled();
+  });
+
+  it('停止が切れていれば投入する', async () => {
+    const { prisma } = dispatcherPrisma(
+      [{ id: 'b1', title: '本' }],
+      new Date(Date.now() - 60 * 1000),
+    );
+    const addJob = vi.fn(async () => ({}));
+    const res = await runPaperbackDraftDispatcher({
+      prisma,
+      addJob: addJob as never,
+      logger: makeLogger(),
+      hasCreds: true,
+    });
+    expect(res.enqueued).toBe(1);
   });
 
   it('認証情報が無ければ無効', async () => {
