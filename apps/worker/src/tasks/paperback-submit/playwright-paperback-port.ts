@@ -490,28 +490,57 @@ async function publishDraft(args: PaperbackPublishArgs): Promise<PaperbackPublis
      * 判定は**必ず content ページに居る状態で**行う。details の「保存して続行」直後は
      * 遷移中で `evaluate` が例外になり、fail-open だと未完成を見逃す (最初の実装の誤り)。
      */
-    const draftLooksComplete = async (): Promise<boolean> =>
+    /**
+     * 完成した下書きの content ページには「概要」が出る:
+     *   判型: 5.83 x 8.27 in … ページ数: 201 印刷コスト ￥608
+     * 未完成の下書きは概要が無く、代わりに「ISBN を取得」ボタンが残っている
+     * (2026-10-02 実測で両方のページテキストを突き合わせて確認)。
+     * 判定を外すと直せない本を 20 分おきに回し続けるので、**見えた印をそのままログに残す**。
+     */
+    const readCompleteness = async (): Promise<{
+      pageCount: number | null;
+      printCost: boolean;
+      needsIsbn: boolean;
+      uploadedInterior: boolean;
+    }> =>
       page
-        .evaluate(() => /ページ数:\s*\d+/.test(document.body.innerText || ''))
-        .catch(() => false);
+        .evaluate(() => {
+          const t = document.body.innerText || '';
+          const needsIsbn = [...document.querySelectorAll('button,a,[role=button],span,input')].some(
+            (x) =>
+              /ISBN を取得/.test(x.textContent || (x as HTMLInputElement).value || '') &&
+              (((x as HTMLElement).offsetWidth || 0) > 0 || ((x as HTMLElement).offsetHeight || 0) > 0),
+          );
+          const m = /ページ数:\s*([\d,]+)/.exec(t);
+          return {
+            pageCount: m ? Number(m[1]!.replace(/,/g, '')) : null,
+            printCost: /印刷コスト/.test(t) && /[￥¥]\s*[\d,]+/.test(t),
+            needsIsbn,
+            uploadedInterior: /原稿[\s\S]{0,120}?正常にアップロード/.test(t),
+          };
+        })
+        .catch(() => ({ pageCount: null, printCost: false, needsIsbn: true, uploadedInterior: false }));
 
     if (!/\/content/.test(page.url())) {
       await gotoWithReauth(`${BASE}/print-setup/paperback/${titleId}/content`, 'content-completeness');
     }
     await page.waitForTimeout(5000);
-    let draftComplete = false;
-    for (let i = 0; i < 3 && !draftComplete; i += 1) {
-      draftComplete = await draftLooksComplete();
-      if (!draftComplete) await page.waitForTimeout(5000);
+    let completeness = await readCompleteness();
+    for (let i = 0; i < 2 && (completeness.needsIsbn || completeness.pageCount == null); i += 1) {
+      await page.waitForTimeout(5000);
+      completeness = await readCompleteness();
     }
-    if (!draftComplete) {
+    log.info({ titleId, ...completeness }, 'paperback 下書きの完成度');
+    if (completeness.needsIsbn || completeness.pageCount == null) {
       await shot(page, `${titleId}-draft-incomplete`);
       return {
         ok: false,
         reason: 'draft_incomplete',
-        message: '下書きが未完成 (原稿未アップロード/ISBN 未取得)。下書き作成からやり直します',
+        message: `下書きが未完成 (ISBN 未取得=${String(completeness.needsIsbn)} 頁数=${String(completeness.pageCount)})。下書き作成からやり直します`,
       };
     }
+    /** 概要から読んだ実際の頁数 (プレビューを起動しなかった回の値付けに使う)。 */
+    const contentPageCount = completeness.pageCount;
 
     let pages: number | null = null;
     let approvedOk = false;
@@ -622,14 +651,9 @@ async function publishDraft(args: PaperbackPublishArgs): Promise<PaperbackPublis
     // null のままになる。そのまま 200 頁と仮定して値付けすると、**厚い本で印刷費を下回る定価**
     // になってしまう (定価は印刷費に連動するため)。content ページの「概要」に出ている
     // 実際の頁数 (「ページ数: 201」) を読んでから値付けする。
-    if (pages == null) {
-      pages = await page
-        .evaluate(() => {
-          const m = /ページ数:\s*(\d+)/.exec(document.body.innerText || '');
-          return m ? Number(m[1]) : null;
-        })
-        .catch(() => null);
-      if (pages != null) log.info({ titleId, pages }, 'content ページから頁数を読み取った');
+    if (pages == null && contentPageCount != null) {
+      pages = contentPageCount;
+      log.info({ titleId, pages }, 'content ページの概要から頁数を使う');
     }
 
     const priceJpy = args.priceFor(pages ?? 200);
