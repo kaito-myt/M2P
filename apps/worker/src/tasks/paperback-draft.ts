@@ -161,9 +161,14 @@ export async function runPaperbackDraft(
 
   const book = await prisma.book.findUnique({ where: { id: bookId } });
   if (!book) throw new NotFoundError(`Book not found: ${bookId}`, { details: { bookId } });
-  if (book.pb_publish_status !== 'unlisted' || book.pb_title_id) {
+  if (book.pb_publish_status !== 'unlisted') {
     log.info({ bookId, status: book.pb_publish_status }, '既に下書き以降 — skip');
     return { ok: true, status: 'already_drafted', titleId: book.pb_title_id };
+  }
+  // [F-097k] status は unlisted のまま titleId だけある = 採番後に落ちた (デプロイ等)。
+  // 本棚にはもう「ペーパーバックの作成」が出ないので、**その下書きを再開する**。
+  if (book.pb_title_id) {
+    log.info({ bookId, titleId: book.pb_title_id }, '採番済みの下書きを再開する');
   }
   if (!book.asin) {
     return fail('no_asin', 'Kindle 版の ASIN が無いので本棚から行を特定できません', PLAN_NG_COOLDOWN_HOURS);
@@ -266,6 +271,12 @@ export async function runPaperbackDraft(
       email: env.AMAZON_EMAIL ?? null,
       password: env.AMAZON_PASSWORD ?? '',
       otp,
+      resumeTitleId: book.pb_title_id,
+      // 採番された瞬間に保存する (status は drafted にしない — アップロードはまだ)。
+      onTitleId: async (titleId: string) => {
+        await prisma.book.update({ where: { id: bookId }, data: { pb_title_id: titleId } });
+        log.info({ bookId, titleId }, 'titleId を先に保存した');
+      },
     });
   } catch (err) {
     return fail('error', err instanceof Error ? err.message : String(err), FAILURE_COOLDOWN_HOURS);

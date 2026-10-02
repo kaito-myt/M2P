@@ -4001,3 +4001,15 @@ KDP のプレビューアーが報告する内容を正しく読めるかが、�
   `/表紙/` だけで判定すると、エラーが 1 つも無いのに毎回表紙を差し替える
   (2026-10-02 実測)。`isRealPreviewError` で案内文を除き、表紙サイズ不適合は
   `COVER_SIZE_ERROR`(提出された表紙サイズ|適切な表紙のサイズ) で判定する。
+- **titleId は「採番された瞬間」に保存する。** `paperback.draft` は 本棚 → 詳細保存で
+  titleId が採番された**あと**に、ISBN/判型/原稿・表紙アップロード (数分) が続く。
+  従来は全部終わってから DB に書いていたため、途中で worker が落ちる (= デプロイ) と
+  **KDP 上には下書きがあるのに DB は何も知らない**状態になった。本棚にはもう
+  「ペーパーバックの作成」が出ないので、その本は二度と進まない (2026-10-02 実測で 1 冊発生し、
+  `pb_title_id='AB6EM5X3KV0'` を手で戻して復旧)。
+  対策は 2 つ:
+  - `PaperbackDraftArgs.onTitleId` で**採番直後に `pb_title_id` だけ**保存する
+    (`pb_publish_status` は `unlisted` のまま — アップロードはまだ終わっていない)。
+  - `PaperbackDraftArgs.resumeTitleId` を渡すと本棚と詳細ページを飛ばし、その下書きの
+    コンテンツページから再開する。`status='unlisted'` かつ `pb_title_id` あり = 再開対象。
+  これに伴い `paperback.draft.dispatch` の絞り込みから `pb_title_id: null` を外した。

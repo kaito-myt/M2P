@@ -66,7 +66,8 @@ export async function runPaperbackDraftDispatcher(
   const books = await db.book.findMany({
     where: {
       pb_publish_status: 'unlisted',
-      pb_title_id: null,
+      // `pb_title_id` が入っていても status が unlisted なら「採番後に落ちた下書き」なので
+      // 対象に含める (paperback.draft 側が本棚を飛ばして再開する — F-097k)。
       asin: { not: null },
       // **Kindle が販売中の本だけ**。取り下げ済み (retracted) は本棚に
       // 「ペーパーバックの作成」が出ず、毎回 no_create_button で枠を潰していた

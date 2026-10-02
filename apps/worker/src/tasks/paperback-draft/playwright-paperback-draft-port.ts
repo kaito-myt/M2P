@@ -82,6 +82,18 @@ export interface PaperbackDraftArgs {
    * 生の TOTP だけでは通らない (2026-09-29 実測)。
    */
   otp: OtpProvider;
+  /**
+   * [F-097k] 下書きが**採番された瞬間**に呼ばれる。ここで titleId を DB に保存しておかないと、
+   * この後の長いアップロード中に worker が落ちたとき (= デプロイ) に
+   * **KDP 上には下書きがあるのに DB は何も知らない**状態になり、本棚にはもう
+   * 「ペーパーバックの作成」が出ないのでその本が二度と進まなくなる (2026-10-02 実測)。
+   */
+  onTitleId?: (titleId: string) => Promise<void>;
+  /**
+   * [F-097k] 既に採番済みの下書きを再開する。指定時は本棚と詳細ページ (STEP0/STEP1) を飛ばし、
+   * その titleId のコンテンツページから再開する。
+   */
+  resumeTitleId?: string | null;
 }
 
 export type PaperbackDraftResult =
@@ -216,7 +228,30 @@ async function createDraft(args: PaperbackDraftArgs): Promise<PaperbackDraftResu
         .catch(() => false);
     };
 
+    // [F-097k] 既に採番済みの下書きがあるなら本棚からやり直さない (作成枠も消費しない)。
+    let resumedTitleId: string | null = null;
+    if (args.resumeTitleId) {
+      await page
+        .goto(`${BASE}/print-setup/paperback/${args.resumeTitleId}/content`, { waitUntil: 'domcontentloaded' })
+        .catch(() => {});
+      await page.waitForTimeout(6000);
+      if (!(await passReauth('resume'))) {
+        await shot('resume-reauth-failed');
+        return { ok: false, reason: 'reauth_failed', message: '下書き再開時に再認証できませんでした' };
+      }
+      if (extractTitleId(page.url()) === args.resumeTitleId) {
+        resumedTitleId = args.resumeTitleId;
+        log.info({ bookId: args.bookId, titleId: resumedTitleId }, 'paperback draft resumed');
+      } else {
+        log.warn(
+          { bookId: args.bookId, titleId: args.resumeTitleId, url: page.url().slice(0, 110) },
+          '下書きを再開できなかったので本棚からやり直す',
+        );
+      }
+    }
+
     // --- STEP0: 本棚 → 「ペーパーバックの作成」 ---
+    if (!resumedTitleId) {
     await page.goto(`${BASE}/ja_JP/bookshelf`, { waitUntil: 'domcontentloaded' }).catch(() => {});
     await page.waitForTimeout(6000);
     if (!(await passReauth('bookshelf'))) {
@@ -514,12 +549,23 @@ async function createDraft(args: PaperbackDraftArgs): Promise<PaperbackDraftResu
     }
     await passReauth('after-step1');
 
-    const titleId = extractTitleId(page.url());
+    }
+
+    const titleId = resumedTitleId ?? extractTitleId(page.url());
     if (!titleId) {
       await shot('no-title-id');
       return { ok: false, reason: 'no_title_id', message: `titleId を取得できません (url=${page.url().slice(0, 110)})` };
     }
-    log.info({ bookId: args.bookId, titleId }, 'paperback draft created');
+    if (!resumedTitleId) {
+      log.info({ bookId: args.bookId, titleId }, 'paperback draft created');
+      // **採番直後に保存する**。この先のアップロードは数分かかり、途中で worker が落ちると
+      // KDP には下書きがあるのに DB が知らない状態になって詰む。
+      if (args.onTitleId) {
+        await args.onTitleId(titleId).catch((err: unknown) => {
+          log.warn({ bookId: args.bookId, titleId, err: errMsg(err) }, 'titleId の保存に失敗');
+        });
+      }
+    }
 
     // --- STEP2: ISBN / 印刷オプション / 判型 / アップロード ---
     const isbnClicked = await page

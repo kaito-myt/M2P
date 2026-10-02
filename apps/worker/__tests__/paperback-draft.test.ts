@@ -309,7 +309,11 @@ describe('paperback.draft.dispatch', () => {
     expect(res).toMatchObject({ enabled: true, enqueued: 1, bookId: 'b1' });
     expect(addJob).toHaveBeenCalledTimes(1);
     // 取り下げ済みの本は本棚に「ペーパーバックの作成」が出ないので対象から外す。
-    expect(seen[0]).toMatchObject({ pb_publish_status: 'unlisted', pb_title_id: null, publish_status: 'published' });
+    expect(seen[0]).toMatchObject({ pb_publish_status: 'unlisted', publish_status: 'published' });
+    // [F-097k] titleId 採番後に落ちた本 (status=unlisted のまま titleId あり) も拾えるよう、
+    // `pb_title_id: null` では絞らない。絞ると KDP 上に下書きがあるのに本棚から
+    // 作り直せない本が永久に進まなくなる。
+    expect(seen[0]).not.toHaveProperty('pb_title_id');
   });
 
   it('対象が無ければ投入しない', async () => {
