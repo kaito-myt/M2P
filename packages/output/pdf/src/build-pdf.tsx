@@ -104,6 +104,9 @@ export interface BuildPdfChapter {
   body_md: string;
 }
 
+/** `renderToBuffer` が受け取れる Document 要素の型。 */
+type PdfDocumentElement = Parameters<typeof renderToBuffer>[0];
+
 /** 左右余白の上書きスタイル(pt)。undefined なら既定の 15mm。 */
 type SidePad = { paddingLeft: number; paddingRight: number } | undefined;
 
@@ -194,13 +197,19 @@ export interface BuildPdfOptions {
   sideMarginMm?: number;
 }
 
-export async function buildPdf(
+/**
+ * PDF の React ツリーを組む (描画はしない)。
+ *
+ * 公開しているのは、**左右余白の上書きが全ページに行き渡っているか**をテストから
+ * 検証できるようにするため。1 ページでも渡し忘れると、ペーパーバック用に余白を広げても
+ * そのページだけ既定の 15mm のまま残り、KDP のプレビューが
+ * 「内側マージンが不十分です」を出し続けて承認できなくなる。
+ */
+export function buildBookDocument(
   book: BuildPdfBook,
   chapters: BuildPdfChapter[],
   opts: BuildPdfOptions = {},
-): Promise<Buffer> {
-  registerFonts();
-
+): PdfDocumentElement {
   const sidePad: SidePad =
     opts.sideMarginMm != null
       ? {
@@ -247,11 +256,23 @@ export async function buildPdf(
       author="宮田海斗"
       subject={book.subtitle ?? undefined}
     >
-      <TitlePage title={book.title} subtitle={book.subtitle} />
+      {/* 扉にも sidePad を渡す。渡し忘れると ペーパーバック用に余白を広げても
+          扉だけ 15mm のまま残り、KDP のプレビューが「内側マージンが不十分です」を
+          出し続ける (大きな中央寄せ文字のページほど左右いっぱいに伸びるため)。 */}
+      <TitlePage title={book.title} subtitle={book.subtitle} sidePad={sidePad} />
       {content}
     </Document>
   );
 
-  const buffer = await renderToBuffer(doc);
+  return doc;
+}
+
+export async function buildPdf(
+  book: BuildPdfBook,
+  chapters: BuildPdfChapter[],
+  opts: BuildPdfOptions = {},
+): Promise<Buffer> {
+  registerFonts();
+  const buffer = await renderToBuffer(buildBookDocument(book, chapters, opts));
   return Buffer.from(buffer);
 }

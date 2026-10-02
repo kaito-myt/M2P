@@ -1,4 +1,4 @@
-export { buildPdf, type BuildPdfBook, type BuildPdfChapter } from './build-pdf.js';
+export { buildPdf, buildBookDocument, type BuildPdfBook, type BuildPdfChapter } from './build-pdf.js';
 export {
   buildPaperbackWrapCover,
   spineWidthMm,

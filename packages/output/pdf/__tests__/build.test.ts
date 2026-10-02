@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { buildPdf, type BuildPdfBook, type BuildPdfChapter } from '../src/index.js';
+import { buildPdf, type BuildPdfBook, type BuildPdfChapter, buildBookDocument } from '../src/index.js';
 
 const sampleBook: BuildPdfBook = {
   title: 'テスト書籍タイトル',
@@ -209,3 +209,62 @@ function generateBenchmarkBody(targetChars: number): string {
   }
   return body.slice(0, targetChars);
 }
+
+describe('ペーパーバック用の左右余白 (F-097j/k)', () => {
+  // KDP は 151〜300 頁の本に 0.5"(12.700mm) 以上の内側マージンを要求する。
+  // 既定の 15mm では余裕が 2.3mm しかなく、章扉のような**大きな中央寄せ文字**の
+  // ページで「内側マージンが不十分です」を出された (2026-10-01 実測、指摘ページ=章扉)。
+  // ペーパーバックは 20mm で組み直すが、1 ページでも渡し忘れるとそのページだけ
+  // 15mm のまま残り、いつまでも承認できない。全ページを機械的に検証する。
+  /**
+   * ページを描く自前コンポーネント (名前が Page/Pages で終わるもの) を
+   * **名前で**集める。`sidePad` が付いているものだけを集めると、渡し忘れた
+   * コンポーネントが素通りして検証にならないため。
+   */
+  function collectPageComponents(
+    node: unknown,
+    out: Array<{ name: string; sidePad: unknown }> = [],
+  ): Array<{ name: string; sidePad: unknown }> {
+    if (node == null || typeof node !== 'object') return out;
+    if (Array.isArray(node)) {
+      for (const child of node) collectPageComponents(child, out);
+      return out;
+    }
+    const el = node as { type?: unknown; props?: Record<string, unknown> };
+    const name = typeof el.type === 'function' ? ((el.type as { name?: string }).name ?? '') : '';
+    if (/Pages?$/.test(name) && el.props) {
+      out.push({ name, sidePad: el.props.sidePad });
+    }
+    if (el.props) collectPageComponents(el.props.children, out);
+    return out;
+  }
+
+  const chapters = [
+    { index: 1, heading: 'はじめに', body_md: 'ほんぶん。'.repeat(40) },
+    { index: 2, heading: '第1章 テスト', body_md: 'ほんぶん。'.repeat(40) },
+  ];
+
+  it('sideMarginMm を渡すと全ページコンポーネントに行き渡る', () => {
+    const doc = buildBookDocument({ title: 'タイトル', subtitle: 'サブ' }, chapters, {
+      sideMarginMm: 20,
+    });
+    const nodes = collectPageComponents(doc);
+    // 扉 / 目次 / 章扉 / 本文 がそろっていること (集計漏れで素通りしないための下限)
+    expect(nodes.map((n) => n.name)).toContain('TitlePage');
+    expect(nodes.length).toBeGreaterThanOrEqual(4);
+    const expected = (20 * 72) / 25.4;
+    for (const n of nodes) {
+      const pad = n.sidePad as { paddingLeft?: number; paddingRight?: number } | undefined;
+      expect(pad, `${n.name} に sidePad が渡っていない`).toBeTruthy();
+      expect(pad!.paddingLeft).toBeCloseTo(expected, 2);
+      expect(pad!.paddingRight).toBeCloseTo(expected, 2);
+    }
+  });
+
+  it('sideMarginMm を渡さなければ既定 (15mm) のまま', () => {
+    const doc = buildBookDocument({ title: 'タイトル', subtitle: null }, chapters, {});
+    const nodes = collectPageComponents(doc);
+    expect(nodes.length).toBeGreaterThanOrEqual(4);
+    for (const n of nodes) expect(n.sidePad).toBeUndefined();
+  });
+});
