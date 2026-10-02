@@ -38,6 +38,7 @@ const COOLDOWN_HOURS: Record<string, number> = {
   not_approved: 6,
   no_previewer: 24,
   no_price_field: 24,
+  draft_incomplete: 0,
   reauth_failed: 3,
   uncertain: 6,
   error: 6,
@@ -265,6 +266,21 @@ export async function runPaperbackSubmit(
   }
 
   const hours = COOLDOWN_HOURS[result.reason] ?? 6;
+  if (result.reason === 'draft_incomplete') {
+    // [F-097k] 原稿も ISBN も入っていない下書き。出版側では直せないので
+    // `pb_publish_status` を unlisted に戻し、**titleId は残したまま**
+    // `paperback.draft` の再開経路 (resumeTitleId) に完成させてもらう。
+    await prisma.book.update({
+      where: { id: book.id },
+      data: {
+        pb_publish_status: 'unlisted',
+        pb_last_error: `${result.reason}: ${result.message}`.slice(0, 500),
+        pb_submit_cooldown_until: null,
+      },
+    });
+    log.warn({ bookId: book.id, titleId: book.pb_title_id }, '下書きが未完成 — 下書き作成へ差し戻す');
+    return { ok: false, status: result.reason, bookId: book.id };
+  }
   await prisma.book.update({
     where: { id: book.id },
     data: {

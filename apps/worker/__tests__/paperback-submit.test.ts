@@ -143,6 +143,31 @@ describe('paperback.submit (F-097d)', () => {
   });
 });
 
+describe('未完成の下書きの差し戻し (F-097k)', () => {
+  // 原稿も ISBN も入っていない下書きは出版側では直せない。従来はこれが
+  // no_price_field / blocked_prior_page として延々リトライされ続けていた。
+  it('draft_incomplete なら unlisted に戻し titleId は残す', async () => {
+    const { prisma, updates } = buildPrisma(BOOK);
+    const { port } = makePort({
+      ok: false,
+      reason: 'draft_incomplete',
+      message: '下書きが未完成',
+    } as PaperbackPublishResult);
+
+    const res = await runPaperbackSubmit(
+      { book_id: 'b1' },
+      { prisma, port, logger: makeLogger(), decryptSession: () => 'session', env: ENV },
+    );
+
+    expect(res).toMatchObject({ ok: false, status: 'draft_incomplete' });
+    const u = updates.at(-1)!;
+    // 下書き作成の再開経路に拾わせる: status は unlisted、titleId は触らない、待たせない。
+    expect(u.pb_publish_status).toBe('unlisted');
+    expect(u).not.toHaveProperty('pb_title_id');
+    expect(u.pb_submit_cooldown_until).toBeNull();
+  });
+});
+
 describe('paperback.submit.dispatch', () => {
   it('下書き済みの本を 1 冊だけ投入する', async () => {
     const enqueued: Array<{ task: string; payload: unknown }> = [];

@@ -144,6 +144,7 @@ export type PaperbackPublishResult =
       reason:
         | 'reauth_failed'
         | 'no_previewer'
+        | 'draft_incomplete'
         | 'not_approved'
         | 'cover_rejected'
         | 'blocked_prior_page'
@@ -475,6 +476,29 @@ async function publishDraft(args: PaperbackPublishArgs): Promise<PaperbackPublis
       log.info({ titleId, warned, state: await previewStateText(page) }, 'paperback content preview state');
       return warned;
     };
+
+    /**
+     * [F-097k] content ページの「概要」に**ページ数と印刷コスト**が出ているか。
+     *
+     * 原稿が処理済みの下書きには必ず「ページ数: 152 印刷コスト ￥510」が出る。
+     * 出ていない = 原稿も ISBN も入っていない**未完成の下書き**で、この状態で先へ進むと
+     * 価格ページが「以前のページに問題が見つかりました」で固まる (2026-10-02 実測。
+     * `no_price_field` / `blocked_prior_page` として延々リトライしていた本の正体)。
+     * details/content を保存し直しても直らないので、下書き作成からやり直させる。
+     */
+    const draftLooksComplete = async (): Promise<boolean> =>
+      page
+        .evaluate(() => /ページ数:\s*\d+/.test(document.body.innerText || ''))
+        .catch(() => true);
+
+    if (!(await draftLooksComplete())) {
+      await shot(page, `${titleId}-draft-incomplete`);
+      return {
+        ok: false,
+        reason: 'draft_incomplete',
+        message: '下書きが未完成 (原稿未アップロード/ISBN 未取得)。下書き作成からやり直します',
+      };
+    }
 
     let pages: number | null = null;
     let approvedOk = false;

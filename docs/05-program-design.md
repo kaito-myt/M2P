@@ -4029,3 +4029,11 @@ KDP のプレビューアーが報告する内容を正しく読めるかが、�
   ウィザードを操作する事故が起きた (2026-10-02 実測)。`paperback.draft.dispatch` /
   `paperback.submit.dispatch` は投入時に `pb_submit_cooldown_until` を
   `IN_FLIGHT_GUARD_MS`(30 分) 先に置き、次の tick で同じ本を選ばないようにする。
+- **未完成の下書きは出版側では直せない — 下書き作成へ差し戻す。** content ページの「概要」に
+  「ページ数: 152 印刷コスト ￥510」が出ていれば原稿は処理済み。出ていない下書きは
+  **原稿も ISBN も入っていない**状態で、この先へ進むと価格ページが
+  「以前のページに問題が見つかりました」で固まる (details/content を保存し直しても直らない)。
+  2026-10-02 実測で、`no_price_field` / `blocked_prior_page` として延々リトライされていた本の
+  正体がこれだった。`paperback.submit` は `draft_incomplete` を返し、タスク側が
+  `pb_publish_status='unlisted'` に戻す (**`pb_title_id` は残す**) ことで、
+  `paperback.draft` の再開経路 (`resumeTitleId`) が下書きを完成させる。
