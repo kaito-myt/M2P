@@ -606,6 +606,20 @@ async function publishDraft(args: PaperbackPublishArgs): Promise<PaperbackPublis
       }
     }
 
+    // [F-097k] プレビューアーを起動しなかった回 (前回すでに承認済みの下書き) は `pages` が
+    // null のままになる。そのまま 200 頁と仮定して値付けすると、**厚い本で印刷費を下回る定価**
+    // になってしまう (定価は印刷費に連動するため)。content ページの「概要」に出ている
+    // 実際の頁数 (「ページ数: 201」) を読んでから値付けする。
+    if (pages == null) {
+      pages = await page
+        .evaluate(() => {
+          const m = /ページ数:\s*(\d+)/.exec(document.body.innerText || '');
+          return m ? Number(m[1]) : null;
+        })
+        .catch(() => null);
+      if (pages != null) log.info({ titleId, pages }, 'content ページから頁数を読み取った');
+    }
+
     const priceJpy = args.priceFor(pages ?? 200);
 
     /**
