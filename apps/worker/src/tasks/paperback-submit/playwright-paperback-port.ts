@@ -529,55 +529,18 @@ async function publishDraft(args: PaperbackPublishArgs): Promise<PaperbackPublis
     }
 
     const priceJpy = args.priceFor(pages ?? 200);
-    const jp = await page.waitForSelector('#price-input-jpy', { timeout: 30000 }).catch(() => null);
-    if (!jp) await shot(page, `${titleId}-no-price-field`);
-    if (!jp) return { ok: false, reason: 'no_price_field', message: '価格入力欄が見つかりません' };
-    await jp.click({ force: true, timeout: 8000 }).catch(() => {});
-    await jp.fill('').catch(() => {});
-    await jp.type(String(priceJpy), { delay: 40 });
-    await page.keyboard.press('Tab');
-    await page.waitForTimeout(4000);
-    log.info({ titleId, priceJpy, pages }, 'paperback price filled');
 
-    // 「以前のページに問題が見つかりました」= 前段が確定していない。戻らず失敗として返す。
-    const blocked = await page
-      .evaluate(() => {
-        const d = [...document.querySelectorAll('[role=dialog], .a-popover')].find(
-          (x) => ((x as HTMLElement).offsetWidth || (x as HTMLElement).offsetHeight) && /以前のページに問題/.test(x.textContent || ''),
-        );
-        return d ? (d.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 160) : null;
-      })
-      .catch(() => null);
-    if (blocked) {
-      // [F-097g] 表紙を差し替えると前段 (details/content) の確定が外れることがある。
-      // details → content の順に保存し直してから価格ページへ戻り、もう一度だけ試す。
-      log.warn({ titleId, blocked }, '以前のページに問題 — details/content を保存し直して再試行');
-      await shot(page, `${titleId}-blocked-prior-page`);
-      await gotoWithReauth(`${BASE}/print-setup/paperback/${titleId}/details`, 'details-retry');
-      const detailsResaved = await clickVisible(/保存して続行/);
-      await page.waitForTimeout(10000);
-      await passReauth('details-resave');
-      await gotoWithReauth(`${BASE}/print-setup/paperback/${titleId}/content`, 'content-retry');
-      const contentResaved = await clickVisible(/保存して続行/);
-      await page.waitForTimeout(12000);
-      await passReauth('content-resave');
-      log.info({ titleId, detailsResaved, contentResaved }, 'paperback 前段を保存し直した');
-
-      if (!/\/pricing/.test(page.url())) {
-        await gotoWithReauth(`${BASE}/print-setup/paperback/${titleId}/pricing`, 'pricing-retry');
-      }
-      const jp2 = await page.waitForSelector('#price-input-jpy', { timeout: 30000 }).catch(() => null);
-      if (!jp2) {
-        await shot(page, `${titleId}-no-price-field-retry`);
-        return { ok: false, reason: 'no_price_field', message: '再試行後も価格入力欄が見つかりません' };
-      }
-      await jp2.click({ force: true, timeout: 8000 }).catch(() => {});
-      await jp2.fill('').catch(() => {});
-      await jp2.type(String(priceJpy), { delay: 40 });
-      await page.keyboard.press('Tab');
-      await page.waitForTimeout(4000);
-
-      const stillBlocked = await page
+    /**
+     * 「本の設定の以前のページに問題が見つかりました。続行するには、戻って情報を確認し、
+     * 保存してください。」ダイアログの文言を返す (出ていなければ null)。
+     *
+     * このダイアログが出ている間は **価格欄 (`#price-input-jpy`) 自体が描画されない**
+     * (「マーケットプレイスが設定されていません」とだけ出る。2026-10-01 実測)。
+     * つまり `no_price_field` の正体はたいていこれなので、価格欄の有無を判定する前に
+     * ダイアログを見て前段を保存し直す必要がある。
+     */
+    const priorPageBlocked = async (): Promise<string | null> =>
+      page
         .evaluate(() => {
           const d = [...document.querySelectorAll('[role=dialog], .a-popover')].find(
             (x) =>
@@ -587,10 +550,59 @@ async function publishDraft(args: PaperbackPublishArgs): Promise<PaperbackPublis
           return d ? (d.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 160) : null;
         })
         .catch(() => null);
-      if (stillBlocked) {
-        await shot(page, `${titleId}-blocked-prior-page-retry`);
-        return { ok: false, reason: 'blocked_prior_page', message: stillBlocked };
+
+    /**
+     * [F-097g] 表紙や本文を差し替えると前段 (details/content) の確定が外れることがある。
+     * details → content の順に保存し直してから価格ページへ戻る。
+     */
+    const resavePriorPages = async (): Promise<void> => {
+      await gotoWithReauth(`${BASE}/print-setup/paperback/${titleId}/details`, 'details-retry');
+      const detailsResaved = await clickVisible(/保存して続行/);
+      await page.waitForTimeout(10000);
+      await passReauth('details-resave');
+      await gotoWithReauth(`${BASE}/print-setup/paperback/${titleId}/content`, 'content-retry');
+      const contentResaved = await clickVisible(/保存して続行/);
+      await page.waitForTimeout(12000);
+      await passReauth('content-resave');
+      log.info({ titleId, detailsResaved, contentResaved }, 'paperback 前段を保存し直した');
+      if (!/\/pricing/.test(page.url())) {
+        await gotoWithReauth(`${BASE}/print-setup/paperback/${titleId}/pricing`, 'pricing-retry');
       }
+    };
+
+    let jp = null as Awaited<ReturnType<typeof page.waitForSelector>> | null;
+    let blockedMsg: string | null = null;
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      jp = await page.waitForSelector('#price-input-jpy', { timeout: 30000 }).catch(() => null);
+      blockedMsg = await priorPageBlocked();
+      if (jp && !blockedMsg) break;
+      if (attempt === 1) break;
+      log.warn(
+        { titleId, blocked: blockedMsg, hasPriceField: Boolean(jp) },
+        '価格欄に入力できない — details/content を保存し直して再試行',
+      );
+      await shot(page, `${titleId}-blocked-prior-page`);
+      await resavePriorPages();
+    }
+
+    if (!jp) {
+      await shot(page, `${titleId}-no-price-field`);
+      return blockedMsg
+        ? { ok: false, reason: 'blocked_prior_page', message: blockedMsg }
+        : { ok: false, reason: 'no_price_field', message: '価格入力欄が見つかりません' };
+    }
+
+    await jp.click({ force: true, timeout: 8000 }).catch(() => {});
+    await jp.fill('').catch(() => {});
+    await jp.type(String(priceJpy), { delay: 40 });
+    await page.keyboard.press('Tab');
+    await page.waitForTimeout(4000);
+    log.info({ titleId, priceJpy, pages }, 'paperback price filled');
+
+    const stillBlocked = await priorPageBlocked();
+    if (stillBlocked) {
+      await shot(page, `${titleId}-blocked-prior-page-retry`);
+      return { ok: false, reason: 'blocked_prior_page', message: stillBlocked };
     }
 
     if (args.dryRun) return { ok: true, status: 'dry_run_ready', pages, priceJpy };
