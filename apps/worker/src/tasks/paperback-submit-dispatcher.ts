@@ -10,6 +10,7 @@ import type { JobHelpers, Task } from 'graphile-worker';
 import { createLogger, type Logger } from '@a2p/contracts/logger';
 import { prisma as defaultPrisma } from '@a2p/db';
 
+import { IN_FLIGHT_GUARD_MS } from './paperback-draft-dispatcher.js';
 import { PAPERBACK_SUBMIT_TASK_NAME } from './paperback-submit.js';
 import type { AddJobLike } from './sales-fetch-dispatcher.js';
 
@@ -23,6 +24,7 @@ export interface PaperbackSubmitDispatcherPrisma {
       orderBy: Record<string, unknown>;
       take: number;
     }): Promise<Array<{ id: string; title: string }>>;
+    update(args: { where: { id: string }; data: Record<string, unknown> }): Promise<unknown>;
   };
 }
 
@@ -76,6 +78,13 @@ export async function runPaperbackSubmitDispatcher(
     { book_id: bookId },
     { jobKey: `paperback-submit-${bookId}`, jobKeyMode: 'preserve_run_at' },
   );
+  // [F-097k] draft 側と同じ理由 (jobKey は実行開始で解放される) で二重起動を防ぐ。
+  await db.book
+    .update({
+      where: { id: bookId },
+      data: { pb_submit_cooldown_until: new Date(now().getTime() + IN_FLIGHT_GUARD_MS) },
+    })
+    .catch(() => undefined);
   log.info({ bookId, title: books[0]!.title }, 'paperback.submit.dispatch enqueued 1 book');
   return { enabled: true, enqueued: 1, bookId };
 }

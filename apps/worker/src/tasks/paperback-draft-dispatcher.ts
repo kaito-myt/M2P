@@ -20,6 +20,9 @@ import type { AddJobLike } from './sales-fetch-dispatcher.js';
 
 export const PAPERBACK_DRAFT_DISPATCHER_TASK_NAME = 'paperback.draft.dispatch';
 
+/** 投入した本を次の tick で選び直さないための猶予 (1 回の実行にかかる時間より長く取る)。 */
+export const IN_FLIGHT_GUARD_MS = 30 * 60 * 1000;
+
 export interface PaperbackDraftDispatcherPrisma {
   appSettings?: {
     findUnique(args: {
@@ -34,6 +37,7 @@ export interface PaperbackDraftDispatcherPrisma {
       orderBy: Record<string, unknown> | Array<Record<string, unknown>>;
       take: number;
     }): Promise<Array<{ id: string; title: string }>>;
+    update(args: { where: { id: string }; data: Record<string, unknown> }): Promise<unknown>;
   };
 }
 
@@ -111,6 +115,17 @@ export async function runPaperbackDraftDispatcher(
     { book_id: bookId },
     { jobKey: `paperback-draft-${bookId}`, jobKeyMode: 'preserve_run_at' },
   );
+  // [F-097k] 同じ本の二重起動を防ぐ。
+  // graphile は**ジョブが走り始めた時点で jobKey を解放する**ので、10 分おきの cron が
+  // 走行中(10〜20 分)の本をもう一度投入してしまい、同じ本に対してブラウザが 2 本
+  // 同時にウィザードを操作する事故が実際に起きた (2026-10-02 実測)。
+  // 走行時間ぶんの短いクールダウンを置いて次の tick では選ばれないようにする。
+  await db.book
+    .update({
+      where: { id: bookId },
+      data: { pb_submit_cooldown_until: new Date(now().getTime() + IN_FLIGHT_GUARD_MS) },
+    })
+    .catch(() => undefined);
   log.info({ bookId, title: books[0]!.title }, 'paperback.draft.dispatch enqueued 1 book');
   return { enabled: true, enqueued: 1, bookId };
 }

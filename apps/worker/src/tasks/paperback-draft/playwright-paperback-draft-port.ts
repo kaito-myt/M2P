@@ -703,7 +703,13 @@ async function createDraft(args: PaperbackDraftArgs): Promise<PaperbackDraftResu
     for (let i = 0; i < 72; i += 1) {
       await page.waitForTimeout(10000);
       const t: string = await page.evaluate(() => document.body.textContent ?? '').catch(() => '');
-      const ok = (t.match(/正常にアップロードしました|アップロードに成功|処理が完了しました/g) ?? []).length;
+      // KDP の文言は原稿と表紙で**違う**:
+      //   原稿 "x.pdf" を正常にアップロードしました
+      //   表紙 "x.pdf" が正常にアップロードされました。   ← 受け身
+      // 「しました」だけを見ていたため常に 1 件しか数えられず、毎回 12 分空回りしてから
+      // 先へ進んでいた (2026-10-02 実測)。
+      const ok = (t.match(/正常にアップロード(しました|されました)|アップロードに成功|処理が完了しました/g) ?? [])
+        .length;
       if (/アップロードで問題|アップロードに失敗|エラーが発生|問題が見つかりました/.test(t)) {
         await shot('upload-error');
         return { ok: false, reason: 'upload_failed', message: 'KDP がアップロードの問題を報告しました' };

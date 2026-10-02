@@ -146,11 +146,16 @@ describe('paperback.submit (F-097d)', () => {
 describe('paperback.submit.dispatch', () => {
   it('下書き済みの本を 1 冊だけ投入する', async () => {
     const enqueued: Array<{ task: string; payload: unknown }> = [];
+    const guards: Array<Record<string, unknown>> = [];
     const prisma = {
       book: {
         findMany: async (args: { take: number }) => {
           expect(args.take).toBe(1);
           return [{ id: 'b1', title: '本' }];
+        },
+        update: async (args: { data: Record<string, unknown> }) => {
+          guards.push(args.data);
+          return {};
         },
       },
     } as unknown as NonNullable<Parameters<typeof runPaperbackSubmitDispatcher>[0]>['prisma'];
@@ -166,6 +171,10 @@ describe('paperback.submit.dispatch', () => {
 
     expect(res).toMatchObject({ enabled: true, enqueued: 1, bookId: 'b1' });
     expect(enqueued[0]).toMatchObject({ task: 'paperback.submit', payload: { book_id: 'b1' } });
+    // [F-097k] 実行開始で jobKey が解放されるので、投入時に短いクールダウンで二重起動を防ぐ。
+    const guard = guards[0]?.pb_submit_cooldown_until as Date | undefined;
+    expect(guard).toBeInstanceOf(Date);
+    expect(guard!.getTime()).toBeGreaterThan(Date.now());
   });
 
   it('資格情報が無ければ何も投入しない', async () => {

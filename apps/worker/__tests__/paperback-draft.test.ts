@@ -280,6 +280,7 @@ describe('paperback.draft.dispatch', () => {
   ) {
     const seen: Array<Record<string, unknown>> = [];
     const orderBys: Array<Record<string, unknown> | Array<Record<string, unknown>>> = [];
+    const guards: Array<Record<string, unknown>> = [];
     const prisma = {
       appSettings: {
         findUnique: async () => ({ kdp_creation_paused_until: pausedUntil }),
@@ -293,9 +294,13 @@ describe('paperback.draft.dispatch', () => {
           orderBys.push(args.orderBy);
           return rows;
         },
+        update: async (args: { where: { id: string }; data: Record<string, unknown> }) => {
+          guards.push(args.data);
+          return {};
+        },
       },
     } as unknown as PaperbackDraftDispatcherPrisma;
-    return { prisma, seen, orderBys };
+    return { prisma, seen, orderBys, guards };
   }
 
   /** `packages/db/schema.prisma` の `model Book` に実在するフィールド名を読む。 */
@@ -317,7 +322,7 @@ describe('paperback.draft.dispatch', () => {
   }
 
   it('下書き未作成の本を 1 冊だけ投入する', async () => {
-    const { prisma, seen } = dispatcherPrisma([{ id: 'b1', title: '本' }]);
+    const { prisma, seen, guards } = dispatcherPrisma([{ id: 'b1', title: '本' }]);
     const addJob = vi.fn(async () => ({}));
     const res = await runPaperbackDraftDispatcher({
       prisma,
@@ -333,6 +338,11 @@ describe('paperback.draft.dispatch', () => {
     // `pb_title_id: null` では絞らない。絞ると KDP 上に下書きがあるのに本棚から
     // 作り直せない本が永久に進まなくなる。
     expect(seen[0]).not.toHaveProperty('pb_title_id');
+    // [F-097k] jobKey は実行開始で解放されるため、cron が走行中の本を再投入してしまう。
+    // 投入時に短いクールダウンを置いて二重起動を防ぐ。
+    const guard = guards[0]?.pb_submit_cooldown_until as Date | undefined;
+    expect(guard).toBeInstanceOf(Date);
+    expect(guard!.getTime()).toBeGreaterThan(Date.now());
   });
 
   it('対象が無ければ投入しない', async () => {
