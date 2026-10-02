@@ -19,6 +19,7 @@
  */
 import { createLogger } from '@a2p/contracts/logger';
 
+import { checkReuploadConfirms } from '../kdp-submit/playwright-publish-port.js';
 import { UA, LAUNCH_ARGS } from '../sales-fetch/playwright-browser-port.js';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -29,6 +30,32 @@ const log = createLogger('worker.paperback-submit.playwright');
 const BASE = 'https://kdp.amazon.co.jp';
 /** content ページに残っていると保存が黙ってブロックされる警告文 (= プレビュー未承認)。 */
 const PREVIEW_WARN = '続行する前に、これらの変更をプレビューして確認してください';
+
+/**
+ * プレビュー/content ページから拾った文のうち、**エラーではない案内文**。
+ *
+ * 画面から広く文言を集めるようにした結果 (F-097k)、「表紙 "...pdf" が正常にアップロード
+ * されました。」のような**成功通知にも「表紙」が含まれる**ため、これを素通しすると
+ * エラーが 1 つも無くても毎回「表紙が不適合」と誤判定して差し替えてしまう (2026-10-02 実測)。
+ */
+const PREVIEW_INFO_PATTERNS: readonly RegExp[] = [
+  /正常にアップロード/,
+  /デザインが新しくなりました/,
+  /ISBN が割り当てられました/,
+  /外部流通機能を利用できません/,
+  /新しい原稿または表紙画像をアップロードされたようです/,
+  /続行する前に、これらの変更をプレビュー/,
+  /原稿、表紙、印刷オプションを更新しました/,
+  /印刷コスト/,
+];
+
+/** KDP が本当にエラーとして出している文言か。 */
+export function isRealPreviewError(text: string): boolean {
+  return !PREVIEW_INFO_PATTERNS.some((re) => re.test(text));
+}
+
+/** 表紙サイズ不適合を指す文言 (「表紙」を含むだけの案内文と区別する)。 */
+export const COVER_SIZE_ERROR = /提出された表紙サイズ|適切な表紙のサイズ|表紙のサイズが適切ではありません/;
 
 /**
  * [F-097e] デバッグ用の画面キャプチャ (R2 `debug/paperback/`)。
@@ -347,7 +374,9 @@ async function publishDraft(args: PaperbackPublishArgs): Promise<PaperbackPublis
         if (/正常にアップロードしました|アップロードに成功|処理が完了しました/.test(t)) break;
         if (/アップロードで問題|アップロードに失敗/.test(t)) return false;
       }
-      log.info({ titleId }, 'paperback interior replaced');
+      // [F-097k] 表紙と同じく、再アップロード後は確認チェックが要る。
+      const cfm = await checkReuploadConfirms(page).catch(() => ({ total: 0, checked: 0 }));
+      log.info({ titleId, ...cfm }, 'paperback interior replaced');
       return true;
     };
 
@@ -390,7 +419,12 @@ async function publishDraft(args: PaperbackPublishArgs): Promise<PaperbackPublis
           return false;
         }
       }
-      log.info({ titleId }, 'paperback cover replaced');
+      // [F-097k] 原稿/表紙を上げ直すと KDP が
+      // 「新しい原稿または表紙画像をアップロードされたようです。これをクリックすることで、
+      //   自分の回答が正しいことを確認することになります。」の確認チェックを要求する。
+      // ON にしないと content が確定せず、価格ページで「以前のページに問題」になる。
+      const cfm = await checkReuploadConfirms(page).catch(() => ({ total: 0, checked: 0 }));
+      log.info({ titleId, ...cfm }, 'paperback cover replaced');
       return true;
     };
 
@@ -467,7 +501,8 @@ async function publishDraft(args: PaperbackPublishArgs): Promise<PaperbackPublis
       // 組み直した正しいラップカバーに差し替えて仕切り直す (文言に「表紙」が出ない
       // ケースもあるため、エラーの有無だけで判断する — 2026-09-29 実測)。
       // [F-097j] 「内側マージンが不十分です」は本文 PDF の問題なので、余白を広げた本文に差し替える。
-      const marginBad = lastPreviewErrors.some((e) => /マージン/.test(e));
+      const realErrors = lastPreviewErrors.filter(isRealPreviewError);
+      const marginBad = realErrors.some((e) => /マージン/.test(e));
       if (marginBad && args.interiorPath && !interiorReplaced) {
         log.warn({ titleId, previewErrors: lastPreviewErrors }, '本文の余白不足 — 余白を広げた本文に差し替える');
         interiorReplaced = true;
@@ -476,13 +511,15 @@ async function publishDraft(args: PaperbackPublishArgs): Promise<PaperbackPublis
           return {
             ok: false,
             reason: 'cover_rejected',
-            message: `本文を差し替えられませんでした: ${lastPreviewErrors.join(' / ').slice(0, 200)}`,
+            message: `本文を差し替えられませんでした: ${realErrors.join(' / ').slice(0, 200)}`,
           };
         }
         continue;
       }
 
-      const previewHasError = lastPreviewErrors.length > 0;
+      // 表紙サイズの指摘が出ていればそれ、出ていなくても**本物の**エラーが残っているなら
+      // 表紙が原因のことが多い (文言に「表紙」が出ないケースがある — 2026-09-29 実測)。
+      const previewHasError = realErrors.some((e) => COVER_SIZE_ERROR.test(e)) || realErrors.length > 0;
       if (previewHasError && !coverReplaced) {
         // **KDP が数えた頁数**で作り直す (手元の頁数とは一致しない)。
         const kdpPages = r.pages ?? pages;
@@ -493,7 +530,7 @@ async function publishDraft(args: PaperbackPublishArgs): Promise<PaperbackPublis
         }
         if (!file) break;
         log.warn(
-          { titleId, kdpPages, previewErrors: lastPreviewErrors },
+          { titleId, kdpPages, previewErrors: realErrors },
           '表紙が KDP 判定で不適合 — KDP の頁数で作り直して差し替える',
         );
         coverReplaced = true;
@@ -502,7 +539,7 @@ async function publishDraft(args: PaperbackPublishArgs): Promise<PaperbackPublis
           return {
             ok: false,
             reason: 'cover_rejected',
-            message: `表紙を差し替えられませんでした: ${lastPreviewErrors.join(' / ').slice(0, 200)}`,
+            message: `表紙を差し替えられませんでした: ${realErrors.join(' / ').slice(0, 200)}`,
           };
         }
         continue;
@@ -510,13 +547,17 @@ async function publishDraft(args: PaperbackPublishArgs): Promise<PaperbackPublis
     }
     if (!approvedOk) {
       await shot(page, `${titleId}-not-approved`);
-      const detail = lastPreviewErrors.length > 0 ? ` KDP の指摘: ${lastPreviewErrors.join(' / ').slice(0, 220)}` : '';
-      const reason = lastPreviewErrors.some((e) => /表紙/.test(e)) ? 'cover_rejected' : 'not_approved';
+      const real = lastPreviewErrors.filter(isRealPreviewError);
+      const detail = real.length > 0 ? ` KDP の指摘: ${real.join(' / ').slice(0, 220)}` : '';
+      const reason = real.some((e) => COVER_SIZE_ERROR.test(e)) ? 'cover_rejected' : 'not_approved';
       return { ok: false, reason, message: `プレビュー承認が記録されませんでした (4 回試行)。${detail}` };
     }
     log.info({ titleId, pages }, 'paperback preview approved');
 
     // --- content を保存して pricing へ ---
+    // 保存前に再アップロードの確認チェックを ON にする (残っていると保存が通らない)。
+    const preSaveCfm = await checkReuploadConfirms(page).catch(() => ({ total: 0, checked: 0 }));
+    if (preSaveCfm.total > 0) log.info({ titleId, ...preSaveCfm }, 'content 保存前の確認チェック');
     const contSaved = await clickVisible(/保存して続行/);
     log.info({ titleId, contSaved }, 'paperback content saved');
     await page.waitForTimeout(12000);
@@ -561,6 +602,8 @@ async function publishDraft(args: PaperbackPublishArgs): Promise<PaperbackPublis
       await page.waitForTimeout(10000);
       await passReauth('details-resave');
       await gotoWithReauth(`${BASE}/print-setup/paperback/${titleId}/content`, 'content-retry');
+      const retryCfm = await checkReuploadConfirms(page).catch(() => ({ total: 0, checked: 0 }));
+      if (retryCfm.total > 0) log.info({ titleId, ...retryCfm }, '前段やり直し時の確認チェック');
       const contentResaved = await clickVisible(/保存して続行/);
       await page.waitForTimeout(12000);
       await passReauth('content-resave');

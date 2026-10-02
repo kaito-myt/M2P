@@ -571,7 +571,7 @@ async function checkConfirmBoxes(page: Page): Promise<{ total: number; checked: 
  * 時だけ複数出現**（AI生成コンテンツ欄・アクセシビリティ欄など）。native input と role=checkbox の
  * 両方に対応し、祖先テキストで対象を特定してクリック＋イベント発火の両手段で確実に checked にする。
  */
-async function checkReuploadConfirms(page: Page): Promise<{ total: number; checked: number }> {
+export async function checkReuploadConfirms(page: Page): Promise<{ total: number; checked: number }> {
   return page.evaluate(() => {
     const RE = /新しい原稿または表紙画像をアップロード|自分の回答が正しいこと/;
     const boxes = [

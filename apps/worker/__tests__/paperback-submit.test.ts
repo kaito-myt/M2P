@@ -3,6 +3,10 @@ import { describe, expect, it, vi } from 'vitest';
 import type { Logger } from '@a2p/contracts/logger';
 
 import { paperbackPrice, printCost, royalty } from '../src/tasks/paperback-submit/paperback-price.js';
+import {
+  COVER_SIZE_ERROR,
+  isRealPreviewError,
+} from '../src/tasks/paperback-submit/playwright-paperback-port.js';
 import type {
   PaperbackPublishPort,
   PaperbackPublishResult,
@@ -174,5 +178,36 @@ describe('paperback.submit.dispatch', () => {
       },
     });
     expect(res).toMatchObject({ enabled: false, enqueued: 0 });
+  });
+});
+
+describe('プレビューの文言分類 (F-097k)', () => {
+  // 画面から広く文言を集めるようにしたら、成功通知「表紙 "x.pdf" が正常にアップロード
+  // されました。」まで拾ってしまい、/表紙/ だけで判定していた表紙差し替えが
+  // **エラーが 1 つも無いのに毎回発火**した (2026-10-02 実測)。
+  it('成功通知や案内文はエラーとして扱わない', () => {
+    const info = [
+      '表紙 "cmq-pb-cover-191p.pdf" が正常にアップロードされました。',
+      '原稿 "cmq-interior.pdf" を正常にアップロードしました',
+      'コンテンツ ページのデザインが新しくなりました',
+      '無料の KDP ISBN が割り当てられました:',
+      '選択された本文、用紙タイプ、判型の本では、外部流通機能を利用できません。',
+      '新しい原稿または表紙画像をアップロードされたようです。',
+      '原稿、表紙、印刷オプションを更新しました。',
+    ];
+    for (const t of info) expect(isRealPreviewError(t), t).toBe(false);
+    for (const t of info) expect(COVER_SIZE_ERROR.test(t), t).toBe(false);
+  });
+
+  it('本物のエラーはエラーとして扱う', () => {
+    const errs = [
+      '内側マージンが不十分です。',
+      'ページの上下には 6.35 mm (0.25 インチ) 以上の外側マージンが必要です。',
+      'エラーのある本は、Amazon の品質基準を満たしません。',
+      '適切な表紙のサイズは 12.000x8.520 ですが、提出されたファイル サイズは 8.264x11.694 です。',
+    ];
+    for (const t of errs) expect(isRealPreviewError(t), t).toBe(true);
+    expect(errs.some((e) => /マージン/.test(e))).toBe(true);
+    expect(errs.filter((e) => COVER_SIZE_ERROR.test(e))).toHaveLength(1);
   });
 });
