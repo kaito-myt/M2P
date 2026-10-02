@@ -1,3 +1,7 @@
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+
 import { describe, expect, it, vi } from 'vitest';
 
 import type { Logger } from '@a2p/contracts/logger';
@@ -259,15 +263,38 @@ describe('paperback.draft', () => {
 describe('paperback.draft.dispatch', () => {
   function dispatcherPrisma(rows: Array<{ id: string; title: string }>) {
     const seen: Array<Record<string, unknown>> = [];
+    const orderBys: Array<Record<string, unknown> | Array<Record<string, unknown>>> = [];
     const prisma = {
       book: {
-        findMany: async (args: { where: Record<string, unknown> }) => {
+        findMany: async (args: {
+          where: Record<string, unknown>;
+          orderBy: Record<string, unknown> | Array<Record<string, unknown>>;
+        }) => {
           seen.push(args.where);
+          orderBys.push(args.orderBy);
           return rows;
         },
       },
     } as unknown as PaperbackDraftDispatcherPrisma;
-    return { prisma, seen };
+    return { prisma, seen, orderBys };
+  }
+
+  /** `packages/db/schema.prisma` の `model Book` に実在するフィールド名を読む。 */
+  function bookModelFields(): Set<string> {
+    const schemaPath = path.resolve(
+      path.dirname(fileURLToPath(import.meta.url)),
+      '../../../packages/db/schema.prisma',
+    );
+    const schema = readFileSync(schemaPath, 'utf8');
+    const start = schema.indexOf('\nmodel Book {');
+    expect(start).toBeGreaterThan(-1);
+    const body = schema.slice(start, schema.indexOf('\n}', start));
+    const fields = new Set<string>();
+    for (const line of body.split('\n')) {
+      const m = /^\s{2}([a-zA-Z_][a-zA-Z0-9_]*)\s+\S/.exec(line);
+      if (m) fields.add(m[1]!);
+    }
+    return fields;
   }
 
   it('下書き未作成の本を 1 冊だけ投入する', async () => {
@@ -296,6 +323,31 @@ describe('paperback.draft.dispatch', () => {
     });
     expect(res.enqueued).toBe(0);
     expect(addJob).not.toHaveBeenCalled();
+  });
+
+  // 2026-10-02: `orderBy: { published_at: 'desc' }` を指定していたが `books` にその列は無く
+  // (それは blog_posts / note_articles の列)、Prisma が毎回 validation error を投げて
+  // `paperback.draft.dispatch` が 297 件積み上がり下書きが 1 冊も進まなかった。
+  // モックではこの種の誤りを捕まえられないので、実スキーマと突き合わせる。
+  it('orderBy は books に実在する列だけを使う', async () => {
+    const { prisma, orderBys } = dispatcherPrisma([{ id: 'b1', title: '本' }]);
+    await runPaperbackDraftDispatcher({
+      prisma,
+      addJob: (async () => ({})) as never,
+      logger: makeLogger(),
+      hasCreds: true,
+    });
+    const fields = bookModelFields();
+    expect(fields.has('done_at')).toBe(true);
+    expect(fields.has('published_at')).toBe(false);
+
+    const used = [orderBys[0]!].flat();
+    expect(used.length).toBeGreaterThan(0);
+    for (const clause of used) {
+      for (const key of Object.keys(clause)) {
+        expect(fields, `orderBy の ${key} は books に無い列`).toContain(key);
+      }
+    }
   });
 
   it('認証情報が無ければ無効', async () => {

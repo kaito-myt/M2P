@@ -41,7 +41,8 @@ async function pickBooks(mode: 'draft' | 'submit', limit: number): Promise<Row[]
       publish_status: 'published',
     },
     select: { id: true, title: true },
-    orderBy: { published_at: 'desc' },
+    // `books` に `published_at` は無い (dispatcher 側のコメント参照)。
+    orderBy: [{ done_at: { sort: 'desc', nulls: 'last' } }, { created_at: 'desc' }],
     take: limit,
   });
 }

@@ -25,7 +25,7 @@ export interface PaperbackDraftDispatcherPrisma {
     findMany(args: {
       where: Record<string, unknown>;
       select: { id: true; title: true };
-      orderBy: Record<string, unknown>;
+      orderBy: Record<string, unknown> | Array<Record<string, unknown>>;
       take: number;
     }): Promise<Array<{ id: string; title: string }>>;
   };
@@ -76,7 +76,13 @@ export async function runPaperbackDraftDispatcher(
     },
     select: { id: true, title: true },
     // 新しい本から。直近に出した本ほど本棚の先頭にあり確実に見つかる。
-    orderBy: { published_at: 'desc' },
+    //
+    // **`books` に `published_at` 列は無い** (それは `blog_posts` / `note_articles` の列)。
+    // 誤って `orderBy: { published_at: 'desc' }` を指定していた間、Prisma が毎回
+    // `Unknown argument 'published_at'` で例外を投げ、`paperback.draft.dispatch` が
+    // 2026-09-30〜10-02 で 297 件積み上がって**下書きが 1 冊も進まなかった**。
+    // Kindle 出版日に相当するのは `done_at` (null あり) なので nulls last で並べる。
+    orderBy: [{ done_at: { sort: 'desc', nulls: 'last' } }, { created_at: 'desc' }],
     take: 1,
   });
   if (books.length === 0) return { enabled: true, enqueued: 0, bookId: null };

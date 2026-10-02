@@ -261,31 +261,59 @@ async function publishDraft(args: PaperbackPublishArgs): Promise<PaperbackPublis
     };
 
     /**
-     * [F-097g] プレビューアーが出しているエラー文を読む。表紙サイズ不適合はここに出る
-     * (「適切な表紙のサイズは 12.000x8.520 ですが…」)。承認ボタンはこのとき無効になる。
+     * [F-097g/j] プレビューアーが出しているエラー文を読む。承認ボタンはこのとき無効になる。
+     *
+     * KDP のプレビューアーは**別フレーム (iframe)** で描画されることがあり、トップ document
+     * だけを見ていると本文の余白エラー
+     *   「内側マージンが不十分です。152 ページの本では、0.5" (12.700mm) 以上の内側マージンが必要です」
+     * を取り逃がす。2026-10-02 まではまさにこれで `マージン` を検出できず、F-097j の
+     * **本文差し替えが一度も発火していなかった** (DB に残った理由は毎回 generic な
+     * 「エラーのある本は、Amazon の品質基準を満たしません」だけだった)。
+     * そのため全フレームを走査する。
      */
+    const PREVIEW_ERROR_PATTERNS: readonly string[] = [
+      '提出された表紙サイズが[^。]*。',
+      '適切な表紙のサイズは[^。]*。',
+      '判型が選択されていますが[^。]*。',
+      // 本文 (原稿) 側の指摘 — これを拾えないと本文の差し替えが発火しない。
+      '内側マージン[^。]*。',
+      '外側マージン[^。]*。',
+      'マージンが不十分[^。]*。',
+      'ページの上下には[^。]*。',
+      'エラーのある本は[^。]*。',
+    ];
+
     const previewErrors = async (): Promise<string[]> => {
-      return page
-        .evaluate(() => {
-          const txt = document.body.innerText || '';
-          const out: string[] = [];
-          for (const re of [
-            /提出された表紙サイズが[^。]*。/g,
-            /適切な表紙のサイズは[^。]*。/g,
-            /判型が選択されていますが[^。]*。/g,
-            /エラーのある本は[^。]*。/g,
-          ]) {
-            let m: RegExpExecArray | null;
-            while ((m = re.exec(txt)) !== null && out.length < 8) out.push(m[0].replace(/\s+/g, ' ').trim());
-          }
-          // 左パネルのエラーボックス本文も拾う (上の決め打ちに当たらない文言のため)。
-          for (const box of [...document.querySelectorAll('[class*="error"], [class*="Error"]')]) {
-            const t = (box.textContent ?? '').replace(/\s+/g, ' ').trim();
-            if (t.length > 8 && t.length < 400 && out.length < 12 && !out.includes(t)) out.push(t);
-          }
-          return out;
-        })
-        .catch(() => [] as string[]);
+      const out: string[] = [];
+      const push = (raw: string): void => {
+        const v = raw.replace(/\s+/g, ' ').trim();
+        if (v.length > 6 && v.length < 400 && !out.includes(v)) out.push(v);
+      };
+      for (const frame of page.frames()) {
+        const found = await frame
+          .evaluate((sources: readonly string[]) => {
+            const txt = document.body?.innerText ?? '';
+            const hits: string[] = [];
+            for (const src of sources) {
+              const re = new RegExp(src, 'g');
+              let m: RegExpExecArray | null;
+              while ((m = re.exec(txt)) !== null && hits.length < 24) hits.push(m[0]);
+            }
+            // 決め打ちに当たらない文言のため、エラーボックス本文も拾う。
+            const boxes = document.querySelectorAll(
+              '[class*="error"], [class*="Error"], [role="alert"]',
+            );
+            for (const box of [...boxes]) {
+              const t = box.textContent ?? '';
+              if (t.trim().length > 8) hits.push(t);
+            }
+            return hits;
+          }, PREVIEW_ERROR_PATTERNS)
+          .catch(() => [] as string[]);
+        for (const t of found) push(t);
+        if (out.length >= 12) break;
+      }
+      return out.slice(0, 12);
     };
 
     /** 本文ファイルを上げ直す (原稿のアップロードボタン)。 */
@@ -391,6 +419,13 @@ async function publishDraft(args: PaperbackPublishArgs): Promise<PaperbackPublis
       await page.goto(`${BASE}/print-setup/paperback/${titleId}/content`, { waitUntil: 'domcontentloaded' }).catch(() => {});
       await page.waitForTimeout(6000);
       await passReauth('after-approve');
+      // プレビューアーを閉じると消える文言と、content ページ側に残る文言の両方があるので
+      // 戻ったあともう一度拾ってマージする。
+      const contentErrs = await previewErrors();
+      if (contentErrs.length > 0) {
+        lastPreviewErrors = [...new Set([...lastPreviewErrors, ...contentErrs])].slice(0, 12);
+        log.info({ titleId, contentErrors: contentErrs }, 'content ページ側のエラー文も収集');
+      }
       return { opened: true, pages };
     };
 
