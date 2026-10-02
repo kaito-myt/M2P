@@ -511,9 +511,16 @@ async function publishDraft(args: PaperbackPublishArgs): Promise<PaperbackPublis
               /ISBN を取得/.test(x.textContent || (x as HTMLInputElement).value || '') &&
               (((x as HTMLElement).offsetWidth || 0) > 0 || ((x as HTMLElement).offsetHeight || 0) > 0),
           );
-          const m = /ページ数:\s*([\d,]+)/.exec(t);
+          // 「ページ数:」は**概要以外にも出る**。未完成の下書きでも KDP の最小頁数の
+          // 案内として「ページ数: 24」が入っており、最初の一致を拾うと 24 頁として
+          // 値付けしてしまう (2026-10-02 実測)。実際の頁数は常に案内値以上なので
+          // **すべての一致の最大値**を採る。
+          const counts = [...t.matchAll(/ページ数:\s*([\d,]+)/g)].map((x) =>
+            Number(x[1]!.replace(/,/g, '')),
+          );
+          const maxCount = counts.length > 0 ? Math.max(...counts) : null;
           return {
-            pageCount: m ? Number(m[1]!.replace(/,/g, '')) : null,
+            pageCount: maxCount,
             printCost: /印刷コスト/.test(t) && /[￥¥]\s*[\d,]+/.test(t),
             needsIsbn,
             uploadedInterior: /原稿[\s\S]{0,120}?正常にアップロード/.test(t),
