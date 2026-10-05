@@ -1305,3 +1305,26 @@ Vercel AI SDK + Anthropic SDK / gpt-image / Cloudflare R2 / NextAuth(共有) / T
       グローバルより先に有効化する」ことはできない(§6 Phase7 追記に既知の制約として記載)。
       運営者が特定アカウントだけ自動化したい場合は、グローバル設定を先に ON にしたうえで
       他アカウントを `/accounts/[id]` の設定で個別に OFF にする運用を想定している。
+
+### judge の `suggested_price_jpy=0` が有料記事を無料にしていた (F-ANP-45 再発, 2026-10-05)
+
+運営者報告「note が全部無料記事になってる」。実測すると **9/25 以降に公開した 21 本すべてが無料**で、
+有料企画だったのに無料で公開された記事が 9 本、未公開のまま `paid=false` に落ちた記事が 21 本あった。
+
+原因は `pipeline.note.judge` の `resolveFinalPricing`:
+
+- judge の出力仕様は `suggested_price_jpy` を「`recommend_paid=true` のときの想定価格」としか
+  書いていないため、**有料を勧めないとき judge は `0` を返す**。
+- `const price = judged.suggested_price_jpy ?? article.price_jpy` の `??` は **null/undefined しか
+  拾わない**ので、`0` がそのまま採用され、企画時に決めた価格 (680 円など) を打ち消す。
+- 結果 `price > 0` を満たせず `canPaid=false` → **「judge に格下げはさせない」設計が無効化**され、
+  さらに `paid=false` の時点で `paywall_line_pos` も消えるため後から戻すこともできない。
+
+対処:
+
+- `suggested_price_jpy` は **0 以下を「提案なし」として扱い**、企画時の価格へ落とす
+  (`apps/worker/__tests__/pipeline-note-judge.test.ts` に 0 のケースの回帰テストを追加。
+  旧実装に戻すと失敗することを確認済み)。
+- judge の出力仕様にも「有料を勧めないときは 0 を入れずキーごと省略する」と明記した。
+- **教訓**: 「未設定」を `0` で表す外部出力に `??` を使わない。`0` が意味を持つ場では
+  `> 0` で明示的に判定する。既存テストは `null` しか試しておらず、実機が返す `0` を素通ししていた。

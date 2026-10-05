@@ -99,7 +99,9 @@ export async function judgeNoteArticle(
     '  },',
     '  "judge_comments": { [axis: string]: string },',
     '  "recommend_paid": boolean (この内容なら有料販売を推奨するか),',
-    '  "suggested_price_jpy": integer (recommend_paid=true のときの想定価格。円、100〜3000程度)',
+    '  "suggested_price_jpy": integer (recommend_paid=true のときの想定価格。円、100〜3000程度。',
+    '    有料を勧めないときは **0 を入れず、このキーごと省略する** — 0 を入れると',
+    '    企画時に決めた価格を打ち消して有料記事が無料で公開される)',
     '}',
     'JSON 以外のテキストは出力しないこと。',
   ].join('\n');

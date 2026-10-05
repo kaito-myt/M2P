@@ -326,6 +326,20 @@ describe('resolveFinalPricing (F-ANP-45: judge に有料→無料の格下げを
     expect(r).toEqual({ paid: true, price_jpy: 500 });
   });
 
+  // 実機の judge は recommend_paid=false のとき suggested_price_jpy に **0** を返す。
+  // null ではないので `??` では拾えず、企画時の価格を 0 で潰していた (2026-10-05 実測)。
+  it('judge が価格 0 を返しても企画時の価格を維持する', () => {
+    const judgedZero = { recommend_paid: false, suggested_price_jpy: 0 } as never;
+    const r = resolveFinalPricing({ paid: true, price_jpy: 680, paywall_line_pos: 900 }, judgedZero, true);
+    expect(r).toEqual({ paid: true, price_jpy: 680 });
+  });
+
+  it('企画価格も 0 なら有料にはしない (値段が決まらないため)', () => {
+    const judgedZero = { recommend_paid: false, suggested_price_jpy: 0 } as never;
+    const r = resolveFinalPricing({ paid: true, price_jpy: 0, paywall_line_pos: 900 }, judgedZero, true);
+    expect(r).toEqual({ paid: false, price_jpy: null });
+  });
+
   it('judge が何も言わなくても企画の有料を維持する', () => {
     const r = resolveFinalPricing({ paid: true, price_jpy: 680, paywall_line_pos: 900 }, judgedSilent, true);
     expect(r).toEqual({ paid: true, price_jpy: 680 });

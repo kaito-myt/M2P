@@ -384,7 +384,19 @@ export function resolveFinalPricing(
   // 企画時に有料なら有料のまま。無料でも judge が有料を勧めるなら格上げは許す。
   const plannedPaid = article.paid || judged.recommend_paid === true;
   if (!plannedPaid) return { paid: false, price_jpy: null };
-  const price = judged.suggested_price_jpy ?? article.price_jpy ?? null;
+  // judge は `recommend_paid=false` のとき `suggested_price_jpy` に **0** を入れてくる
+  // (出力仕様が「recommend_paid=true のときの想定価格」としか言っていないため)。
+  // `??` は null/undefined しか拾わないので **0 は素通しされ**、企画時の価格 (680 円など) を
+  // 0 で上書きしてしまう。すると下の `price > 0` を満たせず、格下げ禁止のはずの記事が
+  // 無料で公開される — 2026-10-05 実測で、有料企画なのに無料になった記事が 29 本、
+  // 9/25 以降に公開した記事は 21 本すべて無料だった (F-ANP-45 の再発)。
+  // 0 以下は「提案なし」とみなし、企画時の価格へ落とす。
+  const suggested =
+    typeof judged.suggested_price_jpy === 'number' && judged.suggested_price_jpy > 0
+      ? judged.suggested_price_jpy
+      : null;
+  const planned = article.price_jpy !== null && article.price_jpy > 0 ? article.price_jpy : null;
+  const price = suggested ?? planned;
   // 有料にできるのは「アカウントが許可」かつ「有料ラインが本文にある」かつ「価格が決まっている」ときだけ。
   // (有料ラインが無いまま paid にすると publish 時に本文が丸ごと有料側へ入ってしまう)
   const canPaid = paidAllowed && price !== null && price > 0 && (article.paywall_line_pos ?? null) !== null;
