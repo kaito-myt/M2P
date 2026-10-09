@@ -13,6 +13,7 @@ import { prisma as defaultPrisma } from '@a2p/db';
 
 import { applyNoteArticleCostFromJob, type NoteArticleCostPrisma } from './lib/note-article-cost.js';
 import type { NoteArticleRepo } from './lib/note-article-repo.js';
+import { resolveTargetChars } from './lib/note-target-chars.js';
 import { PIPELINE_NOTE_EDITOR_TASK_NAME } from './pipeline-note-editor.js';
 
 /**
@@ -36,7 +37,7 @@ export const PipelineNoteWriterBodyPayloadSchema = z.object({
 });
 export type PipelineNoteWriterBodyPayload = z.infer<typeof PipelineNoteWriterBodyPayloadSchema>;
 
-const DEFAULT_TARGET_CHARS = 4000;
+// 目標文字数は無料/有料で違う (`lib/note-target-chars.ts`)。
 const DEFAULT_FREE_RATIO = 0.3;
 
 export interface PipelineNoteWriterBodyPrisma {
@@ -253,7 +254,7 @@ export async function runPipelineNoteWriterBody(
       lead,
       headings,
       paid: article.paid,
-      target_chars: DEFAULT_TARGET_CHARS,
+      target_chars: resolveTargetChars(account.monetization_policy_json, article.paid),
       free_ratio: readFreeRatio(account.monetization_policy_json),
     };
     if (article.paid && article.price_jpy !== null) input.price_jpy = article.price_jpy;

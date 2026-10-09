@@ -13,6 +13,7 @@ import { prisma as defaultPrisma } from '@a2p/db';
 
 import { applyNoteArticleCostFromJob, type NoteArticleCostPrisma } from './lib/note-article-cost.js';
 import type { NoteArticleRepo } from './lib/note-article-repo.js';
+import { resolveTargetChars } from './lib/note-target-chars.js';
 import { PIPELINE_NOTE_WRITER_BODY_TASK_NAME } from './pipeline-note-writer-body.js';
 
 /**
@@ -45,8 +46,8 @@ export type PipelineNoteWriterOutlinePayload = z.infer<
   typeof PipelineNoteWriterOutlinePayloadSchema
 >;
 
-/** note 記事 1 本あたりの既定目標文字数 (docs/11 §3.2 — 数千字)。 */
-const DEFAULT_TARGET_CHARS = 4000;
+// 目標文字数は無料/有料で違う (`lib/note-target-chars.ts`)。見出しの本数は目標字数に
+// 引きずられるので、本文執筆 (writer.body) と**同じ値**を見出し設計にも渡す必要がある。
 
 export interface PipelineNoteWriterOutlinePrisma {
   job: {
@@ -88,12 +89,20 @@ export interface PipelineNoteWriterOutlinePrisma {
   noteAccount: {
     findUnique: (args: {
       where: { id: string };
-      select: { id: true; niche: true; target_reader: true; tone: true; editorial_policy?: true };
+      select: {
+        id: true;
+        niche: true;
+        target_reader: true;
+        tone: true;
+        monetization_policy_json?: true;
+        editorial_policy?: true;
+      };
     }) => Promise<{
       id: string;
       niche: string;
       target_reader: string | null;
       tone: string | null;
+      monetization_policy_json?: unknown;
       editorial_policy?: string | null;
     } | null>;
   };
@@ -183,7 +192,14 @@ export async function runPipelineNoteWriterOutline(
 
     const account = await prisma.noteAccount.findUnique({
       where: { id: article.note_account_id },
-      select: { id: true, niche: true, target_reader: true, tone: true, editorial_policy: true },
+      select: {
+        id: true,
+        niche: true,
+        target_reader: true,
+        tone: true,
+        monetization_policy_json: true,
+        editorial_policy: true,
+      },
     });
     if (!account) {
       throw new NotFoundError(`NoteAccount not found: ${article.note_account_id}`, {
@@ -208,7 +224,7 @@ export async function runPipelineNoteWriterOutline(
         target_reader: theme?.target_reader ?? account.target_reader ?? undefined,
       },
       paid: article.paid,
-      target_chars: DEFAULT_TARGET_CHARS,
+      target_chars: resolveTargetChars(account.monetization_policy_json, article.paid),
     };
 
     const outline = await generateOutline(input);

@@ -41,6 +41,8 @@ interface AccountRecord {
   niche: string;
   target_reader: string | null;
   tone: string | null;
+  /** 目標文字数の上書き (`target_chars_free` / `target_chars_paid`) を読むのに使う。 */
+  monetization_policy_json?: unknown;
 }
 interface ThemeRecord {
   id: string;

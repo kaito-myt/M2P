@@ -25,8 +25,23 @@ import type { LoadModelAssignmentDeps } from '../lib/load-model-assignment.js';
 import { extractJson } from './lib/extract-json.js';
 import { editorialPolicyLines } from './account-context.js';
 
-const DEFAULT_MAX_OUTPUT_TOKENS = 8192;
+/**
+ * 出力上限。日本語本文を JSON 文字列として返すため、実測で **1 字あたり約 1.5 トークン**
+ * かかる (2026-10-09: 平均 4,935 トークンで本文 3,200 字)。8192 では 253 回中 20 回 (7.9%)
+ * が上限に張り付いて**本文が文の途中で切れており**、末尾の免責文や CTA ごと失われていた。
+ * 有料記事の目標 (4,000〜7,000 字) を満たすには 1 万トークンを超えるので余裕を取る。
+ */
+const DEFAULT_MAX_OUTPUT_TOKENS = 16384;
 const MAX_PARSE_RETRIES = 2;
+
+/**
+ * 目標文字数に対して許す下限の比率。これを下回ったら不足字数を伝えて書き直させる。
+ *
+ * 実測 (2026-10-09) で無料記事は目標 4,000 字に対し平均 3,131 字 (78%)、有料記事は 3,659 字
+ * (91%) しか出ておらず、有料記事はアカウント方針が定める下限 4,000 字を割っていた。
+ * 目標値だけ引き上げても同じ比率で未達になるので、下限を機械的に突き返す。
+ */
+const MIN_CHAR_RATIO = 0.85;
 
 /** 有料記事の無料/有料の区切りマーカー。本文中に単独行として出現する想定。 */
 export const PAYWALL_MARKER = '<<<PAYWALL>>>';
@@ -165,10 +180,14 @@ export async function generateNoteBody(
     '}',
     'JSON 以外のテキストは出力しないこと。JSON 文字列値内の改行は必ず \\n でエスケープすること。',
   );
-  const userMessage = lines.join('\n');
+  const baseUserMessage = lines.join('\n');
+  const minChars = Math.floor(parsedInput.target_chars * MIN_CHAR_RATIO);
 
   let lastError: AgentError | undefined;
+  /** 前回が短すぎた場合に追記する指示 (不足字数つき)。 */
+  let shortfall: string | undefined;
   for (let attempt = 1; attempt <= MAX_PARSE_RETRIES; attempt++) {
+    const userMessage = shortfall ? `${baseUserMessage}\n\n${shortfall}` : baseUserMessage;
     const completion = await client.complete({
       role: 'anp.writer',
       genre: null,
@@ -214,6 +233,28 @@ export async function generateNoteBody(
       continue;
     }
     const charCount = [...body].length;
+    if (charCount < minChars && attempt < MAX_PARSE_RETRIES) {
+      // 薄い記事は judge の「無料部分だけでは1つも試せない」「有料部分が無料部分の繰り返し」で
+      // 差し戻される。字数を埋めるための水増しではなく、中身を足して伸ばすよう具体的に指示する。
+      shortfall = [
+        `【前回の出力は ${charCount} 字で、目標 ${parsedInput.target_chars} 字に対して ` +
+          `${parsedInput.target_chars - charCount} 字足りませんでした。書き直してください】`,
+        `- 最低 ${minChars} 字。同じ内容を言い換えて伸ばすのではなく、中身を足して伸ばすこと。`,
+        '- 足すもの: 実際の手順を番号付きで分解する / 数字と集計条件を添えた表を増やす /',
+        '  うまくいかなかった場合の分岐 / 判断を間違えた実例とその理由。',
+        '- 見出し構成は変えない。各見出しの中身を厚くする。',
+        ...(parsedInput.paid
+          ? [
+              '- 無料部分は、それだけで読者が1つ試し切れる分量にする (考え方と根拠を完結させる)。',
+              '- 有料部分は無料部分の繰り返しにせず、条件式・閾値・テンプレート・全データを置く。',
+            ]
+          : []),
+      ].join('\n');
+      lastError = new AgentError('anp.writer.invalid_output: body too short', {
+        details: { charCount, minChars, targetChars: parsedInput.target_chars, attempt },
+      });
+      continue;
+    }
     const output: NoteWriterOutput = { body_md: body, char_count: charCount };
     if (paywallLinePos !== undefined) output.paywall_line_pos = paywallLinePos;
     return output;

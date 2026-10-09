@@ -35,6 +35,18 @@ function paragraphs(bodyMd: string): string[] {
     .filter((p) => p.length > 0);
 }
 
+/**
+ * 「ここは無料パートです」と自称している見出しを判定する (2026-10-09 実測)。
+ *
+ * ライターはアカウント方針に従って見出しに `【無料】` や「無料で試せる〜」を書く。
+ * その見出しが**有料側の先頭**に来ると、読者には「無料と書いてあるのに課金を求められる」
+ * 記事に見える (F-ANP-47 の復元時に 21 本中 5 本で発生していた)。
+ * 有料側の先頭ブロックの候補からは外し、次に近い境界を選ぶ。
+ */
+export function declaresItselfFree(block: string): boolean {
+  return /無料/.test(block.split('\n')[0] ?? '');
+}
+
 /** 見出し記号・箇条書き記号を落として、エディタ上の表示テキストに寄せる。 */
 export function toAnchorText(block: string): string {
   const firstLine = block.split('\n')[0] ?? '';
@@ -78,8 +90,13 @@ export function computePaywallSplit(bodyMd: string, freeRatio: number): PaywallS
   const headings = candidates.filter((c) => c.heading);
   const pool = headings.length >= 1 ? headings : candidates;
 
-  let best = pool[0]!;
-  for (const c of pool) {
+  // 「【無料】〜」と自称する見出しを有料側の先頭に置かない。全候補がそうなら諦めて元の pool を使う
+  // (有料ラインを引かずに返すより、位置がずれても有料化できる方がましなので null にはしない)。
+  const notSelfDeclaredFree = pool.filter((c) => !declaresItselfFree(c.block));
+  const usable = notSelfDeclaredFree.length >= 1 ? notSelfDeclaredFree : pool;
+
+  let best = usable[0]!;
+  for (const c of usable) {
     if (Math.abs(c.pos - target) < Math.abs(best.pos - target)) best = c;
   }
 

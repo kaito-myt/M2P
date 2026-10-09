@@ -2,7 +2,11 @@ import { describe, expect, it, vi } from 'vitest';
 
 import type { Logger } from '@a2p/contracts/logger';
 
-import { computePaywallSplit, toAnchorText } from '../src/tasks/note-publish/paywall-split.js';
+import {
+  computePaywallSplit,
+  declaresItselfFree,
+  toAnchorText,
+} from '../src/tasks/note-publish/paywall-split.js';
 import type {
   NoteMonetizeArgs,
   NoteMonetizeResult,
@@ -33,6 +37,24 @@ const BODY = [
   '実際に使った文面をそのまま出します。',
   'テンプレは4種類あります。',
   'まとめです。',
+].join('\n\n');
+
+/**
+ * `free_ratio` の効き方を見るための本文。見出しを 4 本置き、どれも「無料」と自称しない。
+ * BODY は見出しが 2 本 (うち 1 本が `## 無料パート`) しかないため、有料側の先頭に
+ * 「無料」と書かれた見出しを置かない規則の下では境界候補が 1 つに潰れて比率が効かない。
+ */
+const BODY_MANY = [
+  '# 導入',
+  'この記事では実際の記録を出します。',
+  '## 前提の整理',
+  '対象と集計条件を先に決めます。',
+  '## 手順の分解',
+  '実際にやった順に並べます。',
+  '## 判断の基準',
+  '数字をどう読むかを書きます。',
+  '## 失敗したとき',
+  '外した場合の切り分けです。',
 ].join('\n\n');
 
 interface ArticleState {
@@ -169,9 +191,32 @@ describe('computePaywallSplit (F-ANP-47)', () => {
   });
 
   it('free_ratio が大きいほど無料側が長くなる', () => {
-    const low = computePaywallSplit(BODY, 0.2)!;
-    const high = computePaywallSplit(BODY, 0.8)!;
+    const low = computePaywallSplit(BODY_MANY, 0.2)!;
+    const high = computePaywallSplit(BODY_MANY, 0.8)!;
     expect(high.pos).toBeGreaterThan(low.pos);
+  });
+
+  it('「無料」と自称する見出しを有料側の先頭に置かない (2026-10-09)', () => {
+    // `## 無料パート` が free_ratio 0.3 にいちばん近い境界だが、そこで切ると読者には
+    // 「無料と書いてあるのに課金を求められる」記事に見える。次の見出しまでずらす。
+    const split = computePaywallSplit(BODY, 0.3)!;
+    expect(split.anchorText).toBe('有料パート');
+    expect(declaresItselfFree(`## ${split.anchorText}`)).toBe(false);
+  });
+
+  it('候補がすべて「無料」と自称していたら諦めて最も近い境界を使う (null にはしない)', () => {
+    // 有料化できない方が損なので、位置がずれても有料ラインは引く。
+    const allFree = [
+      '# 導入',
+      '前置きです。',
+      '## 無料で試せる手順',
+      '手順です。',
+      '## 【無料】確認のしかた',
+      '確認です。',
+    ].join('\n\n');
+    const split = computePaywallSplit(allFree, 0.3);
+    expect(split).not.toBeNull();
+    expect(declaresItselfFree(`## ${split!.anchorText}`)).toBe(true);
   });
 });
 

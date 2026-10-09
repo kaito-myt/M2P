@@ -162,8 +162,8 @@ function baseInput(overrides: Partial<NoteWriterInput> = {}): NoteWriterInput {
 
 describe('generateNoteBody — paywall marker missing', () => {
   it('paid=true でマーカー未検出の応答が続く場合、再試行を尽くして AgentError を throw する', async () => {
-    const bodyWithoutMarker = 'マーカーが無い本文です。'.padEnd(300, 'あ');
-    const text = JSON.stringify({ body_md: bodyWithoutMarker, char_count: 300 });
+    const bodyWithoutMarker = 'マーカーが無い本文です。'.padEnd(4000, 'あ');
+    const text = JSON.stringify({ body_md: bodyWithoutMarker, char_count: 4000 });
     const fakeClient = makeFakeClient(text);
 
     await expect(
@@ -178,8 +178,8 @@ describe('generateNoteBody — paywall marker missing', () => {
   });
 
   it('paid=false の場合はマーカー欠落を問わず成功する', async () => {
-    const body = '無料記事の本文です。'.padEnd(300, 'あ');
-    const text = JSON.stringify({ body_md: body, char_count: 300 });
+    const body = '無料記事の本文です。'.padEnd(4000, 'あ');
+    const text = JSON.stringify({ body_md: body, char_count: 4000 });
     const fakeClient = makeFakeClient(text);
 
     const result = await generateNoteBody(baseInput({ paid: false }), {
@@ -192,8 +192,8 @@ describe('generateNoteBody — paywall marker missing', () => {
   });
 
   it('F-ANP-31: related_books が渡された場合、書名がユーザーメッセージに含まれる', async () => {
-    const body = '無料記事の本文です。'.padEnd(300, 'あ');
-    const text = JSON.stringify({ body_md: body, char_count: 300 });
+    const body = '無料記事の本文です。'.padEnd(4000, 'あ');
+    const text = JSON.stringify({ body_md: body, char_count: 4000 });
     const fakeClient = makeFakeClient(text);
 
     await generateNoteBody(
@@ -208,5 +208,78 @@ describe('generateNoteBody — paywall marker missing', () => {
     const userMessage = call.messages.find((m) => m.role === 'user')?.content ?? '';
     expect(userMessage).toContain('関連書籍タイトルA');
     expect(userMessage).toContain('さりげなく触れてよい');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 4. 文量の下限 — 目標字数を大きく下回る本文は不足字数を伝えて書き直させる
+//    (2026-10-09 実測: 無料記事は目標 4,000 字に対し平均 3,131 字 = 78% しか出ず、
+//     有料記事はアカウント方針の下限 4,000 字を割っていた)
+// ---------------------------------------------------------------------------
+
+function userMessageOf(client: LLMClient, callIndex: number): string {
+  const calls = (client.complete as ReturnType<typeof vi.fn>).mock.calls;
+  const args = calls[callIndex]![0] as LLMCompleteArgs;
+  return args.messages.find((m) => m.role === 'user')?.content ?? '';
+}
+
+describe('generateNoteBody — 文量の下限', () => {
+  it('目標字数を大きく下回る本文は、不足字数を伝えて書き直させる', async () => {
+    const shortBody = '短い本文です。'.padEnd(1200, 'あ');
+    const fakeClient = makeFakeClient(JSON.stringify({ body_md: shortBody, char_count: 1200 }));
+
+    await generateNoteBody(baseInput({ paid: false, target_chars: 6000 }), {
+      createAgentClient: vi.fn(async () => fakeClient),
+      promptLoaderDeps: { prisma: makePromptRepo() },
+    });
+
+    expect(fakeClient.complete).toHaveBeenCalledTimes(2);
+    // 1 回目は素のプロンプト、2 回目に不足分の指示が付く。
+    expect(userMessageOf(fakeClient, 0)).not.toContain('足りませんでした');
+    const retry = userMessageOf(fakeClient, 1);
+    expect(retry).toContain('1200 字');
+    expect(retry).toContain('4800 字足りませんでした'); // 6000 - 1200
+    expect(retry).toContain('最低 5100 字'); // 6000 * 0.85
+    // 水増しではなく中身を足させる。
+    expect(retry).toContain('中身を足して伸ばすこと');
+  });
+
+  it('有料記事の書き直しでは、無料部分の自立と有料部分の新規性も指示する', async () => {
+    const shortBody = `短い本文${PAYWALL_MARKER}続き`.padEnd(1000, 'あ');
+    const fakeClient = makeFakeClient(JSON.stringify({ body_md: shortBody, char_count: 1000 }));
+
+    await generateNoteBody(baseInput({ paid: true, target_chars: 6000 }), {
+      createAgentClient: vi.fn(async () => fakeClient),
+      promptLoaderDeps: { prisma: makePromptRepo() },
+    });
+
+    const retry = userMessageOf(fakeClient, 1);
+    expect(retry).toContain('無料部分は、それだけで読者が1つ試し切れる分量にする');
+    expect(retry).toContain('有料部分は無料部分の繰り返しにせず');
+  });
+
+  it('再試行しても短いままなら、落とさず最後の本文を返す (公開は judge に委ねる)', async () => {
+    const shortBody = '短い本文です。'.padEnd(1000, 'あ');
+    const fakeClient = makeFakeClient(JSON.stringify({ body_md: shortBody, char_count: 1000 }));
+
+    const result = await generateNoteBody(baseInput({ paid: false, target_chars: 6000 }), {
+      createAgentClient: vi.fn(async () => fakeClient),
+      promptLoaderDeps: { prisma: makePromptRepo() },
+    });
+
+    expect(result.char_count).toBe(1000);
+    expect(fakeClient.complete).toHaveBeenCalledTimes(2);
+  });
+
+  it('下限を満たしていれば 1 回で返す (余計な書き直しをしない)', async () => {
+    const body = '十分な長さの本文です。'.padEnd(5200, 'あ');
+    const fakeClient = makeFakeClient(JSON.stringify({ body_md: body, char_count: 5200 }));
+
+    await generateNoteBody(baseInput({ paid: false, target_chars: 6000 }), {
+      createAgentClient: vi.fn(async () => fakeClient),
+      promptLoaderDeps: { prisma: makePromptRepo() },
+    });
+
+    expect(fakeClient.complete).toHaveBeenCalledTimes(1);
   });
 });
