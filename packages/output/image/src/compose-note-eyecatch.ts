@@ -40,6 +40,8 @@ export const NOTE_EYECATCH_HEIGHT = 670;
 /** 文字サイズの下限 (参考記事: 40 以下はスマホで読めない)。 */
 const MIN_COPY_SIZE = 48;
 const MAX_COPY_LINES = 2;
+/** キャッチコピー (白) が満たすべき最低コントラスト比 (WCAG AA の本文基準)。 */
+const SCRIM_TARGET_CONTRAST = 4.5;
 
 export interface NoteEyecatchText {
   /** 主役のキャッチコピー (全角 6〜16 文字程度。短いほど強い)。 */
@@ -208,6 +210,55 @@ function drawCopyLine(
  * 文字を載せる帯を「暗く + ぼかす」(参考記事: 画像を暗くするかぼかしを入れて文字を浮かす)。
  * 下端に向かって効きが強くなるマスクを掛けるので、絵の主題 (上 2/3) は鮮明なまま残る。
  */
+/** `#rrggbb` を 0〜255 の RGB に。 */
+export function hexToRgb(hex: string): { r: number; g: number; b: number } {
+  const h = hex.replace('#', '').trim();
+  const v = h.length === 3 ? h.split('').map((c) => c + c).join('') : h;
+  return {
+    r: parseInt(v.slice(0, 2), 16) || 0,
+    g: parseInt(v.slice(2, 4), 16) || 0,
+    b: parseInt(v.slice(4, 6), 16) || 0,
+  };
+}
+
+/** sRGB の相対輝度 (WCAG 2.x)。0 = 黒, 1 = 白。 */
+export function relativeLuminance(r: number, g: number, b: number): number {
+  const f = (v: number): number => {
+    const s = Math.min(255, Math.max(0, v)) / 255;
+    return s <= 0.03928 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4;
+  };
+  return 0.2126 * f(r) + 0.7152 * f(g) + 0.0722 * f(b);
+}
+
+/** 白文字に対するコントラスト比。 */
+export function contrastWithWhite(r: number, g: number, b: number): number {
+  return 1.05 / (relativeLuminance(r, g, b) + 0.05);
+}
+
+/**
+ * 白文字が `targetRatio` 以上のコントラストで読めるようにするために必要な、
+ * ベース色スクリムの不透明度 (0〜1) を返す。
+ *
+ * 画像生成モデルは「下 1/3 は落ち着いた面に」と指示しても**平気で主役を置いてくる**
+ * (2026-10-09 実測: 馬のアップの上にキャッチコピーが乗って読めない画像が出ていた)。
+ * 絵の側の約束に頼らず、**実際に文字が乗る領域の輝度を測って**スクリムを必要なだけ
+ * 濃くすることで、どんな絵が来ても読める状態を保証する。
+ */
+export function scrimAlphaForContrast(
+  bg: { r: number; g: number; b: number },
+  base: { r: number; g: number; b: number },
+  targetRatio = 4.5,
+): number {
+  for (let step = 0; step <= 50; step += 1) {
+    const a = step / 50;
+    const r = bg.r * (1 - a) + base.r * a;
+    const g = bg.g * (1 - a) + base.g * a;
+    const b = bg.b * (1 - a) + base.b * a;
+    if (contrastWithWhite(r, g, b) >= targetRatio) return a;
+  }
+  return 1;
+}
+
 async function blurTextArea(baseBuf: Buffer, W: number, H: number): Promise<Buffer> {
   const bandTop = Math.round(H * 0.4);
   const bandH = H - bandTop;
@@ -259,25 +310,58 @@ export async function composeNoteEyecatch(
   const resized = await sharp(bg).resize(W, H, { fit: 'cover', position: 'centre' }).png().toBuffer();
   const softened = await blurTextArea(resized, W, H).catch(() => resized);
 
-  // --- スクリム: ベースカラーを下から重ねる (どんな絵でも文字が読めるように) ---
+  const parts: string[] = [];
+  const textWidth = W - M * 2;
+  const subSize = subSizeFor(copySizeForLength(copy));
+  const bottomSafe = 56;
+
+  // --- 先に文字ブロックの高さを確定させる (スクリムの濃さを実測で決めるため) ---
+  const { size: copySize, lines: copyLines } = fitCopy(bold, copy, textWidth);
+  const copyLH = copySize * 1.24;
+  const subBlockH = sub ? subSize * 1.35 + 12 : 0;
+  // アクセントの下線まで含めた上端。
+  const textBlockH = subBlockH + copyLines.length * copyLH + copySize * 0.3 + 28;
+  const textTopY = Math.max(0, Math.round(H - bottomSafe - textBlockH));
+
+  // --- スクリム: **実際に文字が乗る領域の輝度を測って**必要なだけ濃くする ---
+  //     (絵の側の「下 1/3 は落ち着いた面に」という指示は守られないことがあるため)
+  let neededAlpha = 0;
+  try {
+    const top = Math.min(H - 2, textTopY);
+    // `sharp` の `stats()` は**入力画像**に対して計算され、直前の `extract()` は効かない。
+    // 領域だけを測るには一度 buffer に焼いてから測る (2026-10-09: これを怠って
+    // 画像全体の平均で判定しており、スクリムの濃さが決まっていなかった)。
+    const region = await sharp(softened)
+      .extract({ left: M, top, width: Math.max(1, W - M * 2), height: Math.max(1, H - bottomSafe - top) })
+      .toBuffer();
+    const stats = await sharp(region).stats();
+    const [cr, cg, cb] = stats.channels;
+    if (cr && cg && cb) {
+      neededAlpha = scrimAlphaForContrast(
+        { r: cr.mean, g: cg.mean, b: cb.mean },
+        hexToRgb(scheme.base),
+        SCRIM_TARGET_CONTRAST,
+      );
+    }
+  } catch {
+    neededAlpha = 0.94; // 測れないときは安全側 (濃いめ) に倒す
+  }
+  const aBottom = Math.max(0.94, neededAlpha);
+  const aText = Math.max(0.78, neededAlpha);
+  const tFrac = Math.min(0.9, Math.max(0.3, (H - textTopY) / H));
   const scrim = `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}">
     <defs>
       <linearGradient id="g" x1="0" y1="1" x2="0" y2="0">
-        <stop offset="0" stop-color="${scheme.base}" stop-opacity="0.94"/>
-        <stop offset="0.40" stop-color="${scheme.base}" stop-opacity="0.78"/>
-        <stop offset="0.72" stop-color="${scheme.base}" stop-opacity="0.30"/>
+        <stop offset="0" stop-color="${scheme.base}" stop-opacity="${aBottom.toFixed(2)}"/>
+        <stop offset="${tFrac.toFixed(3)}" stop-color="${scheme.base}" stop-opacity="${aText.toFixed(2)}"/>
+        <stop offset="${Math.min(1, tFrac + 0.14).toFixed(3)}" stop-color="${scheme.base}" stop-opacity="0.30"/>
         <stop offset="1" stop-color="${scheme.base}" stop-opacity="0.06"/>
       </linearGradient>
     </defs>
     <rect x="0" y="0" width="${W}" height="${H}" fill="url(#g)"/>
   </svg>`;
 
-  const parts: string[] = [];
-  const textWidth = W - M * 2;
-  const subSize = subSizeFor(copySizeForLength(copy));
-
   // --- 下から積み上げる: 補足 → キャッチ ---
-  const bottomSafe = 56;
   let cursorY = H - bottomSafe;
 
   if (sub) {
@@ -294,8 +378,6 @@ export async function composeNoteEyecatch(
     cursorY -= 12;
   }
 
-  const { size: copySize, lines: copyLines } = fitCopy(bold, copy, textWidth);
-  const copyLH = copySize * 1.24;
   for (let i = copyLines.length - 1; i >= 0; i -= 1) {
     parts.push(drawCopyLine(bold, copyLines[i]!, copySize, M, cursorY, scheme, accent));
     cursorY -= copyLH;

@@ -4,6 +4,9 @@ import sharp from 'sharp';
 import {
   accentForNiche,
   composeNoteEyecatch,
+  contrastWithWhite,
+  hexToRgb,
+  scrimAlphaForContrast,
   copySizeForLength,
   defaultEyecatchAlt,
   fitCopy,
@@ -183,5 +186,56 @@ describe('サムネイル作法 (F-ANP-49)', () => {
     const meta = await sharp(out).metadata();
     expect(meta.width).toBe(NOTE_EYECATCH_WIDTH);
     expect(meta.height).toBe(NOTE_EYECATCH_HEIGHT);
+  });
+});
+
+describe('スクリムのコントラスト保証 (2026-10-09)', () => {
+  // 画像生成モデルは「下 1/3 は落ち着いた面に」と指示しても主役を置いてくることがあり、
+  // 実際に馬のアップの上にキャッチコピーが乗って読めない画像が出ていた。
+  // 絵の側の約束に頼らず、文字が乗る領域の輝度を測ってスクリムを濃くする。
+  it('白に対するコントラスト比を正しく計算する', () => {
+    expect(contrastWithWhite(255, 255, 255)).toBeCloseTo(1, 2);
+    expect(contrastWithWhite(0, 0, 0)).toBeCloseTo(21, 0);
+  });
+
+  it('明るい背景ほど濃いスクリムを要求する', () => {
+    const base = hexToRgb('#0b1020');
+    const onWhite = scrimAlphaForContrast({ r: 255, g: 255, b: 255 }, base);
+    const onMid = scrimAlphaForContrast({ r: 128, g: 128, b: 128 }, base);
+    const onDark = scrimAlphaForContrast({ r: 10, g: 12, b: 20 }, base);
+    expect(onWhite).toBeGreaterThan(onMid);
+    expect(onMid).toBeGreaterThan(onDark);
+    expect(onDark).toBe(0);
+  });
+
+  it('求めた不透明度を重ねると目標コントラストを満たす', () => {
+    const base = hexToRgb('#0b1020');
+    for (const bg of [
+      { r: 255, g: 255, b: 255 },
+      { r: 240, g: 200, b: 60 },
+      { r: 128, g: 128, b: 128 },
+    ]) {
+      const a = scrimAlphaForContrast(bg, base, 4.5);
+      const r = bg.r * (1 - a) + base.r * a;
+      const g = bg.g * (1 - a) + base.g * a;
+      const b = bg.b * (1 - a) + base.b * a;
+      expect(contrastWithWhite(r, g, b)).toBeGreaterThanOrEqual(4.5);
+    }
+  });
+
+  it('真っ白な背景でもキャッチコピー領域が暗くなる', async () => {
+    const white = await sharp({
+      create: { width: 1280, height: 670, channels: 3, background: '#ffffff' },
+    })
+      .png()
+      .toBuffer();
+    const out = await composeNoteEyecatch(white, { copy: '買い足し0円', sub: '月の上限と収支で休む判断' });
+    // 文字が乗る帯の **右側 (文字が届かない範囲)** を測る。
+    // 文字そのものを含めると白いグリフで平均が持ち上がり、地の明るさを測れない。
+    // stats() は入力画像に対して計算されるので、領域は一度 buffer に焼いてから測る。
+    const region = await sharp(out).extract({ left: 980, top: 470, width: 236, height: 150 }).toBuffer();
+    const stats = await sharp(region).stats();
+    const [r, g, b] = stats.channels;
+    expect(contrastWithWhite(r!.mean, g!.mean, b!.mean)).toBeGreaterThanOrEqual(4.5);
   });
 });
