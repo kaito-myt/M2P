@@ -1,6 +1,7 @@
 import { type CronItem, parseCronItems, type ParsedCronItem } from 'graphile-worker';
 
 import { ALERT_COST_CHECK_TASK_NAME } from './tasks/alert-cost-check.js';
+import { LOCKS_SWEEP_TASK_NAME } from './tasks/locks-sweep.js';
 import { ARCHIVE_DB_BACKUP_TASK_NAME } from './tasks/archive-db-backup.js';
 import { ARCHIVE_JOBS_TASK_NAME } from './tasks/archive-jobs.js';
 import { BATCH_PLAN_DISPATCHER_TASK_NAME } from './tasks/batch-plan-dispatcher.js';
@@ -722,6 +723,19 @@ export const CRON_ITEMS: CronItem[] = [
     match: ALERT_COST_CHECK_CRON,
     identifier: 'alert-cost-check-hourly',
     payload: { scope: 'monthly' },
+  },
+  // SP-02 T-02-07: 毎時 0 分に期限切れ BookLock / NoteLock と stale job を掃除。
+  //
+  // [2026-10-09] `LOCKS_SWEEP_CRON` は定数として定義・テストもされていたのに、
+  // **この配列に入っていなかったため一度も実行されていなかった**。
+  // 結果、デプロイ等でジョブが落とされると期限切れロックが残り続け、
+  // その記事/書籍が永久に `NoteLock conflict` で弾かれる状態になっていた
+  // (実測: 期限切れ 8 件が最古 2026-09-28 から滞留し、記事 3 本が eyecatch で停止)。
+  // テストが定数の値しか見ていなかったので赤くならなかった。
+  {
+    task: LOCKS_SWEEP_TASK_NAME,
+    match: LOCKS_SWEEP_CRON,
+    identifier: 'locks-sweep-hourly',
   },
   // T-09-04: 週次ジョブログアーカイブ (日曜 03:00 JST = 土曜 18:00 UTC, docs/05 §5.3.18)
   {

@@ -100,8 +100,8 @@ describe('crontab.ts', () => {
     expect(KDP_PUBLISH_STATUS_SYNC_CRON).toBe('0 */6 * * *');
   });
 
-  it('CRON_ITEMS は archive.db.backup / fx.fetch / ads.spend.fetch / bw.retag.tick / catalog.fetch / batch_plan.dispatcher / alert.cost.check / archive.jobs / kdp.publish.status.sync / promotion.playbook.refresh / promotion.metrics.fetch / org.promo.tick / kdp.publish.digest / promotion.growth.todo / promotion.x.engage / promotion.sns.engage / note.engage / promotion.growth.loop / recurring.cost.refresh / model.health.probe / note.publish.status.sync / note.sales.fetch.dispatch / paperback.queue.sweep / paperback.status.sync / paperback.submit.dispatch / paperback.draft.dispatch の 26 件', () => {
-    expect(CRON_ITEMS).toHaveLength(26);
+  it('CRON_ITEMS は archive.db.backup / fx.fetch / ads.spend.fetch / bw.retag.tick / catalog.fetch / batch_plan.dispatcher / alert.cost.check / archive.jobs / kdp.publish.status.sync / promotion.playbook.refresh / promotion.metrics.fetch / org.promo.tick / kdp.publish.digest / promotion.growth.todo / promotion.x.engage / promotion.sns.engage / note.engage / promotion.growth.loop / recurring.cost.refresh / model.health.probe / note.publish.status.sync / note.sales.fetch.dispatch / paperback.queue.sweep / paperback.status.sync / paperback.submit.dispatch / paperback.draft.dispatch / locks.sweep の 27 件', () => {
+    expect(CRON_ITEMS).toHaveLength(27);
 
     // F-097f: ペーパーバックのサーバー側下書き作成 (30 分毎・出版側と 15 分ずらす)。
     const pbDraft = CRON_ITEMS.find((c) => c.task === PAPERBACK_DRAFT_DISPATCHER_TASK_NAME);
@@ -120,9 +120,16 @@ describe('crontab.ts', () => {
     expect(paperback!.match).toBe(PAPERBACK_QUEUE_SWEEP_CRON);
     expect(paperback!.identifier).toBe('paperback-queue-sweep-daily');
 
-    // locks-sweep-hourly は存在しない — sweep は alert.cost.check monthly に相乗り (T-07-11)
+    // [2026-10-09] かつて「sweep は alert.cost.check monthly に相乗り (T-07-11)」として
+    // **CRON_ITEMS に入れず、ここで不在をアサートしていた**。しかし相乗りしているのは
+    // `sweepExpiredLocks` (BookLock) だけで、`sweepExpiredNoteLocks` と
+    // `sweepStaleJobs` は呼ばれておらず、locks.sweep 自体は一度も実行されていなかった。
+    // 結果、落とされたジョブの NoteLock が永久に残って記事が停止し (実測 3 本)、
+    // 孤児の内部 Job が 51 件滞留していた。cron に登録し、ここでも存在を要求する。
     const sweep = CRON_ITEMS.find((c) => c.task === LOCKS_SWEEP_TASK_NAME);
-    expect(sweep).toBeUndefined();
+    expect(sweep).toBeDefined();
+    expect(sweep!.match).toBe(LOCKS_SWEEP_CRON);
+    expect(sweep!.identifier).toBe('locks-sweep-hourly');
 
     const archive = CRON_ITEMS.find((c) => c.task === ARCHIVE_DB_BACKUP_TASK_NAME);
     expect(archive).toBeDefined();
@@ -224,7 +231,7 @@ describe('crontab.ts', () => {
 
   it('buildParsedCronItems は graphile-worker の parseCronItems に通る', () => {
     const parsed = buildParsedCronItems();
-    expect(parsed).toHaveLength(26);
+    expect(parsed).toHaveLength(CRON_ITEMS.length);
     const tasks = parsed.map((p) => p.task).sort();
     expect(tasks).toEqual(
       [
@@ -254,6 +261,7 @@ describe('crontab.ts', () => {
         PAPERBACK_STATUS_SYNC_TASK_NAME,
         PAPERBACK_SUBMIT_DISPATCHER_TASK_NAME,
         PAPERBACK_DRAFT_DISPATCHER_TASK_NAME,
+        LOCKS_SWEEP_TASK_NAME,
       ].sort(),
     );
   });
@@ -285,14 +293,14 @@ describe('crontab.ts', () => {
 
   it('buildCronItemsWithSettings({ sales_auto_fetch_enabled: false }) は sales.fetch.dispatch を含まない', () => {
     const items = buildCronItemsWithSettings({ sales_auto_fetch_enabled: false });
-    expect(items).toHaveLength(26); // 静的 CRON_ITEMS と同数
+    expect(items).toHaveLength(CRON_ITEMS.length); // 静的 CRON_ITEMS と同数
     const dispatch = items.find((c) => c.task === SALES_FETCH_DISPATCHER_TASK_NAME);
     expect(dispatch).toBeUndefined();
   });
 
   it('buildCronItemsWithSettings({ sales_auto_fetch_enabled: true }) は sales.fetch.dispatch を含む', () => {
     const items = buildCronItemsWithSettings({ sales_auto_fetch_enabled: true });
-    expect(items).toHaveLength(27); // 静的 26 件 + dispatch 1 件
+    expect(items).toHaveLength(CRON_ITEMS.length + 1); // 静的 + dispatch 1 件
     const dispatch = items.find((c) => c.task === SALES_FETCH_DISPATCHER_TASK_NAME);
     expect(dispatch).toBeDefined();
     expect(dispatch!.identifier).toBe('sales-fetch-dispatch-daily');
@@ -324,10 +332,10 @@ describe('crontab.ts', () => {
     expect(CRON_ITEMS).toHaveLength(beforeLength);
   });
 
-  it('buildParsedCronItems(buildCronItemsWithSettings(enabled=true)) は 27 件の ParsedCronItem を返す', () => {
+  it('buildParsedCronItems(buildCronItemsWithSettings(enabled=true)) は 静的 + dispatch 1 件 の ParsedCronItem を返す', () => {
     const items = buildCronItemsWithSettings({ sales_auto_fetch_enabled: true });
     const parsed = buildParsedCronItems(items);
-    expect(parsed).toHaveLength(27);
+    expect(parsed).toHaveLength(CRON_ITEMS.length + 1);
     const tasks = parsed.map((p) => p.task).sort();
     expect(tasks).toContain(SALES_FETCH_DISPATCHER_TASK_NAME);
   });
@@ -374,7 +382,7 @@ describe('crontab.ts', () => {
       sales_auto_fetch_enabled: true,
       promo_auto_post_enabled: true,
     });
-    expect(items).toHaveLength(28);
+    expect(items).toHaveLength(CRON_ITEMS.length + 2);
     expect(items.find((c) => c.task === SALES_FETCH_DISPATCHER_TASK_NAME)).toBeDefined();
     expect(items.find((c) => c.task === PROMOTION_DISPATCH_TASK_NAME)).toBeDefined();
   });
