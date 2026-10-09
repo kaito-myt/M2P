@@ -48,6 +48,8 @@ function buildPrisma(args: {
   jobs: JobRecord[];
   articles: ArticleRecord[];
   accounts: AccountRecord[];
+  /** 記事末の関連記事リンクに使える公開済み記事 (省略時は無し)。 */
+  publishedArticles?: Array<{ title: string; note_url: string | null }>;
 }) {
   const jobs = [...args.jobs];
   const articleUpdates: Array<{ where: { id: string }; data: Record<string, unknown> }> = [];
@@ -80,6 +82,8 @@ function buildPrisma(args: {
     },
     noteArticle: {
       findUnique: async ({ where }) => args.articles.find((a) => a.id === where.id) ?? null,
+      // 記事末の関連記事リンク候補 (公開済みの自記事)。既定は空 = リンクを書かせない。
+      findMany: async () => args.publishedArticles ?? [],
       update: async ({ where, data }) => {
         articleUpdates.push({ where, data: data as Record<string, unknown> });
         return { id: where.id };

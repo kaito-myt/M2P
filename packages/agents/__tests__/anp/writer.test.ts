@@ -271,6 +271,64 @@ describe('generateNoteBody — 文量の下限', () => {
     expect(fakeClient.complete).toHaveBeenCalledTimes(2);
   });
 
+  it('関連記事リンクは渡された公開済み記事だけに限らせ、無ければ書かせない', async () => {
+    const body = '本文です。'.padEnd(5200, 'あ');
+    const text = JSON.stringify({ body_md: body, char_count: 5200 });
+
+    // 公開済み記事を渡した場合: URL をそのまま使わせ、それ以外を禁止する。
+    const withLinks = makeFakeClient(text);
+    await generateNoteBody(
+      baseInput({
+        paid: false,
+        target_chars: 6000,
+        related_articles: [{ title: '既存記事A', note_url: 'https://note.com/acct/n/aaa' }],
+      }),
+      { createAgentClient: vi.fn(async () => withLinks), promptLoaderDeps: { prisma: makePromptRepo() } },
+    );
+    const msg = userMessageOf(withLinks, 0);
+    expect(msg).toContain('https://note.com/acct/n/aaa');
+    expect(msg).toContain('ここに無い記事をリンク先として書いてはいけない');
+
+    // 渡さない場合: リンクを書かせない (存在しないリンクは judge が公開不可にする)。
+    const noLinks = makeFakeClient(text);
+    await generateNoteBody(baseInput({ paid: false, target_chars: 6000 }), {
+      createAgentClient: vi.fn(async () => noLinks),
+      promptLoaderDeps: { prisma: makePromptRepo() },
+    });
+    expect(userMessageOf(noLinks, 0)).toContain('関連記事リンクは書かない');
+  });
+
+  it('数字の整合と出典を機械的に要求する (judge が表を再計算して差し戻していた)', async () => {
+    const body = '本文です。'.padEnd(5200, 'あ');
+    const fakeClient = makeFakeClient(JSON.stringify({ body_md: body, char_count: 5200 }));
+
+    await generateNoteBody(baseInput({ paid: false, target_chars: 6000 }), {
+      createAgentClient: vi.fn(async () => fakeClient),
+      promptLoaderDeps: { prisma: makePromptRepo() },
+    });
+
+    const msg = userMessageOf(fakeClient, 0);
+    expect(msg).toContain('内訳と合計は必ず一致させる');
+    expect(msg).toContain('n の定義と件数');
+    expect(msg).toContain('確認していない数字は書かない');
+  });
+
+  it('有料記事には有料部分の新規性を価格つきで要求する', async () => {
+    const body = `前半${PAYWALL_MARKER}後半`.padEnd(5200, 'あ');
+    const fakeClient = makeFakeClient(JSON.stringify({ body_md: body, char_count: 5200 }));
+
+    await generateNoteBody(baseInput({ paid: true, target_chars: 6000, price_jpy: 680 }), {
+      createAgentClient: vi.fn(async () => fakeClient),
+      promptLoaderDeps: { prisma: makePromptRepo() },
+    });
+
+    const msg = userMessageOf(fakeClient, 0);
+    expect(msg).toContain('¥680に見合うこと');
+    expect(msg).toContain('有料部分は無料部分の言い換え・並べ直しにしない');
+    expect(msg).toContain('無料部分は**それだけで読者が1つ試し切れる**');
+    expect(msg).toContain('架空の記入例で埋めない');
+  });
+
   it('下限を満たしていれば 1 回で返す (余計な書き直しをしない)', async () => {
     const body = '十分な長さの本文です。'.padEnd(5200, 'あ');
     const fakeClient = makeFakeClient(JSON.stringify({ body_md: body, char_count: 5200 }));

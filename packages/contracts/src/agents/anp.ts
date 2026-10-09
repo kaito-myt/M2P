@@ -143,6 +143,23 @@ export const NoteWriterInputSchema = z.object({
     .array(z.object({ title: z.string().min(1).max(200), asin: z.string().min(1).max(20).optional() }))
     .max(2)
     .optional(),
+  /**
+   * 同じアカウントで既に note 公開済みの記事 (タイトル + 実 URL)。
+   *
+   * 記事方針は CTA に「関連する自記事1本へのリンク」を必須としているが、writer は公開済み
+   * 記事を知らないため**存在しないリンクを書くしかなかった**。judge はそれを
+   * 「項目10: 関連記事の実際のリンクが必要」として減点し続けていた (2026-10-09 実測)。
+   * ここに渡した URL だけを使わせる。空なら「リンクを書かない」が正しい振る舞い。
+   */
+  related_articles: z
+    .array(
+      z.object({
+        title: z.string().min(1).max(200),
+        note_url: z.string().min(1).max(500),
+      }),
+    )
+    .max(6)
+    .optional(),
 });
 export type NoteWriterInput = z.infer<typeof NoteWriterInputSchema>;
 

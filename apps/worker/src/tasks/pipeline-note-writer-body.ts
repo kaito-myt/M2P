@@ -70,6 +70,22 @@ export interface PipelineNoteWriterBodyPrisma {
       paid: boolean;
       price_jpy: number | null;
     } | null>;
+    /**
+     * 記事末の関連記事リンクに使える「同じアカウントで公開済みの記事」。
+     * これを渡さないと writer は存在しないリンクを書くしかなく、judge が
+     * 「項目10: 関連記事の実際のリンクが必要」として差し戻し続ける (2026-10-09 実測)。
+     */
+    findMany: (args: {
+      where: {
+        note_account_id: string;
+        publish_status: string;
+        note_url: { not: null };
+        id: { not: string };
+      };
+      select: { title: true; note_url: true };
+      orderBy: { published_at: { sort: 'desc'; nulls: 'last' } };
+      take: number;
+    }) => Promise<Array<{ title: string; note_url: string | null }>>;
   } & NoteArticleRepo;
   tokenUsage: NoteArticleCostPrisma['tokenUsage'];
   noteAccount: {
@@ -242,6 +258,29 @@ export async function runPipelineNoteWriterBody(
       }
     }
 
+    // 記事末の関連記事リンク用に、同じアカウントの公開済み記事を渡す。
+    // 取れなかった場合は空のまま渡す = writer 側は「リンクを書かない」を選ぶ
+    // (存在しないリンクを書かれるより、リンクが無い方がまし)。
+    let relatedArticles: Array<{ title: string; note_url: string }> = [];
+    try {
+      const published = await prisma.noteArticle.findMany({
+        where: {
+          note_account_id: article.note_account_id,
+          publish_status: 'published',
+          note_url: { not: null },
+          id: { not: noteArticleId },
+        },
+        select: { title: true, note_url: true },
+        orderBy: { published_at: { sort: 'desc', nulls: 'last' } },
+        take: 6,
+      });
+      relatedArticles = published
+        .filter((a): a is { title: string; note_url: string } => typeof a.note_url === 'string' && a.note_url.length > 0)
+        .map((a) => ({ title: a.title, note_url: a.note_url }));
+    } catch (err) {
+      log.warn({ err, noteArticleId }, 'related_articles の取得に失敗 — リンクなしで続行');
+    }
+
     const input: NoteWriterInput = {
       note_article_id: noteArticleId,
       job_id: jobId,
@@ -260,6 +299,7 @@ export async function runPipelineNoteWriterBody(
     if (article.paid && article.price_jpy !== null) input.price_jpy = article.price_jpy;
     if (feedback && feedback.length > 0) input.feedback = feedback;
     if (relatedBooks.length > 0) input.related_books = relatedBooks;
+    if (relatedArticles.length > 0) input.related_articles = relatedArticles;
 
     const body = await generateBody(input);
 
