@@ -162,13 +162,14 @@ describe('pipeline.note.numcheck', () => {
     );
     const done = jobUpdates.find((u) => u.data.status === 'done');
     expect(done!.data.result_json).toMatchObject({
-      applied: true,
+      accepted: true,
+      changed: true,
       fixes: ['合計を 148 → 147 に修正'],
     });
   });
 
   it('直すところが無ければ本文は書き換えず status だけ進める', async () => {
-    const { prisma, articleUpdates } = buildPrisma({
+    const { prisma, articleUpdates, jobUpdates } = buildPrisma({
       jobs: [{ id: 'job1', status: 'queued' }],
       articles: [article()],
     });
@@ -190,6 +191,9 @@ describe('pipeline.note.numcheck', () => {
 
     expect(articleUpdates[0]!.data).toEqual({ status: 'eyecatch' });
     expect(articleUpdates[0]!.data).not.toHaveProperty('body_md');
+    // 「採用できたが直すところが無かった」を「採用できなかった」と混同しない。
+    const done = jobUpdates.find((u) => u.data.status === 'done');
+    expect(done!.data.result_json).toMatchObject({ accepted: true, changed: false, fixes: [] });
   });
 
   it('チェックが例外で落ちてもパイプラインは止めず、本文はそのままで eyecatch へ進む', async () => {

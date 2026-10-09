@@ -280,7 +280,11 @@ export async function runPipelineNoteNumcheck(
         finished_at: now(),
         error: null,
         result_json: {
-          applied: shouldWrite,
+          // accepted = エージェントの出力を採用できたか / changed = 本文を書き換えたか。
+          // 「採用できたが直すところが無かった」(accepted=true, changed=false) と
+          // 「出力を採用できなかった」(accepted=false) は別物なので分けて残す。
+          accepted: checked.applied,
+          changed: shouldWrite,
           fixes: checked.fixes,
           unresolved: checked.unresolved,
           next_job_id: childJob.id,
@@ -293,7 +297,8 @@ export async function runPipelineNoteNumcheck(
         task: PIPELINE_NOTE_NUMCHECK_TASK_NAME,
         jobId,
         noteArticleId,
-        applied: shouldWrite,
+        accepted: checked.applied,
+        changed: shouldWrite,
         fixCount: checked.fixes.length,
         unresolvedCount: checked.unresolved.length,
         nextJobId: childJob.id,
