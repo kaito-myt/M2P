@@ -199,6 +199,42 @@ export const NoteEditorOutputSchema = z.object({
 export type NoteEditorOutput = z.infer<typeof NoteEditorOutputSchema>;
 
 // ---------------------------------------------------------------------------
+// 数値の自己整合チェック (role='anp.numcheck', 2026-10-09)
+//
+// judge は本文の表を**実際に再計算して**不一致を指摘してくる。実測された差し戻し例:
+//   - 「5〜6頭の的中数は下位区分の合計が147件で、記載の148件と一致しません」
+//   - 「人気帯別の複勝馬数は計65頭で、全体214件の複勝率32.7%に相当する約70頭と不一致」
+//   - 「無料部分の『準備20分・仕上げ15分』と有料部分の表の『準備25分・仕上げ10分』が食い違う」
+// これはプロンプトに「整合させて」と書くだけでは消えなかったため、出力後に本文を
+// 走査して突き合わせる工程として分離した (A2P の namecheck/contcheck と同じ考え方)。
+// ---------------------------------------------------------------------------
+
+export const NoteNumCheckInputSchema = z.object({
+  note_article_id: z.string().min(1),
+  job_id: z.string().optional(),
+  account: NoteAccountContextSchema,
+  title: z.string().min(1).max(200),
+  body_md: z.string().min(1),
+  paid: z.boolean(),
+  /** 有料記事のみ: 有料ラインの位置。校正後に再抽出して返す (editor と同じ契約)。 */
+  paywall_line_pos: z.number().int().min(0).optional(),
+});
+export type NoteNumCheckInput = z.infer<typeof NoteNumCheckInputSchema>;
+
+export const NoteNumCheckOutputSchema = z.object({
+  /** 直した本文。問題が無ければ入力と同一でよい。 */
+  body_md: z.string().min(200),
+  /** 直した内容 (1 件 1 行)。空配列 = 直すところが無かった。 */
+  fixes: z.array(z.string().max(500)).max(40).default([]),
+  /**
+   * 直せなかった問題 (元の記録が無いので数字を決められない等)。
+   * judge へ渡さず、Job.result_json に残して運営者が見られるようにする。
+   */
+  unresolved: z.array(z.string().max(500)).max(40).default([]),
+});
+export type NoteNumCheckOutput = z.infer<typeof NoteNumCheckOutputSchema>;
+
+// ---------------------------------------------------------------------------
 // F-ANP-15 — 品質判定 (role='anp.judge')
 // ---------------------------------------------------------------------------
 

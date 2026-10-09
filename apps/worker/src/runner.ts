@@ -217,6 +217,7 @@ import {
   pipelineNoteWriterBodyTask,
 } from './tasks/pipeline-note-writer-body.js';
 import { PIPELINE_NOTE_EDITOR_TASK_NAME, pipelineNoteEditorTask } from './tasks/pipeline-note-editor.js';
+import { PIPELINE_NOTE_NUMCHECK_TASK_NAME, pipelineNoteNumcheckTask } from './tasks/pipeline-note-numcheck.js';
 import { PIPELINE_NOTE_EYECATCH_TASK_NAME, pipelineNoteEyecatchTask } from './tasks/pipeline-note-eyecatch.js';
 import { PIPELINE_NOTE_JUDGE_TASK_NAME, pipelineNoteJudgeTask } from './tasks/pipeline-note-judge.js';
 import { PIPELINE_NOTE_MONETIZE_TASK_NAME, pipelineNoteMonetizeTask } from './tasks/pipeline-note-monetize.js';
@@ -370,6 +371,7 @@ export function buildTaskList(): TaskList {
     [PIPELINE_NOTE_WRITER_OUTLINE_TASK_NAME]: pipelineNoteWriterOutlineTask,
     [PIPELINE_NOTE_WRITER_BODY_TASK_NAME]: pipelineNoteWriterBodyTask,
     [PIPELINE_NOTE_EDITOR_TASK_NAME]: pipelineNoteEditorTask,
+    [PIPELINE_NOTE_NUMCHECK_TASK_NAME]: pipelineNoteNumcheckTask,
     [PIPELINE_NOTE_EYECATCH_TASK_NAME]: pipelineNoteEyecatchTask,
     [PIPELINE_NOTE_JUDGE_TASK_NAME]: pipelineNoteJudgeTask,
     [PIPELINE_NOTE_PUBLISH_TASK_NAME]: pipelineNotePublishTask,

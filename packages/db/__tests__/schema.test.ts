@@ -76,6 +76,10 @@ const EXPECTED_MODELS = [
   'NoteMembershipStat',
   'NoteAuthRequest',
   'NoteLock',
+  // 2026-09〜10 追加。schema.prisma には入っていたがこの一覧の更新が漏れており、
+  // 「モデル数が一覧と一致する」テストだけが赤いまま放置されていた (2026-10-09 に追加)。
+  'AnpAgentRole',
+  'OrgCodeRequest',
 ] as const;
 
 describe('schema.prisma', () => {

@@ -6,43 +6,49 @@ import {
   releaseNoteLock as defaultReleaseNoteLock,
 } from '@a2p/agents/lib/note-lock';
 import {
-  editNoteArticle as defaultEditNoteArticle,
-  type EditNoteArticleResult,
-} from '@a2p/agents/anp/editor';
-import type { NoteEditorInput } from '@a2p/contracts/agents/anp';
+  checkNoteNumbers as defaultCheckNoteNumbers,
+  type CheckNoteNumbersResult,
+} from '@a2p/agents/anp/numcheck';
+import type { NoteNumCheckInput } from '@a2p/contracts/agents/anp';
 import { NotFoundError, ValidationError } from '@a2p/contracts/errors';
 import { createLogger, type Logger } from '@a2p/contracts/logger';
 import { prisma as defaultPrisma } from '@a2p/db';
 
 import { applyNoteArticleCostFromJob, type NoteArticleCostPrisma } from './lib/note-article-cost.js';
 import type { NoteArticleRepo } from './lib/note-article-repo.js';
-import { PIPELINE_NOTE_NUMCHECK_TASK_NAME } from './pipeline-note-numcheck.js';
+import { PIPELINE_NOTE_EYECATCH_TASK_NAME } from './pipeline-note-eyecatch.js';
 
 /**
- * `pipeline.note.editor` タスク (docs/11-anp-design.md §7, F-ANP-13).
+ * `pipeline.note.numcheck` タスク (docs/11-anp-design.md §7, 2026-10-09).
  *
- * note Editor で校閲 (短段落・リード文最適化) を行い、`pipeline.note.numcheck` (数値の自己整合)
- * を自動連結する (その後 eyecatch → judge)。
- * `pipeline.note.judge` からの不合格差し戻し (`feedback` 付き) もこのタスクで受ける
- * (docs/11 §7: judge 不合格 → editor 1 回まで差し戻し)。
+ * 校閲 (`pipeline.note.editor`) の後、アイキャッチ生成の前に、**本文内の数値の自己整合**
+ * だけを確かめて直す。
+ *
+ * なぜ必要か (2026-10-09 実測):
+ *   judge は本文の表を実際に再計算して不一致を指摘してくる。差し戻し例は
+ *   「下位区分の合計が147件で記載の148件と不一致」「無料部分の『準備20分』と
+ *   有料部分の表の『準備25分』が食い違う」。writer のプロンプトに整合を要求しても
+ *   消えなかったので、工程として分離した (A2P の namecheck/contcheck と同じ考え方)。
+ *
+ * 安全側の設計:
+ *   - エージェント側で「訂正の範囲を超えた出力」(見出しが変わる・本文長が ±15% 超) は
+ *     採用せず**入力本文を素通し**する。数値の不整合は judge が拾うので検出網は残る。
+ *   - この工程が失敗しても**パイプラインは止めない**: 本文をそのままにして eyecatch へ進む。
+ *     「数字を直す」工程の失敗で記事全体を落とすのは割に合わない。
+ *   - 直した内容・直せなかった内容は `Job.result_json` に残し、運営者が追えるようにする。
  */
 
-export const PIPELINE_NOTE_EDITOR_TASK_NAME = 'pipeline.note.editor';
+export const PIPELINE_NOTE_NUMCHECK_TASK_NAME = 'pipeline.note.numcheck';
 
-export const PipelineNoteEditorPayloadSchema = z.object({
+export const PipelineNoteNumcheckPayloadSchema = z.object({
   note_article_id: z.string().min(1),
   job_id: z.string().min(1),
-  feedback: z.array(z.string().max(2000)).max(20).optional(),
-  /**
-   * judge から差し戻された回数。editor 自体はこれを判定に使わないが、
-   * eyecatch → judge へそのまま forward し、judge の RETRY_LIMIT 判定に使う
-   * (docs/11 §7: editor→eyecatch→judge の 1 周を通して retry_count を運ぶ)。
-   */
+  /** judge の RETRY_LIMIT 判定用。editor → eyecatch → judge へそのまま運ぶ。 */
   retry_count: z.number().int().min(0).default(0),
 });
-export type PipelineNoteEditorPayload = z.infer<typeof PipelineNoteEditorPayloadSchema>;
+export type PipelineNoteNumcheckPayload = z.infer<typeof PipelineNoteNumcheckPayloadSchema>;
 
-export interface PipelineNoteEditorPrisma {
+export interface PipelineNoteNumcheckPrisma {
   job: {
     findUnique: (args: {
       where: { id: string };
@@ -67,7 +73,6 @@ export interface PipelineNoteEditorPrisma {
         id: true;
         note_account_id: true;
         title: true;
-        lead: true;
         body_md: true;
         paid: true;
         paywall_line_pos: true;
@@ -76,7 +81,6 @@ export interface PipelineNoteEditorPrisma {
       id: string;
       note_account_id: string;
       title: string;
-      lead: string | null;
       body_md: string | null;
       paid: boolean;
       paywall_line_pos: number | null;
@@ -91,8 +95,8 @@ export interface PipelineNoteEditorPrisma {
       id: string;
       niche: string;
       tone: string | null;
-      editorial_policy?: string | null;
       target_reader: string | null;
+      editorial_policy?: string | null;
     } | null>;
   };
 }
@@ -103,31 +107,31 @@ export type AddJobLike = (
   spec?: Record<string, unknown>,
 ) => Promise<unknown>;
 
-export interface PipelineNoteEditorDeps {
-  prisma?: PipelineNoteEditorPrisma;
+export interface PipelineNoteNumcheckDeps {
+  prisma?: PipelineNoteNumcheckPrisma;
   logger?: Logger;
-  editArticle?: (input: NoteEditorInput) => Promise<EditNoteArticleResult>;
+  checkNumbers?: (input: NoteNumCheckInput) => Promise<CheckNoteNumbersResult>;
   acquireLock?: typeof defaultAcquireNoteLock;
   releaseLock?: typeof defaultReleaseNoteLock;
   now?: () => Date;
 }
 
-export async function runPipelineNoteEditor(
+export async function runPipelineNoteNumcheck(
   payload: unknown,
   addJob: AddJobLike,
-  deps: PipelineNoteEditorDeps = {},
+  deps: PipelineNoteNumcheckDeps = {},
 ): Promise<void> {
-  const parsed = PipelineNoteEditorPayloadSchema.safeParse(payload);
+  const parsed = PipelineNoteNumcheckPayloadSchema.safeParse(payload);
   if (!parsed.success) {
-    throw new ValidationError('pipeline.note.editor payload が不正です', {
+    throw new ValidationError('pipeline.note.numcheck payload が不正です', {
       details: { issues: parsed.error.issues },
     });
   }
-  const { note_article_id: noteArticleId, job_id: jobId, feedback, retry_count: retryCount } = parsed.data;
+  const { note_article_id: noteArticleId, job_id: jobId, retry_count: retryCount } = parsed.data;
 
-  const log = deps.logger ?? createLogger(`worker.${PIPELINE_NOTE_EDITOR_TASK_NAME}`);
-  const prisma = deps.prisma ?? (defaultPrisma as unknown as PipelineNoteEditorPrisma);
-  const editArticle = deps.editArticle ?? defaultEditNoteArticle;
+  const log = deps.logger ?? createLogger(`worker.${PIPELINE_NOTE_NUMCHECK_TASK_NAME}`);
+  const prisma = deps.prisma ?? (defaultPrisma as unknown as PipelineNoteNumcheckPrisma);
+  const checkNumbers = deps.checkNumbers ?? defaultCheckNoteNumbers;
   const acquireLock = deps.acquireLock ?? defaultAcquireNoteLock;
   const releaseLock = deps.releaseLock ?? defaultReleaseNoteLock;
   const now = deps.now ?? (() => new Date());
@@ -137,7 +141,7 @@ export async function runPipelineNoteEditor(
     throw new NotFoundError(`Job not found: ${jobId}`, { details: { jobId, noteArticleId } });
   }
   if (existing.status === 'done') {
-    log.info({ task: PIPELINE_NOTE_EDITOR_TASK_NAME, jobId }, 'job already done — skipping');
+    log.info({ task: PIPELINE_NOTE_NUMCHECK_TASK_NAME, jobId }, 'job already done — skipping');
     return;
   }
 
@@ -146,7 +150,7 @@ export async function runPipelineNoteEditor(
     data: { status: 'running', started_at: now() },
   });
   if (cas.count === 0) {
-    log.info({ task: PIPELINE_NOTE_EDITOR_TASK_NAME, jobId }, 'job not in queued/failed — skipping');
+    log.info({ task: PIPELINE_NOTE_NUMCHECK_TASK_NAME, jobId }, 'job not in queued/failed — skipping');
     return;
   }
 
@@ -164,7 +168,6 @@ export async function runPipelineNoteEditor(
         id: true,
         note_account_id: true,
         title: true,
-        lead: true,
         body_md: true,
         paid: true,
         paywall_line_pos: true,
@@ -175,8 +178,8 @@ export async function runPipelineNoteEditor(
         details: { noteArticleId, jobId },
       });
     }
-    if (!article.body_md || !article.lead) {
-      throw new NotFoundError(`NoteArticle has no body_md/lead yet: ${noteArticleId}`, {
+    if (!article.body_md) {
+      throw new NotFoundError(`NoteArticle has no body_md yet: ${noteArticleId}`, {
         details: { noteArticleId, jobId },
       });
     }
@@ -191,67 +194,82 @@ export async function runPipelineNoteEditor(
       });
     }
 
-    const input: NoteEditorInput = {
+    const input: NoteNumCheckInput = {
       note_article_id: noteArticleId,
       job_id: jobId,
-      account: { niche: account.niche, tone: account.tone, target_reader: account.target_reader, editorial_policy: account.editorial_policy ?? null },
+      account: {
+        niche: account.niche,
+        tone: account.tone,
+        target_reader: account.target_reader,
+        editorial_policy: account.editorial_policy ?? null,
+      },
       title: article.title,
-      lead: article.lead,
       body_md: article.body_md,
       paid: article.paid,
     };
     if (article.paid && article.paywall_line_pos !== null) {
       input.paywall_line_pos = article.paywall_line_pos;
     }
-    if (feedback && feedback.length > 0) input.feedback = feedback;
 
-    const edited = await editArticle(input);
-
-    if (article.paid && edited.paywall_line_pos === undefined) {
-      // フォールバックで古い paywall_line_pos を引き継ぐと、校閲で本文が変わった後の
-      // ズレた位置のまま「有料ライン確定」扱いになる (code-reviewer 指摘)。
-      // editNoteArticle は marker 保持指示時は必ず再試行後に位置を返す契約のため、
-      // それでも undefined ということは想定外の入力/契約違反として fail させる。
-      throw new ValidationError(
-        `pipeline.note.editor: paid article edited without paywall_line_pos: ${noteArticleId}`,
-        { details: { noteArticleId, jobId } },
+    // この工程の失敗でパイプラインを止めない。数字を直せなくても記事は進める
+    // (数値の不整合は judge が拾って差し戻す)。
+    let checked: CheckNoteNumbersResult;
+    try {
+      checked = await checkNumbers(input);
+    } catch (err) {
+      log.warn(
+        { task: PIPELINE_NOTE_NUMCHECK_TASK_NAME, jobId, noteArticleId, err },
+        'numcheck failed — 本文はそのままで eyecatch へ進む',
       );
+      checked = {
+        body_md: article.body_md,
+        fixes: [],
+        unresolved: [`数値チェックが例外で終了: ${err instanceof Error ? err.message : String(err)}`],
+        applied: false,
+        ...(article.paid && article.paywall_line_pos !== null
+          ? { paywall_line_pos: article.paywall_line_pos }
+          : {}),
+      };
     }
 
-    await prisma.noteArticle.update({
-      where: { id: noteArticleId },
-      data: {
-        lead: edited.lead,
-        body_md: edited.body_md,
-        paywall_line_pos: article.paid ? edited.paywall_line_pos! : null,
-        status: 'eyecatch',
-      },
-    });
+    // 有料記事で位置が取れなかった場合は本文を書き換えない。ズレた位置のまま
+    // 「有料ライン確定」にすると、無料部分の途中で課金される事故になる。
+    const paywallOk = !article.paid || checked.paywall_line_pos !== undefined;
+    const shouldWrite = checked.applied && paywallOk && checked.body_md !== article.body_md;
+
+    if (shouldWrite) {
+      await prisma.noteArticle.update({
+        where: { id: noteArticleId },
+        data: {
+          body_md: checked.body_md,
+          paywall_line_pos: article.paid ? checked.paywall_line_pos! : null,
+          status: 'eyecatch',
+        },
+      });
+    } else {
+      await prisma.noteArticle.update({ where: { id: noteArticleId }, data: { status: 'eyecatch' } });
+    }
 
     try {
       await applyNoteArticleCostFromJob(prisma, jobId, noteArticleId);
     } catch (costErr) {
       log.warn(
-        { task: PIPELINE_NOTE_EDITOR_TASK_NAME, jobId, noteArticleId, err: costErr },
+        { task: PIPELINE_NOTE_NUMCHECK_TASK_NAME, jobId, noteArticleId, err: costErr },
         'applyNoteArticleCostFromJob failed — continuing (cost_jpy_total may undercount)',
       );
     }
 
     const childJob = await prisma.job.create({
       data: {
-        kind: PIPELINE_NOTE_NUMCHECK_TASK_NAME,
+        kind: PIPELINE_NOTE_EYECATCH_TASK_NAME,
         status: 'queued',
         parent_job_id: jobId,
         payload_json: { note_article_id: noteArticleId, retry_count: retryCount },
       },
     });
     await addJob(
-      PIPELINE_NOTE_NUMCHECK_TASK_NAME,
-      {
-        note_article_id: noteArticleId,
-        job_id: childJob.id,
-        retry_count: retryCount,
-      },
+      PIPELINE_NOTE_EYECATCH_TASK_NAME,
+      { note_article_id: noteArticleId, job_id: childJob.id, retry_count: retryCount },
       { maxAttempts: 3 },
     );
 
@@ -261,13 +279,26 @@ export async function runPipelineNoteEditor(
         status: 'done',
         finished_at: now(),
         error: null,
-        result_json: { next_job_id: childJob.id },
+        result_json: {
+          applied: shouldWrite,
+          fixes: checked.fixes,
+          unresolved: checked.unresolved,
+          next_job_id: childJob.id,
+        },
       },
     });
 
     log.info(
-      { task: PIPELINE_NOTE_EDITOR_TASK_NAME, jobId, noteArticleId, nextJobId: childJob.id },
-      'pipeline.note.editor done — pipeline.note.numcheck enqueued',
+      {
+        task: PIPELINE_NOTE_NUMCHECK_TASK_NAME,
+        jobId,
+        noteArticleId,
+        applied: shouldWrite,
+        fixCount: checked.fixes.length,
+        unresolvedCount: checked.unresolved.length,
+        nextJobId: childJob.id,
+      },
+      'pipeline.note.numcheck done — pipeline.note.eyecatch enqueued',
     );
   } catch (err) {
     await failJob(prisma, jobId, now(), err, log);
@@ -277,7 +308,7 @@ export async function runPipelineNoteEditor(
       await releaseLock({ noteArticleId, holder: `pipeline:${jobId}` });
     } catch (releaseErr) {
       log.warn(
-        { task: PIPELINE_NOTE_EDITOR_TASK_NAME, jobId, noteArticleId, err: releaseErr },
+        { task: PIPELINE_NOTE_NUMCHECK_TASK_NAME, jobId, noteArticleId, err: releaseErr },
         'failed to release NoteLock (will be swept by locks.sweep)',
       );
     }
@@ -285,7 +316,7 @@ export async function runPipelineNoteEditor(
 }
 
 async function failJob(
-  prisma: { job: PipelineNoteEditorPrisma['job'] },
+  prisma: { job: PipelineNoteNumcheckPrisma['job'] },
   jobId: string,
   finishedAt: Date,
   err: unknown,
@@ -298,7 +329,7 @@ async function failJob(
     });
   } catch (jobUpdateErr) {
     log.warn(
-      { task: PIPELINE_NOTE_EDITOR_TASK_NAME, jobId, err: jobUpdateErr },
+      { task: PIPELINE_NOTE_NUMCHECK_TASK_NAME, jobId, err: jobUpdateErr },
       'failed to mark internal Job as failed',
     );
   }
@@ -313,6 +344,6 @@ function serializeError(err: unknown): string {
   }
 }
 
-export const pipelineNoteEditorTask: Task = async (payload: unknown, helpers: JobHelpers) => {
-  await runPipelineNoteEditor(payload, helpers.addJob as unknown as AddJobLike);
+export const pipelineNoteNumcheckTask: Task = async (payload: unknown, helpers: JobHelpers) => {
+  await runPipelineNoteNumcheck(payload, helpers.addJob as unknown as AddJobLike);
 };

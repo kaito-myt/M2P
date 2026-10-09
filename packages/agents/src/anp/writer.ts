@@ -43,6 +43,14 @@ const MAX_PARSE_RETRIES = 2;
  */
 const MIN_CHAR_RATIO = 0.85;
 
+/**
+ * 字数不足で書き直させる上限回数。パース失敗 (`MAX_PARSE_RETRIES`) とは**別枠**にする。
+ *
+ * 共用にしていた間は書き直しが実質 1 回しかできず、6,000 字目標に対して 4,158 字で
+ * 止まっていた (2026-10-09 実走)。枠を分け、さらに前回の本文を土台として渡す。
+ */
+const MAX_LENGTH_RETRIES = 2;
+
 /** 有料記事の無料/有料の区切りマーカー。本文中に単独行として出現する想定。 */
 export const PAYWALL_MARKER = '<<<PAYWALL>>>';
 
@@ -227,9 +235,16 @@ export async function generateNoteBody(
   const minChars = Math.floor(parsedInput.target_chars * MIN_CHAR_RATIO);
 
   let lastError: AgentError | undefined;
-  /** 前回が短すぎた場合に追記する指示 (不足字数つき)。 */
+  /** 前回が短すぎた場合に追記する指示 (不足字数 + 前回の本文つき)。 */
   let shortfall: string | undefined;
-  for (let attempt = 1; attempt <= MAX_PARSE_RETRIES; attempt++) {
+  /** 字数不足で返した最後の本文。再試行を使い切ったらこれを返す (記事を落とさない)。 */
+  let lastShortOutput: NoteWriterOutput | undefined;
+  /** パース/マーカー失敗の回数。字数不足とは別枠で数える。 */
+  let parseFailures = 0;
+  /** 字数不足で書き直させた回数。 */
+  let lengthRetries = 0;
+
+  for (let attempt = 1; attempt <= MAX_PARSE_RETRIES + MAX_LENGTH_RETRIES; attempt++) {
     const userMessage = shortfall ? `${baseUserMessage}\n\n${shortfall}` : baseUserMessage;
     const completion = await client.complete({
       role: 'anp.writer',
@@ -247,6 +262,8 @@ export async function generateNoteBody(
       lastError = new AgentError('anp.writer.invalid_output: empty response', {
         details: { rawText: String(rawText), attempt },
       });
+      parseFailures += 1;
+      if (parseFailures >= MAX_PARSE_RETRIES) break;
       continue;
     }
 
@@ -255,6 +272,8 @@ export async function generateNoteBody(
       lastError = new AgentError('anp.writer.invalid_output: failed to parse JSON', {
         details: { rawText, attempt },
       });
+      parseFailures += 1;
+      if (parseFailures >= MAX_PARSE_RETRIES) break;
       continue;
     }
 
@@ -265,6 +284,8 @@ export async function generateNoteBody(
         details: { rawText, issues: validated.error.issues, attempt },
         cause: validated.error,
       });
+      parseFailures += 1;
+      if (parseFailures >= MAX_PARSE_RETRIES) break;
       continue;
     }
 
@@ -273,37 +294,68 @@ export async function generateNoteBody(
       lastError = new AgentError('anp.writer.invalid_output: paywall marker missing', {
         details: { rawText, attempt },
       });
+      parseFailures += 1;
+      if (parseFailures >= MAX_PARSE_RETRIES) break;
       continue;
     }
     const charCount = [...body].length;
-    if (charCount < minChars && attempt < MAX_PARSE_RETRIES) {
+    const output: NoteWriterOutput = { body_md: body, char_count: charCount };
+    if (paywallLinePos !== undefined) output.paywall_line_pos = paywallLinePos;
+
+    if (charCount < minChars) {
+      lastShortOutput = output;
+      lastError = new AgentError('anp.writer.invalid_output: body too short', {
+        details: { charCount, minChars, targetChars: parsedInput.target_chars, attempt },
+      });
+      // 再試行枠を使い切ったら、短いままでも返す。記事を落とす方が損
+      // (公開可否は judge が判断する)。
+      if (lengthRetries >= MAX_LENGTH_RETRIES) return lastShortOutput;
+      lengthRetries += 1;
+
       // 薄い記事は judge の「無料部分だけでは1つも試せない」「有料部分が無料部分の繰り返し」で
       // 差し戻される。字数を埋めるための水増しではなく、中身を足して伸ばすよう具体的に指示する。
+      //
+      // **前回の本文を土台として渡す**。白紙から書き直させると毎回同じ分量に収束して
+      // 目標に届かなかった (2026-10-09 実走: 6,000 字目標に対し 1 回書き直して 4,158 字)。
       shortfall = [
         `【前回の出力は ${charCount} 字で、目標 ${parsedInput.target_chars} 字に対して ` +
-          `${parsedInput.target_chars - charCount} 字足りませんでした。書き直してください】`,
-        `- 最低 ${minChars} 字。同じ内容を言い換えて伸ばすのではなく、中身を足して伸ばすこと。`,
-        '- 足すもの: 実際の手順を番号付きで分解する / 数字と集計条件を添えた表を増やす /',
+          `${parsedInput.target_chars - charCount} 字足りません。下の本文を土台に書き足してください】`,
+        `- 最低 ${minChars} 字。ゼロから書き直すのではなく、**下の本文を残したまま中身を足す**。`,
+        '- 同じ内容の言い換えで伸ばさない。足すものは次のいずれか:',
+        '  実際の手順を番号付きで分解する / 数字と集計条件を添えた表を増やす /',
         '  うまくいかなかった場合の分岐 / 判断を間違えた実例とその理由。',
         '- 見出し構成は変えない。各見出しの中身を厚くする。',
         ...(parsedInput.paid
           ? [
               '- 無料部分は、それだけで読者が1つ試し切れる分量にする (考え方と根拠を完結させる)。',
               '- 有料部分は無料部分の繰り返しにせず、条件式・閾値・テンプレート・全データを置く。',
+              `- ${PAYWALL_MARKER} は書き足した後も単独行で1回だけ残す。`,
             ]
           : []),
+        '',
+        '【前回の本文 — これを土台にする】',
+        insertMarkerForRetry(body, parsedInput.paid, paywallLinePos),
       ].join('\n');
-      lastError = new AgentError('anp.writer.invalid_output: body too short', {
-        details: { charCount, minChars, targetChars: parsedInput.target_chars, attempt },
-      });
       continue;
     }
-    const output: NoteWriterOutput = { body_md: body, char_count: charCount };
-    if (paywallLinePos !== undefined) output.paywall_line_pos = paywallLinePos;
     return output;
   }
 
+  // 字数不足で枠を使い切った場合は本文を返す (上の return で拾うが、
+  // パース失敗と字数不足が混ざった場合の保険としてここでも返す)。
+  if (lastShortOutput) return lastShortOutput;
   throw lastError ?? new AgentError('anp.writer.invalid_output: unknown failure');
+}
+
+/**
+ * 書き足し用に前回の本文へマーカーを戻す。
+ * マーカー抜きで渡すと、書き足した結果から有料ラインが消える。
+ */
+function insertMarkerForRetry(body: string, paid: boolean, pos: number | undefined): string {
+  if (!paid || pos === undefined) return body;
+  const chars = [...body];
+  if (pos < 0 || pos > chars.length) return body;
+  return `${chars.slice(0, pos).join('')}\n\n${PAYWALL_MARKER}\n\n${chars.slice(pos).join('')}`;
 }
 
 function normalizePartialOutput(raw: unknown): unknown {

@@ -233,15 +233,19 @@ describe('generateNoteBody — 文量の下限', () => {
       promptLoaderDeps: { prisma: makePromptRepo() },
     });
 
-    expect(fakeClient.complete).toHaveBeenCalledTimes(2);
-    // 1 回目は素のプロンプト、2 回目に不足分の指示が付く。
-    expect(userMessageOf(fakeClient, 0)).not.toContain('足りませんでした');
+    // 字数不足はパース失敗と別枠で 2 回まで書き直させる (1 回では届かなかった実測)。
+    expect(fakeClient.complete).toHaveBeenCalledTimes(3);
+    // 1 回目は素のプロンプト、2 回目以降に不足分の指示が付く。
+    expect(userMessageOf(fakeClient, 0)).not.toContain('字足りません');
     const retry = userMessageOf(fakeClient, 1);
     expect(retry).toContain('1200 字');
-    expect(retry).toContain('4800 字足りませんでした'); // 6000 - 1200
+    expect(retry).toContain('4800 字足りません'); // 6000 - 1200
     expect(retry).toContain('最低 5100 字'); // 6000 * 0.85
     // 水増しではなく中身を足させる。
-    expect(retry).toContain('中身を足して伸ばすこと');
+    expect(retry).toContain('下の本文を残したまま中身を足す');
+    // 白紙から書き直させず、前回の本文を土台として渡す。
+    expect(retry).toContain('【前回の本文 — これを土台にする】');
+    expect(retry).toContain(shortBody);
   });
 
   it('有料記事の書き直しでは、無料部分の自立と有料部分の新規性も指示する', async () => {
@@ -268,6 +272,22 @@ describe('generateNoteBody — 文量の下限', () => {
     });
 
     expect(result.char_count).toBe(1000);
+    expect(fakeClient.complete).toHaveBeenCalledTimes(3);
+  });
+
+  it('字数不足の枠はパース失敗の枠を食い潰さない (マーカー欠落は 2 回で打ち切る)', async () => {
+    // 十分な長さだがマーカーが無い有料記事 = パース系の失敗。字数の枠 (2) が
+    // 加算されて 4 回呼ばれたりしないこと。
+    const body = '本文です。'.padEnd(5200, 'あ');
+    const fakeClient = makeFakeClient(JSON.stringify({ body_md: body, char_count: 5200 }));
+
+    await expect(
+      generateNoteBody(baseInput({ paid: true, target_chars: 6000 }), {
+        createAgentClient: vi.fn(async () => fakeClient),
+        promptLoaderDeps: { prisma: makePromptRepo() },
+      }),
+    ).rejects.toThrow(AgentError);
+
     expect(fakeClient.complete).toHaveBeenCalledTimes(2);
   });
 

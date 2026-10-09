@@ -6,8 +6,9 @@
  * upsert する (CLAUDE.md ルール #4: プロンプトは DB が正 / ルール #7: 設計書とコードの整合)。
  *
  * 投入内容:
- *  1. Prompts — role='anp.theme' | 'anp.outline' | 'anp.writer' | 'anp.editor' | 'anp.judge' |
- *     'anp.promo' | 'anp.strategist' | 'anp.consultant' の genre=null v1 active テンプレ (ANP_PROMPT_ROLES.length 件)
+ *  1. Prompts — role='anp.theme' | 'anp.outline' | 'anp.writer' | 'anp.editor' | 'anp.numcheck' |
+ *     'anp.judge' | 'anp.promo' | 'anp.strategist' | 'anp.consultant' の genre=null v1 active
+ *     テンプレ (ANP_PROMPT_ROLES.length 件)
  *  2. ModelAssignments — 同 role の既定モデル割当 (同数)
  *
  * 全件 upsert で idempotent。実行: `pnpm --filter @a2p/db run seed:anp`
@@ -19,6 +20,7 @@ export const ANP_PROMPT_ROLES = [
   'anp.outline',
   'anp.writer',
   'anp.editor',
+  'anp.numcheck',
   'anp.judge',
   'anp.promo',
   'anp.strategist',
@@ -43,6 +45,7 @@ const ANP_ROLE_PLACEHOLDERS: Record<AnpPromptRole, string[]> = {
     'feedback',
   ],
   'anp.editor': ['niche', 'tone', 'title', 'paid', 'feedback'],
+  'anp.numcheck': ['niche', 'title', 'paid'],
   'anp.judge': ['niche', 'target_reader'],
   'anp.promo': ['channel_label', 'length_guide'],
   'anp.strategist': [],
@@ -163,6 +166,46 @@ function buildAnpEditorPrompt(): string {
   ].join('\n');
 }
 
+function buildAnpNumcheckPrompt(): string {
+  return [
+    '# あなたの役割：note 記事の数値校正担当',
+    '',
+    'あなたは記事に出てくる数字が、記事の中で矛盾していないかだけを確かめる校正担当です。',
+    '文章を良くする仕事ではありません。**数字の整合だけ**を見ます。',
+    '',
+    '## なぜこの工程があるか',
+    '読者は無料部分と有料部分の両方を読みます。同じ項目の数字が場所によって違っていると、',
+    '記事全体の信頼が失われ、公開できません。表の内訳を足して合計と合わないケース、',
+    '率が件数÷母数にならないケースが実際に多数見つかっています。',
+    '',
+    '## 確かめること',
+    '1. 表の内訳を実際に足して、記載の合計・総数と一致するか。',
+    '2. 率 (%・回収率・複勝率など) が「件数 ÷ 母数」と合うか。四捨五入を超えてずれていないか。',
+    '3. 同じ項目の数字が別の場所で違う値になっていないか (本文 ↔ 表、無料部分 ↔ 有料部分)。',
+    '4. 合計時間・合計金額・件数の足し算が合うか。',
+    '5. n の定義 (レース数か頭数か、件数か人数か) が途中で入れ替わっていないか。',
+    '',
+    '## 直し方',
+    '- **数字と、その数字に直接かかる文だけ**を直す。見出し ({title} 以下の構成) と段落数は変えない。',
+    '- どちらが正しいか決められるなら、根拠のある側に合わせて他方を直す。',
+    '- 決められないなら、その数字を使った主張を落として書ける範囲に狭める。',
+    '  **それらしい数字を作ってはいけない。** 落としたものは unresolved に書く。',
+    '- ニッチ ({niche}) の慣習的な指標名は変えない。',
+    '',
+    '## してはいけないこと',
+    '- 言い回しの改善・要約・情報の追加 (別の工程の仕事)。',
+    '- 見出しの追加・削除・並べ替え。',
+    '- 本文中に `<<<PAYWALL>>>` マーカー行がある場合の削除・複製 (paid={paid} が yes のとき出現)。',
+    '  **単独行のまま必ず 1 回だけ**残すこと。',
+    '- 直すところが無いときに、無理に何かを変えること (本文をそのまま返し fixes を空配列にする)。',
+    '',
+    '## 出力',
+    'ユーザーメッセージで与えられる JSON 出力形式に厳密に従うこと。',
+    'JSON 以外の前置き・説明・コードフェンスは出力しない。',
+    'JSON 文字列値内の改行は必ず `\\n` でエスケープする。日本語で出力する。',
+  ].join('\n');
+}
+
 function buildAnpJudgePrompt(): string {
   return [
     '# あなたの役割：note 記事の品質審査員 (Quality Judge)',
@@ -275,6 +318,7 @@ const ANP_PROMPT_BODY_BUILDERS: Record<AnpPromptRole, () => string> = {
   'anp.outline': buildAnpOutlinePrompt,
   'anp.writer': buildAnpWriterPrompt,
   'anp.editor': buildAnpEditorPrompt,
+  'anp.numcheck': buildAnpNumcheckPrompt,
   'anp.judge': buildAnpJudgePrompt,
   'anp.promo': buildAnpPromoPrompt,
   'anp.strategist': buildAnpStrategistPrompt,
@@ -323,6 +367,8 @@ export function buildAnpModelAssignmentSeeds(): AnpModelAssignmentSeed[] {
     { role: 'anp.outline', genre: null, provider: 'anthropic', model: 'claude-sonnet-4-6', status: 'active', created_by: 'system' },
     { role: 'anp.writer', genre: null, provider: 'anthropic', model: 'claude-sonnet-5', status: 'active', created_by: 'system' },
     { role: 'anp.editor', genre: null, provider: 'openai', model: 'gpt-5', status: 'active', created_by: 'system' },
+    // 数値の突き合わせは「推論して直す」作業。judge が同じことを既にできているので同系統を使う。
+    { role: 'anp.numcheck', genre: null, provider: 'anthropic', model: 'claude-sonnet-5', status: 'active', created_by: 'system' },
     { role: 'anp.judge', genre: null, provider: 'anthropic', model: 'claude-sonnet-5', status: 'active', created_by: 'system' },
     { role: 'anp.promo', genre: null, provider: 'anthropic', model: 'claude-sonnet-4-6', status: 'active', created_by: 'system' },
     { role: 'anp.strategist', genre: null, provider: 'anthropic', model: 'claude-opus-5', status: 'active', created_by: 'system' },

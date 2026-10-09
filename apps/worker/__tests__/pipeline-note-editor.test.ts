@@ -10,7 +10,7 @@ import {
   type AddJobLike,
   type PipelineNoteEditorPrisma,
 } from '../src/tasks/pipeline-note-editor.js';
-import { PIPELINE_NOTE_EYECATCH_TASK_NAME } from '../src/tasks/pipeline-note-eyecatch.js';
+import { PIPELINE_NOTE_NUMCHECK_TASK_NAME } from '../src/tasks/pipeline-note-numcheck.js';
 
 function makeLogger(): Logger {
   return {
@@ -159,9 +159,9 @@ describe('pipeline.note.editor', () => {
       paywall_line_pos: 150,
       status: 'eyecatch',
     });
-    expect(jobCreates[0]!.data).toMatchObject({ kind: PIPELINE_NOTE_EYECATCH_TASK_NAME });
+    expect(jobCreates[0]!.data).toMatchObject({ kind: PIPELINE_NOTE_NUMCHECK_TASK_NAME });
     expect(addJob).toHaveBeenCalledWith(
-      PIPELINE_NOTE_EYECATCH_TASK_NAME,
+      PIPELINE_NOTE_NUMCHECK_TASK_NAME,
       expect.objectContaining({ note_article_id: 'art1' }),
       { maxAttempts: 3 },
     );

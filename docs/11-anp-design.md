@@ -284,7 +284,7 @@ ANP の機能は A2P の対応機能を note 向けに写像したもの。**太
   `0 23 * * *` UTC=JST 08:00。A2P `pipeline.theme.auto`(JST 07:00) と衝突しないよう1時間ずらす)が
   `anp_auto_theme_enabled=true` の間、`note_accounts.status='active'` の各アカウントに
   1日 `anp_themes_per_day` 件のテーマを自動生成する。`anp_autopass_enabled=true` の間はさらに
-  生成した全テーマを自動採用し `pipeline.note.writer.outline`(以降 body→editor→eyecatch→judge は
+  生成した全テーマを自動採用し `pipeline.note.writer.outline`(以降 body→editor→numcheck→eyecatch→judge は
   既存の自動連結)を起動する — UI の「テーマ生成」→「承認」ボタンと同じ経路を worker から直接踏む。
   **アカウント別設定を実装済み(2026-09-21)**: `note_accounts.settings_json`
   (`auto_theme_enabled`/`themes_per_day`/`autopass_enabled`)で `note.theme.auto` の実効値を
@@ -832,7 +832,7 @@ packages/
 A2P・portal と揃えれば SSO 素通り（`docs/10` 準拠）。ANP の本番サブドメイン案 = `anp.m2p.tools`。
 
 ### 5.3 ジョブ/ワーカー
-graphile-worker を流用。ANP のタスクは `pipeline.note.*`（marketer/outline/writer/editor/eyecatch/judge/publish/export）＋ `note.sales.fetch` / `note.publish.status.sync`。
+graphile-worker を流用。ANP のタスクは `pipeline.note.*`（marketer/outline/writer/editor/numcheck/eyecatch/judge/publish/export）＋ `note.sales.fetch` / `note.publish.status.sync`。
 既存 `apps/worker` にタスクを追加する（サービス増を避ける）。並列度・BookLock 相当（`note_locks`）を用意。
 
 ### 5.4 LLM/画像/検索（A2P `docs/03` 準拠）
@@ -968,7 +968,7 @@ A2P の `books` 系を note 記事系に写像。**マルチアカウントを�
 ```
 note.theme.generate (アカウント別・手動起動。UI の「テーマ生成」ボタン)
   → [運営者がテーマ承認 (UI) — NoteArticle 作成]
-  → pipeline.note.writer.outline → writer.body → editor → eyecatch → judge (自動連結)
+  → pipeline.note.writer.outline → writer.body → editor → numcheck → eyecatch → judge (自動連結)
   → judge 合格 (score_total >= 80) → NoteArticle.status='ready' (公開ゲート待ち)
   → [Phase 2 未実装] 価格/公開ゲート: 人間承認 or AI自動 (現状は UI の「公開(dry-run)/公開」ボタン手動起動、または dispatcher 自動)
   → [Phase 2 実装済み] pipeline.note.publish (Playwright アシスト。UI ボタン or note.publish.dispatch) → note.publish.status.sync (6h毎)
@@ -982,8 +982,9 @@ note.theme.generate (アカウント別・手動起動。UI の「テーマ生�
 |---|---|---|---|
 | `note.theme.generate` | `{ note_account_id, job_id, count? }` | note Marketer (`@a2p/agents/anp/theme`, role=`anp.theme`) がニッチ/トーン/直近採用済タイトル (90日除外) を入力にテーマ候補を生成し `NoteTheme(status='pending')` を `createMany` | 次タスクなし (UI 承認待ちで停止) |
 | `pipeline.note.writer.outline` | `{ note_article_id, job_id }` | note Writer/Outline (role=`anp.outline`) がリード文+見出し構成 (2〜12) を生成。`NoteArticle.lead` 確定、`status='writing'` | `pipeline.note.writer.body` を自動 enqueue（`lead`/`headings` は子 Job の `payload_json` で forward — `NoteArticle` に永続列を持たないため） |
-| `pipeline.note.writer.body` | `{ note_article_id, job_id, lead, headings, feedback? }` | note Writer/Body (role=`anp.writer`) が本文 (目標 4,000 字) を執筆。有料記事は本文中に `<<<PAYWALL>>>` マーカーを 1 回挿入させ、呼出側でマーカー位置を `paywall_line_pos` として抽出・除去。`NoteArticle.body_md`/`paywall_line_pos` 確定、`status='editing'` | `pipeline.note.editor` を自動 enqueue |
-| `pipeline.note.editor` | `{ note_article_id, job_id, feedback?, retry_count? }` | note Editor (role=`anp.editor`) が短段落・リード文中心に校閲。`paywall_line_pos` 指定時はマーカーを再挿入して LLM に渡し「保持したまま校閲」を指示、新しい位置を再抽出。`status='eyecatch'` | `pipeline.note.eyecatch` を自動 enqueue（`retry_count` を forward） |
+| `pipeline.note.writer.body` | `{ note_article_id, job_id, lead, headings, feedback? }` | note Writer/Body (role=`anp.writer`) が本文を執筆 (目標は無料 4,000 字 / 有料 6,000 字 — `lib/note-target-chars.ts`。目標の 85% を下回ったら不足字数と前回本文を渡して最大 2 回書き足させる)。記事末の関連記事リンクは `related_articles` で渡した**公開済みの実 URL だけ**を使わせる。有料記事は本文中に `<<<PAYWALL>>>` マーカーを 1 回挿入させ、呼出側でマーカー位置を `paywall_line_pos` として抽出・除去。`NoteArticle.body_md`/`paywall_line_pos` 確定、`status='editing'` | `pipeline.note.editor` を自動 enqueue |
+| `pipeline.note.editor` | `{ note_article_id, job_id, feedback?, retry_count? }` | note Editor (role=`anp.editor`) が短段落・リード文中心に校閲。`paywall_line_pos` 指定時はマーカーを再挿入して LLM に渡し「保持したまま校閲」を指示、新しい位置を再抽出。`status='eyecatch'` | `pipeline.note.numcheck` を自動 enqueue（`retry_count` を forward） |
+| `pipeline.note.numcheck` | `{ note_article_id, job_id, retry_count? }` | **本文内の数値の自己整合だけ**を確かめて直す (role=`anp.numcheck`, 2026-10-09)。表の内訳と合計・率と件数÷母数・本文と表・無料部分と有料部分の食い違いを突き合わせる。**訂正の範囲を超えた出力 (見出しが変わる / 本文長が ±15% 超) は採用せず入力本文を素通し**する。有料記事はマーカーを再挿入して渡し、返ってこなければ本文を書き換えない (位置ズレで課金事故になる)。**この工程の失敗ではパイプラインを止めない** (数値の不整合は judge が拾う)。直した内容/直せなかった内容は `Job.result_json.fixes`/`unresolved` に残す。`status='eyecatch'` | `pipeline.note.eyecatch` を自動 enqueue（`retry_count` を forward） |
 | `pipeline.note.eyecatch` | `{ note_article_id, job_id, retry_count? }` | **(F-ANP-42) まず note 内 SEO** (`anp.seo`) を best-effort で実行し、タイトル/リード/見出し/ハッシュタグ/アイキャッチのコピーを確定 (`note-seo-step.ts`。失敗しても続行)。続いて note Eyecatch (`@a2p/agents/anp/eyecatch`, role=`anp.eyecatch` = 既定 Nano Banana 2) が **文字を含まない**挿絵を生成し、`composeNoteEyecatch` でキャッチコピーを Noto Sans JP のアウトラインとして焼き込む (F-ANP-41)。R2 `note/{note_article_id}/eyecatch.jpg` に保存、`NoteArticle.eyecatch_r2_key` 確定、`status='judging'`。**`retry_count > 0` かつ既に `eyecatch_r2_key` が設定済みなら再生成をスキップ**（judge 差し戻しは本文のみ変わるため、画像コストの重複を避ける） | `pipeline.note.judge` を自動 enqueue（`retry_count` を forward） |
 | `pipeline.note.judge` | `{ note_article_id, job_id, retry_count }` | note Judge (role=`anp.judge`) が 4 軸 (フック強度/可読性/有料転換見込み/検索流入見込み) で採点。`NoteArticle.quality_score` に最終スコアを保持（内訳/コメントは `Job.result_json`） | 合格 (>=80): `status='ready'`。不合格 かつ `retry_count < 1`: `pipeline.note.editor` へ差し戻し (`retry_count+1` を payload に forward、`status='editing'`)。不合格 かつ `retry_count >= 1`: `status='needs_human_review'` |
 
@@ -1176,7 +1177,7 @@ re-export している。
 ## 8. 段階的ロードマップ
 
 - **Phase 0（設計・雛形）**: 本ドキュメント／`apps/anp` スキャフォールド（SSO で起動する骨格＋ホーム骨格）／portal タイル（済）。
-- **Phase 1（MVP・実装済み）**: 単一〜複数アカウントで theme→outline→writer.body→editor→eyecatch→judge→**status='ready' (下書き相当)** まで自動連結。`apps/anp` に `/accounts`・`/accounts/[id]` UI（アカウント作成・テーマ生成/承認/却下・記事一覧）を実装。note 公開はアシスト手動（Phase 2）。売上手入力。
+- **Phase 1（MVP・実装済み）**: 単一〜複数アカウントで theme→outline→writer.body→editor→numcheck→eyecatch→judge→**status='ready' (下書き相当)** まで自動連結。`apps/anp` に `/accounts`・`/accounts/[id]` UI（アカウント作成・テーマ生成/承認/却下・記事一覧）を実装。note 公開はアシスト手動（Phase 2）。売上手入力。
 - **Phase 2（一部実装済み・2026-09-15）**: note 公開オートメーション（`pipeline.note.publish`/`note.publish.dispatch`/`note.publish.status.sync`、§7）＋マルチアカウント別セッション（`note_accounts.session_state_enc`、移行/取込スクリプト）を実装。**未実装・要フォロー**: 有料記事の価格/有料ライン設定 UI 自動化（note の KYC 要件により本人確認完了後に追加実装が必要、§2.1 参照）、~~認証リレー(`note_auth_requests`＋LINE)~~ → **Phase 7 で解消**、~~売上スクレイプ(`note.sales.fetch`)~~ → Phase 3 で解消、価格自動決定(F-ANP-16)。
 - **Phase 3（一部実装済み・2026-09-16）**: SNS 自動販促（`promotion.note.article`、§7）／売上・KPI取得（`note.sales.fetch`/`note.sales.fetch.dispatch`、§7）／相互流入 F-ANP-31 最小版（note 本文への関連書籍紹介、§3.4）／ホーム集約 F-ANP-42 最小版（`apps/anp/app/page.tsx`）を実装。**未実装・要フォロー**: メンバーシップ運用そのもの（運用アカウント無しのため §2.2 のスクレイプ未検証）、org 自律連携（note 出版本部/note 販促本部）、~~有料記事の価格/有料ライン設定 UI（Phase 2 から継続）~~ → **F-ANP-16b/47 で解消**（公開時の有料設定 = `pipeline.note.publish`、公開後の有料化 = `pipeline.note.monetize`）。
 - **Phase 4（一部実装済み・2026-09-18）**: 日次自動運転(F-ANP-17: `note.theme.auto` — テーマ自動生成＋自動採用＋パイプライン自動起動、§7)／価格・有料の自動提案(F-ANP-16 続き: judge が有料化提案、paid は KYC 未完了のため常に false 強制、§3.2/§7)／`needs_human_review` 再審査 UI(申し送り6 解消)／`note_accounts.handle` 編集 UI＋公開成功時の自動保存(申し送り13 解消)／A2P⇄note 相互送客の拡充(書籍LP→note 導線、F-ANP-31 最小版、§3.4)を実装。**未実装・要フォロー**: note→書籍化などクロスツール収益最適化、~~アカウント別のパイプライン自動パス設定(現状 `anp_auto_theme_enabled` 等はグローバル1設定)~~ → **Phase 7 で解消**、org 自律連携(F-ANP-43、運営者指示によりスコープ外)、~~有料記事の価格/有料ライン設定 UI(Phase 2 から継続、KYC 完了待ち)~~ → **F-ANP-16b/47 で解消**(実運用の可否は note 側 KYC の完了次第。未完了なら `kyc_required` で安全に止まる)、メンバーシップ運用実データ検証(Phase 3 から継続)。
@@ -1486,3 +1487,50 @@ judge に `paid=false` と伝わっていた (judge 自身が格下げしてい�
 出力後に本文を走査して突き合わせる検証工程 (A2P の `namecheck`/`contcheck` に相当) が必要
 — 無料部分と有料部分で同じ項目の数字が違う、表の内訳が合計と合わない、率が件数÷母数に
 ならない、を機械的に検出して書き直させる。`pipeline.note.fix-tables` の隣に置くのが素直。
+
+### 数値の自己整合を工程として分けた (`pipeline.note.numcheck`, 2026-10-09)
+
+上節の実走で残った障壁「同じ記事の中で数字が食い違う」への対処。judge は本文の表を
+**実際に再計算して**不一致を指摘してくるので、writer のプロンプトに「整合させて」と
+書くだけでは消えなかった。公開判定の前に潰す工程を分けた。
+
+**なぜ `anp.editor` ではないのか。** editor の契約は「見出し構成・段落の意味内容は保持し、
+文体・読みやすさのみ磨く」。数字を直すのは意味内容の変更なので editor の役割ではない。
+
+**連結**: `editor` → **`numcheck`** → `eyecatch` → `judge`。
+
+**確認項目** (role=`anp.numcheck`, プロンプトは `packages/db/seed-anp.ts` が正):
+
+1. 表の内訳を実際に足して、記載の合計・総数と一致するか。
+2. 率が「件数 ÷ 母数」と合うか (四捨五入を超えたずれ)。
+3. 同じ項目の数字が別の場所で違う値になっていないか (本文 ↔ 表、無料部分 ↔ 有料部分)。
+4. 合計時間・合計金額・件数の足し算。
+5. n の定義 (レース数か頭数か) が途中で入れ替わっていないか。
+
+**直し方**: 数字とその数字に直接かかる文だけを直す。決められない場合は
+**それらしい数字を作らず主張を狭め**、`unresolved` に残す。
+
+**この工程に本文を書き換えさせすぎない仕掛け** (ここが設計の要):
+
+- 見出しの集合が変わったら採用しない (`headingsOf` で突き合わせ)。
+- 本文長が入力比 **±15%** を超えたら採用しない (`MAX_LENGTH_DRIFT`)。訂正であって書き直しではない。
+- 有料記事はマーカーを再挿入して渡し、返ってこなければ本文を書き換えない
+  (ズレた位置で「有料ライン確定」にすると**無料部分の途中で課金される**)。
+- 採用しなかった場合は入力本文を素通しし、理由を `unresolved` に残す。
+- **LLM が例外で落ちてもパイプラインを止めない**。本文はそのままで eyecatch へ進む。
+  数字を直す工程の失敗で記事全体を落とすのは割に合わず、不整合は judge が拾う。
+
+### 文量不足の書き直しを専用枠にし、前回本文を土台に渡す (2026-10-09)
+
+実走で 6,000 字目標に対し 4,158 字で止まった原因は 2 つあった。
+
+1. `MAX_PARSE_RETRIES=2` を**パース失敗と字数不足で共用**していたため、書き直しが実質 1 回。
+   → `MAX_LENGTH_RETRIES=2` を別枠にした (パース失敗はパース枠だけを消費する)。
+2. 書き直しを**白紙から**やらせていたため、毎回同じ分量に収束していた。
+   → **前回の本文を「土台」として渡し**、構成を変えずに中身を足させる (有料記事は
+   マーカーを戻してから渡す。渡し忘れると書き足した結果から有料ラインが消える)。
+
+**`anp.editor` の出力上限も 8,192 → 16,384 に上げた。** 校閲は本文全体を打ち直すので、
+有料記事の目標を 6,000 字にした時点で 8,192 では必ず足りず、**校閲の出力が途中で切れて
+末尾の免責文・CTA が消える**。writer だけ上げて editor を忘れると、文量を増やした分が
+そのまま校閲で切り落とされる。

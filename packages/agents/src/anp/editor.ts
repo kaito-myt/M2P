@@ -27,7 +27,13 @@ import { extractJson } from './lib/extract-json.js';
 import { PAYWALL_MARKER, splitPaywallMarker } from './writer.js';
 import { editorialPolicyLines } from './account-context.js';
 
-const DEFAULT_MAX_OUTPUT_TOKENS = 8192;
+/**
+ * 出力上限。校閲は**本文全体を打ち直す**ので、writer と同じ余裕が必要
+ * (日本語本文を JSON 文字列で返すと実測 1 字あたり約 1.5 トークン)。
+ * 有料記事の目標を 6,000 字へ上げた (`lib/note-target-chars.ts`) 時点で 8,192 では
+ * 必ず足りず、**校閲の出力が途中で切れて末尾の免責文・CTA が消える**。
+ */
+const DEFAULT_MAX_OUTPUT_TOKENS = 16384;
 const MAX_PARSE_RETRIES = 2;
 
 export interface EditNoteArticleResult extends NoteEditorOutput {

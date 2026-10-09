@@ -52,9 +52,9 @@ function makePrismaMock() {
 const silentLogger = { info: () => undefined, warn: () => undefined };
 
 describe('buildAnpPromptSeeds', () => {
-  it('7 role すべてに genre=null v1 active 行を1本ずつ生成する', () => {
+  it('全 role に genre=null v1 active 行を1本ずつ生成する', () => {
     const seeds = buildAnpPromptSeeds();
-    expect(seeds).toHaveLength(8);
+    expect(seeds).toHaveLength(ANP_PROMPT_ROLES.length);
     expect(seeds.map((s) => s.role).sort()).toEqual([...ANP_PROMPT_ROLES].sort());
     for (const s of seeds) {
       expect(s.genre).toBeNull();
@@ -66,9 +66,10 @@ describe('buildAnpPromptSeeds', () => {
 });
 
 describe('buildAnpModelAssignmentSeeds', () => {
-  it('8 role に適材適所のモデルを割当てる (企画/戦略=Opus 5, 執筆/判定=Sonnet 5, 校閲=GPT-5)', () => {
+  it('全 role に適材適所のモデルを割当てる (企画/戦略=Opus 5, 執筆/判定/数値校正=Sonnet 5, 校閲=GPT-5)', () => {
     const seeds = buildAnpModelAssignmentSeeds();
-    expect(seeds).toHaveLength(8);
+    expect(seeds).toHaveLength(ANP_PROMPT_ROLES.length);
+    expect(seeds.map((s) => s.role).sort()).toEqual([...ANP_PROMPT_ROLES].sort());
     for (const s of seeds) expect(s.status).toBe('active');
     const by = new Map(seeds.map((s) => [s.role, `${s.provider}/${s.model}`]));
     expect(by.get('anp.theme')).toBe('anthropic/claude-opus-5');
@@ -77,22 +78,24 @@ describe('buildAnpModelAssignmentSeeds', () => {
     expect(by.get('anp.writer')).toBe('anthropic/claude-sonnet-5');
     expect(by.get('anp.judge')).toBe('anthropic/claude-sonnet-5');
     expect(by.get('anp.editor')).toBe('openai/gpt-5');
+    expect(by.get('anp.numcheck')).toBe('anthropic/claude-sonnet-5');
   });
 });
 
 describe('runSeedAnp', () => {
   it('prompt / modelAssignment を upsert し、2 回実行しても追加 create が発生しない (idempotent)', async () => {
     const prisma = makePrismaMock();
+    const N = ANP_PROMPT_ROLES.length;
     const first = await runSeedAnp(prisma as never, silentLogger);
-    expect(first.prompts).toBe(8);
-    expect(first.modelAssignments).toBe(8);
-    expect(prisma.prompt.create).toHaveBeenCalledTimes(8);
-    expect(prisma.modelAssignment.create).toHaveBeenCalledTimes(8);
+    expect(first.prompts).toBe(N);
+    expect(first.modelAssignments).toBe(N);
+    expect(prisma.prompt.create).toHaveBeenCalledTimes(N);
+    expect(prisma.modelAssignment.create).toHaveBeenCalledTimes(N);
 
     await runSeedAnp(prisma as never, silentLogger);
-    expect(prisma.prompt.create).toHaveBeenCalledTimes(8);
-    expect(prisma.modelAssignment.create).toHaveBeenCalledTimes(8);
-    expect(prisma.prompt.update).toHaveBeenCalledTimes(8);
-    expect(prisma.modelAssignment.update).toHaveBeenCalledTimes(8);
+    expect(prisma.prompt.create).toHaveBeenCalledTimes(N);
+    expect(prisma.modelAssignment.create).toHaveBeenCalledTimes(N);
+    expect(prisma.prompt.update).toHaveBeenCalledTimes(N);
+    expect(prisma.modelAssignment.update).toHaveBeenCalledTimes(N);
   });
 });

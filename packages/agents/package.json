@@ -45,6 +45,7 @@
     "./anp/outline": "./src/anp/outline.ts",
     "./anp/writer": "./src/anp/writer.ts",
     "./anp/editor": "./src/anp/editor.ts",
+    "./anp/numcheck": "./src/anp/numcheck.ts",
     "./anp/judge": "./src/anp/judge.ts",
     "./anp/eyecatch": "./src/anp/eyecatch.ts",
     "./anp/seo": "./src/anp/seo.ts",
