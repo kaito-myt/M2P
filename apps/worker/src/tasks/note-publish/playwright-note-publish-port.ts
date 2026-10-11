@@ -57,6 +57,15 @@ const MAX_JUNK_CLEANUPS = 300;
 const UPDATE_LABELS = ['更新する', '投稿する', '公開する', '有料エリアを設定して更新', '設定して更新する'];
 /** 新規公開時の確定ボタン候補 (「投稿する」を先に見る以外は UPDATE_LABELS と同じ)。 */
 const POST_LABELS = ['投稿する', '公開する', '更新する', '有料エリアを設定して投稿', '設定して投稿する'];
+/**
+ * 「有料エリア設定」画面でラインを確定するボタン (2026-10-11 実測のラベル)。
+ * ラインの位置を選んだだけでは確定せず、このボタンを押すまで `投稿する` が無反応になる。
+ */
+const PAID_AREA_CONFIRM_LABELS = [
+  'このラインより先を有料にする',
+  '有料エリアを設定する',
+  'この場所から有料にする',
+];
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 type Page = any;
@@ -391,24 +400,18 @@ async function publishOne(args: NotePublishArgs): Promise<NotePublishResult> {
       };
     }
 
-    // 5b. [F-ANP-16b] 有料記事: 記事タイプを有料に切り替える (KYC モーダルが出たら中断)。
+    // 5b. [F-ANP-16b] 有料記事の前提チェック。
+    //
+    // **記事タイプ(無料/有料)の切替はエディタには無い。「公開に進む」の先の公開設定画面にある。**
+    // 以前はここでエディタ側の `#paid` を探していたが、その要素は公開設定画面のものなので
+    // 必ず空振りし、しかも空振りが「KYC で止まっていない」と同じ戻り値だったため
+    // **記事タイプが無料のまま公開設定へ進んでいた** (2026-10-11 実測)。
+    // 実際の切替は後段の `selectPaidTypeOnSettings` で行う (`monetizeNoteArticle` と同じ順番)。
     if (a.paid) {
       if (a.priceJpy === null || a.priceJpy <= 0) {
         await screenshot(page, stageDir, `${a.id}-paid-no-price`);
         return { ok: false, reason: 'blocked', message: '有料記事ですが価格が未設定のため中断しました(下書きは保存済み)', noteUrl: draftEditUrl };
       }
-      const editorPaid = await selectPaidAndCheckKyc(page).catch((err) => {
-        log.warn({ err: errMsg(err), articleId: a.id }, '有料切替で例外');
-        return 'kyc_required';
-      });
-      if (editorPaid === 'kyc_required') {
-        await screenshot(page, stageDir, `${a.id}-paid-kyc-required`);
-        return { ok: false, reason: 'blocked', message: KYC_MESSAGE, noteUrl: draftEditUrl };
-      }
-      // `not_found` は失敗ではない: note は UI 変更で記事タイプの切替を
-      // エディタから公開設定画面へ移した。ここに無ければ後段で選ぶ。
-      log.info({ articleId: a.id, editorPaid }, 'エディタ側の有料切替');
-      await screenshot(page, stageDir, `${a.id}-paid-selected`);
     }
 
     // 6. 公開設定へ。
@@ -479,8 +482,21 @@ async function publishOne(args: NotePublishArgs): Promise<NotePublishResult> {
       const labels = await visibleButtonLabels(page);
       log.info({ articleId: a.id, labels }, '有料エリア設定画面のボタン');
       // 本文へのマーカー挿入が効かなかった場合でも、ここでラインを選べば有料公開できる。
-      await ensurePaidAreaLine(page, a.freeBlocks.length);
+      const lineOk = await ensurePaidAreaLine(
+        page,
+        a.freeBlocks.length,
+        a.freeBlocks.length + a.paidBlocks.length,
+      );
       await screenshot(page, stageDir, `${a.id}-paid-area`);
+      if (!lineOk) {
+        return {
+          ok: false,
+          reason: 'blocked',
+          message:
+            '有料エリアのラインを確定できませんでした(全文無料で公開してしまう事故の防止。下書きは保存済み)',
+          noteUrl: draftEditUrl,
+        };
+      }
       posted = await clickAnyText(page, POST_LABELS);
     }
     if (!posted) {
@@ -707,14 +723,22 @@ async function monetizeOne(args: NoteMonetizeArgs): Promise<NoteMonetizeResult> 
     }
     await page.waitForTimeout(5000);
 
-    const kyc = await selectPaidAndCheckKyc(page).catch(() => false);
+    const paidType = await selectPaidTypeOnSettings(page).catch(() => 'not_found');
     await screenshot(page, args.stageDir, `${args.articleId}-monetize-paid`);
-    if (kyc) {
+    if (paidType === 'kyc_required') {
       return {
         ok: false,
         reason: 'kyc_required',
         message:
           'note の本人情報登録(KYC)が未完了のため有料に切り替えられません。note の「設定 › お支払先」を登録後に再実行してください(記事は無料のまま公開され続けます)',
+        noteUrl: args.noteUrl,
+      };
+    }
+    if (paidType === 'not_found') {
+      return {
+        ok: false,
+        reason: 'blocked',
+        message: '公開設定の「記事タイプ › 有料」を選べませんでした(記事は無料のまま公開され続けます)',
         noteUrl: args.noteUrl,
       };
     }
@@ -827,7 +851,11 @@ async function checkPublished(args: NoteCheckPublishedArgs): Promise<NoteCheckPu
  * `freeBlockCount` 番目のボタン (= 無料ブロックの直後) を押す。既にラインが設定済みなら
  * 何もしない。戻り値は「ラインが設定されている状態になったか」。
  */
-async function ensurePaidAreaLine(page: Page, freeBlockCount: number): Promise<boolean> {
+async function ensurePaidAreaLine(
+  page: Page,
+  freeBlockCount: number,
+  totalBlockCount?: number,
+): Promise<boolean> {
   const alreadySet = await page
     .evaluate(() => /ここから先は/.test(document.querySelector('paywall-line')?.textContent ?? ''))
     .catch(() => false);
@@ -839,12 +867,36 @@ async function ensurePaidAreaLine(page: Page, freeBlockCount: number): Promise<b
     // ボタンが無い = この画面ではラインを選べない (既に設定済みか画面構成が変わった)。
     return await page.evaluate(() => !!document.querySelector('paywall-line')).catch(() => false);
   }
-  const at = Math.min(Math.max(freeBlockCount, 1), count) - 1;
+
+  // note が数えるブロック数は、こちらの markdown ブロック数と一致しない
+  // (2026-10-11 実測: 無料 37 ブロックに対し note 側の挿入位置は 28 個しかなかった)。
+  // 総数が分かっているときは**無料部分の割合**で位置を決める。素朴に clamp すると
+  // 末尾が選ばれ、ほぼ全文が無料の「有料記事」ができてしまう。
+  const at =
+    totalBlockCount && totalBlockCount > 0
+      ? Math.min(Math.max(Math.round((freeBlockCount / totalBlockCount) * count), 1), count) - 1
+      : Math.min(Math.max(freeBlockCount, 1), count) - 1;
   const target = buttons.nth(at);
   await target.scrollIntoViewIfNeeded({ timeout: 10000 }).catch(() => {});
   await target.click({ timeout: 15000 }).catch(() => {});
   await page.waitForTimeout(2500);
-  log.info({ freeBlockCount, buttonCount: count, clicked: at }, '有料エリアのラインを選択');
+  log.info(
+    { freeBlockCount, totalBlockCount: totalBlockCount ?? null, buttonCount: count, clicked: at },
+    '有料エリアのラインを選択',
+  );
+
+  // ラインを置いただけでは確定しない。確定ボタンを押すまで「投稿する」が無反応になる
+  // (2026-10-11 実測: 投稿する を押しても有料エリア設定画面のまま進まなかった)。
+  const confirmed = await clickAnyText(page, PAID_AREA_CONFIRM_LABELS);
+  await page.waitForTimeout(3000);
+  if (!confirmed) {
+    log.warn({ buttons: await visibleButtonLabels(page) }, '有料エリアの確定ボタンが見つからない');
+    return false;
+  }
+  const lineSet = await page
+    .evaluate(() => !!document.querySelector('paywall-line'))
+    .catch(() => false);
+  log.info({ confirmed, lineSet }, '有料エリアのライン確定');
   return true;
 }
 
@@ -1128,41 +1180,11 @@ async function selectPaidAndCheckKyc(page: Page): Promise<PaidSelectResult> {
  * 選べたことは **価格欄が現れたか / ラジオが checked になったか** で確認する。
  * クリックしただけで成功扱いにすると、無料のまま公開する事故に戻る。
  */
-async function selectPaidTypeOnSettings(page: Page): Promise<PaidSelectResult> {
-  const box = await page
+async function paidTypeLooksSelected(page: Page): Promise<boolean> {
+  return page
     .evaluate(() => {
-      const isVisible = (e: Element) => {
-        const el = e as HTMLElement;
-        return !!(el.offsetWidth || el.offsetHeight);
-      };
-      // ラジオ本体が input[type=radio] なら、その祖先ラベル/行をクリック対象にする。
-      const radios = [...document.querySelectorAll('input[type=radio]')] as HTMLInputElement[];
-      for (const input of radios) {
-        const label = input.closest('label');
-        if ((label?.textContent || '').trim() !== '有料') continue;
-        const target = (label ?? input) as HTMLElement;
-        const r = target.getBoundingClientRect();
-        return { x: r.x + r.width / 2, y: r.y + r.height / 2 };
-      }
-      // 独自実装のラジオ: テキストがちょうど「有料」の可視要素のうち最も内側のもの。
-      const candidates = [...document.querySelectorAll('label,div,span,button,[role=radio]')]
-        .filter((e) => (e.textContent || '').trim() === '有料' && isVisible(e))
-        .sort((a, b) => a.querySelectorAll('*').length - b.querySelectorAll('*').length);
-      const el = candidates[0];
-      if (!el) return null;
-      const r = el.getBoundingClientRect();
-      return { x: r.x + r.width / 2, y: r.y + r.height / 2 };
-    })
-    .catch(() => null);
-  if (!box) return 'not_found';
-
-  await page.mouse.click(box.x, box.y);
-  await page.waitForTimeout(2500);
-
-  if (await hasKycPrompt(page)) return 'kyc_required';
-
-  const selected = await page
-    .evaluate(() => {
+      const paid = document.querySelector('#paid') as HTMLInputElement | null;
+      if (paid?.checked) return true;
       const radioChecked = [...document.querySelectorAll('input[type=radio]')].some((e) => {
         const input = e as HTMLInputElement;
         return input.checked && (input.closest('label')?.textContent || '').trim() === '有料';
@@ -1185,8 +1207,46 @@ async function selectPaidTypeOnSettings(page: Page): Promise<PaidSelectResult> {
       return radioChecked || ariaChecked || priceShown;
     })
     .catch(() => false);
+}
 
-  return selected ? 'ok' : 'not_found';
+async function selectPaidTypeOnSettings(page: Page): Promise<PaidSelectResult> {
+  // 1) 実績のある経路: `#paid` を祖先ラベルごと実クリックする
+  //    (`monetizeNoteArticle` が 2026-10-09 に 9 本の後付け有料化を通した経路と同じ)。
+  const viaId = await selectPaidAndCheckKyc(page);
+  if (viaId === 'kyc_required') return 'kyc_required';
+  if (viaId === 'ok' && (await paidTypeLooksSelected(page))) return 'ok';
+
+  // 2) `#paid` が無い/効かない場合の保険: テキストがちょうど「有料」の可視要素をクリックする。
+  //    note が id を変えても、ラベルの文言が残っていれば拾える。
+  const box = await page
+    .evaluate(() => {
+      const isVisible = (e: Element) => {
+        const el = e as HTMLElement;
+        return !!(el.offsetWidth || el.offsetHeight);
+      };
+      const radios = [...document.querySelectorAll('input[type=radio]')] as HTMLInputElement[];
+      for (const input of radios) {
+        const label = input.closest('label');
+        if ((label?.textContent || '').trim() !== '有料') continue;
+        const target = (label ?? input) as HTMLElement;
+        const r = target.getBoundingClientRect();
+        return { x: r.x + r.width / 2, y: r.y + r.height / 2 };
+      }
+      const candidates = [...document.querySelectorAll('label,div,span,button,[role=radio]')]
+        .filter((e) => (e.textContent || '').trim() === '有料' && isVisible(e))
+        .sort((a, b) => a.querySelectorAll('*').length - b.querySelectorAll('*').length);
+      const el = candidates[0];
+      if (!el) return null;
+      const r = el.getBoundingClientRect();
+      return { x: r.x + r.width / 2, y: r.y + r.height / 2 };
+    })
+    .catch(() => null);
+  if (!box) return 'not_found';
+
+  await page.mouse.click(box.x, box.y);
+  await page.waitForTimeout(2500);
+  if (await hasKycPrompt(page)) return 'kyc_required';
+  return (await paidTypeLooksSelected(page)) ? 'ok' : 'not_found';
 }
 
 /**
