@@ -427,6 +427,31 @@ describe('pipeline.note.publish', () => {
     expect(articles[0]!.note_url).toBe('https://editor.note.com/notes/nabc/edit/');
   });
 
+  it('失敗した記事は updated_at を進めて列の最後尾に回す (head-of-line blocking 防止)', async () => {
+    const { prisma, articleUpdates, articles } = buildPrisma({
+      jobs: [{ id: 'job1', status: 'queued' }],
+      articles: [{ ...BASE_ARTICLE }],
+      accounts: [{ ...BASE_ACCOUNT }],
+    });
+    const publishPort = makePort({ ok: false, reason: 'error', message: 'なにかに失敗' });
+    const res = await runPipelineNotePublish(
+      { note_article_id: 'art1', job_id: 'job1', dry_run: false },
+      {
+        prisma,
+        logger: makeLogger(),
+        publishPort,
+        acquireLock: vi.fn().mockResolvedValue(undefined),
+        releaseLock: vi.fn().mockResolvedValue(undefined),
+        decryptSession: () => '{}',
+        notify: vi.fn().mockResolvedValue(true),
+      },
+    );
+    expect(res).toMatchObject({ ok: false, reason: 'error' });
+    // status は ready のまま (再試行できる) が、updated_at は必ず進む。
+    expect(articles[0]!.status).toBe('ready');
+    expect(articleUpdates.some((u) => 'updated_at' in u.data)).toBe(true);
+  });
+
   it('dry_run 省略時は安全側(true)で publishPort を呼ぶ', async () => {
     const { prisma } = buildPrisma({
       jobs: [{ id: 'job1', status: 'queued' }],

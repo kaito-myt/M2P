@@ -11,7 +11,9 @@
  *   - noteId 採番後は失敗しても `NoteArticle.note_url` を即保存する(下書き追跡のため)。
  *   - `not_logged_in`: アカウントを `status='paused'` にして LINE 通知 (bw.submit と同型)。
  *   - `kyc_required`/`blocked`/`error`: `NoteArticle.status` は `ready` のまま維持し、
- *     `note_url` は保持する(次回 dispatcher が再試行できるように)。
+ *     `note_url` は保持する(次回 dispatcher が再試行できるように)。ただし `updated_at` は
+ *     進める — dispatcher は `updated_at asc` で選ぶので、失敗した記事を先頭に残すと
+ *     後続が永久に公開されない (2026-10-11 追加)。
  */
 import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -337,6 +339,14 @@ export async function runPipelineNotePublish(
     }
 
     log.warn({ articleId, reason: result.reason, fail_message: result.message }, 'pipeline.note.publish failed');
+    // 失敗しても status は 'ready' のまま維持する (= 次回 dispatcher が再試行できる) が、
+    // dispatcher の候補は `orderBy: updated_at asc` なので updated_at を進めないと
+    // **同じ記事が毎 tick 先頭に居座り、後続が永久に出られない** (head-of-line blocking)。
+    // 30 分毎に同じ 1 本でブラウザを立ち上げ続けて他が 1 本も進まない状態になるため、
+    // 失敗した記事は列の最後尾に回す。
+    await prisma.noteArticle
+      .update({ where: { id: articleId }, data: { updated_at: now() } })
+      .catch((err) => log.warn({ err: errMsg(err), articleId }, 'updated_at 更新失敗(無視)'));
     if (result.reason === 'not_logged_in') {
       await prisma.noteAccount
         .update({ where: { id: account.id }, data: { status: 'paused' } })
