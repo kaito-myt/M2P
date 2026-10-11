@@ -5,6 +5,7 @@ import {
   appendInternalLinks,
   routeByJudgeScore,
   NOTE_JUDGE_PASS_THRESHOLD,
+  NOTE_JUDGE_PUBLISH_FLOOR,
   NOTE_JUDGE_REWRITE_THRESHOLD,
   NoteSeoOutputSchema,
   EDITORIAL_SECTION_KEYS,
@@ -55,21 +56,35 @@ describe('appendInternalLinks (F-ANP-42)', () => {
 });
 
 describe('routeByJudgeScore (F-ANP-44)', () => {
-  it('85 以上は公開へ', () => {
+  it('合格ライン以上は公開へ', () => {
     expect(routeByJudgeScore(NOTE_JUDGE_PASS_THRESHOLD, 0, 1)).toBe('ready');
     expect(routeByJudgeScore(92, 1, 1)).toBe('ready');
   });
 
-  it('70〜84 は校閲へ、69 以下は構成からやり直し', () => {
-    expect(routeByJudgeScore(84, 0, 1)).toBe('editor');
+  it('合格ライン未満〜70 は校閲へ、69 以下は構成からやり直し', () => {
+    expect(routeByJudgeScore(NOTE_JUDGE_PASS_THRESHOLD - 1, 0, 1)).toBe('editor');
     expect(routeByJudgeScore(NOTE_JUDGE_REWRITE_THRESHOLD, 0, 1)).toBe('editor');
     expect(routeByJudgeScore(69, 0, 1)).toBe('writer');
     expect(routeByJudgeScore(10, 0, 1)).toBe('writer');
   });
 
-  it('差し戻し上限に達したら人手へ', () => {
-    expect(routeByJudgeScore(84, 1, 1)).toBe('needs_human_review');
+  it('合格ラインは実測で到達可能な 80 (85 は 440 件中 3 件しか出なかった)', () => {
+    expect(NOTE_JUDGE_PASS_THRESHOLD).toBe(80);
+  });
+
+  it('差し戻し上限に達しても公開下限以上なら公開へ回す (運営者指示「必ず公開」)', () => {
+    expect(routeByJudgeScore(NOTE_JUDGE_PASS_THRESHOLD - 1, 1, 1)).toBe('ready');
+    expect(routeByJudgeScore(NOTE_JUDGE_PUBLISH_FLOOR, 1, 1)).toBe('ready');
+  });
+
+  it('差し戻し上限かつ公開下限未満のときだけ人手へ', () => {
+    expect(routeByJudgeScore(NOTE_JUDGE_PUBLISH_FLOOR - 1, 1, 1)).toBe('needs_human_review');
     expect(routeByJudgeScore(40, 1, 1)).toBe('needs_human_review');
+  });
+
+  it('公開下限は書き直しラインと同じ 70', () => {
+    expect(NOTE_JUDGE_PUBLISH_FLOOR).toBe(70);
+    expect(NOTE_JUDGE_PUBLISH_FLOOR).toBe(NOTE_JUDGE_REWRITE_THRESHOLD);
   });
 });
 

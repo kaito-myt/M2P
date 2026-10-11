@@ -8,6 +8,7 @@ import {
 import { judgeNoteArticle as defaultJudgeNoteArticle } from '@a2p/agents/anp/judge';
 import {
   NOTE_JUDGE_PASS_THRESHOLD,
+  NOTE_JUDGE_PUBLISH_FLOOR,
   routeByJudgeScore,
   type NoteJudgeInput,
   type NoteJudgeOutput,
@@ -26,10 +27,14 @@ import { PIPELINE_NOTE_WRITER_OUTLINE_TASK_NAME } from './pipeline-note-writer-o
  * `pipeline.note.judge` タスク (docs/11-anp-design.md §7, F-ANP-15).
  *
  * note Quality Judge が 4 軸採点 (フック強度/可読性/有料転換見込み/検索流入見込み) を行い、
- * 合格 (>= 80) なら `NoteArticle.status='ready'` (公開ゲート待ち。note 公開自体は Phase 2)。
- * 不合格は `pipeline.note.editor` へ 1 回だけ差し戻す (A2P Judge の RETRY_LIMIT=1 と同じ)。
- * 2 回目も不合格なら `NoteArticle.status='needs_human_review'` に遷移する
- * (note_articles.status の取りうる値に Phase 1 で追加。docs/11 §6 に追記)。
+ * 合格 (>= `NOTE_JUDGE_PASS_THRESHOLD`) なら `NoteArticle.status='ready'` (公開ゲート待ち)。
+ * 不合格は `pipeline.note.editor` / `pipeline.note.writer.outline` へ差し戻す (`RETRY_LIMIT` 回まで)。
+ *
+ * **差し戻しを使い切ったときの終端 (2026-10-11 変更)**: 従来は無条件に
+ * `needs_human_review` だったが、合格ラインが実測で到達不能だったため全記事がここに落ち、
+ * 9 日間 1 本も公開されない状態になった。現在は `NOTE_JUDGE_PUBLISH_FLOOR` 以上なら
+ * `ready` にして公開まで通し (`result_json.published_below_pass=true` で記録)、
+ * 下限未満だけを `needs_human_review` に落とす。
  *
  * NOTE: `eval_results` テーブルは `book_id` NOT NULL FK (Book 専用) のため ANP では使えない。
  * 代わりに `NoteArticle.quality_score` に最終スコアのみ保持し、内訳/コメントは
@@ -226,6 +231,7 @@ export async function runPipelineNoteJudge(
 
     let phase: string;
     let nextJobId: string | null = null;
+    let belowPass = false;
 
     // F-ANP-16 (docs/11 申し送り8): note の本人確認(KYC)が未完了のため有料記事は公開できない。
     // 判定が確定するタイミング(ready / needs_human_review の終端状態)では `paid` を必ず false へ
@@ -242,6 +248,9 @@ export async function runPipelineNoteJudge(
     const route = routeByJudgeScore(judged.score_total, retryCount, RETRY_LIMIT);
 
     if (route === 'ready') {
+      // 合格ラインに届いて ready になったのか、差し戻しを使い切って「下限以上だから出す」で
+      // ready になったのかは運用上まったく意味が違う。後者は品質の宿題が残っているので記録する。
+      belowPass = judged.score_total < NOTE_JUDGE_PASS_THRESHOLD;
       await prisma.noteArticle.update({
         where: { id: noteArticleId },
         data: {
@@ -253,10 +262,18 @@ export async function runPipelineNoteJudge(
           paywall_line_pos: finalPricing.paid ? article.paywall_line_pos : null,
         },
       });
-      phase = 'ready';
+      phase = belowPass ? 'ready_below_pass' : 'ready';
       log.info(
-        { task: PIPELINE_NOTE_JUDGE_TASK_NAME, jobId, noteArticleId, scoreTotal: judged.score_total },
-        'score >= threshold — NoteArticle status=ready',
+        {
+          task: PIPELINE_NOTE_JUDGE_TASK_NAME,
+          jobId,
+          noteArticleId,
+          scoreTotal: judged.score_total,
+          belowPass,
+        },
+        belowPass
+          ? `score < ${NOTE_JUDGE_PASS_THRESHOLD} but >= ${NOTE_JUDGE_PUBLISH_FLOOR} and retries exhausted — publishing anyway (status=ready)`
+          : 'score >= threshold — NoteArticle status=ready',
       );
     } else if (route === 'editor' || route === 'writer') {
       const nextRetryCount = retryCount + 1;
@@ -341,6 +358,8 @@ export async function runPipelineNoteJudge(
           judge_comments: judged.judge_comments,
           retry_count: retryCount,
           phase,
+          // 合格ライン未満で公開に回した記事 (運営者指示「必ず公開」の下限適用分)。
+          published_below_pass: belowPass,
           next_job_id: nextJobId,
         },
       },

@@ -49,6 +49,7 @@ function buildPrisma(args: {
   const jobs = [...args.jobs];
   const articleUpdates: Array<{ where: { id: string }; data: Record<string, unknown> }> = [];
   const jobCreates: Array<{ data: Record<string, unknown> }> = [];
+  const jobUpdates: Array<{ id: string; data: Record<string, unknown> }> = [];
   let counter = 0;
 
   const prisma: PipelineNoteJudgePrisma = {
@@ -65,6 +66,7 @@ function buildPrisma(args: {
       update: async ({ where, data }) => {
         const j = jobs.find((x) => x.id === where.id);
         if (j && data.status) j.status = data.status;
+        jobUpdates.push({ id: where.id, data: data as Record<string, unknown> });
         return { id: where.id };
       },
       create: async ({ data }) => {
@@ -88,7 +90,7 @@ function buildPrisma(args: {
     },
   };
 
-  return { prisma, articleUpdates, jobCreates };
+  return { prisma, articleUpdates, jobCreates, jobUpdates };
 }
 
 function makeArticle(overrides: Partial<ArticleRecord> = {}): ArticleRecord {
@@ -115,6 +117,13 @@ const FAIL_OUTPUT: NoteJudgeOutput = {
   score_total: 50,
   score_breakdown: { hook_strength: 50, readability: 50, paid_conversion: 50, search_inflow: 50 },
   judge_comments: { hook_strength: '弱い' },
+};
+
+/** 合格ライン未満だが公開下限 (70) 以上。実測の中央値帯 (74.4 平均) に相当する。 */
+const BELOW_PASS_OUTPUT: NoteJudgeOutput = {
+  score_total: 76,
+  score_breakdown: { hook_strength: 78, readability: 80, paid_conversion: 68, search_inflow: 78 },
+  judge_comments: { paid_conversion: '有料部分の価値訴求が弱い' },
 };
 
 describe('pipeline.note.judge', () => {
@@ -310,6 +319,62 @@ describe('pipeline.note.judge', () => {
     });
     expect(jobCreates).toHaveLength(0);
     expect(addJob).not.toHaveBeenCalled();
+  });
+
+  it('差し戻し上限 + 合格ライン未満でも公開下限以上なら ready にして公開まで通す (運営者指示 2026-10-11)', async () => {
+    const { prisma, articleUpdates, jobCreates, jobUpdates } = buildPrisma({
+      jobs: [{ id: 'job1', status: 'queued' }],
+      articles: [makeArticle()],
+      accounts: [{ id: 'acc1', niche: '副業', target_reader: null }],
+    });
+    const addJob: AddJobLike = vi.fn();
+    const judgeArticle = vi.fn().mockResolvedValue(BELOW_PASS_OUTPUT);
+
+    await runPipelineNoteJudge(
+      { note_article_id: 'art1', job_id: 'job1', retry_count: 2 },
+      addJob,
+      { prisma, logger: makeLogger(), judgeArticle, acquireLock: vi.fn().mockResolvedValue(undefined), releaseLock: vi.fn().mockResolvedValue(undefined) },
+    );
+
+    expect(articleUpdates[0]!.data).toMatchObject({ status: 'ready', quality_score: 76 });
+    expect(jobCreates).toHaveLength(0);
+    const result = jobUpdates.at(-1)!.data.result_json as Record<string, unknown>;
+    expect(result).toMatchObject({ phase: 'ready_below_pass', published_below_pass: true });
+  });
+
+  it('合格ラインに届いた記事は published_below_pass=false で記録される', async () => {
+    const { prisma, jobUpdates } = buildPrisma({
+      jobs: [{ id: 'job1', status: 'queued' }],
+      articles: [makeArticle()],
+      accounts: [{ id: 'acc1', niche: '副業', target_reader: null }],
+    });
+    const judgeArticle = vi.fn().mockResolvedValue(PASS_OUTPUT);
+
+    await runPipelineNoteJudge(
+      { note_article_id: 'art1', job_id: 'job1', retry_count: 0 },
+      vi.fn(),
+      { prisma, logger: makeLogger(), judgeArticle, acquireLock: vi.fn().mockResolvedValue(undefined), releaseLock: vi.fn().mockResolvedValue(undefined) },
+    );
+
+    const result = jobUpdates.at(-1)!.data.result_json as Record<string, unknown>;
+    expect(result).toMatchObject({ phase: 'ready', published_below_pass: false });
+  });
+
+  it('差し戻し上限 + 公開下限未満は従来どおり needs_human_review (50 点は出さない)', async () => {
+    const { prisma, articleUpdates } = buildPrisma({
+      jobs: [{ id: 'job1', status: 'queued' }],
+      articles: [makeArticle()],
+      accounts: [{ id: 'acc1', niche: '副業', target_reader: null }],
+    });
+    const judgeArticle = vi.fn().mockResolvedValue(FAIL_OUTPUT);
+
+    await runPipelineNoteJudge(
+      { note_article_id: 'art1', job_id: 'job1', retry_count: 2 },
+      vi.fn(),
+      { prisma, logger: makeLogger(), judgeArticle, acquireLock: vi.fn().mockResolvedValue(undefined), releaseLock: vi.fn().mockResolvedValue(undefined) },
+    );
+
+    expect(articleUpdates[0]!.data).toMatchObject({ status: 'needs_human_review' });
   });
 
   it('タスク名が docs/11 §7 と一致する', () => {

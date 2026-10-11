@@ -2,15 +2,24 @@
  * `note.publish.dispatch` タスク (docs/11-anp-design.md §7 Phase2, F-ANP-20 自動運用)。
  *
  * cron (既定 30 分毎) で起動し、`AppSettings.anp_auto_publish_enabled=true` のとき、
- * `note_articles.status='ready' AND publish_status='draft' AND paid=false` をアカウントごとに
- * 1 件、`note_accounts.status='active'` のみ選んで `pipeline.note.publish` へ enqueue する
- * (bw.submit.dispatch と同型)。1 tick の総数は 3 件まで(自然な投稿頻度に抑える)。
+ * `note_articles.status='ready' AND publish_status='draft'` をアカウントごとに 1 件、
+ * `note_accounts.status='active'` のみ選んで `pipeline.note.publish` へ enqueue する
+ * (bw.submit.dispatch と同型)。1 tick の総数は 3 件まで。
  * job_key で同一記事の重複投入を防ぐ。
  *
- * **`paid=false` に限定する理由 (code review 2026-09-16 #2)**: 有料記事の価格/有料ライン設定 UI が
- * 未実装のため、有料記事は `pipeline.note.publish` に渡しても実公開直前で必ず `blocked` になる
- * (`shouldBlockPaidPublish`)。dispatcher が無駄なジョブ/ブラウザ起動を繰り返さないよう、
- * 自動運用の対象からそもそも除外する(有料記事の公開は当面 UI からの手動 dry-run のみ)。
+ * **有料記事も対象にする (2026-10-11)**: かつては `paid=false` に限定していた。理由は
+ * 「有料記事の価格/有料ライン設定 UI が未実装で、実公開直前に必ず `blocked` になるから
+ * 無駄なブラウザ起動を避ける」(code review 2026-09-16 #2)。F-ANP-16b でアカウント設定
+ * `paid_publish_enabled` による実公開が入り、有料記事 19 本の公開と 9 本の後付け有料化を
+ * 実走で確認済みなので、この除外条件はもう嘘になっていた。残したままだと企画どおり有料に
+ * した記事 (実測 38 本) が自動公開から永久に外れるため撤去する。
+ * `paid_publish_enabled` が OFF のアカウントでは judge が `paid=false` に落とすので、
+ * dispatcher 側で有料を弾く必要はない。
+ *
+ * **1 アカウント 1 日あたりの上限 (`MAX_PER_ACCOUNT_PER_DAY`)**: 運営者指示
+ * 「スケジュール通りに必ず公開するようにして」に対し、上限なしのままだと滞留分が
+ * 一気に出て投稿頻度が跳ね上がる (30 分毎 × 1 件 = 最大 48 本/日)。note 側のスパム判定を
+ * 避けつつ積み残しを現実的な速度で流すため、日次上限で頻度を決める。
  */
 import type { JobHelpers, Task } from 'graphile-worker';
 
@@ -23,6 +32,22 @@ import type { AddJobLike } from './sales-fetch-dispatcher.js';
 export const NOTE_PUBLISH_DISPATCHER_TASK_NAME = 'note.publish.dispatch';
 
 const MAX_PER_TICK = 3;
+
+/**
+ * 1 アカウントが 1 日 (JST) に公開する上限。
+ *
+ * 15 本は実測に基づく: 2026-09-24 に同一アカウントで 16 本を公開してアカウント制限は起きて
+ * いない。定常運用の投稿頻度 (1〜2 本/日) ではなく「積み残しを流しきるまでの上限」として置く。
+ */
+export const MAX_PER_ACCOUNT_PER_DAY = 15;
+
+/** JST の「今日」の 0 時を UTC の Date で返す (公開本数の日次カウント用)。 */
+export function startOfJstDay(now: Date): Date {
+  const jst = new Date(now.getTime() + 9 * 60 * 60 * 1000);
+  return new Date(
+    Date.UTC(jst.getUTCFullYear(), jst.getUTCMonth(), jst.getUTCDate()) - 9 * 60 * 60 * 1000,
+  );
+}
 
 export interface NotePublishDispatcherPrisma {
   appSettings: {
@@ -40,10 +65,17 @@ export interface NotePublishDispatcherPrisma {
   };
   noteArticle: {
     findFirst(args: {
-      where: { note_account_id: string; status: string; publish_status: string; paid: boolean };
+      where: { note_account_id: string; status: string; publish_status: string };
       select: { id: true };
       orderBy: { updated_at: 'asc' };
     }): Promise<{ id: string } | null>;
+    count(args: {
+      where: {
+        note_account_id: string;
+        publish_status: string;
+        published_at: { gte: Date };
+      };
+    }): Promise<number>;
   };
   job: {
     create(args: {
@@ -56,12 +88,15 @@ export interface NotePublishDispatcherDeps {
   prisma?: NotePublishDispatcherPrisma;
   addJob?: AddJobLike;
   logger?: Logger;
+  now?: () => Date;
 }
 
 export interface NotePublishDispatcherResult {
   enabled: boolean;
   enqueued: number;
   articleIds: string[];
+  /** 日次上限に達して見送ったアカウント数 (観測用)。 */
+  cappedAccounts: number;
 }
 
 export async function runNotePublishDispatcher(
@@ -77,7 +112,7 @@ export async function runNotePublishDispatcher(
     select: { anp_auto_publish_enabled: true, anp_publish_dry_run: true },
   });
   if (!settings?.anp_auto_publish_enabled) {
-    return { enabled: false, enqueued: 0, articleIds: [] };
+    return { enabled: false, enqueued: 0, articleIds: [], cappedAccounts: 0 };
   }
 
   const accounts = await db.noteAccount.findMany({
@@ -86,15 +121,31 @@ export async function runNotePublishDispatcher(
     orderBy: { created_at: 'asc' },
   });
 
+  const dayStart = startOfJstDay((deps.now ?? (() => new Date()))());
   const articleIds: string[] = [];
+  let cappedAccounts = 0;
   for (const account of accounts) {
     if (articleIds.length >= MAX_PER_TICK) break;
     // [F-ANP-17] アカウント別設定でグローバル既定値(=ここでは確定 true)を上書きできる
     // (未指定はグローバルに従う=true のまま)。グローバル OFF の間はこの関数自体が
     // 早期 return するため、有効化できるのは「特定アカウントだけ OFF にする」方向のみ。
     if (!resolveAutoPublishEnabled(account.settings_json, true)) continue;
+
+    // 日次上限。公開済みの本数で数えるので、途中で失敗した記事は枠を食わない。
+    const publishedToday = await db.noteArticle.count({
+      where: {
+        note_account_id: account.id,
+        publish_status: 'published',
+        published_at: { gte: dayStart },
+      },
+    });
+    if (publishedToday >= MAX_PER_ACCOUNT_PER_DAY) {
+      cappedAccounts += 1;
+      continue;
+    }
+
     const article = await db.noteArticle.findFirst({
-      where: { note_account_id: account.id, status: 'ready', publish_status: 'draft', paid: false },
+      where: { note_account_id: account.id, status: 'ready', publish_status: 'draft' },
       select: { id: true },
       orderBy: { updated_at: 'asc' },
     });
@@ -116,10 +167,10 @@ export async function runNotePublishDispatcher(
   }
 
   log.info(
-    { enqueued: articleIds.length, dryRun: settings.anp_publish_dry_run },
+    { enqueued: articleIds.length, cappedAccounts, dryRun: settings.anp_publish_dry_run },
     'note.publish.dispatch enqueued',
   );
-  return { enabled: true, enqueued: articleIds.length, articleIds };
+  return { enabled: true, enqueued: articleIds.length, articleIds, cappedAccounts };
 }
 
 export const notePublishDispatcherTask: Task = async (_payload: unknown, helpers: JobHelpers) => {

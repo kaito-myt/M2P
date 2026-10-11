@@ -284,10 +284,27 @@ export type NoteJudgeOutput = z.infer<typeof NoteJudgeOutputSchema>;
  * F-ANP-44 (2026-09-24): 運営者の設計方針
  *   85 点以上 → 公開 / 70〜84 → 校閲 (editor) へ / 69 以下 → 構成からやり直し (writer)
  * に合わせて 80 → 85 に引き上げ、低スコア帯の差し戻し先を分けた。
+ *
+ * **2026-10-11: 85 → 80 に戻した。** 85 は到達不能だったことが実測で確定している
+ * (writer の出力上限/数値整合/CTA リンクを全部直した後の 42 件で平均 74.4・最高 83・85 以上 0 件、
+ * 歴代 440 件でも 85 以上は 3 件)。結果 **10/02 以降 9 日間 1 本も公開されず**、118 本が
+ * needs_human_review に滞留し、その間 ANP の生成コストだけ ¥6,415 かかっていた
+ * (judge 262 回・editor 251 回・アイキャッチ 250 枚で公開 0 本)。合格ラインは「届く線」に置く。
  */
-export const NOTE_JUDGE_PASS_THRESHOLD = 85;
+export const NOTE_JUDGE_PASS_THRESHOLD = 80;
 /** これ未満は「校閲では直らない」とみなし、構成 (outline) から書き直す。 */
 export const NOTE_JUDGE_REWRITE_THRESHOLD = 70;
+/**
+ * 差し戻し上限に達した記事を「それでも公開する」下限 (運営者指示 2026-10-11
+ * 「スケジュール通りに必ず公開するようにして」)。
+ *
+ * 自動リトライを使い切った時点で合格ライン未満でも、この線以上なら `ready` にして公開まで通す。
+ * 品質ゲートが公開スケジュールを無期限に止められる状態 (= 9 日間 0 本) を設計から消すための下限で、
+ * 「公開しない」判断は `needs_human_review` に落ちるこの線未満だけに限定する。
+ * 線を `NOTE_JUDGE_REWRITE_THRESHOLD` と同じ 70 に置くのは、70 未満は judge 自身が
+ * 「校閲では直らない=構成から書き直し」と判定する帯で、出す価値がないと見なせるため。
+ */
+export const NOTE_JUDGE_PUBLISH_FLOOR = 70;
 
 /** judge スコアから次の工程を決める (docs/11 §7, F-ANP-44)。 */
 export function routeByJudgeScore(
@@ -296,7 +313,10 @@ export function routeByJudgeScore(
   retryLimit: number,
 ): 'ready' | 'editor' | 'writer' | 'needs_human_review' {
   if (scoreTotal >= NOTE_JUDGE_PASS_THRESHOLD) return 'ready';
-  if (retryCount >= retryLimit) return 'needs_human_review';
+  if (retryCount >= retryLimit) {
+    // 合格ライン未満でも公開下限以上なら出す (人手待ちで無期限に止めない)。
+    return scoreTotal >= NOTE_JUDGE_PUBLISH_FLOOR ? 'ready' : 'needs_human_review';
+  }
   return scoreTotal < NOTE_JUDGE_REWRITE_THRESHOLD ? 'writer' : 'editor';
 }
 

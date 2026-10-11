@@ -986,7 +986,7 @@ note.theme.generate (アカウント別・手動起動。UI の「テーマ生�
 | `pipeline.note.editor` | `{ note_article_id, job_id, feedback?, retry_count? }` | note Editor (role=`anp.editor`) が短段落・リード文中心に校閲。`paywall_line_pos` 指定時はマーカーを再挿入して LLM に渡し「保持したまま校閲」を指示、新しい位置を再抽出。`status='eyecatch'` | `pipeline.note.numcheck` を自動 enqueue（`retry_count` を forward） |
 | `pipeline.note.numcheck` | `{ note_article_id, job_id, retry_count? }` | **本文内の数値の自己整合だけ**を確かめて直す (role=`anp.numcheck`, 2026-10-09)。表の内訳と合計・率と件数÷母数・本文と表・無料部分と有料部分の食い違いを突き合わせる。**訂正の範囲を超えた出力 (見出しが変わる / 本文長が ±15% 超) は採用せず入力本文を素通し**する。有料記事はマーカーを再挿入して渡し、返ってこなければ本文を書き換えない (位置ズレで課金事故になる)。**この工程の失敗ではパイプラインを止めない** (数値の不整合は judge が拾う)。直した内容/直せなかった内容は `Job.result_json.fixes`/`unresolved` に残す。`status='eyecatch'` | `pipeline.note.eyecatch` を自動 enqueue（`retry_count` を forward） |
 | `pipeline.note.eyecatch` | `{ note_article_id, job_id, retry_count? }` | **(F-ANP-42) まず note 内 SEO** (`anp.seo`) を best-effort で実行し、タイトル/リード/見出し/ハッシュタグ/アイキャッチのコピーを確定 (`note-seo-step.ts`。失敗しても続行)。続いて note Eyecatch (`@a2p/agents/anp/eyecatch`, role=`anp.eyecatch` = 既定 Nano Banana 2) が **文字を含まない**挿絵を生成し、`composeNoteEyecatch` でキャッチコピーを Noto Sans JP のアウトラインとして焼き込む (F-ANP-41)。R2 `note/{note_article_id}/eyecatch.jpg` に保存、`NoteArticle.eyecatch_r2_key` 確定、`status='judging'`。**`retry_count > 0` かつ既に `eyecatch_r2_key` が設定済みなら再生成をスキップ**（judge 差し戻しは本文のみ変わるため、画像コストの重複を避ける） | `pipeline.note.judge` を自動 enqueue（`retry_count` を forward） |
-| `pipeline.note.judge` | `{ note_article_id, job_id, retry_count }` | note Judge (role=`anp.judge`) が 4 軸 (フック強度/可読性/有料転換見込み/検索流入見込み) で採点。`NoteArticle.quality_score` に最終スコアを保持（内訳/コメントは `Job.result_json`） | 合格 (>=80): `status='ready'`。不合格 かつ `retry_count < 1`: `pipeline.note.editor` へ差し戻し (`retry_count+1` を payload に forward、`status='editing'`)。不合格 かつ `retry_count >= 1`: `status='needs_human_review'` |
+| `pipeline.note.judge` | `{ note_article_id, job_id, retry_count }` | note Judge (role=`anp.judge`) が 4 軸 (フック強度/可読性/有料転換見込み/検索流入見込み) で採点。`NoteArticle.quality_score` に最終スコアを保持（内訳/コメントは `Job.result_json`） | 合格 (>=`NOTE_JUDGE_PASS_THRESHOLD`=80): `status='ready'`。不合格 かつ `retry_count < RETRY_LIMIT`: 70〜79 は `pipeline.note.editor` / 69 以下は `pipeline.note.writer.outline` へ差し戻し (`retry_count+1` を forward)。**差し戻し上限に達したら `NOTE_JUDGE_PUBLISH_FLOOR`(=70) 以上なら `status='ready'`**(`result_json.published_below_pass=true`、`phase='ready_below_pass'`)、**下限未満のみ `status='needs_human_review'`** |
 
 ### 排他制御・冪等性・エラー方針
 
@@ -1003,7 +1003,7 @@ note.theme.generate (アカウント別・手動起動。UI の「テーマ生�
 | `pipeline.note.publish` | `{ note_article_id, job_id, dry_run? }` | `NoteArticle(status='ready')` を Playwright ヘッドレスで note へ送信（`apps/worker/src/tasks/note-publish/playwright-note-publish-port.ts`）。①**毎回 `note.com/notes/new` で新規下書きを作成**して noteId を採番(resume はしない。理由は下記「本文重複バグ」参照)、失敗しても即 `NoteArticle.note_url` に保存。②タイトル/本文(`buildNoteBlocks` で見出し/箇条書き/段落+有料ラインに分解)/見出し画像を流し込み(見出し/箇条書き/画像/有料エリア指定は必ず「+」挿入メニューを開いてから項目クリック — 下記参照)。③「下書き保存」必須(dry_run はここで終了、`publish_status='draft'`)。④`dry_run=false`: **有料記事(`paid=true`)はこの時点で必ず `blocked` にして中断**(価格/有料ライン設定 UI 未実装、`shouldBlockPaidPublish`。有料エリア指定マーカーの挿入自体に失敗した場合も同様に中断し有料本文の誤・無料公開を防ぐ)。無料記事のみ「公開に進む」→ 公開設定画面 →「投稿する」→ 完了確認は「URL遷移」または「『記事が公開されました』モーダルのテキスト検知」のいずれか(`waitForPublishConfirmation`。note は本文ページへ遷移せずモーダルを重ねて表示するため、2026-09-18 発見。§2.1 参照)。公開 URL は note 公開API (`GET /api/v3/notes/<noteId>`、認証不要)の `status`/`user.urlname` から確定(`resolvePublishedUrl`。URL遷移監視はフォールバック)。各段で R2 `debug/note-publish/<article>-<step>-<ts>.png` にスクショ保存 | 成功(公開): `status='published'`, `publish_status='published'`, `published_at`, `note_url`確定 + LINE通知(アカウント`display_name`込み)。成功(dry-run): `publish_status='draft'`のみ。`not_logged_in`: `NoteAccount.status='paused'`+LINE通知、記事は`ready`のまま保持。`blocked`/`error`: 記事は`ready`のまま、`note_url`は保持し次回再試行可能(ただし次回も新規下書きになるため note 上に下書きが積み残る — 運営者が適宜整理) |
 | `pipeline.note.monetize` | `{ note_article_id, job_id, dry_run?, price_jpy? }` | **(F-ANP-47) 公開済みの無料記事を後から有料化する**。①対象は `status='published'` かつ `paid=false` かつ `note_url` あり(それ以外は `not_published`/`already_paid` で skip)。②`computePaywallSplit(body_md, free_ratio)` がアカウントの `monetization_policy_json.free_ratio` に最も近い**段落境界**を選ぶ(見出し直前を同点優先。段落が 2 つ未満なら `no_paywall_slot` で skip)。③`NotePublishPort.monetizeOne` が `https://editor.note.com/notes/<noteId>/edit/` を開き、指定段落の先頭を trusted click →「+」メニュー →「有料エリア指定」→「公開に進む」→ 記事タイプ `#paid` を trusted click(本人情報モーダルが出たら `kyc_required` で中断) → 価格入力 →「更新する」。④価格は `resolveMonetizePrice`(運営者指定 → 記事の `price_jpy` → 価格帯下限 → 500円、10円単位)。**実更新の二重ゲート**: アカウント `paid_publish_enabled` が ON かつ `AppSettings.anp_publish_dry_run` が OFF のときのみ。どちらか欠ければ強制ドライラン(有料選択+価格入力まで進めて更新は押さない = KYC 確認手段)。各段で R2 `debug/note-publish/<article>-monetize-<step>-<ts>.png` にスクショ | 成功: `paid=true`, `price_jpy`, `paywall_line_pos` を保存 + LINE通知。ドライラン: `dry_run_ready`(DB 変更なし)。`kyc_required`: LINE通知して記事は無料のまま。`not_logged_in`: `NoteAccount.status='paused'`+LINE通知。いずれの失敗でも**記事を非公開化・削除はしない** |
 | `pipeline.note.fix-tables` | `{ note_article_id, job_id, dry_run? }` | **(F-ANP-48) 公開済み記事に残った Markdown の表を表画像へ差し替える**。①対象は `status='published'` かつ `note_url` あり。②`body_md` の表を `attachTableImages` で PNG 化（アカウントの配色 = `schemeForNiche(niche)` のベース色をヘッダ帯に使う）。③`NotePublishPort.fixTablesOne` がエディタを開き、**パイプ行が連続している範囲だけ**を選択して削除し (`findFirstPipeGroup`: パイプで始まり終わる行が 2 行以上連続し、そのどれかが `|---|` である範囲のみ) 同じ位置に画像を挿入 →「公開に進む」→「更新する」(有料記事は「有料エリア設定」を挟む)。④`dry_run`(既定 true) は差し替えるだけで更新を押さない。グローバル `anp_publish_dry_run` が ON なら強制ドライラン | 成功: `fixed`(replaced/remaining を `result_json` に記録)+LINE通知。ドライラン: `dry_run_ready`。表が無ければ `no_tables`。`not_logged_in`: `NoteAccount.status='paused'`+LINE通知 |
-| `note.publish.dispatch` | (cron, payload無し) | `AppSettings.anp_auto_publish_enabled=true` のとき、`note_articles.status='ready' AND publish_status='draft' AND paid=false` をアカウントごとに1件(`note_accounts.status='active'`のみ)選び `pipeline.note.publish` を enqueue(`dry_run=AppSettings.anp_publish_dry_run`)。1 tick 最大3件。`job_key='note-publish-<article_id>'`で重複防止。**`paid=false` に限定**(有料記事は価格 UI 未実装のため自動運用対象外 — 手動 dry-run のみ) | 対象記事があるアカウント分だけ enqueue。次回tickまで待機 |
+| `note.publish.dispatch` | (cron, payload無し) | `AppSettings.anp_auto_publish_enabled=true` のとき、`note_articles.status='ready' AND publish_status='draft'` をアカウントごとに1件(`note_accounts.status='active'`のみ)選び `pipeline.note.publish` を enqueue(`dry_run=AppSettings.anp_publish_dry_run`)。1 tick 最大3件、**1アカウント1日(JST)最大 `MAX_PER_ACCOUNT_PER_DAY=15` 本**(`publish_status='published' AND published_at >= JST当日0時` の実公開本数で数えるので失敗した記事は枠を食わない)。`job_key='note-publish-<article_id>'`で重複防止。**有料記事も対象**(2026-10-11: F-ANP-16b 後に除外条件を撤去。§7「有料記事が自動公開から外れていた」参照) | 対象記事があるアカウント分だけ enqueue。日次上限に達したアカウントは `cappedAccounts` に数えて見送る |
 | `note.publish.status.sync` | (cron, payload無し) | READ-ONLY。`publish_status='published'`の記事の`note_url`を開き、404/非公開文言を検知したら`unlisted`に降格。セッション失効検知時はそのアカウントを`paused`+LINE通知して走査打ち切り(dispatcher と同じ扱い) | `publish_status='unlisted'`への降格 or 変更なし |
 
 **排他/冪等性**: `pipeline.note.publish` は Phase 1 の `pipeline.note.*` と同じ内部 `Job` CAS + `NoteLock`(`pipeline:<job_id>`, TTL 30分) パターン。`maxAttempts=2`(dispatcher/UI 双方の enqueue で指定)。
@@ -1589,3 +1589,78 @@ judge に `paid=false` と伝わっていた (judge 自身が格下げしてい�
 引き下げる場合の変更点は `NOTE_JUDGE_PASS_THRESHOLD`
 (`packages/contracts/src/agents/anp.ts`) の 1 箇所。`NOTE_JUDGE_REWRITE_THRESHOLD = 70`
 (これ未満は構成から書き直す) との間隔は保たれる。
+
+### 9 日間 1 本も公開されていなかった — 公開を止めていた 2 つの条件 (2026-10-11)
+
+運営者指摘「公開作業が全然できてなくない？」を受けて本番を実測した。**事実として、
+10/02 を最後に 9 日間 1 本も公開されていなかった。**
+
+| 本番の状態 (2026-10-11 計測) | 値 |
+|---|---|
+| 最終公開日 | **2026-10-02** (以降 `pipeline.note.publish` の実行 0 件) |
+| `needs_human_review` / `draft` | **118 本** (無料 80 / 有料 38) |
+| 公開済み | 31 本 |
+| `anp_auto_publish_enabled` / `anp_publish_dry_run` | `true` / `false` (= 配線は生きている) |
+| `note-publish-dispatch` cron の最終実行 | 当日 11:00 (= 30 分毎に回っているが毎回 0 件 enqueue) |
+| 10 月の ANP 生成コスト | **¥6,415** (judge 262 回 / editor 251 回 / 本文 136 本) に対し**公開 0 本** |
+
+滞留 118 本はすべて本文もアイキャッチも揃っており (`body_md` 1,000 字未満 0 本 /
+`eyecatch_r2_key` null 0 本)、**成果物としては公開できる状態で止まっていた**。
+スコア分布は 80〜84 が 32 本 / 75〜79 が 28 本 / 70〜74 が 30 本 / 65〜69 が 28 本。
+
+#### 原因 1 — 到達不能な合格ラインが唯一の出口を塞いでいた
+
+`routeByJudgeScore` の終端は「差し戻し上限に達したら無条件に `needs_human_review`」だった。
+合格ライン 85 が実測で到達不能 (前節: 42 件で平均 74.4 / 最高 83 / 85 以上 0 件) なので、
+**全記事が例外なくこの終端に落ちる**。そして `note.publish.dispatch` は
+`status='ready'` しか拾わない。つまり品質ゲートが公開スケジュールを**無期限に**止められる
+設計になっており、実際に 9 日間止めていた。
+
+- **合格ラインを 80 に引き下げた** (`NOTE_JUDGE_PASS_THRESHOLD`)。前節の推奨どおり。
+- **それだけでは足りない**ので `NOTE_JUDGE_PUBLISH_FLOOR = 70` を新設した。
+  差し戻しを使い切った時点で合格ライン未満でも、この下限以上なら `status='ready'` にして
+  公開まで通す (運営者指示「スケジュール通りに必ず公開するようにして」)。
+  **「公開しない」判断は下限未満だけに限定する。**
+- 下限を 70 に置く根拠は、70 未満は judge 自身が「校閲では直らない=構成から書き直し」と
+  判定する帯 (`NOTE_JUDGE_REWRITE_THRESHOLD`) であること。出す価値がないと見なせる線が既にある。
+- 合格して `ready` になったのか、下限適用で `ready` になったのかは運用上まったく意味が違うので
+  `Job.result_json.published_below_pass` と `phase='ready_below_pass'` で区別して記録する。
+  品質の宿題が残っている記事を後から数えられるようにするため。
+
+**教訓**: 品質ゲートの「不合格」側に公開以外の出口が無いと、ゲートの値を 1 つ間違えただけで
+パイプライン全体が無言で停止する。止まったこと自体はどのジョブも `failed` にならないので
+アラートにも出ない (10 月のジョブは全部 `done`)。**終端状態は必ず「出す」か「捨てる」に
+収束させ、「人を待つ」を既定の終端にしない。**
+
+#### 原因 2 — 有料記事が自動公開から構造的に外れていた
+
+`note.publish.dispatch` の候補条件に `paid: false` が残っていた。これは
+「有料記事の価格/有料ライン設定 UI が未実装で、実公開直前に必ず `blocked` になるから
+無駄なブラウザ起動を避ける」(code review 2026-09-16 #2) という当時正しかった判断だが、
+F-ANP-16b (アカウント設定 `paid_publish_enabled`) と F-ANP-47 (後付け有料化) が入り、
+**有料記事 19 本の公開と 9 本の後付け有料化を実走で確認済み**の時点で嘘になっていた。
+
+残したままだと、企画どおり有料にした記事 (実測 38 本) が自動公開から**永久に**外れる。
+除外条件を撤去した。`paid_publish_enabled` が OFF のアカウントでは judge が `paid=false` に
+落とすので、dispatcher 側で有料を弾く必要はない。
+
+**教訓**: 「いま未実装だから除外する」条件は、実装された時点で**嘘になる**。
+除外の理由がコメントに書いてあっても、理由が消えたことを検知する仕組みは無い。
+
+#### 投稿頻度 — `MAX_PER_ACCOUNT_PER_DAY = 15`
+
+上限なしのままだと滞留分が 30 分毎 × 1 件 = 最大 48 本/日 で一気に出る。
+note 側のスパム判定を避けつつ積み残しを現実的な速度で流すため、**1 アカウント 1 日 (JST)
+15 本**を上限にした。15 は実測に基づく: 2026-09-24 に同一アカウントで 16 本を公開して
+アカウント制限は起きていない。定常運用の投稿頻度 (1〜2 本/日) ではなく
+「積み残しを流しきるまでの上限」として置いている。
+
+カウントは `publish_status='published' AND published_at >= JST当日0時` の**実公開本数**で数える。
+enqueue 数ではないので、途中で失敗した記事が翌日まで枠を食うことがない。
+
+#### 滞留 118 本の扱い
+
+`forceReady` (`apps/anp/app/actions/review.ts`) と同じ CAS 更新
+(`WHERE status='needs_human_review'`) で、**公開下限 70 以上の 90 本を `ready` に戻した**。
+残る 28 本 (65〜69 点) は judge 自身が「構成から書き直し」と判定する帯なので
+`needs_human_review` に残し、書き直しの判断を運営者に委ねる。
