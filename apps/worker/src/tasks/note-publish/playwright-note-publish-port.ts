@@ -397,20 +397,17 @@ async function publishOne(args: NotePublishArgs): Promise<NotePublishResult> {
         await screenshot(page, stageDir, `${a.id}-paid-no-price`);
         return { ok: false, reason: 'blocked', message: '有料記事ですが価格が未設定のため中断しました(下書きは保存済み)', noteUrl: draftEditUrl };
       }
-      const kyc = await selectPaidAndCheckKyc(page).catch((err) => {
+      const editorPaid = await selectPaidAndCheckKyc(page).catch((err) => {
         log.warn({ err: errMsg(err), articleId: a.id }, '有料切替で例外');
-        return true;
+        return 'kyc_required';
       });
-      if (kyc) {
+      if (editorPaid === 'kyc_required') {
         await screenshot(page, stageDir, `${a.id}-paid-kyc-required`);
-        return {
-          ok: false,
-          reason: 'blocked',
-          message:
-            'note の本人情報登録(KYC)が未完了のため有料記事を公開できません(note の「設定 › お支払先 › お支払い口座」を登録後に再実行してください。下書きは保存済み)',
-          noteUrl: draftEditUrl,
-        };
+        return { ok: false, reason: 'blocked', message: KYC_MESSAGE, noteUrl: draftEditUrl };
       }
+      // `not_found` は失敗ではない: note は UI 変更で記事タイプの切替を
+      // エディタから公開設定画面へ移した。ここに無ければ後段で選ぶ。
+      log.info({ articleId: a.id, editorPaid }, 'エディタ側の有料切替');
       await screenshot(page, stageDir, `${a.id}-paid-selected`);
     }
 
@@ -423,8 +420,29 @@ async function publishOne(args: NotePublishArgs): Promise<NotePublishResult> {
     await page.waitForTimeout(5000);
     await screenshot(page, stageDir, `${a.id}-publish-settings`);
 
-    // [F-ANP-16b] 有料記事は公開設定画面で価格を入力してから投稿する。
+    // [F-ANP-16b] 有料記事は公開設定画面で「記事タイプ=有料」を選んでから価格を入力する。
+    //
+    // **2026-10-11**: 記事タイプの切替が公開設定画面へ移っており (note の UI 変更)、
+    // エディタ側だけを見ていた従来の実装では**記事タイプが無料のまま**公開設定へ進み、
+    // 価格欄がそもそも描画されず `blocked` になっていた (実測スクリーンショットで確認)。
     if (a.paid && a.priceJpy !== null) {
+      const typeSelected = await selectPaidTypeOnSettings(page).catch((err) => {
+        log.warn({ err: errMsg(err), articleId: a.id }, '記事タイプ(有料)の選択で例外');
+        return 'not_found';
+      });
+      await screenshot(page, stageDir, `${a.id}-paid-type`);
+      if (typeSelected === 'kyc_required') {
+        return { ok: false, reason: 'blocked', message: KYC_MESSAGE, noteUrl: draftEditUrl };
+      }
+      if (typeSelected === 'not_found') {
+        return {
+          ok: false,
+          reason: 'blocked',
+          message:
+            '公開設定の「記事タイプ › 有料」が見つからないため中断しました(無料で公開してしまう事故の防止。下書きは保存済み)',
+          noteUrl: draftEditUrl,
+        };
+      }
       const priceSet = await fillPaidPrice(page, a.priceJpy).catch((err) => {
         log.warn({ err: errMsg(err), articleId: a.id }, '価格入力で例外');
         return false;
@@ -1057,7 +1075,27 @@ async function moveCaretToBodyEnd(page: Page): Promise<boolean> {
  * で実証)。現状は `shouldBlockPaidPublish` により有料記事の実公開経路がこの手前で止まるため
  * 呼び出し箇所が無いが、価格/有料ライン UI 実装時に再度呼び出すためロジックを維持する。
  */
-async function selectPaidAndCheckKyc(page: Page): Promise<boolean> {
+/** 有料切替の結果。`not_found` は「その画面に切替が無い」で、失敗とは区別する。 */
+export type PaidSelectResult = 'ok' | 'kyc_required' | 'not_found';
+
+export const KYC_MESSAGE =
+  'note の本人情報登録(KYC)が未完了のため有料記事を公開できません(note の「設定 › お支払先 › お支払い口座」を登録後に再実行してください。下書きは保存済み)';
+
+/** 本人情報登録(KYC)モーダルが出ているか。 */
+async function hasKycPrompt(page: Page): Promise<boolean> {
+  const bodyText: string = await page.locator('body').innerText().catch(() => '');
+  return /本人情報の登録|本人情報の入力/.test(bodyText);
+}
+
+/**
+ * エディタ側の有料切替 (`#paid`)。
+ *
+ * 2026-10-11 時点の note にはこの要素が**無い** (記事タイプの切替は公開設定画面へ移った)。
+ * 戻り値を 3 値にしてあるのは、従来 `false` が「KYC で止まっていない」と
+ * 「そもそも切替が見つからない」の両方を意味しており、呼出側が後者を成功と
+ * 読み違えて**記事タイプが無料のまま先に進んでいた**ため。
+ */
+async function selectPaidAndCheckKyc(page: Page): Promise<PaidSelectResult> {
   const box = await page
     .evaluate(() => {
       const input = document.querySelector('#paid') as HTMLInputElement | null;
@@ -1073,11 +1111,82 @@ async function selectPaidAndCheckKyc(page: Page): Promise<boolean> {
       return { x: r.x + r.width / 2, y: r.y + Math.min(20, r.height / 2) };
     })
     .catch(() => null);
-  if (!box) return false;
+  if (!box) return 'not_found';
   await page.mouse.click(box.x, box.y);
   await page.waitForTimeout(2000);
-  const bodyText: string = await page.locator('body').innerText().catch(() => '');
-  return /本人情報の登録|本人情報の入力/.test(bodyText);
+  return (await hasKycPrompt(page)) ? 'kyc_required' : 'ok';
+}
+
+/**
+ * [2026-10-11] 公開設定画面の「記事タイプ > 有料」を選ぶ。
+ *
+ * note の公開設定画面には `記事タイプ` セクションがあり `無料` / `有料` の 2 択になっている。
+ * **既定は `無料`** で、`有料` を選んで初めて価格入力欄が描画される。
+ * ラジオの実装 (`input[type=radio]` か独自要素か) に依存しないよう、
+ * 「テキストがちょうど `有料` の要素」を起点に実マウスクリックする (React の合成イベント対策)。
+ *
+ * 選べたことは **価格欄が現れたか / ラジオが checked になったか** で確認する。
+ * クリックしただけで成功扱いにすると、無料のまま公開する事故に戻る。
+ */
+async function selectPaidTypeOnSettings(page: Page): Promise<PaidSelectResult> {
+  const box = await page
+    .evaluate(() => {
+      const isVisible = (e: Element) => {
+        const el = e as HTMLElement;
+        return !!(el.offsetWidth || el.offsetHeight);
+      };
+      // ラジオ本体が input[type=radio] なら、その祖先ラベル/行をクリック対象にする。
+      const radios = [...document.querySelectorAll('input[type=radio]')] as HTMLInputElement[];
+      for (const input of radios) {
+        const label = input.closest('label');
+        if ((label?.textContent || '').trim() !== '有料') continue;
+        const target = (label ?? input) as HTMLElement;
+        const r = target.getBoundingClientRect();
+        return { x: r.x + r.width / 2, y: r.y + r.height / 2 };
+      }
+      // 独自実装のラジオ: テキストがちょうど「有料」の可視要素のうち最も内側のもの。
+      const candidates = [...document.querySelectorAll('label,div,span,button,[role=radio]')]
+        .filter((e) => (e.textContent || '').trim() === '有料' && isVisible(e))
+        .sort((a, b) => a.querySelectorAll('*').length - b.querySelectorAll('*').length);
+      const el = candidates[0];
+      if (!el) return null;
+      const r = el.getBoundingClientRect();
+      return { x: r.x + r.width / 2, y: r.y + r.height / 2 };
+    })
+    .catch(() => null);
+  if (!box) return 'not_found';
+
+  await page.mouse.click(box.x, box.y);
+  await page.waitForTimeout(2500);
+
+  if (await hasKycPrompt(page)) return 'kyc_required';
+
+  const selected = await page
+    .evaluate(() => {
+      const radioChecked = [...document.querySelectorAll('input[type=radio]')].some((e) => {
+        const input = e as HTMLInputElement;
+        return input.checked && (input.closest('label')?.textContent || '').trim() === '有料';
+      });
+      const ariaChecked = [...document.querySelectorAll('[role=radio]')].some(
+        (e) => e.getAttribute('aria-checked') === 'true' && (e.textContent || '').trim() === '有料',
+      );
+      // 価格欄が現れたか (有料を選んだときだけ描画される)。
+      const priceShown = [...document.querySelectorAll('input')].some((e) => {
+        const el = e as HTMLInputElement;
+        if (!(el.offsetWidth || el.offsetHeight)) return false;
+        return (
+          el.type === 'number' ||
+          el.name === 'price' ||
+          el.id === 'price' ||
+          /価格|円/.test(el.getAttribute('placeholder') || '') ||
+          /価格/.test(el.getAttribute('aria-label') || '')
+        );
+      });
+      return radioChecked || ariaChecked || priceShown;
+    })
+    .catch(() => false);
+
+  return selected ? 'ok' : 'not_found';
 }
 
 /**
