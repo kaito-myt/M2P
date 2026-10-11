@@ -486,6 +486,7 @@ async function publishOne(args: NotePublishArgs): Promise<NotePublishResult> {
         page,
         a.freeBlocks.length,
         a.freeBlocks.length + a.paidBlocks.length,
+        paidAreaAnchor(a.paidBlocks),
       );
       await screenshot(page, stageDir, `${a.id}-paid-area`);
       if (!lineOk) {
@@ -851,10 +852,47 @@ async function checkPublished(args: NoteCheckPublishedArgs): Promise<NoteCheckPu
  * `freeBlockCount` 番目のボタン (= 無料ブロックの直後) を押す。既にラインが設定済みなら
  * 何もしない。戻り値は「ラインが設定されている状態になったか」。
  */
+/**
+ * 「有料エリア設定」画面で、有料側の先頭ブロックのテキスト (`anchorText`) の直前にある
+ * 「ラインをこの場所に変更」ボタンの index を返す。見つからなければ -1。
+ *
+ * note のブロック数はこちらの Markdown ブロック数と一致しないため、割合で位置を決めると
+ * ずれる (2026-10-11 実測: 本文の 47% で切るつもりが 79% まで無料になった)。
+ * **テキストで位置を指すのが唯一正確な方法**で、後付け有料化 (`monetizeNoteArticle`) が
+ * エディタ側で既に採っている考え方と同じ。
+ */
+async function findPaidAreaSlotByAnchor(page: Page, anchorText: string): Promise<number> {
+  if (anchorText.trim().length < 6) return -1;
+  return page
+    .evaluate((rawAnchor: string) => {
+      const norm = (t: string) => t.replace(/\s+/g, '');
+      const needle = norm(rawAnchor).slice(0, 24);
+      if (needle.length < 6) return -1;
+      const buttons = [...document.querySelectorAll('button')].filter(
+        (b) => (b.textContent || '').trim() === 'ラインをこの場所に変更',
+      );
+      if (buttons.length === 0) return -1;
+      // アンカーを含む要素のうち**最も内側**のもの (div で囲むと本文全体が一致してしまう)。
+      const matches = [...document.querySelectorAll('p,h1,h2,h3,h4,h5,li,figcaption,span,div')]
+        .filter((e) => norm(e.textContent || '').includes(needle))
+        .sort((a, b) => a.querySelectorAll('*').length - b.querySelectorAll('*').length);
+      const anchorEl = matches[0];
+      if (!anchorEl) return -1;
+      // アンカーより前にある最後のボタン。
+      let idx = -1;
+      buttons.forEach((b, i) => {
+        if (b.compareDocumentPosition(anchorEl) & Node.DOCUMENT_POSITION_FOLLOWING) idx = i;
+      });
+      return idx;
+    }, anchorText)
+    .catch(() => -1);
+}
+
 async function ensurePaidAreaLine(
   page: Page,
   freeBlockCount: number,
   totalBlockCount?: number,
+  anchorText?: string,
 ): Promise<boolean> {
   const alreadySet = await page
     .evaluate(() => /ここから先は/.test(document.querySelector('paywall-line')?.textContent ?? ''))
@@ -872,16 +910,27 @@ async function ensurePaidAreaLine(
   // (2026-10-11 実測: 無料 37 ブロックに対し note 側の挿入位置は 28 個しかなかった)。
   // 総数が分かっているときは**無料部分の割合**で位置を決める。素朴に clamp すると
   // 末尾が選ばれ、ほぼ全文が無料の「有料記事」ができてしまう。
-  const at =
+  const byRatio =
     totalBlockCount && totalBlockCount > 0
       ? Math.min(Math.max(Math.round((freeBlockCount / totalBlockCount) * count), 1), count) - 1
       : Math.min(Math.max(freeBlockCount, 1), count) - 1;
+  // 有料側の先頭テキストで位置を指せるならそちらを使う (割合はあくまで保険)。
+  const byAnchor = anchorText ? await findPaidAreaSlotByAnchor(page, anchorText) : -1;
+  const at = byAnchor >= 0 ? byAnchor : byRatio;
   const target = buttons.nth(at);
   await target.scrollIntoViewIfNeeded({ timeout: 10000 }).catch(() => {});
   await target.click({ timeout: 15000 }).catch(() => {});
   await page.waitForTimeout(2500);
   log.info(
-    { freeBlockCount, totalBlockCount: totalBlockCount ?? null, buttonCount: count, clicked: at },
+    {
+      freeBlockCount,
+      totalBlockCount: totalBlockCount ?? null,
+      buttonCount: count,
+      byAnchor,
+      byRatio,
+      clicked: at,
+      anchor: anchorText ?? null,
+    },
     '有料エリアのラインを選択',
   );
 
@@ -898,6 +947,23 @@ async function ensurePaidAreaLine(
     .catch(() => false);
   log.info({ confirmed, lineSet }, '有料エリアのライン確定');
   return true;
+}
+
+/**
+ * 有料側の先頭ブロックから、画面上で位置合わせに使うテキストを作る。
+ * 見出し記号や箇条書き記号は note の表示に出ないので落とす
+ * (`paywall-split.ts` の `toAnchorText` と同じ整形)。
+ */
+export function paidAreaAnchor(paidBlocks: readonly NotePublishBlock[]): string {
+  const first = paidBlocks[0];
+  if (!first) return '';
+  const line = (first.text ?? '').split('\n')[0] ?? '';
+  return line
+    .replace(/^#{1,6}\s*/, '')
+    .replace(/^[-*・]\s*/, '')
+    .replace(/\*\*/g, '')
+    .trim()
+    .slice(0, 40);
 }
 
 /** 候補ラベルを順に試して最初に押せたものでtrue。 */
