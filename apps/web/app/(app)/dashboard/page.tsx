@@ -167,7 +167,8 @@ export default async function DashboardPage() {
     getAvgQualityScore(),
     prisma.salesRecord.aggregate({ _sum: { royalty_jpy: true, kenp_read: true }, where: { year_month: ymNow } }),
     prisma.salesRecord.aggregate({ _sum: { royalty_jpy: true }, where: { year_month: ymPrev } }),
-    getCostMeterData(prisma),
+    // docs/05 §3.3 — A2P のホームなので A2P の活動分だけ (ANP の note 生成費は含めない)。
+    getCostMeterData(prisma, { tool: 'a2p' }),
     prisma.book.count({ where: { publish_status: 'published' } }),
     prisma.book.count({ where: { publish_status: 'retracted' } }),
     prisma.book.groupBy({ by: ['status'], _count: { _all: true } }),

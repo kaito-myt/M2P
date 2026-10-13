@@ -87,6 +87,9 @@ export default async function OrgDashboardPage() {
     : [];
   const tasks = tasksRaw.map((t) => mapOrgTaskRow(t as unknown as DbOrgTask));
 
+  // docs/05 §3.3 — AI 組織 (CEO/本部長) は A2P と ANP の両方を見て意思決定するので、
+  // ここは**意図的に全ツール合算** (tool で絞らない)。実例: AI CEO は 2026-10-08 に
+  // ANP 側の `anp_auto_theme_enabled` を止めている。経営判断の土台は全社の数字。
   const costAgg = await prisma.tokenUsage.aggregate({
     _sum: { cost_jpy: true },
     where: { created_at: { gte: monthStartUtc(new Date()) } },

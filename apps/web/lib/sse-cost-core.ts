@@ -19,7 +19,9 @@
  *   将来 `cost_update` チャネルを worker 側で追加したら LISTEN 方式に切替可能。
  */
 
-import type { CostMeterData, CostMeterPrisma } from './cost-meter-core';
+import type { ToolKey } from '@a2p/contracts/cost-attribution';
+
+import type { CostMeterData, CostMeterPrisma, GetCostMeterOptions } from './cost-meter-core';
 import { getCostMeterData } from './cost-meter-core';
 
 /** SSE ポーリング間隔 (ミリ秒). 5 秒以内更新の受け入れ基準を満たす値. */
@@ -42,7 +44,12 @@ export interface CreateCostEventStreamOptions {
   /** clearInterval 差替え. */
   clearIntervalFn?: typeof clearInterval;
   /** getCostMeterData 差替え (テスト容易性). 既定は lib/cost-meter-core の実装. */
-  getCostMeterDataFn?: (prisma: CostMeterPrisma, now?: Date) => Promise<CostMeterData>;
+  getCostMeterDataFn?: (
+    prisma: CostMeterPrisma,
+    options?: GetCostMeterOptions | Date,
+  ) => Promise<CostMeterData>;
+  /** 集計対象のツール (docs/05 §3.3)。A2P の画面は 'a2p'。 */
+  tool?: ToolKey;
   /** 現在時刻を返す関数 (テスト固定用). */
   now?: () => Date;
   /** エラーフック. */
@@ -69,6 +76,7 @@ export function createCostEventStream(
     setIntervalFn = setInterval,
     clearIntervalFn = clearInterval,
     getCostMeterDataFn = getCostMeterData,
+    tool,
     now,
     onError,
   } = opts;
@@ -128,7 +136,7 @@ export function createCostEventStream(
     if (closed) return;
     let data: CostMeterData;
     try {
-      data = await getCostMeterDataFn(prisma, now?.());
+      data = await getCostMeterDataFn(prisma, { ...(now ? { now: now() } : {}), ...(tool ? { tool } : {}) });
     } catch (err) {
       onError?.(err, 'fetch');
       return;

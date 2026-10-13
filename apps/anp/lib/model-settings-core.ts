@@ -34,6 +34,12 @@ export const ANP_ROLE_META: Record<string, { label: string; description: string 
   'anp.promo': { label: 'SNS 告知', description: '公開記事の X / Instagram 告知文' },
   'anp.strategist': { label: 'アカウント設計・プロフィール素材', description: '設計案 (表示名/bio/柱/収益方針) と自己紹介文・画像プロンプト' },
   'anp.consultant': { label: 'アカウント戦略の AI 相談', description: '/accounts/design/consult のチャット相手 (Tavily リサーチ込み)' },
+  // `anp.*` ではないが ANP に帰属する役割 (docs/05 §3.3)。コスト画面の役割別内訳に出るので
+  // ラベルを持たせる。モデル設定の対象ではない (setAnpModelAssignmentInput は anp.* のみ)。
+  growth_scout: {
+    label: 'フォロー偵察 (共有)',
+    description: 'note.engage がフォロー/スキ対象を web 検索で特定する共有エージェント。A2P の販促でも使う',
+  },
 };
 
 export function anpRoleLabel(role: string): string {

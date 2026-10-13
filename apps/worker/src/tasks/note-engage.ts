@@ -118,13 +118,19 @@ export async function runNoteEngage(payload: unknown, deps: NoteEngageDeps = {})
   const generate =
     deps.generate ??
     ((input: { concept?: string | null; target_audience?: string | null; daily_target?: number }) =>
-      defaultGenerate({
-        channel: NOTE_CHANNEL,
-        concept: input.concept ?? '',
-        target_audience: input.target_audience ?? '',
-        daily_target: input.daily_target ?? 15,
-        recent_posts: [],
-      }));
+      defaultGenerate(
+        {
+          channel: NOTE_CHANNEL,
+          concept: input.concept ?? '',
+          target_audience: input.target_audience ?? '',
+          daily_target: input.daily_target ?? 15,
+          recent_posts: [],
+        },
+        // docs/05 §3.3 — growth_scout は共有エージェント。このタスクは ANP (note 本体) の
+        // 活動なので、コストは ANP に帰属させる。channel='note' だけでは判別できない
+        // (A2P も書籍紹介 note 記事を販促チャンネルとして持つ) ので明示する。
+        { tool: 'anp' },
+      ));
 
   const parsed = NoteEngagePayloadSchema.safeParse(payload);
   const jobId = parsed.success ? parsed.data.job_id : undefined;

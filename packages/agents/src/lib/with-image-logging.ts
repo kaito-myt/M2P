@@ -12,6 +12,8 @@
  */
 import { prisma as defaultPrisma } from '@a2p/db';
 
+import { defaultToolForRole, type ToolKey } from '@a2p/contracts/cost-attribution';
+
 import { updateBookCost, type UpdateBookCostPrisma } from './update-book-cost.js';
 import { IMAGE_MODEL } from '../tools/image-gen.js';
 import type {
@@ -38,12 +40,18 @@ export interface ImageLoggingContext {
   provider?: string;
   /** 画像モデルの上書き (既定 `IMAGE_MODEL`)。model_catalog の単価引きに使う。 */
   model?: string;
+  /**
+   * docs/05 §3.3 — この呼出をどのツールの活動として数えるか。省略時は role から既定値。
+   * (`anp.eyecatch` のように role 名前空間で分かるものは指定不要。)
+   */
+  tool?: ToolKey;
 }
 
 interface TokenUsageCreateData {
   book_id: string | null;
   theme_session_id: string | null;
   job_id: string | null;
+  tool: ToolKey;
   provider: string;
   model: string;
   role: string;
@@ -233,6 +241,7 @@ export function withImageLogging(
           book_id: ctx.bookId ?? null,
           theme_session_id: ctx.themeSessionId ?? null,
           job_id: ctx.jobId ?? null,
+          tool: ctx.tool ?? defaultToolForRole(role),
           provider,
           model,
           role,

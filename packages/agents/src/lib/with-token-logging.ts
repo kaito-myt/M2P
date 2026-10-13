@@ -22,6 +22,7 @@ import type {
   LLMCompleteArgs,
   LLMCompleteResult,
 } from '@a2p/contracts/agents';
+import { defaultToolForRole, type ToolKey } from '@a2p/contracts/cost-attribution';
 
 import { updateBookCost, type UpdateBookCostPrisma } from './update-book-cost.js';
 
@@ -36,6 +37,14 @@ export interface LoggingContext {
   orgTaskId?: string;
   /** 役割 (Marketer / Writer / ...) — `prompts.role` と同値域。 */
   role: AgentRole;
+  /**
+   * docs/05 §3.3 — この呼出をどのツールの活動として数えるか。
+   * 省略時は `defaultToolForRole(role)`。**共有エージェント** (`growth_scout` 等。
+   * A2P の販促と ANP の両方から呼ばれる) は role でも channel でも帰属が決まらない
+   * (`PROMOTION_CHANNELS` に note が含まれるため) ので、**呼出側の worker タスクが**
+   * `deps.tool` 経由でここに明示する。
+   */
+  tool?: ToolKey;
 }
 
 interface TokenUsageCreateData {
@@ -43,6 +52,7 @@ interface TokenUsageCreateData {
   theme_session_id?: string | null;
   job_id?: string | null;
   org_task_id?: string | null;
+  tool: ToolKey;
   provider: string;
   model: string;
   role: AgentRole;
@@ -229,6 +239,7 @@ export function withTokenLogging<T extends LLMClient>(
               theme_session_id: ctx.themeSessionId ?? null,
               job_id: ctx.jobId ?? null,
               org_task_id: ctx.orgTaskId ?? null,
+              tool: ctx.tool ?? defaultToolForRole(ctx.role),
               provider: result.provider,
               model: result.model,
               role: ctx.role,

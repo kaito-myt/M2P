@@ -908,6 +908,11 @@ model TokenUsage {
   theme_session_id    String? // book_id 未確定時の集計キー
   job_id              String?
   org_task_id         String? // docs/06 §9: 組織タスク別コスト集計キー (CEO/本部長/担当の呼出)
+  // docs/05 §3.3: この呼出をどのツールの活動として数えるか。a2p | anp | m2p。
+  // role だけでは決まらない (growth_scout/promo_strategist 等の共有エージェントは
+  // A2P と ANP の両方から呼ばれ、cron 経由では job_id も無い) ので記録時に確定させる。
+  // 各ツールの画面は自分の tool だけを集計し、全ツール合算は portal で見る。
+  tool                String   @default("a2p")
   provider            String // anthropic | openai | google
   model               String
   role                String // marketer | writer | editor | judge | thumbnail_text | thumbnail_image | optimizer | revision
@@ -928,6 +933,7 @@ model TokenUsage {
   @@index([org_task_id], map: "token_usage_org_task_idx")
   @@index([provider, model, created_at], map: "token_usage_provider_model_idx")
   @@index([role, created_at], map: "token_usage_role_idx")
+  @@index([tool, created_at(sort: Desc)], map: "token_usage_tool_time_idx") // ツール別月次集計
   @@index([created_at(sort: Desc)], map: "token_usage_time_idx") // 月次集計
   @@map("token_usage")
 }

@@ -13,6 +13,7 @@ import {
   type GrowthScoutOutput,
 } from '@a2p/contracts/agents/growth-scout';
 import { genreLabel } from '@a2p/contracts/genres';
+import type { ToolKey } from '@a2p/contracts/cost-attribution';
 
 import { createAgentClient as defaultCreateAgentClient } from '../lib/llm-client-factory.js';
 import { extractLlmJson } from '../lib/sanitize-llm-json.js';
@@ -41,6 +42,15 @@ export interface GrowthScoutDeps {
   loadAssignmentDeps?: LoadModelAssignmentDeps;
   withTokenLoggingDeps?: WithTokenLoggingDeps;
   getApiKey?: (provider: string) => Promise<string>;
+  /**
+   * docs/05 §3.3 — このコストをどのツールの活動として数えるか (既定 'a2p')。
+   *
+   * growth_scout は**共有エージェント**で、A2P の販促 ToDo (`promotion.growth.todo` /
+   * `promotion.sns.engage`) と ANP の note 自動フォロー (`note.engage`) の両方から
+   * 呼ばれる。しかも両方 `channel='note'` を渡すことがある (A2P は書籍紹介 note 記事を
+   * 販促チャンネルとして持つ) ので channel では判別できない。**呼出側が明示する。**
+   */
+  tool?: ToolKey;
 }
 
 export async function generateGrowthTodo(
@@ -55,7 +65,7 @@ export async function generateGrowthTodo(
   const prompt = await loadPrompt('growth_scout', null, deps.promptLoaderDeps);
   const systemPrompt = fillPlaceholders(prompt.template, { channel_label: channelLabel, genre });
 
-  const ctx: LoggingContext = { role: 'growth_scout' };
+  const ctx: LoggingContext = { role: 'growth_scout', ...(deps.tool ? { tool: deps.tool } : {}) };
   const factoryDeps: Parameters<typeof makeClient>[3] = {};
   if (deps.loadAssignmentDeps) factoryDeps.loadAssignmentDeps = deps.loadAssignmentDeps;
   if (deps.withTokenLoggingDeps) factoryDeps.withTokenLoggingDeps = deps.withTokenLoggingDeps;

@@ -52,7 +52,9 @@ async function loadHomeData() {
       select: { note_article_id: true, views: true, revenue_jpy: true },
     }),
     prisma.tokenUsage.aggregate({
-      where: { role: { startsWith: 'anp.' }, created_at: { gte: start, lt: end } },
+      // docs/05 §3.3 — ANP 帰属分。`role LIKE 'anp.%'` だと note.engage の
+      // growth_scout (共有エージェント) を取りこぼすので tool で絞る。
+      where: { tool: 'anp', created_at: { gte: start, lt: end } },
       _sum: { cost_jpy: true },
     }),
     prisma.noteAuthRequest.findMany({

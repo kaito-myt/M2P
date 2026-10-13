@@ -1,7 +1,7 @@
 /**
  * GET /api/cost/export.csv — コスト詳細 CSV エクスポート (T-07-05 / S-024).
  *
- * - 当月の token_usage 全行を日付順で取得し RFC 4180 CSV を返す
+ * - 当月の token_usage (A2P 分のみ, docs/05 §3.3) を日付順で取得し RFC 4180 CSV を返す
  * - 認証必須
  * - ファイル名: `cost-detail-YYYY-MM.csv`
  * - UTF-8 BOM 付き (Excel 互換)
@@ -42,6 +42,8 @@ export async function GET(request: NextRequest): Promise<Response> {
 
   const rows = await prisma.tokenUsage.findMany({
     where: {
+      // docs/05 §3.3: A2P の画面からの書き出しなので A2P の活動分だけ。
+      tool: 'a2p',
       created_at: { gte: start, lt: end },
     },
     orderBy: { created_at: 'asc' },

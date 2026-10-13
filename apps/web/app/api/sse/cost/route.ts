@@ -34,6 +34,8 @@ export async function GET(request: Request): Promise<Response> {
   const stream = createCostEventStream({
     prisma,
     signal: request.signal,
+    // docs/05 §3.3 — A2P のヘッダメーター。A2P の活動分だけを流す。
+    tool: 'a2p',
     onError: (err, ctx) => {
       log.warn({ ctx, err: serializeErr(err) }, 'sse cost stream error');
     },

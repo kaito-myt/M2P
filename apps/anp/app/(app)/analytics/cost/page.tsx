@@ -1,7 +1,12 @@
 /**
  * S-ANP-12 — コストダッシュボード (docs/11-anp-design.md §3.5 F-ANP-42)。
- * `token_usage` の `anp.*` 役割分を当月/前月で集計 (日次・役割別・モデル別・プロバイダ別) し、
- * 記事別・アカウント別は `note_articles.cost_jpy_total` (当月作成分)。月末着地の単純予測付き。
+ * `token_usage` の **ANP 帰属分** (`tool='anp'`, docs/05 §3.3) を当月/前月で集計
+ * (日次・役割別・モデル別・プロバイダ別) し、記事別・アカウント別は
+ * `note_articles.cost_jpy_total` (当月作成分)。月末着地の単純予測付き。
+ *
+ * 以前は `role LIKE 'anp.%'` で絞っていたため、`note.engage` が呼ぶ共有エージェント
+ * `growth_scout` の偵察コストを**取りこぼしていた** (2026-10-13: 10 月 ¥1,809)。
+ * 帰属は記録時に `token_usage.tool` で確定するようになったのでそれを使う。
  */
 import Link from 'next/link';
 
@@ -35,7 +40,7 @@ export default async function CostDashboardPage() {
         SUM(input_tokens) AS input_tokens,
         SUM(output_tokens) AS output_tokens
       FROM token_usage
-      WHERE role LIKE 'anp.%' AND created_at >= ${start} AND created_at < ${end}
+      WHERE tool = 'anp' AND created_at >= ${start} AND created_at < ${end}
       GROUP BY 1, 2, 3, 4
       ORDER BY 1
     `,

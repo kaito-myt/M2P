@@ -6,7 +6,7 @@
  *
  * - 売上: `note_sales` (記事×年月の当月実績: 売上/ビュー/スキ/購入者) と `note_membership_stats` (アカウント×年月:
  *   メンバー数/MRR) を、記事→アカウントで束ねて「当月 KPI / 6 か月推移 / アカウント別 / 記事別」にする。
- * - コスト: `token_usage` (role='anp.*') を日次・役割別・モデル別に集計し、記事別は `note_articles.cost_jpy_total`。
+ * - コスト: `token_usage` (`tool='anp'`, docs/05 §3.3) を日次・役割別・モデル別に集計し、記事別は `note_articles.cost_jpy_total`。
  */
 import { jstMonthRange, toNumber } from './home-core';
 
@@ -371,7 +371,7 @@ function breakdown(rows: ReadonlyArray<{ key: string; label: string; cost: numbe
 }
 
 export function computeCostDashboard(params: {
-  /** 当月 + 前月の token_usage 日次集計 (role='anp.*')。 */
+  /** 当月 + 前月の token_usage 日次集計 (`tool='anp'`)。 */
   usage: CostUsageRow[];
   articles: CostArticleRow[];
   accounts: CostAccountRow[];

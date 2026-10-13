@@ -28,7 +28,9 @@ export async function GET(): Promise<Response> {
     throw err;
   }
 
-  const data = await getCostMeterData(prisma);
+  // docs/05 §3.3 — A2P の画面のメーターなので A2P の活動分だけ。
+  // 全ツール合算 (予算の赤ライン判定) はポータル側で見る。
+  const data = await getCostMeterData(prisma, { tool: 'a2p' });
 
   return NextResponse.json(data);
 }

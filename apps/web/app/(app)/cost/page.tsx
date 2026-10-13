@@ -5,11 +5,17 @@
  * All sections rendered from DB queries in a single RSC render.
  *
  * Phase 1: recharts 不使用。テーブル/バー表示で代替。
+ *
+ * **集計範囲は A2P の活動分のみ** (`token_usage.tool='a2p'`、docs/05 §3.3)。
+ * 以前は `token_usage` を無条件に全件集計していたため、ANP (note) の記事生成コストまで
+ * この画面に乗っていた (2026-10-13: 10 月 ¥9,989 のうち A2P 由来は ¥1,116 だけだった)。
+ * 全ツール合算はポータル (`apps/portal` /cost) で見る。
  */
 import type { Metadata } from 'next';
 
 import { prisma } from '@a2p/db';
 import { getTopCostBooks } from '@a2p/db/cost-aggregation';
+import { TOOL_LABEL } from '@a2p/contracts/cost-attribution';
 
 import { messages } from '@/lib/messages';
 import {
@@ -41,6 +47,8 @@ export const dynamic = 'force-dynamic';
 
 const m = messages.costDashboard;
 const MONTHLY_LIMIT = 50_000;
+/** この画面が集計するツール (docs/05 §3.3)。A2P の活動分だけを数える。 */
+const TOOL = 'a2p' as const;
 
 function toNumber(v: unknown): number {
   if (v == null) return 0;
@@ -66,7 +74,7 @@ export default async function CostDashboardPage() {
   ] = await Promise.all([
     // Total cost for the month
     prisma.tokenUsage.aggregate({
-      where: { created_at: { gte: monthStart, lt: monthEnd } },
+      where: { tool: TOOL, created_at: { gte: monthStart, lt: monthEnd } },
       _sum: { cost_jpy: true },
     }),
 
@@ -78,7 +86,7 @@ export default async function CostDashboardPage() {
         SUM(cost_jpy) AS cost_jpy,
         COUNT(*) AS call_count
       FROM token_usage
-      WHERE created_at >= ${monthStart} AND created_at < ${monthEnd}
+      WHERE tool = ${TOOL} AND created_at >= ${monthStart} AND created_at < ${monthEnd}
       GROUP BY date, provider
       ORDER BY date ASC, provider ASC
     `,
@@ -86,7 +94,7 @@ export default async function CostDashboardPage() {
     // Breakdown by provider x model x role
     prisma.tokenUsage.groupBy({
       by: ['provider', 'model', 'role'],
-      where: { created_at: { gte: monthStart, lt: monthEnd } },
+      where: { tool: TOOL, created_at: { gte: monthStart, lt: monthEnd } },
       _sum: {
         cost_jpy: true,
         input_tokens: true,
@@ -120,6 +128,7 @@ export default async function CostDashboardPage() {
     prisma.tokenUsage.groupBy({
       by: ['book_id'],
       where: {
+        tool: TOOL,
         created_at: { gte: monthStart, lt: monthEnd },
         book_id: { not: null },
       },
@@ -214,7 +223,11 @@ export default async function CostDashboardPage() {
 
   return (
     <div className="flex flex-col gap-space-loose" data-testid="cost-dashboard-page">
-      <PageHeading eyebrow={m.breadcrumbAnalytics} title={m.pageTitle} description={m.pageSubtitle} />
+      <PageHeading
+        eyebrow={m.breadcrumbAnalytics}
+        title={m.pageTitle}
+        description={`${m.pageSubtitle} ${m.scopeNote(TOOL_LABEL[TOOL])}`}
+      />
 
       {isEmpty ? (
         <div

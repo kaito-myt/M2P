@@ -2206,6 +2206,8 @@ export const messages = {
   costDashboard: {
     pageTitle: 'コスト詳細ダッシュボード',
     pageSubtitle: '書籍 x プロバイダ x モデル x 役割粒度のコスト集計と上限到達予測',
+    /** docs/05 §3.3 — この画面が何を集計しているかを明示する (ANP 分は含まない)。 */
+    scopeNote: (toolLabel: string) => `集計対象は ${toolLabel} の活動のみ。全ツール合算はポータルで確認できます。`,
     breadcrumbHome: 'ホーム',
     breadcrumbAnalytics: '分析',
     breadcrumbCost: 'コスト詳細',

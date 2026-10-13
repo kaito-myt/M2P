@@ -800,6 +800,8 @@ model TokenUsage {
   book_id             String?  // nullable: テーマ生成段階等
   theme_session_id    String?  // book_id 未確定時の集計キー
   job_id              String?
+  org_task_id         String?  // docs/06 §9: 組織タスク別コスト集計キー
+  tool                String   @default("a2p") // §3.3 コスト帰属: a2p | anp | m2p
   provider            String   // anthropic | openai | google
   model               String
   role                String   // marketer | writer | editor | judge | thumbnail_text | thumbnail_image | optimizer | revision
@@ -819,6 +821,7 @@ model TokenUsage {
   @@index([theme_session_id], map: "token_usage_session_idx")
   @@index([provider, model, created_at], map: "token_usage_provider_model_idx")
   @@index([role, created_at], map: "token_usage_role_idx")
+  @@index([tool, created_at(sort: Desc)], map: "token_usage_tool_time_idx") // §3.3 ツール別月次集計
   @@index([created_at(sort: Desc)], map: "token_usage_time_idx") // 月次集計
   @@map("token_usage")
 }
@@ -1024,6 +1027,82 @@ CREATE UNIQUE INDEX prompts_role_genre_active_key
   ON prompts (role, COALESCE(genre, ''))
   WHERE status = 'active';
 ```
+
+### 3.3 コスト帰属 — `token_usage.tool` (2026-10-13)
+
+**原則: 各ツールの画面は、そのツール内で発生した活動のコストだけを集計する。
+全ツール合算はプラットフォーム (`apps/portal` の経営ダッシュボード) で見る。**
+
+運営者判断 (2026-10-13): 「統合のコストは M2P 側で見たいから、各ツールでは、
+そのツール内で発生した活動に対してのコストを集計するようにしてほしい」。
+
+#### 値域
+
+| `tool` | 範囲 | 画面 |
+|---|---|---|
+| `a2p` | 書籍パイプライン・KDP 出版・書籍の販促 | A2P `/cost`, `/dashboard`, `/api/cost/*` |
+| `anp` | note 記事パイプライン・note アカウント運用・note 自動フォロー | ANP `/analytics/cost`, ANP ホーム |
+| `m2p` | どのツールにも属さないプラットフォーム活動 | Portal `/dashboard` (3 ツール合算 + 内訳) |
+
+#### なぜ role から導出できないのか
+
+当初は `role LIKE 'anp.%'` で足りるはずだったが、**共有エージェント**が破る。
+
+- `growth_scout` は `note.engage` (ANP) と `promotion.growth.todo` / `promotion.sns.engage`
+  (A2P の販促) の両方から呼ばれる。
+- しかも**両方が `channel='note'` を渡しうる**。`PROMOTION_CHANNELS` に `note` が含まれる
+  ためで、A2P は「書籍を紹介する note 記事」を販促チャンネルとして持っている
+  (`promotion_posts.channel='note'`)。つまり channel でも判別できない。
+- cron から呼ばれる経路は `job_id` も無いので、後から辿ることもできない。
+
+→ **記録時に確定させる**しかない。`LoggingContext.tool` / `ImageLoggingContext.tool` を
+`withTokenLogging` / `withImageLogging` が `token_usage.tool` に書く。省略時は
+`defaultToolForRole(role)` (`packages/contracts/src/cost-attribution.ts`)。
+共有エージェントを ANP から呼ぶ worker タスクは `deps.tool` で明示する
+(実装: `note-engage.ts` → `generateGrowthTodo(input, { tool: 'anp' })`)。
+
+#### 既定マッピングの線引き
+
+`defaultToolForRole` は**入力の広さ**で決める。
+
+- 1 冊の本を見る役 (`marketer`/`writer`/`editor`/`judge`/`thumbnail_*`/`seo_optimizer`/
+  `metadata_worker`/`sales_analyst`/`market_analyst`) → `a2p`
+- 1 本の note 記事/アカウントを見る役 (`anp.*`) → `anp`
+- 事業全体を見る役 (`ceo`/`ceo_chat`/`prompt_editor`/`*_mgr`/`cost_optimizer`/
+  `cost_accountant`/`promo_analyst`/`account_strategist`) → `m2p`
+- 未知の role → `a2p` (A2P が第 1 ツールで既存行の大多数)
+
+AI 組織を `m2p` にするのは、CEO/本部長が A2P と ANP の**両方**を見て意思決定するため
+(実例: 2026-10-08 に AI CEO が ANP 側の `anp_auto_theme_enabled=false` を決めている)。
+片方のツールに寄せると「自分のツールで起きた活動」ではなくなる。
+
+#### 直した間違い (両方向にずれていた)
+
+| 画面 | 修正前 | 実害 (10 月実測) |
+|---|---|---|
+| A2P `/cost`・`/dashboard`・CSV・ヘッダメーター | `token_usage` を**無条件に全件**集計 | ANP の記事生成費まで A2P の数字に乗り、¥9,989 と表示。真の A2P 分は **¥1,062** |
+| ANP `/analytics/cost`・ANP ホーム | `role LIKE 'anp.%'` | `note.engage` の `growth_scout` ¥1,809 を**取りこぼし**。真の ANP 分は **¥8,873** |
+
+(残り ¥54 が `m2p` = `ceo_chat` + `cost_optimizer`。3 つの合計が ¥9,989 になる。)
+
+#### 意図的に合算のままにした場所
+
+- **A2P `/org` (AI 組織画面) の当月コスト**: 経営判断の土台は全社の数字なので `tool` で
+  絞らない。コード側にその旨をコメントで固定してある。
+- **`getCostMeterData(prisma, { tool })`**: `tool` 省略時は全ツール合算。月次赤ライン
+  (`app_settings.monthly_cost_red_jpy`) は全社の数字なので、ポータルがこれを使う。
+  A2P のヘッダメーターは `tool: 'a2p'` を渡して自分の分だけを出す。
+- **`cost.optimize.weekly` / `org.finance.tick`**: 全社のコスト最適化・予算突合なので合算。
+- **`books/[id]` / `jobs/[id]` の内訳**: `book_id` / `job_id` で絞っており構造的に A2P に閉じる。
+
+#### 新しいツールを足すとき
+
+1. `ToolKey` に 1 値追加 (`packages/contracts/src/cost-attribution.ts`)。
+2. その role 名前空間を `defaultToolForRole` に足す。
+3. そのツールの画面は自分の `tool` で絞る。ポータルは `TOOL_KEYS` を回すので自動で出る。
+
+LLM 呼出を足すときは Hard Rule #5 (`token_usage` への記録) と合わせて
+**帰属も正しいか**を確認する。帰属が間違ったコストは「自分のツールの数字」を壊す。
 
 ---
 

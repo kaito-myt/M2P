@@ -192,6 +192,44 @@ describe('withTokenLogging — 1 complete = 1 token_usage INSERT', () => {
     });
   });
 
+  it('tool 未指定なら role から既定の帰属が入る (docs/05 §3.3)', async () => {
+    const cases: Array<[string, string]> = [
+      ['editor', 'a2p'],
+      ['anp.writer', 'anp'],
+      ['ceo', 'm2p'],
+      ['cost_optimizer', 'm2p'],
+      ['growth_scout', 'a2p'],
+    ];
+    for (const [role, expected] of cases) {
+      const prisma = makeInMemoryPrisma();
+      const wrapped = withTokenLogging(
+        makeFakeClient(makeBaseResult({ costJpy: 1 })),
+        ctx({ role: role as never }),
+        { prisma, logger: silentLogger, fetchPriceSnapshot: async () => ({}) },
+      );
+      await wrapped.complete(makeArgs());
+      const inserted = prisma.tokenUsage.create.mock.calls[0]![0]!.data;
+      expect(inserted.tool, role).toBe(expected);
+    }
+  });
+
+  it('ctx.tool を渡すと既定を上書きする (共有エージェントの帰属を呼出側が決める)', async () => {
+    // growth_scout は note.engage(ANP) と promotion.growth.todo(A2P) の両方から
+    // channel='note' で呼ばれる。role/channel では決まらないので呼出側が明示する。
+    const prisma = makeInMemoryPrisma();
+    const wrapped = withTokenLogging(
+      makeFakeClient(makeBaseResult({ costJpy: 40 })),
+      ctx({ role: 'growth_scout', tool: 'anp' }),
+      { prisma, logger: silentLogger, fetchPriceSnapshot: async () => ({}) },
+    );
+
+    await wrapped.complete(makeArgs());
+
+    const inserted = prisma.tokenUsage.create.mock.calls[0]![0]!.data;
+    expect(inserted.tool).toBe('anp');
+    expect(inserted.role).toBe('growth_scout');
+  });
+
   it('themeSessionId のみ指定でも記録される (bookId 無し → updateBookCost スキップ)', async () => {
     const prisma = makeInMemoryPrisma();
     const client = makeFakeClient(makeBaseResult({ costJpy: 0.1 }));

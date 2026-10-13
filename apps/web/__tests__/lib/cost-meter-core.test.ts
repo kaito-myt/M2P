@@ -4,6 +4,7 @@
  * 検証:
  *  - getCostLevel: ratio -> level マッピング (境界値テスト)
  *  - getCostMeterData: Prisma DI mock で正しい形状を返す
+ *  - tool スコープ (docs/05 §3.3): 渡せばそのツール分だけ、省略なら全ツール合算
  */
 import { describe, expect, it, vi } from 'vitest';
 
@@ -73,6 +74,7 @@ describe('getCostMeterData', () => {
     const result = await getCostMeterData(prisma, new Date(2026, 4, 15));
 
     expect(result).toEqual({
+      tool: null,
       monthly_cost_jpy: 0,
       budget_jpy: 50_000,
       ratio: 0,
@@ -81,6 +83,47 @@ describe('getCostMeterData', () => {
       warn_count: 0,
       paused_count: 0,
     });
+  });
+
+  it('tool を渡すとその tool だけを集計条件に入れる (docs/05 §3.3)', async () => {
+    const prisma = makePrisma({ costJpy: 1_116 });
+    const result = await getCostMeterData(prisma, { tool: 'a2p', now: new Date(2026, 9, 13) });
+
+    expect(result.tool).toBe('a2p');
+    const where = (prisma.tokenUsage.aggregate as unknown as { mock: { calls: Array<[{ where: { tool?: string } }]> } })
+      .mock.calls[0]![0]!.where;
+    expect(where.tool).toBe('a2p');
+  });
+
+  it('tool 省略なら絞り込まない (= 全ツール合算。ポータルの予算判定用)', async () => {
+    const prisma = makePrisma({ costJpy: 9_989 });
+    const result = await getCostMeterData(prisma, { now: new Date(2026, 9, 13) });
+
+    expect(result.tool).toBeNull();
+    const where = (prisma.tokenUsage.aggregate as unknown as { mock: { calls: Array<[{ where: { tool?: string } }]> } })
+      .mock.calls[0]![0]!.where;
+    expect(where.tool).toBeUndefined();
+  });
+
+  it('第2引数に Date を渡す旧シグネチャも受ける (呼出側の一括変更を強制しない)', async () => {
+    const prisma = makePrisma({ costJpy: 100 });
+    const result = await getCostMeterData(prisma, new Date(2026, 9, 13));
+    expect(result.monthly_cost_jpy).toBe(100);
+    expect(result.tool).toBeNull();
+  });
+
+  it("ANP 単体では Amazon 広告費を足さない (広告費は書籍の費用)", async () => {
+    const base = makePrisma({ costJpy: 1_000, budgetJpy: 30_000 });
+    const prisma: CostMeterPrisma = {
+      ...base,
+      adSpend: { aggregate: vi.fn(async () => ({ _sum: { spend_jpy: 5_000 } })) },
+    };
+
+    const anp = await getCostMeterData(prisma, { tool: 'anp', now: new Date(2026, 9, 13) });
+    expect(anp.monthly_cost_jpy).toBe(1_000);
+
+    const a2p = await getCostMeterData(prisma, { tool: 'a2p', now: new Date(2026, 9, 13) });
+    expect(a2p.monthly_cost_jpy).toBe(6_000);
   });
 
   it('computes ratio and level correctly at 80%', async () => {

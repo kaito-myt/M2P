@@ -41,6 +41,7 @@ function makeFakePrisma(): CostMeterPrisma {
 }
 
 const BASE_DATA: CostMeterData = {
+  tool: 'a2p',
   monthly_cost_jpy: 10_000,
   budget_jpy: 50_000,
   ratio: 20,

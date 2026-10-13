@@ -1769,6 +1769,33 @@ follow/like が全件失敗する原因の切り分け。**直してから on �
 (`promotion.sns.engage`/`note.engage` と違ってフラグが存在しない)。止めるなら
 コード変更が必要なので、`promotion.growth.todo` の扱いは運営者判断として残す。
 
+#### ANP のコスト画面は逆に過小表示だった (`tool` 列で解消)
+
+上の内訳を出すときに分かったこと: **A2P と ANP のコスト画面が両方とも間違っていた**。
+
+| 画面 | 修正前の条件 | ずれ方 |
+|---|---|---|
+| A2P `/cost`・ホーム・CSV・ヘッダメーター | **条件なし** (`token_usage` 全件) | note の生成費まで A2P に乗る (10 月 ¥9,989 と表示) |
+| ANP `/analytics/cost`・ANP ホーム | `role LIKE 'anp.%'` | `note.engage` の `growth_scout` ¥1,809 を落とす |
+
+運営者判断 (2026-10-13): 「統合のコストは M2P 側で見たいから、各ツールでは、そのツール内で
+発生した活動に対してのコストを集計するようにしてほしい」。
+
+→ `token_usage.tool` (`a2p` | `anp` | `m2p`) を追加し、**記録時に帰属を確定**させた
+(設計は `docs/05-program-design.md` §3.3)。ANP 側は `role LIKE 'anp.%'` から
+`tool = 'anp'` に変更。10 月の実測は **ANP ¥8,873 / A2P ¥1,062 / 共通 ¥54** になった。
+
+**role では決められなかった理由**が ANP 特有なので記録しておく: `growth_scout` は
+`note.engage` (ANP) と `promotion.growth.todo` (A2P の販促 ToDo) の両方から
+**`channel='note'` で**呼ばれる。A2P は「書籍を紹介する note 記事」を販促チャンネルとして
+持っている (`PROMOTION_CHANNELS` に `note` が含まれる) ため、**channel でも判別できない**。
+cron 経由は `job_id` も無い。したがって ANP 側の呼出 (`note-engage.ts`) が
+`generateGrowthTodo(input, { tool: 'anp' })` と明示する形にした。
+
+`growth_scout` は `anp.*` ではないが ANP のコスト画面の役割別内訳に出るので、
+`ANP_ROLE_META` にラベル (「フォロー偵察 (共有)」) を足してある。
+モデル設定の一覧は `anp.*` だけを拾うので、そちらには出ない。
+
 #### なぜアラートが鳴らなかったか (再掲・構造の問題)
 
 `note.engage` は cron から `jobId` 無しで呼ばれるので `jobs` 行が無く、

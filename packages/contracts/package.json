@@ -13,6 +13,7 @@
     "./errors": "./src/errors.ts",
     "./money": "./src/money.ts",
     "./genres": "./src/genres.ts",
+    "./cost-attribution": "./src/cost-attribution.ts",
     "./agents": "./src/agents/index.ts",
     "./agents/marketer": "./src/agents/marketer.ts",
     "./agents/writer": "./src/agents/writer.ts",
