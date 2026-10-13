@@ -106,3 +106,33 @@ export function isToolKey(v: unknown): v is ToolKey {
 export function normalizeToolKey(v: unknown): ToolKey {
   return isToolKey(v) ? v : DEFAULT_TOOL;
 }
+
+// ---------------------------------------------------------------------------
+// 集計期間 (JST)
+// ---------------------------------------------------------------------------
+
+/**
+ * JST の「前月初 / 当月初 / 翌月初」を UTC の `Date` で返す。
+ *
+ * `token_usage.created_at` は **timestamp WITHOUT time zone に UTC を入れている**ので、
+ * JST の月初は UTC 月初 -9h。各ツールのコスト画面はこれを使って月を切る
+ * (以前は A2P が UTC 月境界、ANP が JST 月境界で、同じ月の数字が画面で食い違っていた)。
+ *
+ * SQL 側で日付ラベルを作るときは `created_at AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Tokyo'`。
+ * **`AT TIME ZONE 'Asia/Tokyo'` を 1 回だけ掛けるのは誤り** — timestamp without time zone に
+ * 対しては「この値は東京時刻」という解釈になり 9 時間**引かれる**
+ * (2026-10-13 実測: 保存値 10-12 22:31 → 10-12 13:31。正しくは 10-13 07:31)。
+ */
+export function jstMonthRange(now: Date): { prevMonthStart: Date; monthStart: Date; nextMonthStart: Date } {
+  const jst = new Date(now.getTime() + 9 * 3600_000);
+  const y = jst.getUTCFullYear();
+  const m = jst.getUTCMonth();
+  const at = (year: number, month: number) => new Date(Date.UTC(year, month, 1) - 9 * 3600_000);
+  return { prevMonthStart: at(y, m - 1), monthStart: at(y, m), nextMonthStart: at(y, m + 1) };
+}
+
+/** JST の 'YYYY-MM'。 */
+export function jstYearMonth(now: Date): string {
+  const jst = new Date(now.getTime() + 9 * 3600_000);
+  return `${jst.getUTCFullYear()}-${String(jst.getUTCMonth() + 1).padStart(2, '0')}`;
+}

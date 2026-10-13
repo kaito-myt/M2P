@@ -8,6 +8,8 @@
  *   メンバー数/MRR) を、記事→アカウントで束ねて「当月 KPI / 6 か月推移 / アカウント別 / 記事別」にする。
  * - コスト: `token_usage` (`tool='anp'`, docs/05 §3.3) を日次・役割別・モデル別に集計し、記事別は `note_articles.cost_jpy_total`。
  */
+import { jstMonthRange as jstMonthBoundaries } from '@a2p/contracts/cost-attribution';
+
 import { jstMonthRange, toNumber } from './home-core';
 
 export { jstMonthRange, toNumber };
@@ -464,13 +466,10 @@ export function computeCostDashboard(params: {
 
 /** `token_usage` の JST 日次集計に使う期間 (前月 1 日 JST 〜 翌月 1 日 JST)。 */
 export function costQueryRange(now: Date): { start: Date; end: Date } {
-  const jst = new Date(now.getTime() + 9 * 3600_000);
-  const y = jst.getUTCFullYear();
-  const m = jst.getUTCMonth();
-  return {
-    start: new Date(Date.UTC(y, m - 1, 1) - 9 * 3600_000),
-    end: new Date(Date.UTC(y, m + 1, 1) - 9 * 3600_000),
-  };
+  // 月境界の定義は `@a2p/contracts/cost-attribution` に集約 (A2P/ANP/ポータルで揃える)。
+  // 前月比を出すため前月初から取る。
+  const r = jstMonthBoundaries(now);
+  return { start: r.prevMonthStart, end: r.nextMonthStart };
 }
 
 export { jstDateKey };

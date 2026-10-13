@@ -8,7 +8,13 @@
  * この関数は純粋 (DB も Date も触らない) で、呼び出し側が `token_usage` の
  * 日次×ツール集計行と `now` を渡す。
  */
-import { TOOL_KEYS, normalizeToolKey, type ToolKey } from '@a2p/contracts/cost-attribution';
+import {
+  TOOL_KEYS,
+  jstMonthRange,
+  jstYearMonth,
+  normalizeToolKey,
+  type ToolKey,
+} from '@a2p/contracts/cost-attribution';
 
 /** 呼び出し側が SQL で作る集計行 (1 日 × 1 ツール)。 */
 export interface PlatformCostUsageRow {
@@ -74,28 +80,16 @@ export function getCostLevel(ratioPct: number): CostLevel {
   return 'green';
 }
 
-/** JST の 'YYYY-MM' を返す。 */
-export function jstYearMonth(now: Date): string {
-  const jst = new Date(now.getTime() + 9 * 3600_000);
-  return `${jst.getUTCFullYear()}-${String(jst.getUTCMonth() + 1).padStart(2, '0')}`;
-}
+export { jstYearMonth };
 
 /**
  * 当月/前月の集計範囲 (JST 月初〜翌月初を UTC の Date で返す)。
- * `token_usage.created_at` は UTC 保存なので、JST 月初 = UTC 月初 - 9h。
+ * 境界の定義は `@a2p/contracts/cost-attribution` の `jstMonthRange` に集約してある
+ * (A2P / ANP / ポータルで同じ月を指すため)。前月分も取って前月比を出す。
  */
 export function platformCostRange(now: Date): { start: Date; monthStart: Date; end: Date } {
-  const jst = new Date(now.getTime() + 9 * 3600_000);
-  const y = jst.getUTCFullYear();
-  const m = jst.getUTCMonth();
-  const jstMonthStartUtc = (year: number, month: number) =>
-    new Date(Date.UTC(year, month, 1) - 9 * 3600_000);
-  return {
-    // 前月分も取って前月比を出す。
-    start: jstMonthStartUtc(y, m - 1),
-    monthStart: jstMonthStartUtc(y, m),
-    end: jstMonthStartUtc(y, m + 1),
-  };
+  const r = jstMonthRange(now);
+  return { start: r.prevMonthStart, monthStart: r.monthStart, end: r.nextMonthStart };
 }
 
 function emptyByTool(): Record<ToolKey, number> {

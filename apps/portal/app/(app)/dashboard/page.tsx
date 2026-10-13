@@ -52,7 +52,11 @@ export default async function PlatformDashboardPage() {
   const [usageRaw, settings] = await Promise.all([
     prisma.$queryRaw<Array<{ date: string; tool: string; cost_jpy: unknown; call_count: bigint }>>`
       SELECT
-        TO_CHAR(created_at AT TIME ZONE 'Asia/Tokyo', 'YYYY-MM-DD') AS date,
+        -- created_at は timestamp WITHOUT time zone に UTC を入れている。そこへ
+        -- AT TIME ZONE 'Asia/Tokyo' を 1 回だけ掛けると「この値は東京時刻」と解釈されて
+        -- 9 時間引かれる (2026-10-13 実測: 保存値 10-12 22:31 が 10-12 13:31 になる)。
+        -- 一度 UTC と宣言してから東京へ変換するのが正しい (= +9h)。
+        TO_CHAR(created_at AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Tokyo', 'YYYY-MM-DD') AS date,
         tool,
         SUM(cost_jpy) AS cost_jpy,
         COUNT(*) AS call_count

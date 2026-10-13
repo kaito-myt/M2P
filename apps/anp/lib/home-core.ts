@@ -2,15 +2,13 @@
  * ホーム (F-ANP-42, docs/11-anp-design.md §3.5/§8) の集計ロジック。
  * DB 非依存の純関数にして RSC (`app/(app)/page.tsx`) からもテストからも呼べるようにする。
  */
+import { jstMonthRange as jstMonthBoundaries, jstYearMonth } from '@a2p/contracts/cost-attribution';
 
 export function jstMonthRange(now: Date): { start: Date; end: Date; ym: string } {
-  const jst = new Date(now.getTime() + 9 * 3600_000);
-  const y = jst.getUTCFullYear();
-  const m = jst.getUTCMonth();
-  const start = new Date(Date.UTC(y, m, 1, 0, 0, 0) - 9 * 3600_000);
-  const end = new Date(Date.UTC(y, m + 1, 1, 0, 0, 0) - 9 * 3600_000);
-  const ym = `${y}-${String(m + 1).padStart(2, '0')}`;
-  return { start, end, ym };
+  // 境界の定義は `@a2p/contracts/cost-attribution` に集約してある
+  // (A2P / ANP / ポータルで「当月」が同じ範囲を指すようにするため)。
+  const r = jstMonthBoundaries(now);
+  return { start: r.monthStart, end: r.nextMonthStart, ym: jstYearMonth(now) };
 }
 
 export function toNumber(v: unknown): number {

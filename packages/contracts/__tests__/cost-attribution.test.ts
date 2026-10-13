@@ -7,6 +7,8 @@ import {
   TOOL_SHORT_LABEL,
   defaultToolForRole,
   isToolKey,
+  jstMonthRange,
+  jstYearMonth,
   normalizeToolKey,
 } from '../src/cost-attribution';
 
@@ -96,5 +98,40 @@ describe('ラベル', () => {
 
   it('キーは 3 つ', () => {
     expect([...TOOL_KEYS]).toEqual(['a2p', 'anp', 'm2p']);
+  });
+});
+
+describe('jstMonthRange / jstYearMonth', () => {
+  it('JST 月初は UTC 月初 -9h', () => {
+    // 2026-10-13 10:28 JST
+    const r = jstMonthRange(new Date('2026-10-13T01:28:00.000Z'));
+    expect(r.prevMonthStart.toISOString()).toBe('2026-08-31T15:00:00.000Z'); // 9/1 00:00 JST
+    expect(r.monthStart.toISOString()).toBe('2026-09-30T15:00:00.000Z'); // 10/1 00:00 JST
+    expect(r.nextMonthStart.toISOString()).toBe('2026-10-31T15:00:00.000Z'); // 11/1 00:00 JST
+  });
+
+  it('UTC では前月末でも JST では当月として扱う', () => {
+    // 2026-09-30 16:00 UTC = 2026-10-01 01:00 JST
+    const t = new Date('2026-09-30T16:00:00.000Z');
+    expect(jstYearMonth(t)).toBe('2026-10');
+    expect(jstMonthRange(t).monthStart.toISOString()).toBe('2026-09-30T15:00:00.000Z');
+  });
+
+  it('UTC では当月でも JST 月初前なら前月として扱う', () => {
+    // 2026-09-30 14:59 UTC = 2026-09-30 23:59 JST
+    const t = new Date('2026-09-30T14:59:00.000Z');
+    expect(jstYearMonth(t)).toBe('2026-09');
+  });
+
+  it('年をまたぐ', () => {
+    const t = new Date('2026-01-05T00:00:00.000Z');
+    expect(jstYearMonth(t)).toBe('2026-01');
+    expect(jstMonthRange(t).prevMonthStart.toISOString()).toBe('2025-11-30T15:00:00.000Z');
+    expect(jstMonthRange(t).monthStart.toISOString()).toBe('2025-12-31T15:00:00.000Z');
+  });
+
+  it('12月の翌月初が翌年1月になる', () => {
+    const t = new Date('2026-12-20T00:00:00.000Z');
+    expect(jstMonthRange(t).nextMonthStart.toISOString()).toBe('2026-12-31T15:00:00.000Z');
   });
 });
