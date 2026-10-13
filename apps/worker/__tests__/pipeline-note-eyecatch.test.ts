@@ -94,6 +94,8 @@ const SAMPLE_RESULT: GenerateNoteEyecatchResult = {
   r2Key: 'note/art1/eyecatch.jpg',
   promptUsed: 'prompt',
   styleKey: 'flat_editorial',
+  layoutKey: 'bottom_panel',
+  genreKey: 'default',
   composedText: true,
   alt: 'alt',
 };

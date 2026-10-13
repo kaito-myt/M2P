@@ -38,7 +38,12 @@ export interface NoteSeoStepPrisma {
 
 export interface NoteSeoStepInput {
   noteArticleId: string;
-  jobId: string;
+  /**
+   * `jobs` に実在する ID だけを渡すこと。`token_usage.job_id` は FK なので、実在しない ID を
+   * 渡すとコスト記録の INSERT が落ちて**費用が記録されない** (CLAUDE.md ハードルール 5 違反)。
+   * パイプライン外から呼ぶとき (再生成スクリプト等) は null を渡す。
+   */
+  jobId: string | null;
   noteAccountId: string;
   currentTitle: string;
   hook: string | null;
@@ -120,7 +125,7 @@ export async function runNoteSeoStep(
   try {
     seo = await generateSeo({
       note_article_id: input.noteArticleId,
-      job_id: input.jobId,
+      ...(input.jobId ? { job_id: input.jobId } : {}),
       account: {
         niche: input.account.niche,
         target_reader: input.account.target_reader ?? null,

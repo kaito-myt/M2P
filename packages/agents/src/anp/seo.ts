@@ -9,14 +9,20 @@
  * 具体的な数字・固有名詞を入れられない。校閲後の完成原稿を読ませることで
  * 「4 年分集計した」「回収率が 12 ポイント」のような具体性のあるタイトルが作れる。
  *
+ * 【2026-10-13 F-ANP-53】タイトルの型を**記事ごとに 1 つだけ指定する**ようにした。
+ * それまでは「読まれている型 7 つ」を列挙して「どれかに乗せろ」と指示していたが、生成された
+ * 100 本中 96 本が同じ `X｜Y` 形に収束していた (詳細と原因は `title-style.ts` の冒頭)。
+ * 選択肢を見せると最頻出の型に倒れるので、選ばせずに渡す。
+ *
  * フロー: 校閲 (anp.editor) → **本エージェント** → アイキャッチ (anp.eyecatch) → 判定 (anp.judge)
  *  1. `loadActivePrompt('anp.seo', null)`
- *  2. プレースホルダ差込 ({niche}/{target_reader}/{tone}/{current_title})
+ *  2. プレースホルダ差込 ({niche}/{target_reader}/{tone}/{current_title}/{title_pattern})
  *  3. `createAgentClient('anp.seo', null, ctx)` → JSON 抽出 → zod 検証 (最大 2 回再試行)
  *
  * エラー方針: 他の ANP エージェントと同型 (AgentError / ProviderError 透過 / ConfigError)。
  */
 import { AgentError } from '@a2p/contracts/errors';
+import { classifyNicheGenre } from '@a2p/contracts/note-genre';
 import type { LLMClient } from '@a2p/contracts/agents';
 import {
   NoteSeoInputSchema,
@@ -25,6 +31,13 @@ import {
   type NoteSeoInput,
   type NoteSeoOutput,
 } from '@a2p/contracts/agents/anp';
+
+import {
+  enforceTitlePattern,
+  pickTitlePattern,
+  recurringPhrases,
+  type TitlePattern,
+} from './title-style.js';
 
 import { createAgentClient as defaultCreateAgentClient } from '../lib/llm-client-factory.js';
 import {
@@ -66,6 +79,21 @@ export function extractHeadings(bodyMd: string): string[] {
   return out.slice(0, 20);
 }
 
+/**
+ * 今回使う型をプロンプトに貼る形に整える。**候補を並べない** (並べると最頻出の型に倒れる)。
+ */
+export function buildPatternBlock(pattern: TitlePattern): string {
+  return [
+    `【今回のタイトルの型】${pattern.label}`,
+    pattern.rule,
+    pattern.usesBar
+      ? '区切り記号 ｜ を 1 つ使って 2 段にする。'
+      : '**区切り記号 ｜ は使わない**。1 文で書き切る。',
+    '型の見本 (構造だけ真似る。文言はコピーしない):',
+    ...pattern.examples.map((e) => ` - ${e}`),
+  ].join('\n');
+}
+
 export async function generateNoteSeo(
   input: NoteSeoInput,
   deps: GenerateNoteSeoDeps = {},
@@ -76,11 +104,17 @@ export async function generateNoteSeo(
   const makeClient = deps.createAgentClient ?? defaultCreateAgentClient;
 
   const prompt = await loadPrompt('anp.seo', null, deps.promptLoaderDeps);
+  // F-ANP-54: ジャンルで勝ち筋が違う (競馬系=断定/結論、副業系=等身大の金額と失敗)。
+  const genre = classifyNicheGenre(parsed.account.niche);
+  // F-ANP-53: この記事で使う型を 1 つだけ決める (記事 id で決定的)。
+  const pattern = pickTitlePattern(parsed.note_article_id, parsed.recent_titles, parsed.account.niche);
   const systemPrompt = fillPlaceholders(prompt.template, {
     niche: parsed.account.niche,
     target_reader: parsed.account.target_reader ?? '(指定なし)',
     tone: parsed.account.tone ?? '(指定なし)',
     current_title: parsed.current_title,
+    title_pattern: buildPatternBlock(pattern),
+    genre_tone: genre.titleTone,
   });
 
   const ctx: LoggingContext = { role: 'anp.seo' };
@@ -102,6 +136,10 @@ export async function generateNoteSeo(
 
   const headings = extractHeadings(parsed.body_md);
   const body = parsed.body_md.slice(0, BODY_EXCERPT_CHARS);
+  // ニッチ名は検索キーワードなので繰り返して当然 — 指摘対象から外す。
+  const repeated = recurringPhrases(parsed.recent_titles, {
+    exclude: [parsed.account.niche, parsed.account.target_reader ?? ''],
+  });
 
   const userMessage = [
     `ニッチ: ${parsed.account.niche}`,
@@ -111,8 +149,19 @@ export async function generateNoteSeo(
     seoPolicy ? `このアカウントの SEO 方針 (必ず従う):\n${seoPolicy.slice(0, 800)}` : '',
     otherPolicy ? `記事の方針(抜粋):\n${otherPolicy.slice(0, 800)}` : '',
     '',
-    `現在のタイトル(仮題): ${parsed.current_title}`,
+    // 仮題をそのまま「現在のタイトル」として見せると推敲に倒れ、語順も記号も引き継がれる。
+    // 作業用ラベルであることを明示して、構造を断ち切る。
+    '作業用の仮題 (企画段階の機械生成ラベル。記事の中身を伝えるためだけのもの。',
+    `  **語順・記号・言い回しを引き継がず、ゼロから付け直すこと**): ${parsed.current_title}`,
     parsed.hook ? `企画時のフック: ${parsed.hook}` : '',
+    '',
+    buildPatternBlock(pattern),
+    '',
+    `【${genre.label}のタイトルのトーン】`,
+    genre.titleTone,
+    '',
+    `【${genre.label}のアイキャッチのコピー (eyecatch_copy) の作り方】`,
+    genre.copy,
     '',
     headings.length > 0 ? `現在の見出し:\n${headings.map((h) => ` - ${h}`).join('\n')}` : '',
     '',
@@ -120,7 +169,13 @@ export async function generateNoteSeo(
     body,
     '',
     parsed.recent_titles.length > 0
-      ? `直近のタイトル(言い回しが被らないように):\n${parsed.recent_titles.map((t) => ` - ${t}`).join('\n')}`
+      ? [
+          '直近のタイトル — これは**避けるべき見本**です。同じ型・同じ記号・同じ語順にしないこと:',
+          ...parsed.recent_titles.map((t) => ` - ${t}`),
+        ].join('\n')
+      : '',
+    repeated.length > 0
+      ? `直近で繰り返されている言い回し (今回は使わないか、別の言い方にする): ${repeated.join(' / ')}`
       : '',
     parsed.published.length > 0
       ? `内部リンク候補(公開済み記事):\n${parsed.published.map((p) => ` - ${p.title} ${p.note_url}`).join('\n')}`
@@ -186,7 +241,8 @@ export async function generateNoteSeo(
     // 内部リンクは提示した候補 URL のみ許可する (LLM の URL 捏造を弾く)。
     const allowed = new Set(parsed.published.map((p) => p.note_url));
     const links = validated.data.internal_links.filter((u) => allowed.has(u));
-    return { ...validated.data, internal_links: links };
+    // 指示を無視して `｜` 形に戻った場合、代替案に型どおりのものがあれば入れ替える。
+    return enforceTitlePattern({ ...validated.data, internal_links: links }, pattern);
   }
 
   throw lastError ?? new AgentError('anp.seo.invalid_output: unknown failure');

@@ -68,6 +68,69 @@ export function wrapByWidth(
   return lines;
 }
 
+/** その文字を行頭に置いてよいか (禁則)。 */
+export function canStartLine(ch: string): boolean {
+  return !NO_LINE_START.includes(ch);
+}
+
+/**
+ * 行数を決め打ちして、**各行の幅ができるだけ揃うように**折り返す。
+ *
+ * 貪欲な `wrapByWidth` は幅の限界まで詰めるので、「最初の1万円は校正でつく / る」のように
+ * 2 行目に 1 文字だけ残ることがある。サムネイルでは致命的に見苦しいので、行数が決まった後に
+ * **最大行幅を最小化する**割り方を探し直す。文字数が少ない (〜40 字) ので総当たりで足りる。
+ *
+ * 収まる割り方が無ければ `null` (呼び出し側が貪欲な結果にフォールバックする)。
+ */
+export function balanceWrap(
+  font: opentype.Font,
+  text: string,
+  fontSize: number,
+  maxWidth: number,
+  lineCount: number,
+): string[] | null {
+  const chars = Array.from(text);
+  if (lineCount <= 1 || chars.length <= lineCount) return null;
+
+  // 形態素解析は持ち込まず、日本語で特に目立つ 2 つの悪い切り方だけをコストで嫌う。
+  //  1. ひらがな同士の間で切る = 語の途中で割れやすい (「勝負は3着ま / でで決める」)
+  //  2. 行頭が助詞になる = 前の語から引きはがされる (「求人票の条件 / はAIに任せない」)
+  const isKana = (ch: string): boolean => /[぀-ゟ]/.test(ch);
+  const PARTICLES = 'はがをにでとものへやかばねよ';
+  const breakPenalty = maxWidth * 0.14;
+
+  let best: { lines: string[]; cost: number } | null = null;
+
+  const walk = (start: number, remaining: number, acc: string[], cost: number): void => {
+    if (best !== null && cost >= best.cost) return; // 枝刈り
+    if (remaining === 1) {
+      const line = chars.slice(start).join('');
+      if (line.length === 0) return;
+      const w = advanceWidth(font, line, fontSize);
+      if (w > maxWidth) return;
+      const finalCost = Math.max(cost, w);
+      if (best === null || finalCost < best.cost) best = { lines: [...acc, line], cost: finalCost };
+      return;
+    }
+    for (let end = start + 1; end <= chars.length - (remaining - 1); end += 1) {
+      // 次の行の先頭に置けない文字 (句読点・小書き仮名など) では切らない。
+      if (!canStartLine(chars[end]!)) continue;
+      const line = chars.slice(start, end).join('');
+      const w = advanceWidth(font, line, fontSize);
+      if (w > maxWidth) break; // これ以上伸ばしても入らない
+      const prev = chars[end - 1]!;
+      const next = chars[end]!;
+      const penalty =
+        (isKana(prev) && isKana(next) ? breakPenalty : 0) +
+        (PARTICLES.includes(next) ? breakPenalty : 0);
+      walk(end, remaining - 1, [...acc, line], Math.max(cost, w + penalty));
+    }
+  };
+
+  walk(0, lineCount, [], 0);
+  return best === null ? null : (best as { lines: string[] }).lines;
+}
+
 /** maxLines 以内に収まる最大フォントサイズを探す。 */
 export function fitText(
   font: opentype.Font,
@@ -189,7 +252,10 @@ export function advanceWidth(font: opentype.Font, text: string, size: number): n
   return w;
 }
 
-const NUM_RE = /([0-9０-９]+(?:[.,．][0-9０-９]+)?[万億円%％割倍位個歳日年月週時間分秒人本冊点]*)/;
+// 数字に続く「単位」までを 1 かたまりにする。参考サムネが「最初の【1万円】」のように
+// 単位ごと強調していたため (数字だけ強調すると「【1】万円」になって意味が切れる)。
+const NUM_RE =
+  /([0-9０-９]+(?:[.,．][0-9０-９]+)?(?:万|億|円|%|％|割|倍|位|個|歳|日|年|月|週|時間|分|秒|人|本|冊|点|着|頭|件|回|鞍|戦|名|枚|口|ポイント|pt|kg|km|m|R)*)/;
 
 /** 数字＋単位の連なりを検出して強調用に分割する。 */
 export function splitNumberRuns(line: string): Array<{ text: string; num: boolean }> {

@@ -19,13 +19,16 @@
  *  3. R2 に upload (`note/{note_article_id}/eyecatch.jpg`)
  *  4. Return { r2Key, promptUsed }
  */
+import { classifyNicheGenre, type NoteGenreProfile } from '@a2p/contracts/note-genre';
 import { noteArticleEyecatch } from '@a2p/storage/keys';
 import {
   composeNoteEyecatch,
   defaultEyecatchAlt,
+  pickNoteEyecatchLayout,
   schemeForNiche,
   NOTE_EYECATCH_HEIGHT,
   NOTE_EYECATCH_WIDTH,
+  type NoteEyecatchLayout,
 } from '@a2p/output-image';
 
 import { EYECATCH_BANNED_MOTIFS, pickEyecatchStyle, type EyecatchStyle } from './eyecatch-style.js';
@@ -71,6 +74,10 @@ export interface GenerateNoteEyecatchResult {
   promptUsed: string;
   /** 採用した画風キー (次回の重複回避に使う)。 */
   styleKey: string;
+  /** 採用した版面キー (下帯 / 左パネル / 色ボックス / 全面)。 */
+  layoutKey: string;
+  /** 判定したジャンル (競馬系 / 副業系 / 汎用)。 */
+  genreKey: string;
   /** 文字を焼き込んだか (anp.seo のコピーが無い記事は false)。 */
   composedText: boolean;
   /** 画像の alt テキスト (note の画像説明・SEO 用)。 */
@@ -97,7 +104,12 @@ export interface GenerateNoteEyecatchDeps {
  * F-ANP-14b: 記事ごとに画風を振り、AI っぽいモチーフを名指しで禁止したプロンプトを組み立てる。
  * (旧プロンプトは汎用的すぎて gpt-image が毎回「光る脳 + ノート PC の人物」に収束していた。)
  */
-export function buildPrompt(input: GenerateNoteEyecatchInput, style: EyecatchStyle): string {
+export function buildPrompt(
+  input: GenerateNoteEyecatchInput,
+  style: EyecatchStyle,
+  layout: NoteEyecatchLayout,
+  genre: NoteGenreProfile = classifyNicheGenre(input.niche),
+): string {
   const policy = (input.editorialPolicy ?? '').trim().slice(0, 300);
   return [
     'Web メディア (note) の記事アイキャッチを 1 枚作成してください。横長・高解像度。',
@@ -107,22 +119,26 @@ export function buildPrompt(input: GenerateNoteEyecatchInput, style: EyecatchSty
     `【フック】${input.hook}`,
     policy ? `【媒体のトーン】${policy}` : '',
     '',
-    '【画風 (必ず守る)】',
+    // F-ANP-54: ジャンルで勝ち筋が正反対なので、画風より先にジャンルの作法を置く。
+    `【${genre.label}の作法 (最優先。ここに反する絵は失敗)】`,
+    genre.art,
+    '',
+    '【画風 (上の作法の範囲で守る)】',
     `- 画材・質感: ${style.medium}`,
     `- 構図: ${style.composition}`,
     `- 配色: ${style.palette}`,
     '',
     '【内容の作り方】',
-    '- **読者は 3 秒で読むか決める**。要素を詰め込まず、**主題は 1 個だけ**にする。',
+    '- **読者は 3 秒で読むか決める**。描くモノは **1 個だけ**。2 個目を足したくなっても足さない。',
     '  (2 個以上描くと焦点が散り、小さく表示されたときに何の記事か分からなくなる)',
-    '- タイトルの中身を「具体的なモノ・場面」に翻訳して描く (抽象的な概念の比喩に逃げない)。',
-    '- 主題は画面の**上半分**に大きく置く。**下 45% はキャッチコピーを載せるので、',
-    '  主題を置かず、細かい描き込みも避けた落ち着いた面にする** (背景色・影・床・空など)。',
-    '  (後工程で下側に暗い帯を重ねて文字を読ませる。ここに主題があると帯で潰れて無駄になる)',
+    '- その 1 個は、**この記事にしか出てこない具体的なモノ**にする。',
+    '  タイトルと本文から名詞を 1 つ選び、それを大きく描く (抽象的な概念の比喩に逃げない)。',
+    '- 題材が思いつかなくても、書類・グラフ・PC・事務用品に逃げない (下の禁止リスト)。',
+    '  その記事の現場にある道具・場所・モノを探す。',
+    `- ${layout.subjectHint}`,
     '- **色数は 3 色以内** (地の色 + 主役の色 + 差し色 1 色)。差し色は画面のごく一部だけに使う。',
     '- コントラストを強く、色は大胆に。小さく表示されても遠目で目を引くこと。',
-    '- 背景がごちゃつくと文字が読めなくなる。奥はぼかすか単純な面にする。',
-    '- 人物は原則描かない。必要な場合も顔は写さず、手元や後ろ姿など部分的に留める。',
+    '- 背景は単純な面にする (奥行きの小物を並べない)。',
     '',
     '【禁止 (これらが写ると失敗)】',
     ...EYECATCH_BANNED_MOTIFS.map((m) => `- ${m}`),
@@ -181,8 +197,13 @@ export async function generateNoteEyecatch(
     deps.withImageLoggingDeps,
   );
 
-  const style = pickEyecatchStyle(input.noteArticleId, input.recentStyleKeys ?? []);
-  const promptUsed = buildPrompt(input, style);
+  // F-ANP-54: ニッチからジャンルを判定し、画風・版面・画作りの方向をまとめて切り替える。
+  const genre = classifyNicheGenre(input.niche);
+  const style = pickEyecatchStyle(input.noteArticleId, input.recentStyleKeys ?? [], input.niche);
+  // F-ANP-52: 版面を記事ごとに振る。**プロンプトと合成で同じ版面を使う**こと。
+  // 食い違うと主題がパネルの下に埋まって消える。
+  const layout = pickNoteEyecatchLayout(input.noteArticleId, input.niche);
+  const promptUsed = buildPrompt(input, style, layout, genre);
   // Google (Nano Banana) は 16:9 が最も note のアイキャッチ比率に近い。OpenAI は 1536x1024。
   const width = useGoogle ? NOTE_EYECATCH_WIDTH : IMAGE_WIDTH;
   const height = useGoogle ? NOTE_EYECATCH_HEIGHT : IMAGE_HEIGHT;
@@ -213,7 +234,7 @@ export async function generateNoteEyecatch(
         sub: input.eyecatchSub ?? null,
         badge: input.niche,
       },
-      { scheme: schemeForNiche(input.niche) },
+      { scheme: schemeForNiche(input.niche), layout },
     );
     composedText = true;
   }
@@ -226,6 +247,8 @@ export async function generateNoteEyecatch(
     r2Key,
     promptUsed,
     styleKey: style.key,
+    layoutKey: layout.key,
+    genreKey: genre.key,
     composedText,
     alt: defaultEyecatchAlt(input.title, input.niche),
   };

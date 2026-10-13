@@ -5,3 +5,4 @@ export * from './errors.js';
 export * from './money.js';
 export * from './genres.js';
 export * from './cost-attribution.js';
+export * from './note-genre.js';
