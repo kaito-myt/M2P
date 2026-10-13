@@ -64,6 +64,8 @@ const BOTTOM_PANEL_MAX_TOP = 0.72;
 const PANEL_EDGE = 6;
 /** 袋文字のフチの太さ (文字サイズに対する比)。参考サムネはどれも太い。 */
 const OUTLINE_RATIO = 0.2;
+/** 行数を 1 つ減らすために許容する縮小率 (これ以上小さくなるなら行を増やしたほうがよい)。 */
+const LINE_DROP_TOLERANCE = 0.92;
 
 export interface NoteEyecatchText {
   /** 主役のキャッチコピー (全角 8〜18 文字程度。読んで意味の通る一言にする)。 */
@@ -330,16 +332,36 @@ export function fitCopy(
   maxLines: number = MAX_COPY_LINES,
 ): { size: number; lines: string[] } {
   const start = copySizeForLength(copy);
+  let best: { size: number; count: number } | null = null;
   for (let size = start; size >= MIN_COPY_SIZE; size -= 2) {
     const lines = wrapByWidth(font, copy, size, maxWidth);
-    if (lines.length > maxLines) continue;
-    // 行数が決まったら、2 行目に 1 文字だけ残らないよう割り直す。
-    return { size, lines: balanceWrap(font, copy, size, maxWidth, lines.length) ?? lines };
+    if (lines.length <= maxLines) {
+      best = { size, count: lines.length };
+      break;
+    }
   }
-  return {
-    size: MIN_COPY_SIZE,
-    lines: wrapByWidth(font, copy, MIN_COPY_SIZE, maxWidth).slice(0, maxLines + 1),
-  };
+  if (best === null) {
+    return {
+      size: MIN_COPY_SIZE,
+      lines: wrapByWidth(font, copy, MIN_COPY_SIZE, maxWidth).slice(0, maxLines + 1),
+    };
+  }
+
+  // ほんの少し (8% まで) 縮めるだけで 1 行減らせるなら、そちらを採る。
+  // 実測 (2026-10-13): 「同競馬場経験は加点する」が 104px で 3 行に割れて
+  // 「同競馬 / 場経験は / 加点する」と語の途中で折れていた。100px なら 2 行に収まる。
+  const floor = Math.max(MIN_COPY_SIZE, Math.round(best.size * LINE_DROP_TOLERANCE));
+  for (let size = best.size - 2; size >= floor; size -= 2) {
+    const lines = wrapByWidth(font, copy, size, maxWidth);
+    if (lines.length < best.count) {
+      best = { size, count: lines.length };
+      break;
+    }
+  }
+
+  // 行数が決まったら、2 行目に 1 文字だけ残らないよう割り直す。
+  const lines = wrapByWidth(font, copy, best.size, maxWidth);
+  return { size: best.size, lines: balanceWrap(font, copy, best.size, maxWidth, lines.length) ?? lines };
 }
 
 /**

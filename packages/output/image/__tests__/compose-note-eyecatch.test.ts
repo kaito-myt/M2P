@@ -413,3 +413,22 @@ describe('日本語の折り返し', () => {
     expect(/[\u3040-\u309f]/.test(prev) && /[\u3040-\u309f]/.test(next)).toBe(false);
   });
 });
+
+describe('行数を減らせるなら少し縮める (2026-10-13 実測)', () => {
+  it('「同競馬場経験は加点する」が 3 行に割れず 2 行に収まる', () => {
+    const { bold } = loadFonts();
+    // 左パネルの文字幅。104px だと 5 字ずつで 3 行になり「同競馬 / 場経験は / 加点する」と
+    // 語の途中で折れていた。100px なら 6 字入るので 2 行で済む。
+    const { size, lines } = fitCopy(bold, '同競馬場経験は加点する', 609, 3);
+    expect(lines).toHaveLength(2);
+    expect(size).toBeGreaterThanOrEqual(96);
+  });
+
+  it('大きく縮めないと減らせない場合は行を増やしたままにする', () => {
+    const { bold } = loadFonts();
+    // 1 行にするには半分以下まで縮める必要があるので、2 行のまま大きく出す。
+    const { size, lines } = fitCopy(bold, '最初の1万円は校正でつくる', 880, 2);
+    expect(lines).toHaveLength(2);
+    expect(size).toBeGreaterThanOrEqual(80);
+  });
+});
