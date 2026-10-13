@@ -14,6 +14,7 @@
  * 使い方:
  *   bash scripts/paperback/pb-env.sh apps/worker/node_modules/.bin/tsx \
  *     scripts/anp/regen-title-eyecatch.mjs [--limit=6] [--niche=競馬] [--dry] [--titles-only] [--image-only]
+ *   中断したら: --skip-recent=180 で「直近 180 分に更新済み = 作り直し済み」を飛ばして続きから。
  *   環境変数: DBURL / R2_* / OPENAI_API_KEY (pb-env.sh が供給)
  */
 import path from 'node:path';
@@ -30,6 +31,8 @@ const LIMIT = Number(argOf('limit', '6'));
 const NICHE = argOf('niche');
 const ONLY_ID = argOf('article');
 const DRY = args.includes('--dry');
+/** 直近 N 分以内に更新された記事を飛ばす = 中断した続きから再開する (作り直しの二重課金を避ける)。 */
+const SKIP_RECENT_MIN = Number(argOf('skip-recent', '0'));
 const TITLES_ONLY = args.includes('--titles-only');
 const IMAGE_ONLY = args.includes('--image-only');
 
@@ -72,6 +75,9 @@ async function main() {
         "a.status IN ('ready','needs_human_review')",
         'a.body_md IS NOT NULL',
         NICHE ? `acc.niche LIKE '%${NICHE.replace(/'/g, '')}%'` : '',
+        SKIP_RECENT_MIN > 0
+          ? `a.updated_at < NOW() - INTERVAL '${String(Math.floor(SKIP_RECENT_MIN))} minutes'`
+          : '',
       ]
         .filter(Boolean)
         .join(' AND ');
