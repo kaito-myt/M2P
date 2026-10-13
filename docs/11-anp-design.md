@@ -1714,12 +1714,69 @@ worker のログにしか残らず、**DB から後で数えられない**。
 `failed` は「再挑戦余地を残す」ため `promotion_sns_engagements` にも記録しない設計なので、
 **失敗が 1 件も永続化されない**。¥4,700/月 を払っている処理の成否が DB に無い状態だった。
 
-**対応方針 (未実施・運営者判断待ち)**:
-1. `note.engage` に内部 `Job` 行を持たせ、`result_json` に per_account の結果を残す
-   (他の cron タスクと同型にする)。成否が見えないまま金額だけ出る状態を消す。
-2. follow/like が全件失敗している原因の切り分け (セッション有効性 / セレクタ変更)。
-3. 直らない間は `note_engage_enabled=false` で止める。キルスイッチは既にある。
-   偵察だけに ¥4,700/月 を払う意味はない。
+**対応 (2026-10-13 実施)**: 上記 3 を採った。**`note_engage_enabled=false`**。
+キルスイッチは `generate()` (= growth_scout の web 検索呼出) より**前**に見られるので、
+off にした時点でこのタスクのコストは ¥0 になる (`promotion.sns.engage` が 10 月に
+¥0 だったのと同じ理屈 — あちらは `sns_engage_enabled=false` で既に止まっていた)。
+切替は `scripts/anp/set-flag.cjs` (UI トグルが無いフラグ用):
+
+```
+bash scripts/paperback/pb-env.sh node scripts/anp/set-flag.cjs                      # 現在値
+bash scripts/paperback/pb-env.sh node scripts/anp/set-flag.cjs note_engage_enabled on   # 戻す
+```
+
+残る宿題 (止めてあるので急がない): 内部 `Job` 行を持たせて成否を DB に残すこと、
+follow/like が全件失敗する原因の切り分け。**直してから on に戻す**のが順序で、
+「偵察だけ動いて成果 0」の状態に戻さないためにこの 2 つは on の前提条件にする。
+
+### 2026-10-13 再測定 — 「出版しかしていないのにコストが出る」の最終内訳
+
+運営者から同じ問いが再度あったので 10 月全期間 (10/01〜10/13) で測り直した。
+
+| 区分 | 件数 | コスト | 呼び元 |
+|---|---|---|---|
+| ANP (`anp.*` 記事生成) | 1,356 | **¥7,063** | editor ¥2,000 / writer ¥1,870 / judge ¥1,342 / eyecatch ¥764 / seo ¥696 / numcheck ¥356 |
+| ANP (`growth_scout` 偵察) | 46 | **¥1,809** | `note.engage` (UTC 04/10 時 = cron と完全一致) |
+| A2P 側 (販促AI・組織AI) | 22 | **¥1,116** | `promo_strategist` ¥704 / `growth_scout`(週次ToDo) ¥264 / `ceo_chat` ¥33 / `cost_optimizer` ¥21 / 手動 ¥95 |
+| 合計 | 1,424 | **¥9,989** | |
+
+**A2P 側は 10 月合計 ¥1,116 = 全体の 11%。** しかもその中身は販促AIと組織AIで、
+**KDP の出版作業そのものの LLM コストは ¥0** (`marketer`/`writer`/`editor`/`judge`/
+`thumbnail_*`/`seo_optimizer` 等の書籍生成 role は 10 月に 1 件も走っていない)。
+出版は Playwright のブラウザ操作だけなので構造的に LLM を使わない。
+
+#### 生成を止めた 10/10 以降の実コスト = 「何も作っていない期間」の固定費
+
+| 日 (JST) | コスト | 内訳 |
+|---|---|---|
+| 10-10 | ¥156 | `growth_scout` ×4 |
+| 10-11 | ¥175 | `growth_scout` ¥157 / `ceo_chat` ¥16 / `anp.promo` ¥2 |
+| 10-12 | ¥160 | `growth_scout` ¥155 / `anp.promo` ¥5 |
+| 10-13 | ¥493 | `promo_strategist` ¥346(週次) / `growth_scout` ¥132 / `cost_optimizer` ¥11 / `anp.promo` ¥4 |
+
+4 日で ¥984 = **月額換算 約¥7,400**。記事も本も 1 件も作っていないのにこの額で、
+うち **¥4,650/月 (63%) が成果 0 の `note.engage`** だった。これを止めた後の
+固定費は **約¥2,100/月**:
+
+| 残る常時ON | 周期 | 月額 | 消費先 (= 止めない理由) |
+|---|---|---|---|
+| `promotion.playbook.refresh` (`promo_strategist`) | 週 `0 16 * * 1` | 約¥1,500 | `promotion.note.article` が `playbook_json` → `playbook_guidance` として毎記事の販促文生成に渡している (10/13 も 58 回稼働)。**生きている消費先がある** |
+| `promotion.growth.todo` (`growth_scout`) | 週 `0 22 * * 1` | 約¥570 | 手動フォロー/スキの ToDo を `org_tasks(kind='growth_manual')` に起票。**9 件すべて `needs_human` のまま未消化** (最古 09-04)。手動作業をしないなら止められる |
+| `cost.optimize.weekly` | 週 | 約¥50 | コスト最適化の提案 |
+| `anp.promo` | 公開ごと | 約¥0.07/本 | 公開記事の販促文。実質無料 (`gpt-6-luna`) |
+
+この 2 つの週次タスクは crontab で「常時ON」とされていてキルスイッチが無い
+(`promotion.sns.engage`/`note.engage` と違ってフラグが存在しない)。止めるなら
+コード変更が必要なので、`promotion.growth.todo` の扱いは運営者判断として残す。
+
+#### なぜアラートが鳴らなかったか (再掲・構造の問題)
+
+`note.engage` は cron から `jobId` 無しで呼ばれるので `jobs` 行が無く、
+`failed` は「再挑戦余地を残す」ため `promotion_sns_engagements` にも記録されない。
+**¥4,700/月 を払っている処理の成否が DB のどこにも無かった。**
+`token_usage` 側は正しく記録されていた (= CLAUDE.md のコスト可観測性ルールは守られていた)
+ので、今回は「コストは見えるが成果が見えない」という非対称が原因。
+LLM 呼出を伴う cron タスクは**成果も DB に残す**のを原則にする。
 
 #### judge の差し戻しが ¥1,400〜1,500 を無駄にしていた
 
