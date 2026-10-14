@@ -130,12 +130,11 @@ function tokensToElements(
       case 'heading': {
         const t = token as Tokens.Heading;
         if (opts.suppressHeadings) {
-          // 小説: 見出しにはせず、本文の一段落として流す (文字は捨てない)。
-          paragraphs.push(
-            inlineTokensToParagraph(t.tokens, {
-              spacing: { after: 180, line: 336, lineRule: LineRuleType.AUTO },
-            }),
-          );
+          // 小説: 見出し行そのものを出さない。
+          // 実物は `## 1. 式神の忘れ物が招いた千年ジャンプ` のような純粋な構造ラベルで、
+          // 小説に見出しは設計上そもそも存在しない (アウトラインの「場面の流れ」は内部メモ)。
+          // 本文の一段落として流すと地の文の途中に題名が落ちた壊れた組版になるため落とす。
+          // `chapters.body_md` は無改変なので、この判断は出力側だけで可逆。
           break;
         }
         const level =

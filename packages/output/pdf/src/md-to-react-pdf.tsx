@@ -211,14 +211,7 @@ function tokensToElements(
       case 'heading': {
         const t = token as Tokens.Heading;
         if (opts.suppressHeadings) {
-          // 小説: 見出しにはせず、本文の一段落として流す (文字は捨てない)。
-          elements.push(
-            <View key={key} style={{ marginBottom: 8 }}>
-              <Text style={{ lineHeight: LINE_HEIGHT }}>
-                {inlineToElements(t.tokens)}
-              </Text>
-            </View>,
-          );
+          // 小説: 見出し行そのものを出さない (build-docx 側と同じ方針。理由はそちらのコメント)。
           break;
         }
         const fontSize =

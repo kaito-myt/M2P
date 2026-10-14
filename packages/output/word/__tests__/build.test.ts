@@ -198,19 +198,24 @@ describe('buildDocx — 小説 (isNovel) は本文に見出しを入れない', 
   // 2026-10-14: ジャンル誤判定 (候補の genre が一律 'practical') でラノベ・小説が
   // 実用書として執筆され、本文に `##` 小見出しが残った本が出た。ジャンル側は修正済みだが、
   // 出力側でも「小説に見出しは入れない」を担保する。
-  it('本文中の ## を見出しスタイルにせず、文字は残す', async () => {
+  it('本文中の ## 見出し行を出力しない (章タイトルだけ残る)', async () => {
     const novel = await buildDocx(sampleBook, sampleChapters, { isNovel: true });
     const novelXml = await (await JSZip.loadAsync(novel)).file('word/document.xml')!.async('text');
 
-    // 文字は落とさない (黙って本文を削らない)
-    expect(novelXml).toContain('セクション1.1');
-    // 見出しスタイルは付けない (章タイトルの Heading1 だけが残る)
+    // 構造ラベルなので落とす (本文として流すと地の文の途中に題名が落ちる)。
+    expect(novelXml).not.toContain('セクション1.1');
+    expect(novelXml).not.toContain('サブセクション2.1.1');
     expect(novelXml).not.toContain('Heading3');
     expect(novelXml).not.toContain('Heading4');
+    // 章タイトルと地の文は残る
+    expect(novelXml).toContain('第1章 はじめに');
+    expect(novelXml).toContain('Heading1');
+    expect(novelXml).toContain('ここではAI出版の基本について');
 
     // 実用書 (既定) では従来どおり見出しになる
     const practical = await buildDocx(sampleBook, sampleChapters);
     const practicalXml = await (await JSZip.loadAsync(practical)).file('word/document.xml')!.async('text');
+    expect(practicalXml).toContain('セクション1.1');
     expect(practicalXml).toContain('Heading3');
   });
 
