@@ -316,6 +316,7 @@ Inc-2 の完了条件を「椅子 1 個」にしているのは、**3D 生成の
 | コスト帰属 | **完了** | `ToolKey` に `'3dp'` を追加。`tdp.*` role は自動で `3dp` に帰属 |
 | ロール定義 | **完了** | `AgentRole` に `tdp.research` / `tdp.planner` / `tdp.prompter` / `tdp.listing` |
 | アセット検査・最適化 | **完了** | `packages/mesh` (`@a2p/mesh`)。テスト 18 件 |
+| Meshy クライアント | **完了 (キー未設定)** | 同パッケージ `meshy.ts`。テスト 19 件 (fetch 注入で失敗系まで) |
 | `apps/3dp` スケルトン | **未着手** | 次 |
 | ポータルタイル | **未着手** | `NEXT_PUBLIC_3DP_URL` 設定時のみ点灯 (docs/10) |
 
@@ -386,3 +387,32 @@ Inc-2 の完了条件を「椅子 1 個」にしているのは、**3D 生成の
 行う場合は削減後に必ず再検査する (呼出側の責務)。
 なお gltf-transform v4 の `weld()` は**ビット列が完全一致する頂点のみ**をまとめる
 (v2 までの `tolerance` は廃止)。近接頂点の統合が必要なら `simplify` の判断になる。
+
+### Meshy クライアントの実装方針
+
+Meshy は**非同期タスク方式** (投げて task id → ポーリング → 完了 URL から GLB)。
+`fetch` を注入できるようにして、**API キー無しで失敗系まで**テストした。
+
+**credit を無駄に払わない**ことを型と文面で縛っている:
+
+| 守りたいこと | 実装 |
+|---|---|
+| 形で落ちる物にテクスチャ代を払わない | `preview` (形だけ) → 検査 → 合格したら `refine` (テクスチャ) の 2 段を前提にする |
+| `refine` を単独で投げない | `previewTaskId` 無しの `refine` はリクエスト前に弾く (fetch を呼ばない) |
+| ポーリング上限で**投げ直させない** | `retryable=true` + 「**同じ task_id で再開**すること (投げ直すと credit を二重に払う)」をエラー文に明記。タスクは Meshy 側で継続している可能性があるため |
+| credit 切れをリトライしない | 402 / 4xx は `retryable=false`、5xx / 429 のみ `true` |
+| 0 バイトを商品にしない | 空の GLB をエラーにする |
+| GLB が無いのに成功扱いしない | `model_urls.glb` が無ければエラー (fbx だけ返ることがある) |
+
+**プロンプトの定型制約** (`PROP_NEGATIVE_PROMPT` / `buildPropPromptSuffix`):
+AI 3D は指示しないと**台座・地面・背景の板・文字**を勝手に付け、**裏側や底面が無い**ことがある。
+小物商材ではどれも致命的なので、ネガティブプロンプトと接尾辞で機械的に抑える。
+企画依存の文面は DB の `tdp.prompter` プロンプトが作る (CLAUDE.md Hard Rule #4) ので、
+ここに持つのは定型の制約だけ。
+
+### 次に必要なもの
+
+**Meshy Pro ($20/月) の API キー。** これが入れば Inc-2 の完了条件
+(椅子 1 個を生成 → 検査 → 配布用 GLB) まで通せる。
+キーはポータルの「API 管理」(`ApiCredential`) に `provider='meshy'` で入れる想定
+(env `MESHY_API_KEY` へのフォールバックは Tavily と同じ規約にする)。

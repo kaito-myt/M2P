@@ -16,3 +16,13 @@ export {
   type InspectMetrics,
 } from './inspect.js';
 export { optimizeGlb, type OptimizeOptions, type OptimizeResult } from './optimize.js';
+export {
+  MeshyClient,
+  MeshyError,
+  PROP_NEGATIVE_PROMPT,
+  buildPropPromptSuffix,
+  type MeshyClientOptions,
+  type MeshyTask,
+  type MeshyTaskStatus,
+  type MeshyTextTo3dArgs,
+} from './meshy.js';
