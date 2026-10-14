@@ -2015,6 +2015,61 @@ export const KdpSubmitPayload = z.object({
 >   別 ASIN へ移してから」の順で行う。重複 listing の解消は 2026-09-01 と同じ「片方を未出版の完成本で
 >   `--overwrite-map` 差し替え」（9/2 に旅がへた 2 重 B0HGLCN8W8/B0HDY8H11X → 後者を残し前者を別本で差し替え済）。
 > - **上書き（LIVE 出品の再提出）も「本の作成数制限」を誘発しうる (2026-09-02 実測)**: 前日に 8 件の LIVE 上書き再提出を行った翌日、新規作成ゼロ・サーバー自動出版ゼロにもかかわらず新規タイトル作成が `creation_limit` でブロックされた。「下書き resume/編集は枠非消費」という従来理解は**新規 CREATE 画面に限る**話で、大量の再提出や審査中タイトルの滞留はアカウント単位のスロットリングとして新規作成をブロックすることがある。対策 = `app_settings.kdp_creation_paused_until` を尊重し時刻経過後に再試行（新規作成のブロックは STEP1 で検知され副作用なし）。解除は**JST 深夜0時**（=15:00 UTC、`nextJstMidnightUtc` どおり。15:05 JST の再試行で再ブロックを実測＝日中リセット説は誤り）。再提出は**完了した JST 日**にカウントされる。
+>
+> **本棚の一覧 UI と「下書き」判定 (2026-10-14 実測 — `--assist` が 1 冊も進まなかった原因)**:
+> `bash scripts/kdp-assist.sh` が「下書きスロット 0個 / 対象書籍 24冊 → 中止」で何もしない状態だった。
+> 本棚 DOM を実地調査して判明した仕様は 3 つ。
+> - **表示件数の既定は 10 冊/ページ**。`collectDraftIds` は 1 ページ目しか見ていなかったため、
+>   販売中の本が 10 件並んだ時点で下書きが DOM に存在せず、常に 0 件になる（販売中は実測 50 件以上）。
+>   一覧の条件は AUI の native `<select>` で、`change` を投げれば効く:
+>   `podbookshelftable_filter_input-option` = `ALL`/`DRAFT`/`PENDING_APPROVAL`/`PUBLISHING`/`LIVE`/`BLOCKED`、
+>   `podbookshelftable-records-per-page-dropdown-option` = `10`/`25`/`50`。
+>   **どちらもページ再読込で既定 (`ALL` / `10`) に戻る**ので、本棚を開くたび設定し直す必要がある
+>   （＝フィルタが残って重複出版ガードが誤判定する事故は起きないが、`10` に戻る方は取りこぼしの原因になる）。
+> - **1 タイトルに Kindle とペーパーバックが同居する (dual bookshelf)**。状況フィルタ「下書き」は
+>   **どちらかのフォーマットが下書きなら**その行を返す。実測 4 件はすべて
+>   **Kindle=販売中 / ペーパーバック=下書き** で、行テキストに「下書き」が出る。旧実装は行テキストの
+>   「下書き」で判定していたため、この行を Kindle の下書きと取り違える余地があり、その ID で
+>   `editkindledetails` を開くと**販売中の Kindle 本を上書きしてしまう**（否定条件に救われていただけ）。
+> - **フォーマット別の状態はバッジの id に出る**ので、テキストではなくここから読む:
+>   `zme-indie-bookshelf-dual-digital-status-<state>-status-popover-<行ID>`（`digital`=Kindle、
+>   `print`=ペーパーバック、`<state>`=`live`/`draft` ほか）。ただし **`<行ID>` は Kindle の編集 ID とは
+>   別物**（実測ではペーパーバック側の ID）なので、編集 ID は同じ `<tr>` 内の `editkindledetails`
+>   リンクから取る。`<tr>` はフォーマット単位に分かれているため、行内の `digital` バッジだけを見れば
+>   ペーパーバックの状態と混ざらない。採用条件は「行内の digital バッジが `draft` だけ」。
+> - **結論**: Kindle の下書きは実測 0 件だった。つまり `--assist`（下書き resume = 作成枠非消費）には
+>   消化する対象が無く、**新規作成（1 日 5 冊の作成上限を消費）が唯一の前進経路**。そこで
+>   `--assist`/`--auto` は下書きを使い切った後、残りを `runCreate(…, MAX_CREATE)` に回すようにした
+>   （既定 5 冊 = 作成上限、`--max-create=0` で新規作成を無効化）。旧実装はここで中止していたため、
+>   下書きが無い日は出版が 1 冊も進まなかった。
+> - **入稿キューには出版できない本が混ざる**: `kdp_publish_queued=true` の 24 冊のうち 10 冊は
+>   `status='needs_human_review'` で、judge ゲートで止まって `pipeline.book.export` が走っておらず
+>   **DOCX も採用カバーも存在しない**（全て `skip_no_assets` になる）。`fetchBooks` の既定条件に
+>   `b.status='done'` を加え、本文が出来た本だけを対象にした（対象 24 冊 → 14 冊が実態）。
+>
+> **【訂正】作成上限は日次ではなく「週次」だった (2026-10-14 実測・Amazon のモーダル文言が根拠)**:
+> 未出版 14 冊を新規作成で出版しようとして STEP1 の「保存して続行」で止まり、スクリーンショット
+> (`kdp-publish-stage/<bookId>-blocked.png`) に Amazon 自身の説明が写っていた:
+>
+> > **本の作成数上限に達しました** — このフォーマットの**週間**タイトル作成数が上限に達しました。
+> > 制限は**日曜日の午前 0 時 (UTC/協定世界時)** にリセットされます。
+>
+> - これにより本ドキュメントの従来の記述「解除は JST 深夜 0 時 (=15:00 UTC)」「1 日 5 冊の作成上限」は
+>   **誤り**と確定した。正しくは**週次枠**で、リセットは**日曜 0:00 UTC = 日曜 9:00 JST**。
+>   「JST 日中にリセットされない」「日次境界を跨いでも枠が戻らない」という過去の実測は、
+>   日次リセットが存在しないと考えれば全て整合する。
+> - **上限は「フォーマットごと」**(モーダルの原文「このフォーマットの」) — Kindle 本とペーパーバックで
+>   別枠である可能性が高い (未検証。ペーパーバックの入稿が通る日に Kindle が通らない事象の説明になりうる)。
+> - **検出器の取りこぼしを修正**: `scripts/kdp-publish.mjs` と
+>   `apps/worker/src/tasks/kdp-submit/playwright-publish-port.ts` は
+>   `本の作成数制限を超えました|提出可能な本の数を超え` しか見ていなかったため、現行文言
+>   「本の作成数上限に達しました」を拾えず `not_advanced` (原因不明のブロック) として扱っていた。
+>   これは `kdp.submit` では `creation_limit` ではなく `blocked` 扱いになり、
+>   「静かに翌日再試行」ではなく**要調査通知**を出してしまう経路。判定パターンに
+>   `本の作成数上限に達しました|タイトル作成数が上限` を追加した。
+> - **クールダウン境界**: `creationLimitPauseUntil` の候補に `nextWeeklyCreationResetUtc`
+>   (次の日曜 0:00 UTC) を追加し、`min(6h バックオフ, 次の JST 0 時, 次の週次リセット)` とした。
+>   週次リセット直前は 6 時間を待たずその瞬間に再開できる。
 
 **構成（playwright import 隔離ルール順守）**:
 - `apps/worker/src/tasks/kdp-submit.ts` — オーケストレーション（DI 境界 `KdpPublishPort`）。book+`kdp_metadata`+docx/cover(R2) 取得 → セッション再利用(`accounts.kdp_session_state_enc`) → ポート呼出 → `publish_status` 更新 → 監査。

@@ -517,7 +517,7 @@ async function fillStep1(page: Page, b: KdpBookInput): Promise<{ ok?: boolean; b
   const limited = await page.evaluate(() => {
     const n = [...document.querySelectorAll('div,section')].find(
       (x) =>
-        /本の作成数制限を超えました|提出可能な本の数を超え/.test(x.textContent || '') &&
+        /本の作成数制限を超えました|提出可能な本の数を超え|本の作成数上限に達しました|タイトル作成数が上限/.test(x.textContent || '') &&
         (x as HTMLElement).offsetParent !== null &&
         x.querySelectorAll('button,a').length <= 3,
     );

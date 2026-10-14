@@ -5,9 +5,11 @@
  *  - KDP は新規タイトル作成時に max_auth_age=0 の再認証を強制するため、完全ヘッドレス（Railway）出版は不可能。
  *    本ツールはローカルで headful 起動し、運営者が一度だけフレッシュログイン（パスワード+2FA）すれば、
  *    以降ウィザード（詳細→コンテンツ→価格→出版）を全自動で回す。
- *  - さらに Amazon 側の「本の作成数制限」が有効な間は、いくらフォームを正しく埋めても新規作成が拒否される
- *    （保存して続行 → 「本の作成数制限を超えました」モーダル）。本ツールはこれを検出して当該書籍を skip し、
- *    残りを試行する。制限解除後に再実行すれば、未出版の本が順次出版される（＝手動リトライ運用）。
+ *  - さらに Amazon 側の「本の作成数上限」が有効な間は、いくらフォームを正しく埋めても新規作成が拒否される
+ *    （保存して続行 → モーダル）。2026-10-14 実測の文言は「本の作成数上限に達しました / このフォーマットの
+ *    **週間**タイトル作成数が上限に達しました。制限は**日曜日の午前 0 時 (UTC)** にリセットされます」。
+ *    日次ではなく週次で、リセットは日曜 0:00 UTC = 日曜 9:00 JST。本ツールはこれを検出して当該書籍を
+ *    skip し中断する。解除後に再実行すれば未出版の本が順次出版される（＝手動リトライ運用）。
  *
  * 使い方:
  *   # 環境変数(必須): DBURL(=prod DATABASE_PUBLIC_URL), R2_ACCOUNT_ID/R2_ACCESS_KEY_ID/R2_SECRET_ACCESS_KEY/R2_BUCKET_NAME
@@ -20,7 +22,13 @@
  *   node scripts/kdp-publish.mjs --limit=1            # 最大N冊
  *   node scripts/kdp-publish.mjs --all                # 従来挙動: 未出品(done/unlisted)全冊
  *   node scripts/kdp-publish.mjs --assist             # 準自動: 既存の下書きをresumeして各ステップを自動入力。
- *                                                     #   「保存して続行/出版」は運営者が押す(新規作成しないので日次上限を消費しない)
+ *                                                     #   「保存して続行/出版」は運営者が押す(下書きresumeは日次上限を消費しない)
+ *   node scripts/kdp-publish.mjs --max-create=5       # 下書きが足りない分を新規作成する上限(既定5=Amazonの作成上限)
+ *                                                     #   --max-create=0 で新規作成せず下書きの消化だけで終える
+ *
+ * --assist / --auto は「本棚のKindle下書きを使い切ってから、残りを新規作成に回す」。
+ * 2026-10-14 までは下書きが0件だと中止していたため、下書きが無い日は1冊も進まなかった
+ * (本棚の下書き判定の実測仕様は docs/05-program-design.md の KDP 実測知見を参照)。
  *
  * A2P の「自動入稿/一括自動入稿」ボタンで本を入稿キューに登録 → 本ツールを1回ログインして流すと
  * キューの本だけ自動入稿し、成功した本は kdp_publish_queued=false + publish_status='submitted' に更新。
@@ -55,6 +63,11 @@ const LIMIT = parseInt((args.find((a) => a.startsWith('--limit=')) || '').split(
 // 既定は UI「自動入稿/一括自動入稿」で登録された入稿キュー (kdp_publish_queued=true) のみを対象にする。
 // --all で従来挙動 (done+unlisted 全件)。--book-id 指定時はその本のみ。
 const ALL_MODE = args.includes('--all');
+// 下書きが足りないときに新規作成する冊数の上限 (既定 5)。
+// Amazon 側の作成上限は 2026-10-14 実測で**週間**制 (リセットは日曜 0:00 UTC = 日曜 9:00 JST)。
+// 上限に当たってもこちらで検知して中断するので、この値は 1 回の実行で作りすぎないための保険。
+// 0 を渡すと新規作成しない (下書きの消化だけで終える)。
+const MAX_CREATE = parseInt((args.find((a) => a.startsWith('--max-create=')) || '').split('=')[1] || '5', 10);
 // 準自動モード: 既存の下書きをresumeして上書き入力。各ステップの「保存して続行/出版」は運営者が押す。
 const ASSIST = args.includes('--assist');
 // 全自動モード: 既存の下書きをresumeし、保存/出版まで自動クリック。アップロード検証で失敗本はskip(出版しない)。
@@ -199,7 +212,10 @@ async function fetchBooks(c) {
     ? { sql: 'b.id=$1', params: [BOOK_ID] }
     : ALL_MODE
       ? { sql: "b.status='done' AND b.publish_status='unlisted'", params: [] }
-      : { sql: "b.kdp_publish_queued = true AND b.publish_status NOT IN ('published','submitted','retracted')", params: [] };
+      // 入稿キューに入っていても、本文(DOCX)が出来ていない本は出版できない。
+      // judge ゲートで止まった本 (needs_human_review) が queued のまま残るため、
+      // status='done' で絞る (2026-10-14: 24冊中10冊がこれで、全て skip_no_assets だった)。
+      : { sql: "b.kdp_publish_queued = true AND b.status = 'done' AND b.publish_status NOT IN ('published','submitted','retracted')", params: [] };
   const { rows } = await c.query(
     `SELECT b.id, b.title, b.subtitle, acc.pen_name,
        km.description, km.categories, km.keywords, km.price_jpy,
@@ -361,7 +377,7 @@ async function fillStep1(page, b) {
   await page.waitForTimeout(7000);
   // detect creation-limit modal (visible)
   const limited = await page.evaluate(() => {
-    const n = [...document.querySelectorAll('div,section')].find((x) => /本の作成数制限を超えました|提出可能な本の数を超え/.test(x.textContent || '') && x.offsetParent !== null && x.querySelectorAll('button,a').length <= 3);
+    const n = [...document.querySelectorAll('div,section')].find((x) => /本の作成数制限を超えました|提出可能な本の数を超え|本の作成数上限に達しました|タイトル作成数が上限/.test(x.textContent || '') && x.offsetParent !== null && x.querySelectorAll('button,a').length <= 3);
     return !!n;
   });
   if (limited) return { blocked: 'creation_limit' };
@@ -696,6 +712,9 @@ async function captureAsin(page, title) {
 async function verifyPublished(page, title) {
   await page.goto(BOOKSHELF, { waitUntil: 'domcontentloaded' }).catch(() => {});
   await page.waitForTimeout(6000);
+  // 状況フィルタが「下書き」等で残っていると販売中の本が見えず not_found を返してしまう
+  // (= 出版済みの本を再度新規作成する事故)。検索の前に必ず全件表示に戻す。
+  await setBookshelfView(page, { filter: 'ALL', perPage: '50' });
   // 書名で検索してその本だけに絞ってから、ページ全体でステータスを判定する
   // (行DOMのネストが不定で行単位マッチは取りこぼすため)。
   const sb = await page.$('input[type="search"], input[aria-label*="検索"], input[placeholder*="検索"], input[name*="search"]').catch(() => null);
@@ -822,21 +841,91 @@ async function passReauthIfNeeded(page, c) {
 // URLが正規表現にマッチするまで待つ / マッチしなくなるまで待つ
 async function waitUrl(page, re, ms = 600000) { const s = Date.now(); while (Date.now() - s < ms) { if (re.test(page.url())) return true; await page.waitForTimeout(1500); } return false; }
 
-// 本棚から「下書き」行の編集ID一覧を収集 (公開済みの本を誤って上書きしないよう下書きに限定)
+// 本棚の表示条件を明示的に設定する。
+//
+// 本棚の「状況」フィルタと「表示件数」は AUI の native select で、change を投げれば効く。
+// **フィルタは実行間で残る**ため、絞り込んだ側が ALL に戻さないと、後続の
+// verifyPublished (重複出版ガード) が販売中の本を見つけられず not_found と誤判定し、
+// 出版済みの本を再度新規作成してしまう (過去に重複 listing を出した事故と同じ経路)。
+// 既定の表示件数が 10 冊/ページ なのも取りこぼしの原因になるので、常に 50 にする。
+async function setBookshelfView(page, { filter = 'ALL', perPage = '50' } = {}) {
+  for (const [id, value] of [
+    ['podbookshelftable-records-per-page-dropdown-option', perPage],
+    ['podbookshelftable_filter_input-option', filter],
+  ]) {
+    const applied = await page
+      .evaluate(([id, value]) => {
+        const sel = document.getElementById(id);
+        if (!sel || ![...sel.options].some((o) => o.value === value)) return false;
+        if (sel.value === value) return 'same';
+        sel.value = value;
+        sel.dispatchEvent(new Event('change', { bubbles: true }));
+        return true;
+      }, [id, value])
+      .catch(() => false);
+    if (applied === true) await page.waitForTimeout(6000);
+  }
+}
+
+// 本棚から Kindle の「下書き」の編集ID一覧を収集する。
+//
+// 2026-10-14 に実測で判明した本棚の仕様 (旧実装はここを 2 つ踏み抜いていた):
+//
+//  (a) 本棚の表示件数の既定は **10 冊/ページ**。販売中の本が 1 ページ目を埋めていると、
+//      下書きは DOM に存在しない。旧実装は 1 ページ目しか見ていなかったので
+//      `--assist` が毎回「下書きスロット 0個 → 中止」になり、1 冊も進まなかった。
+//      → 「50 冊/ページ」+ 状況フィルタ「下書き」を先に適用する。
+//
+//  (b) 本棚は 1 タイトルに Kindle とペーパーバックが同居する (dual bookshelf)。
+//      **Kindle=販売中 / ペーパーバック=下書き** という行が普通にあり、行テキストに
+//      「下書き」が出る。旧実装はこれを Kindle の下書きと取り違える余地があった。
+//      その ID で editkindledetails を開くと**販売中の Kindle 本を上書きする**。
+//      → フォーマット別の状態はバッジの id に出るので、そこから機械的に読む:
+//          zme-indie-bookshelf-dual-digital-status-draft-status-popover-<行ID>  ← Kindle が下書き
+//          zme-indie-bookshelf-dual-print-status-draft-status-popover-<行ID>    ← PB が下書き
+//        なお <行ID> は Kindle の編集 ID とは別物 (実測ではペーパーバック側の ID) なので、
+//        **編集 ID は同じ行の editkindledetails リンクから取る**。
 async function collectDraftIds(page) {
   await page.goto(BOOKSHELF, { waitUntil: 'domcontentloaded' }); await page.waitForTimeout(6000);
-  return page.evaluate(() => {
-    const out = []; const seen = new Set();
-    for (const a of document.querySelectorAll('a[href*="editkindledetails"]')) {
-      const m = (a.getAttribute('href') || '').match(/kindle\/([A-Z0-9]{8,})\/details/);
-      if (!m) continue;
-      let row = a;
-      for (let i = 0; i < 8 && row; i++) { row = row.parentElement; if (row && /下書き/.test(row.textContent || '')) break; }
-      const rt = row ? row.textContent || '' : '';
-      if (/下書き/.test(rt) && !/レビュー中|販売中|ライブ|出版準備中/.test(rt) && !seen.has(m[1])) { seen.add(m[1]); out.push(m[1]); }
+  await setBookshelfView(page, { filter: 'DRAFT', perPage: '50' });
+
+  const found = await page.evaluate(() => {
+    const DIGITAL = '[id*="dual-digital-status-"]';
+    const badgesExist = !!document.querySelector(DIGITAL);
+    const draft = []; const rejected = []; const seen = new Set();
+    for (const link of document.querySelectorAll('a[href*="editkindledetails"]')) {
+      const m = (link.getAttribute('href') || '').match(/kindle\/([A-Z0-9]{8,})\/details/);
+      if (!m || seen.has(m[1])) continue;
+      const row = link.closest('tr');
+      if (!row) continue;
+      seen.add(m[1]);
+
+      if (badgesExist) {
+        // 同じ行の Kindle(digital) 側バッジだけを見る。draft 以外が 1 つでも混ざったら触らない。
+        const states = new Set();
+        for (const el of row.querySelectorAll(DIGITAL)) {
+          const sm = el.id.match(/dual-digital-status-([a-z_]+)-status-popover-/);
+          if (sm) states.add(sm[1]);
+        }
+        if (states.size === 1 && states.has('draft')) draft.push(m[1]);
+        else rejected.push({ id: m[1], states: [...states].join(',') || 'none' });
+        continue;
+      }
+      // バッジ id が変わった場合の保険: 旧来のテキスト判定 (否定条件は必ず残す)。
+      const rt = (row.textContent || '').replace(/\s+/g, ' ');
+      if (/下書き/.test(rt) && !/レビュー中|販売中|ライブ|出版準備中/.test(rt)) draft.push(m[1]);
+      else rejected.push({ id: m[1], states: 'text' });
     }
-    return out;
+    return { draft, rejected, badgesExist };
   });
+
+  if (!found.badgesExist) log('  (警告: 状態バッジが見つからず旧テキスト判定にフォールバック)');
+  if (found.rejected.length) {
+    log('  (対象外 ' + found.rejected.length + '件: ' + found.rejected.map((r) => r.id + '=' + r.states).join(' ') + ')');
+  }
+  // 絞り込みは残るので必ず戻す (重複出版ガードが販売中の本を見失うのを防ぐ)。
+  await setBookshelfView(page, { filter: 'ALL', perPage: '50' });
+  return found.draft;
 }
 
 // 準自動モード: 既存の下書きをresumeして各ステップを自動入力。次へ/出版は運営者が押す。
@@ -844,7 +933,8 @@ async function runAssist(c, page, s3, books) {
   const editBase = 'https://kdp.amazon.co.jp/action/dualbookshelf.editkindledetails/ja_JP/title-setup/kindle/';
   const ids = await collectDraftIds(page);
   log(`下書きスロット ${ids.length}個 / 対象書籍 ${books.length}冊 → ${Math.min(ids.length, books.length)}冊を処理`);
-  if (!ids.length) { log('下書きが見つかりません。中止'); return; }
+  // 0 件でも中止しない。呼び出し側が残りを runCreate に回す (旧実装はここで中止し、
+  // 本棚に Kindle 下書きが無い日は 1 冊も出版が進まなかった)。
   const results = [];
   const n = Math.min(ids.length, books.length);
   for (let i = 0; i < n; i++) {
@@ -906,6 +996,8 @@ async function runAssist(c, page, s3, books) {
   }
   log('\n===== ASSIST RESULT =====');
   for (const r of results) log(` ${r.status}\t${r.title}`);
+  // 下書きで消化した本 = 先頭 n 冊。残りは呼び出し側が新規作成に回す。
+  return books.slice(0, n).map((b) => b.id);
 }
 
 // 全自動: 既存の下書きをresumeし、STEP1→2→3を fill 関数の自動クリックで進め出版まで行う。
@@ -916,7 +1008,7 @@ async function runAuto(c, page, s3, books) {
   const ids = await collectDraftIds(page);
   const n = Math.min(ids.length, books.length);
   log(`下書きスロット ${ids.length}個 / 対象書籍 ${books.length}冊 → ${n}冊を全自動出版`);
-  if (!ids.length) { log('下書きが見つかりません。中止'); return; }
+  // 0 件でも中止しない (呼び出し側が runCreate にフォールバックする)。
   const results = [];
   for (let i = 0; i < n; i++) {
     const b = books[i]; const id = ids[i];
@@ -972,6 +1064,7 @@ async function runAuto(c, page, s3, books) {
   }
   log('\n===== AUTO RESULT =====');
   for (const r of results) log(` ${r.status}\t${r.title}${r.asin ? ' ' + r.asin : ''}`);
+  return books.slice(0, n).map((b) => b.id);
 }
 
 // 上書きモード: 指定 listing(titleId) を差し替え本(book)で上書き入稿(全自動)。二重出版の重複解消用。
@@ -1030,41 +1123,14 @@ async function runOverwrite(c, page, s3, pairs) {
   for (const r of results) log(` ${r.status}\t${r.titleId}\t${r.title}${r.asin ? ' ' + r.asin : ''}`);
 }
 
-async function main() {
-  const c = db();
-  c.on('error', (e) => { try { log('  (DB接続エラー(無視): ' + e.message + ')'); } catch {} }); // アイドル切断でプロセスを落とさない
-  await c.connect();
-
-  // ---- 上書きモード(重複listingの差し替え) ----
-  if (OVERWRITE) {
-    const map = JSON.parse(fs.readFileSync(OVERWRITE_MAP, 'utf8'));
-    const bookIds = map.map((m) => m.bookId);
-    const books = await fetchBooksByIds(c, bookIds);
-    const byId = new Map(books.map((b) => [b.id, b]));
-    const pairs = map.map((m) => ({ titleId: m.titleId, book: byId.get(m.bookId) })).filter((p) => p.book);
-    log(`上書きペア: ${pairs.length}/${map.length}${DRY_RUN ? ' (DRY RUN)' : ''}`);
-    if (!pairs.length) { log('有効な差し替え本が無い — 中止'); await c.end(); return; }
-    const s3 = r2();
-    const ctx = await chromium.launchPersistentContext(USERDATA, { headless: false, channel: 'chrome', locale: 'ja-JP', viewport: { width: 1500, height: 1200 }, args: ['--disable-blink-features=AutomationControlled'] });
-    const page = ctx.pages()[0] ?? await ctx.newPage();
-    page.setDefaultTimeout(60000);
-    if (!(await ensureLoggedIn(page, c))) { log('ログイン未完了 — 中止'); await ctx.close(); await c.end(); return; }
-    await runOverwrite(c, page, s3, pairs);
-    await page.waitForTimeout(2000); await ctx.close(); await c.end(); return;
+// 新規タイトルを作成して出版する (既定モード)。
+// Amazon の「本の作成数上限」は週間制 (日曜 0:00 UTC リセット) なので maxCreate で切る。
+// 下書き resume (--assist/--auto) と違い、ここは作成枠を消費する。
+async function runCreate(c, page, s3, allBooks, maxCreate) {
+  const books = maxCreate > 0 ? allBooks.slice(0, maxCreate) : allBooks;
+  if (books.length < allBooks.length) {
+    log('新規作成は ' + books.length + '冊 に制限 (残り ' + (allBooks.length - books.length) + '冊 は作成枠が戻る翌日以降。--max-create= で変更可)');
   }
-
-  const books = await fetchBooks(c);
-  log(`対象書籍: ${books.length}冊${DRY_RUN ? ' (DRY RUN)' : ''}${AUTO ? ' (AUTO)' : ASSIST ? ' (ASSIST)' : ''}`);
-  if (!books.length) { await c.end(); return; }
-  const s3 = r2();
-  const ctx = await chromium.launchPersistentContext(USERDATA, { headless: false, channel: 'chrome', locale: 'ja-JP', viewport: { width: 1500, height: 1200 }, args: ['--disable-blink-features=AutomationControlled'] });
-  const page = ctx.pages()[0] ?? await ctx.newPage();
-  page.setDefaultTimeout(60000);
-  if (!(await ensureLoggedIn(page, c))) { log('ログイン未完了 — 中止'); await ctx.close(); await c.end(); return; }
-
-  if (AUTO) { await runAuto(c, page, s3, books); await page.waitForTimeout(2000); await ctx.close(); await c.end(); return; }
-  if (ASSIST) { await runAssist(c, page, s3, books); await page.waitForTimeout(2000); await ctx.close(); await c.end(); return; }
-
   const results = [];
   for (const b of books) {
     log(`\n=== ${b.title} ===`);
@@ -1132,6 +1198,56 @@ async function main() {
   log('\n===== RESULT =====');
   for (const r of results) log(` ${r.status}\t${r.title}${r.asin ? ' ' + r.asin : ''}`);
   fs.writeFileSync(path.join(STAGE, 'result.json'), JSON.stringify(results, null, 2));
+  return results;
+}
+
+async function main() {
+  const c = db();
+  c.on('error', (e) => { try { log('  (DB接続エラー(無視): ' + e.message + ')'); } catch {} }); // アイドル切断でプロセスを落とさない
+  await c.connect();
+
+  // ---- 上書きモード(重複listingの差し替え) ----
+  if (OVERWRITE) {
+    const map = JSON.parse(fs.readFileSync(OVERWRITE_MAP, 'utf8'));
+    const bookIds = map.map((m) => m.bookId);
+    const books = await fetchBooksByIds(c, bookIds);
+    const byId = new Map(books.map((b) => [b.id, b]));
+    const pairs = map.map((m) => ({ titleId: m.titleId, book: byId.get(m.bookId) })).filter((p) => p.book);
+    log(`上書きペア: ${pairs.length}/${map.length}${DRY_RUN ? ' (DRY RUN)' : ''}`);
+    if (!pairs.length) { log('有効な差し替え本が無い — 中止'); await c.end(); return; }
+    const s3 = r2();
+    const ctx = await chromium.launchPersistentContext(USERDATA, { headless: false, channel: 'chrome', locale: 'ja-JP', viewport: { width: 1500, height: 1200 }, args: ['--disable-blink-features=AutomationControlled'] });
+    const page = ctx.pages()[0] ?? await ctx.newPage();
+    page.setDefaultTimeout(60000);
+    if (!(await ensureLoggedIn(page, c))) { log('ログイン未完了 — 中止'); await ctx.close(); await c.end(); return; }
+    await runOverwrite(c, page, s3, pairs);
+    await page.waitForTimeout(2000); await ctx.close(); await c.end(); return;
+  }
+
+  const books = await fetchBooks(c);
+  log(`対象書籍: ${books.length}冊${DRY_RUN ? ' (DRY RUN)' : ''}${AUTO ? ' (AUTO)' : ASSIST ? ' (ASSIST)' : ''}`);
+  if (!books.length) { await c.end(); return; }
+  const s3 = r2();
+  const ctx = await chromium.launchPersistentContext(USERDATA, { headless: false, channel: 'chrome', locale: 'ja-JP', viewport: { width: 1500, height: 1200 }, args: ['--disable-blink-features=AutomationControlled'] });
+  const page = ctx.pages()[0] ?? await ctx.newPage();
+  page.setDefaultTimeout(60000);
+  if (!(await ensureLoggedIn(page, c))) { log('ログイン未完了 — 中止'); await ctx.close(); await c.end(); return; }
+
+  // 下書き resume (作成枠を消費しない) を先に使い切り、足りない分だけ新規作成に回す。
+  if (AUTO || ASSIST) {
+    const consumed = (AUTO ? await runAuto(c, page, s3, books) : await runAssist(c, page, s3, books)) || [];
+    const rest = books.filter((b) => !consumed.includes(b.id));
+    if (!rest.length) log('\n全冊を下書きで消化しました (作成枠の消費なし)');
+    else if (MAX_CREATE <= 0) log(`\n残り ${rest.length}冊 は新規作成が必要ですが --max-create=0 のため作成しません`);
+    else {
+      log(`\n下書きで消化できなかった ${rest.length}冊 → 新規タイトル作成に切り替えます`);
+      log('  (新規作成は Amazon の 1日5冊 の作成上限を消費し、OTP 再認証が出ることがあります)');
+      await runCreate(c, page, s3, rest, MAX_CREATE);
+    }
+    await page.waitForTimeout(2000); await ctx.close(); await c.end(); return;
+  }
+
+  await runCreate(c, page, s3, books, MAX_CREATE);
   await page.waitForTimeout(3000);
   await ctx.close();
   await c.end();

@@ -283,11 +283,37 @@ export const CREATION_LIMIT_BACKOFF_MS = 6 * 60 * 60 * 1000;
 
 export function creationLimitPauseUntil(now: Date): Date {
   const backoff = new Date(now.getTime() + CREATION_LIMIT_BACKOFF_MS);
-  const midnight = nextJstMidnightUtc(now);
-  return midnight < backoff ? midnight : backoff;
+  // 再開を狙える境界のうち最も早いものを使う。
+  // 週次リセットは Amazon がモーダルで明示している唯一の確定境界なので必ず候補に入れる。
+  const candidates = [backoff, nextJstMidnightUtc(now), nextWeeklyCreationResetUtc(now)];
+  return candidates.reduce((a, b) => (b < a ? b : a));
 }
 
-/** 次の JST 0:00（= 15:00 UTC）を返す。KDP 日次作成枠のリセット境界（JP アカウント基準）。 */
+/**
+ * 次の「日曜 0:00 UTC」(= 日曜 9:00 JST) を返す。
+ *
+ * 2026-10-14 実測: 作成上限モーダルは
+ * 「このフォーマットの**週間**タイトル作成数が上限に達しました。制限は**日曜日の午前 0 時
+ * (UTC/協定世界時)** にリセットされます」と明示する。つまり作成枠は日次ではなく**週次**で、
+ * リセット境界は曜日固定。従来の「JST 0 時に日次リセット」という理解は誤りだった
+ * (日次境界を跨いでも枠が戻らない実測と整合する)。
+ */
+export function nextWeeklyCreationResetUtc(now: Date): Date {
+  const d = new Date(now);
+  d.setUTCHours(0, 0, 0, 0);
+  // getUTCDay(): 0 = 日曜。今日が日曜の 0:00 ちょうどより後なら次の日曜へ。
+  const daysUntilSunday = (7 - d.getUTCDay()) % 7;
+  d.setUTCDate(d.getUTCDate() + daysUntilSunday);
+  if (d <= now) d.setUTCDate(d.getUTCDate() + 7);
+  return d;
+}
+
+/**
+ * 次の JST 0:00（= 15:00 UTC）を返す。
+ * かつて「KDP 日次作成枠のリセット境界」と考えていた時刻だが、2026-10-14 の実測で
+ * 作成上限は**週次**(日曜 0:00 UTC リセット)と判明した (`nextWeeklyCreationResetUtc`)。
+ * 再試行を日 1 回以上にするための上限としてのみ残している。
+ */
 export function nextJstMidnightUtc(now: Date): Date {
   const d = new Date(now);
   d.setUTCHours(15, 0, 0, 0); // 15:00 UTC = 翌日 0:00 JST
