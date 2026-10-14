@@ -17,6 +17,11 @@ import { enqueueJob } from '@/lib/graphile-client';
 import { messages } from '@/lib/messages';
 import { createComment } from '@/app/actions/comments';
 import { createRevisionRun } from '@/app/actions/revision-runs';
+import {
+  approveJudgeOverrideCore,
+  discardJudgeFailedCore,
+  type JudgeOverrideDeps,
+} from '@/lib/judge-override-core';
 
 const THUMBNAIL_TEXT_TASK = 'pipeline.book.thumbnail.text';
 const JUDGE_TASK = 'pipeline.book.judge';
@@ -314,6 +319,74 @@ export async function approveBookContent(
     if (isA2PError(err)) return err.toActionResult();
     return fail('unknown', messages.books.contentApproval.error);
   }
+}
+
+// ---------------------------------------------------------------------------
+// [F-099] 品質判定ゲート (needs_human_review) の人間判断。
+// ロジックと「なぜ要るか」は lib/judge-override-core.ts を参照。
+// ここは認証と revalidatePath だけを持つ。
+// ---------------------------------------------------------------------------
+
+const JudgeGateSchema = z.object({
+  book_id: z.string().min(1),
+  /** 判断の理由 (監査ログに残す)。任意。 */
+  note: z.string().trim().max(2000).optional(),
+});
+
+async function runJudgeGate(
+  input: unknown,
+  core: typeof approveJudgeOverrideCore,
+  revalidateCovers: boolean,
+): Promise<ActionResult<{ book_id: string }>> {
+  const m = messages.books.judgeOverride;
+  let actorId: string;
+  try {
+    const session = await getSessionOrThrow();
+    actorId = session.user.id;
+  } catch (err) {
+    if (isA2PError(err)) return err.toActionResult();
+    return fail('unknown', m.error);
+  }
+
+  const parsed = JudgeGateSchema.safeParse(input);
+  if (!parsed.success) return fail('validation', m.error);
+  const { book_id, note } = parsed.data;
+
+  try {
+    const res = await core(
+      {
+        bookRepo: prisma.book as unknown as JudgeOverrideDeps['bookRepo'],
+        auditRepo: prisma.auditLog as unknown as JudgeOverrideDeps['auditRepo'],
+        actorId,
+        messages: { error: m.error, notReviewable: m.notReviewable },
+      },
+      { bookId: book_id, note: note ?? null },
+    );
+    if (!res.ok) return res;
+
+    revalidatePath('/books');
+    revalidatePath(`/books/${book_id}`);
+    revalidatePath('/content-review');
+    if (revalidateCovers) revalidatePath('/covers');
+    return res;
+  } catch (err) {
+    if (isA2PError(err)) return err.toActionResult();
+    return fail('unknown', m.error);
+  }
+}
+
+/** 判定不合格を人間が覆して出版へ進める (judge 合格時と同じ `thumbnail` へ)。 */
+export async function approveJudgeOverride(
+  input: unknown,
+): Promise<ActionResult<{ book_id: string }>> {
+  return runJudgeGate(input, approveJudgeOverrideCore, true);
+}
+
+/** 出版しないと決めた本を片付ける (削除はしない)。 */
+export async function discardJudgeFailed(
+  input: unknown,
+): Promise<ActionResult<{ book_id: string }>> {
+  return runJudgeGate(input, discardJudgeFailedCore, false);
 }
 
 // ---------------------------------------------------------------------------

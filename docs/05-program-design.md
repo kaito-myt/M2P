@@ -4182,3 +4182,40 @@ Instagram はカルーセル投稿にし、うち1枚は固定テンプレ（ブ
 
 **教訓**: 設定値の定数をテストしても、その定数が**配線されているか**は検証できない。
 cron / タスク登録は「一覧に入っているか」をテストする。
+
+---
+
+### F-099 品質判定ゲートの人間判断 (2026-10-14)
+
+**問題**: `pipeline.book.judge` の分岐 C (`score_total < 80` かつ `retry_count >= RETRY_LIMIT`) は
+`Book.status='needs_human_review'` にして止める。ところが**この状態を人間が承認する導線が無かった**。
+
+| 既存の導線 | 対象 status | needs_human_review を扱えるか |
+|---|---|---|
+| `/content-review` ページ | `content_review` | ✗ (クエリに入っていない) |
+| `ContentApprovalBanner` | `content_review` | ✗ (条件分岐で非表示) |
+| `approveBookContent` SA | `content_review` | ✗ (`conflict` で弾く) |
+
+2026-10-14 時点で 14 冊、最古は 2026-09-16 から約 1 か月停止していた。
+
+**設計**: 新しい出版経路を作らず、**judge 合格時の遷移に合流**させる。
+
+```
+needs_human_review ──[承認]──> thumbnail ──[/covers でカバー採用]──> pipeline.book.export
+                   └─[破棄]──> retracted
+```
+
+- ロジック: `apps/web/lib/judge-override-core.ts`
+  (`approveJudgeOverrideCore` / `discardJudgeFailedCore`、deps 注入でテスト可能)
+- Server Action: `apps/web/app/actions/books.ts` の `approveJudgeOverride` / `discardJudgeFailed`
+  (認証と `revalidatePath` のみ持つ薄いラッパ)
+- UI: 書籍詳細の `JudgeOverrideBanner` (判定スコアを併記) と
+  `/content-review` の「品質判定で止まっている本」節。
+  **操作 UI は詳細画面に一本化**し、一覧からはリンクするだけにする (二重実装を避ける)。
+- `status !== 'needs_human_review'` は `conflict`。二重承認と誤操作を防ぐ。
+- 破棄は `retracted`。本文も AI コストも発生済みなので**行は消さない**。
+- 承認・破棄とも `audit_log` に 1 件
+  (`book.judge.override_approve` / `book.judge.discard`、理由を `after_json.note` に保持)。
+
+> 対象 14 冊はいずれも生成済みカバーを 3〜6 枚持っており (採用済み 0)、承認後は
+> `/covers` で採用するだけで出版データ生成まで進む。

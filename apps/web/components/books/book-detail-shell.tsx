@@ -38,6 +38,7 @@ import { CoverTab } from './cover-tab';
 import { CostTab } from './cost-tab';
 import { JobHistoryTab } from './job-history-tab';
 import { EvaluationHistoryTable } from './evaluation-history-table';
+import { JudgeOverrideBanner } from './judge-override-banner';
 import type { EvalResultSerialized } from '@/lib/eval-history-view';
 
 const m = messages.books;
@@ -202,6 +203,14 @@ export function BookDetailShell({ book, costBreakdown, evalResults }: BookDetail
 
       {book.status === 'content_review' && (
         <ContentApprovalBanner bookId={book.id} />
+      )}
+
+      {/* [F-099] judge 不合格で止まった本を人間が裁く (承認 = judge 合格と同じ遷移)。 */}
+      {book.status === 'needs_human_review' && (
+        <JudgeOverrideBanner
+          bookId={book.id}
+          scoreTotal={evalResults[0]?.score_total ?? null}
+        />
       )}
 
       <Tabs value={activeTab} onValueChange={setActiveTab} data-testid="book-tabs">

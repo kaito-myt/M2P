@@ -1159,6 +1159,13 @@ export const messages = {
       title: '本文承認待ちの書籍はありません',
       body: '本文の執筆・校閲が完了した書籍がここに表示されます。',
     },
+    // [F-099] 品質判定で止まった本 (needs_human_review) の節。
+    judgeFailed: {
+      title: '品質判定で止まっている本',
+      subtitle:
+        '判定スコアが基準点 (80 点) に届かず、自動では先に進めません。本を開いて、出版へ進めるか破棄するかを決めてください。',
+      openLabel: '開いて判断する',
+    },
   },
   outlines: {
     pageTitle: 'アウトライン承認',
@@ -1415,6 +1422,19 @@ export const messages = {
       error: '本文の承認に失敗しました',
       revisionInvalid: '修正内容を入力してください',
       revisionNoOutline: 'アウトラインが見つからないため修正を依頼できません',
+    },
+    // [F-099] judge 不合格 (needs_human_review) の人間判断ゲート。
+    judgeOverride: {
+      banner:
+        '品質判定が基準点 (80 点) に届かず、自動では先に進めません。内容を確認して、このまま出版へ進めるか破棄するかを決めてください。',
+      scoreLabel: '判定スコア',
+      button: '承認して出版へ進める',
+      discardButton: '破棄する',
+      submitting: '処理中…',
+      discardConfirm: 'この書籍を破棄します (本文は残りますが一覧から外れます)。よろしいですか？',
+      notReviewable: 'この書籍は人間判断待ちの状態ではありません',
+      error: '処理に失敗しました',
+      nextStep: '承認するとサムネイル承認 (/covers) へ進みます。カバーを採用すると出版データ生成が走ります。',
     },
     filter: {
       statusLabel: 'ステータス',
@@ -2944,7 +2964,7 @@ export const messages = {
       metadataMissing: 'メタデータが未生成のため入稿キューに登録できません',
     },
   },
-  // F-095/F-096: 楽天Kobo・BOOTH 入稿タブ (キュー登録UIのみ先行。自動入稿エンジンは後続)
+  // F-099/F-096: 楽天Kobo・BOOTH 入稿タブ (キュー登録UIのみ先行。自動入稿エンジンは後続)
   channelChecklist: {
     kobo: {
       pageTitle: '楽天Kobo入稿',
