@@ -315,6 +315,7 @@ Inc-2 の完了条件を「椅子 1 個」にしているのは、**3D 生成の
 | 設定列 | **完了・本番適用済** | `app_settings.tdp_monthly_publish_limit` (既定 8) / `tdp_derivative_denylist` (既定 空) |
 | コスト帰属 | **完了** | `ToolKey` に `'3dp'` を追加。`tdp.*` role は自動で `3dp` に帰属 |
 | ロール定義 | **完了** | `AgentRole` に `tdp.research` / `tdp.planner` / `tdp.prompter` / `tdp.listing` |
+| アセット検査・最適化 | **完了** | `packages/mesh` (`@a2p/mesh`)。テスト 18 件 |
 | `apps/3dp` スケルトン | **未着手** | 次 |
 | ポータルタイル | **未着手** | `NEXT_PUBLIC_3DP_URL` 設定時のみ点灯 (docs/10) |
 
@@ -343,3 +344,45 @@ Inc-2 の完了条件を「椅子 1 個」にしているのは、**3D 生成の
 
 拒否された企画も `tdp_products.derivative_check_json` に残す。
 **何を弾いたかが運用の判断材料になる**ため消さない。
+
+### アセット検査の実装 (`packages/mesh`)
+
+`@gltf-transform/core` + `functions` で GLB を読み、**決定論的な数値チェックだけ**で
+販売可否を判定する (見栄えは人間のプレビュー承認で見る)。
+
+しきい値は 2 種類。アクセサリの方が厳しい。
+
+| | 三角形 | テクスチャ | マテリアル | 寸法 | 原点 |
+|---|---|---|---|---|---|
+| `PROP_THRESHOLDS` (床置きの小物・家具) | 20,000 | 2048px × 4 枚 | 2 | 0.05〜5m | 底面 Y=0 ±2cm を要求 |
+| `ACCESSORY_THRESHOLDS` (アバター装飾) | 7,500 | 1024px × 2 枚 | 1 | 0.005〜0.6m | 問わない (Unity 側で親子付けする) |
+
+検出する壊れ方 (いずれもテストで合成 GLB を作って再現済み):
+
+| コード | 何を捕まえるか |
+|---|---|
+| `scale_too_large` / `scale_too_small` | **親ノードのスケール込み**で実寸を出す。頂点座標だけ見ると「データ上 1m・Unity では 40m」を見逃す |
+| `origin_not_grounded` | 原点が宙に浮いている (床置きできない) |
+| `origin_far_from_center` | 水平方向の中心が原点から外れている |
+| `missing_uv` / `missing_normals` | テクスチャが貼れない / 陰影が崩れる |
+| `no_mesh` | 生成失敗。以降の寸法判定は意味を持たないので打ち切る |
+| `too_many_triangles` / `texture_too_large` / `too_many_textures` / `too_many_materials` / `file_too_large` | VRChat/Quest で使えない重さ |
+
+問題は**全部まとめて返す** — 1 個直して再生成を繰り返すとその都度 credit を払うため。
+
+#### 実装中に踏んだ罠: `prune()` が UV を削る
+
+`@gltf-transform/functions` の `prune()` は既定で「テクスチャ未割当の UV は不要」と
+判断して**頂点属性を削る**。3DP の商材は買い手が改変する前提 (テクスチャ差し替え・色変え)
+なので UV が消えると商品価値が無くなる。`keepAttributes: true` を既定にした。
+
+これはテストで実際に踏んで気付いた。放置すると **UV 無しの GLB を出荷し、
+自前の検査が `missing_uv` で弾く**という矛盾が本番で起きていた。
+
+#### 最適化の方針
+
+既定で通すのは**形を変えない処理だけ** (`dedup` / `weld` / `prune`)。
+ポリゴン削減 (`simplify`) は見た目が変わりうるので既定では行わず、
+行う場合は削減後に必ず再検査する (呼出側の責務)。
+なお gltf-transform v4 の `weld()` は**ビット列が完全一致する頂点のみ**をまとめる
+(v2 までの `tolerance` は廃止)。近接頂点の統合が必要なら `simplify` の判断になる。
