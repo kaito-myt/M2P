@@ -8,6 +8,14 @@
 > **2nd tool = ANP (Automated Note Publishing Tool)** — note 記事の企画〜執筆〜出版〜販促〜収益化を
 > **テーマ別マルチアカウント**で自動化（＝note版A2P）。ポータルに横並びタイル済（ロゴ `apps/portal/public/tools/anp.png`）。
 > 設計 = `docs/11-anp-design.md`。実装は `apps/anp` 予定、本番サブドメイン案 `anp.m2p.tools`。共通 packages を流用。
+>
+> **3rd tool = 3DP (3D Products)** — 3Dモデル系商材 (ワールド用プロップ・家具・小物 / アクセサリ /
+> 既存衣装の改変用テクスチャ) を開発し BOOTH で販売する。**アバター本体は作らない**
+> (リグ/ウェイトが必要で AI 生成の品質が届かず、かつ「◯◯風」は依拠性リスクの本命)。
+> 設計 = `docs/12-3dp-design.md`。実装は `apps/3dp` 予定、本番サブドメイン案 `3dp.m2p.tools`。
+> **BOOTH の AI 生成物規制 (2025-07-18) が設計の前提**: 依拠性の高い商品と**大量・連続出品**は
+> 強制非公開→ショップ非公開→アカウント停止。よって 3DP は「大量出品機にしない」
+> (月間出品上限をツール側に持つ)、依拠性のある企画を機械的に弾く、AI 生成であることを明記する。
 
 This repository builds a personal, web-based tool that automates the end-to-end production of Amazon KDP books (実用書・ビジネス書・自己啓発) using a team of AI agents. It also automates its own development through a harness of Claude Code subagents.
 
@@ -119,6 +127,8 @@ docs/                  ← design artifacts produced by harness
 apps/
   portal/              ← Next.js 15 — プラットフォームのハブ (共通ログイン + ツール選択, SSO)。docs/10
   web/                 ← Next.js 15 (App Router) — A2P の UI + API routes
+  anp/                 ← Next.js 15 — ANP (note 記事) の UI。docs/11
+  3dp/                 ← Next.js 15 — 3DP (3Dモデル商材) の UI。docs/12 (予定)
   worker/              ← graphile-worker process — long-running pipelines
 packages/
   agents/              ← Claude Agent SDK subagents (Marketer, Writer, ...)
