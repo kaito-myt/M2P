@@ -166,7 +166,9 @@ export async function generateNoteSeo(
     // F-ANP-56: 週次リサーチで分かった、このアカウント固有のコピー規則と勝ち型。
     // ジャンル表 (genre.copy) は 2 分類しか持てないので、アカウント単位の知見で補強する。
     // 衝突したらリサーチ側 (後に書かれる方) を優先させる。
-    ...accountResearchLines(parsed.account, ['copy', 'patterns']),
+    // findings も渡す。2026-10-14: 「note の競馬面に乗るタイトルは開催日＋レース名始まり」
+    // という決定的な知見が findings にしか無く、タイトルを決める側に届いていなかった。
+    ...accountResearchLines(parsed.account, ['copy', 'patterns', 'findings']),
     '',
     headings.length > 0 ? `現在の見出し:\n${headings.map((h) => ` - ${h}`).join('\n')}` : '',
     '',

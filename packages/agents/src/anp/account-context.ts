@@ -5,6 +5,10 @@
  */
 import type { NoteAccountContext } from '@a2p/contracts/agents/anp';
 
+/** プロンプトに載せる知見の件数と 1 件あたりの文字数 (プロンプト肥大の天井)。 */
+const FINDINGS_IN_PROMPT = 5;
+const FINDING_CHARS = 240;
+
 /**
  * F-ANP-08: 収益化方針 (アカウント設定) をテーマ生成プロンプトに注入する行。
  * `count` を渡すと「候補のうち約 N 件を有料に」と具体数で指示する。未設定項目は出さない。
@@ -65,10 +69,23 @@ export function accountResearchLines(
     lines.push('', '【今このアカウントで効いている記事の型 (週次リサーチ)】', ...r.winning_patterns.map((p) => `- ${p}`));
   }
   if (want.has('findings') && r.findings.length > 0) {
+    // 知見は最大 10 件 × (600 + 600 字) まで入りうるのでプロンプトが膨らむ。
+    // タイトル/構成の判断に効くのは上位数件なので、件数と長さを切る。
+    //
+    // 2026-10-14 の実測でこの経路が必要だと分かった: 競馬アカウントのリサーチが
+    // 「note 公式の競馬トピックに並ぶのは例外なく『開催日＋レース名』始まり。
+    //  条件語始まりの当アカウント 20 本は競馬面に乗っていない」という決定的な知見を
+    // 出したのに、それが `findings` にしか無く `anp.seo` へ渡っていなかったため、
+    // 再生成されたタイトルも条件語始まりのままだった。
+    const top = r.findings.slice(0, FINDINGS_IN_PROMPT);
     lines.push(
       '',
-      '【週次リサーチの知見】',
-      ...r.findings.map((f) => `- ${f.finding}${f.implication ? ` → ${f.implication}` : ''}`),
+      '【週次リサーチの知見 (タイトル・構成の判断材料)】',
+      ...top.map((f) => {
+        const body = f.finding.slice(0, FINDING_CHARS);
+        const imp = f.implication ? ` → ${f.implication.slice(0, FINDING_CHARS)}` : '';
+        return `- ${body}${imp}`;
+      }),
     );
   }
   if (want.has('topics')) {
