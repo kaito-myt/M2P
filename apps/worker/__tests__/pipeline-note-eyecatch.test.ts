@@ -96,7 +96,9 @@ const SAMPLE_RESULT: GenerateNoteEyecatchResult = {
   styleKey: 'flat_editorial',
   layoutKey: 'bottom_panel',
   genreKey: 'default',
-  composedText: true,
+  textInImage: true,
+  textMode: 'image' as const,
+  textRetries: 0,
   alt: 'alt',
 };
 

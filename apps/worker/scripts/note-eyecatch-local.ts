@@ -62,7 +62,7 @@ async function main(): Promise<void> {
     eyecatchSub: sub,
     editorialPolicy: (row.editorial_policy as string | null) ?? null,
   });
-  console.log('r2Key:', result.r2Key, 'styleKey:', result.styleKey, 'composedText:', result.composedText);
+  console.log('r2Key:', result.r2Key, 'styleKey:', result.styleKey, 'textMode:', result.textMode, 'retries:', result.textRetries);
 
   if (outArg) {
     const { downloadBuffer } = await import('@a2p/storage');

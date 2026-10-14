@@ -50,6 +50,7 @@
     "./anp/eyecatch": "./src/anp/eyecatch.ts",
     "./anp/seo": "./src/anp/seo.ts",
     "./anp/eyecatch-style": "./src/anp/eyecatch-style.ts",
+    "./anp/eyecatch-text-check": "./src/anp/eyecatch-text-check.ts",
     "./anp/promo": "./src/anp/promo.ts",
     "./anp/strategist": "./src/anp/strategist.ts",
     "./anp/consultant": "./src/anp/consultant.ts"

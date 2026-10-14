@@ -955,3 +955,34 @@ export function appendInternalLinks(bodyMd: string, urls: readonly string[]): st
   const block = ['', '## あわせて読みたい', ...fresh].join('\n');
   return `${bodyMd.replace(/\s+$/, '')}\n${block}\n`;
 }
+
+// ---------------------------------------------------------------------------
+// F-ANP-55 — アイキャッチの文字崩れ検査 (role='anp.eyecatch_text_check')
+// ---------------------------------------------------------------------------
+
+/**
+ * `verifyNoteEyecatchText` の出力。
+ *
+ * `ok` = メインコピーが判読でき、期待値と一字一句一致し、崩れ文字も余分文字も無い、の総合判定。
+ * アイキャッチを画像モデルに**文字ごと描かせる**ようにしたので (F-ANP-55)、
+ * 字形の崩れを検知して 1 回だけ作り直すために使う。
+ */
+export const NoteEyecatchTextCheckOutputSchema = z.object({
+  /** 総合判定。false なら作り直す。 */
+  ok: z.boolean(),
+  /** メインコピーが判読可能か。 */
+  copy_legible: z.boolean(),
+  /** 読み取れたメインコピーが期待値と一致するか。 */
+  copy_matches: z.boolean(),
+  /** 崩れた/存在しない字 (mojibake)・潰れ・重なりが検出されたか。 */
+  garbled_text_detected: z.boolean(),
+  /** 期待していない余分な文字 (英字ロゴ・署名・URL 等) が描かれているか。 */
+  extra_text_detected: z.boolean(),
+  /** モデルが画像から実際に読み取った全テキスト。 */
+  transcribed_text: z.string(),
+  /** 問題点の箇条書き (日本語)。 */
+  issues: z.array(z.string()),
+  /** 判定の確信度 0-1。 */
+  confidence: z.number().min(0).max(1),
+});
+export type NoteEyecatchTextCheckOutput = z.infer<typeof NoteEyecatchTextCheckOutputSchema>;

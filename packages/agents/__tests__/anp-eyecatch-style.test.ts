@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
-import { NOTE_EYECATCH_LAYOUTS, pickNoteEyecatchLayout } from '@a2p/output-image';
+import { classifyNicheGenre } from '@a2p/contracts/note-genre';
+import { NOTE_EYECATCH_LAYOUTS, pickNoteEyecatchLayout, schemeForNiche } from '@a2p/output-image';
 
 import { buildPrompt } from '../src/anp/eyecatch.js';
 import { EYECATCH_BANNED_MOTIFS, EYECATCH_STYLES, pickEyecatchStyle } from '../src/anp/eyecatch-style.js';
@@ -64,9 +65,9 @@ describe('buildPrompt (F-ANP-14b)', () => {
    * [F-ANP-52] 版面とプロンプトが食い違うと、主題がパネルの下に埋まって消える。
    * 「どこを塗りつぶすか」は 1 箇所 (NOTE_EYECATCH_LAYOUTS) で持ち、両方がそれを見る。
    */
-  it('版面ごとに「隠れる領域に描くな」という指示が入る', () => {
+  it('版面ごとに「絵と文字をどう置くか」の指示が入る', () => {
     for (const l of NOTE_EYECATCH_LAYOUTS) {
-      expect(buildPrompt(input, EYECATCH_STYLES[0]!, l)).toContain(l.subjectHint);
+      expect(buildPrompt(input, EYECATCH_STYLES[0]!, l)).toContain(l.textPlacement);
     }
     const bottom = buildPrompt(input, EYECATCH_STYLES[0]!, NOTE_EYECATCH_LAYOUTS[0]!);
     const side = buildPrompt(input, EYECATCH_STYLES[0]!, NOTE_EYECATCH_LAYOUTS[1]!);
@@ -82,6 +83,71 @@ describe('buildPrompt (F-ANP-14b)', () => {
     for (const motif of ['クリップボード', '円グラフ', 'ノートPC', 'フラットレイ']) {
       expect(prompt).toContain(motif);
     }
-    expect(prompt).toContain('描くモノは **1 個だけ**');
+    expect(prompt).toContain('**描くモノは 1 個だけ**');
+  });
+
+  /**
+   * [F-ANP-55] 画像モデルに**文字ごと**描かせる 1 パス方式に変えた。
+   * コピーがプロンプトに verbatim で入っていなければ、そもそも何も描かれない。
+   */
+  describe('1 パス生成 (文字ごと描かせる)', () => {
+    it('コピーと補足がそのままプロンプトに入る', () => {
+      const prompt = buildPrompt(
+        { ...input, eyecatchCopy: '回収率は実購入額で決める', eyecatchSub: '見送りは0円で記録' },
+        EYECATCH_STYLES[0]!,
+        layout,
+      );
+      expect(prompt).toContain('「回収率は実購入額で決める」');
+      expect(prompt).toContain('「見送りは0円で記録」');
+      expect(prompt).toContain('一字一句そのまま');
+    });
+
+    it('コピーが無ければ「文字を描かない」に倒れる', () => {
+      const prompt = buildPrompt(
+        { ...input, eyecatchCopy: null, eyecatchSub: null },
+        EYECATCH_STYLES[0]!,
+        layout,
+      );
+      expect(prompt).toContain('【文字は描かない】');
+      expect(prompt).not.toContain('【文字の描き方');
+    });
+
+    it('ジャンルごとに書体の作法が切り替わる', () => {
+      const gamble = buildPrompt(
+        { ...input, niche: '競馬予想', eyecatchCopy: 'テスト' },
+        EYECATCH_STYLES[0]!,
+        layout,
+      );
+      const money = buildPrompt(
+        { ...input, niche: '副業×AI活用', eyecatchCopy: 'テスト' },
+        EYECATCH_STYLES[0]!,
+        layout,
+      );
+      expect(gamble).toContain(classifyNicheGenre('競馬予想').typography);
+      expect(money).toContain(classifyNicheGenre('副業×AI活用').typography);
+      expect(gamble).not.toBe(money);
+    });
+
+    it('アカウント固有の画作り指示はジャンル既定を上書きする', () => {
+      const custom = '**モノクロの報道写真**にする。装飾は一切入れない。';
+      const prompt = buildPrompt(
+        { ...input, niche: '競馬予想', eyecatchCopy: 'テスト', accountArtDirection: custom },
+        EYECATCH_STYLES[0]!,
+        layout,
+      );
+      expect(prompt).toContain(custom);
+      expect(prompt).not.toContain(classifyNicheGenre('競馬予想').art);
+    });
+
+    it('配色は文字と帯の色として渡る (アカウントで統一するため)', () => {
+      const scheme = schemeForNiche('競馬予想');
+      const prompt = buildPrompt(
+        { ...input, niche: '競馬予想', eyecatchCopy: 'テスト' },
+        EYECATCH_STYLES[0]!,
+        layout,
+      );
+      expect(prompt).toContain(scheme.main);
+      expect(prompt).toContain(scheme.accent);
+    });
   });
 });

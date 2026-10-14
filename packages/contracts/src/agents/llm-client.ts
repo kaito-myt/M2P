@@ -99,7 +99,12 @@ export type AgentRole =
   // 読みやすさを磨く anp.editor とは役割が違う (editor は意味内容の保持が契約)。
   | 'anp.numcheck'
   // F-ANP-41 — アイキャッチの画像モデル割当 (LLM ではなく画像生成モデルを指す role)。
-  | 'anp.eyecatch';
+  | 'anp.eyecatch'
+  // F-ANP-55 — アイキャッチの文字崩れ検査 (ビジョンモデル)。アイキャッチを画像モデルに
+  // **文字ごと描かせる** 1 パス方式にしたので、日本語の字形が崩れていないかを検査して
+  // 崩れたものだけ作り直す。A2P 表紙の cover_text_check と同じ役割の note 版
+  // (token_usage.book_id が books への FK なので流用できず、別 role にしてある)。
+  | 'anp.eyecatch_text_check';
 
 /**
  * マルチモーダル入力用の画像添付。`content` (テキスト) と併せてユーザーメッセージに付与する。
