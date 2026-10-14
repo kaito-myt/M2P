@@ -25,6 +25,7 @@ export const ANP_PROMPT_ROLES = [
   'anp.promo',
   'anp.strategist',
   'anp.consultant',
+  'anp.research',
 ] as const;
 export type AnpPromptRole = (typeof ANP_PROMPT_ROLES)[number];
 
@@ -50,6 +51,7 @@ const ANP_ROLE_PLACEHOLDERS: Record<AnpPromptRole, string[]> = {
   'anp.promo': ['channel_label', 'length_guide'],
   'anp.strategist': [],
   'anp.consultant': [],
+  'anp.research': [],
 };
 
 function buildAnpThemePrompt(): string {
@@ -313,6 +315,45 @@ function buildAnpConsultantPrompt(): string {
   ].join('\n');
 }
 
+/**
+ * F-ANP-56: アカウント別 週次リサーチ。プレースホルダを使わない
+ * (アカウント情報・実績・観点・検索結果はユーザーメッセージ側で組み立てる、
+ * `packages/agents/src/anp/research.ts` 参照)。
+ */
+function buildAnpResearchPrompt(): string {
+  return [
+    '# あなたの役割：note アカウント専属のリサーチャー',
+    '',
+    'あなたは note で「テーマ別マルチアカウント」を運用する運営者の専属リサーチャーです。',
+    '担当するアカウント 1 つについて週に 1 回、「このアカウントの読者に今何が効くか」を調べ、',
+    '来週の記事づくり (企画・タイトル・アイキャッチ) に直接使える形で返します。',
+    '',
+    'タスクは 2 種類あり、どちらかはユーザーメッセージで指示されます。',
+    '  (1) 観点決定 — 今週このアカウントで何を見るべきかを決め、検索クエリを出す',
+    '  (2) まとめ   — 検索で得た一次情報から、来週の作り方への反映を決める',
+    '',
+    '## 行動原則',
+    '- **アカウント固有に考える。** 担当ニッチが副業系なのか競馬系なのかで、読者が反応するもの・',
+    '  タイトルの作り・画の作りは全く違う。「SNS で伸びるコツ」のような汎用論は価値がないので出さない。',
+    '- **実績を起点にする。** 直近記事の閲覧・スキ・売上が与えられたら、伸びた記事と伸びなかった',
+    '  記事の差を言語化し、その仮説を検証する観点を立てる。',
+    '- **前回と同じことを書かない。** 前回のリサーチ結果が与えられたら、既出の知見は繰り返さず、',
+    '  変化したこと・まだ見ていない面を取る。',
+    '- **一次情報に忠実。** 検索結果に書かれていないことを「調べた結果」として書かない。',
+    '  根拠が無い項目は空配列・空文字で返す。推測で埋めるくらいなら空で返す方が良い。',
+    '- **そのまま使える具体度で書く。** art_direction は画像モデルにそのまま渡す指示文、',
+    '  copy_rules は字数や言い回しまで踏み込んだ規則、topics は記事 1 本に落ちる粒度にする。',
+    '- **規約と誠実さ。** 誇大表現・断定的な効果保証・射幸心を煽る訴求は勧めない。',
+    '  note の規約やプラットフォームのポリシーに触れる題材は topics_to_avoid に入れる。',
+    '- editorial_policy_suggestion は**変えるべき差分だけ**を書く。現行方針の全文を書き直さない',
+    '  (運営者が設定した内容を壊してしまう)。変更不要なら空文字。',
+    '',
+    '## 出力',
+    'ユーザーメッセージで与えられる JSON 出力形式に厳密に従うこと。',
+    'JSON 以外の前置き・説明・コードフェンスは出力しない。日本語で出力する。',
+  ].join('\n');
+}
+
 const ANP_PROMPT_BODY_BUILDERS: Record<AnpPromptRole, () => string> = {
   'anp.theme': buildAnpThemePrompt,
   'anp.outline': buildAnpOutlinePrompt,
@@ -323,6 +364,7 @@ const ANP_PROMPT_BODY_BUILDERS: Record<AnpPromptRole, () => string> = {
   'anp.promo': buildAnpPromoPrompt,
   'anp.strategist': buildAnpStrategistPrompt,
   'anp.consultant': buildAnpConsultantPrompt,
+  'anp.research': buildAnpResearchPrompt,
 };
 
 export interface AnpPromptSeed {
@@ -373,6 +415,9 @@ export function buildAnpModelAssignmentSeeds(): AnpModelAssignmentSeed[] {
     { role: 'anp.promo', genre: null, provider: 'anthropic', model: 'claude-sonnet-4-6', status: 'active', created_by: 'system' },
     { role: 'anp.strategist', genre: null, provider: 'anthropic', model: 'claude-opus-5', status: 'active', created_by: 'system' },
     { role: 'anp.consultant', genre: null, provider: 'anthropic', model: 'claude-opus-5', status: 'active', created_by: 'system' },
+    // F-ANP-56: 週次 1 回 × アカウント数なので頻度が低く、観点の質がそのまま成果に出る。
+    // 企画 (anp.theme) と同じ opus を割り当てる。
+    { role: 'anp.research', genre: null, provider: 'anthropic', model: 'claude-opus-5', status: 'active', created_by: 'system' },
   ];
 }
 

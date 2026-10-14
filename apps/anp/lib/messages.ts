@@ -69,6 +69,32 @@ export const messages = {
     setupDescription: 'note で新規アカウントを作成し、以下の表示名・ハンドルと、下の「note プロフィール素材」の自己紹介文・画像を設定してください。',
     setupDesignLink: '設計案を開く (発信の柱・初回テーマ・設計の根拠)',
     // F-ANP-05: プロフィール素材 (自己紹介文 / アイコン / カバー) の生成・編集・コピー・DL。
+    // F-ANP-56: アカウント別 週次リサーチ。観点はアカウントごとに AI が決める。
+    research: {
+      title: '週次リサーチ',
+      description:
+        'このアカウントのニッチ・読者・直近の実績から「今週何を見るべきか」を AI が決めて調べ、記事づくり (企画・タイトル・アイキャッチ) に反映します。毎週月曜の朝に自動で実行されます。',
+      empty: 'まだリサーチ結果がありません。「今すぐリサーチ」で実行できます (通常は毎週月曜に自動実行)。',
+      runButton: '今すぐリサーチ',
+      runningButton: 'リサーチ中…',
+      runStarted: 'リサーチを開始しました。数十秒後にページを再読み込みしてください。',
+      updatedAt: (s: string) => `最終更新: ${s}`,
+      anglesTitle: '今回の観点',
+      findingsTitle: '知見',
+      patternsTitle: '効いている記事の型',
+      artDirectionTitle: 'アイキャッチの画作り',
+      artDirectionNote: 'この指示はアイキャッチ生成でジャンル既定の画風を上書きします。',
+      copyRulesTitle: 'コピーの作り方',
+      pursueTitle: '次に狙う題材',
+      avoidTitle: '避ける題材',
+      policySuggestionTitle: '記事の方針への提案',
+      policySuggestionNote:
+        '自動では反映しません。内容を確認して「記事の方針・トンマナ」に反映してください。',
+      errors: {
+        runFailed: 'リサーチの開始に失敗しました。',
+        alreadyRunning: 'このアカウントのリサーチは実行中です。',
+      },
+    },
     profile: {
       title: 'note プロフィール素材',
       description:

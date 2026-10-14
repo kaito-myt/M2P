@@ -29,6 +29,7 @@ import { ORG_OPS_WATCH_TASK_NAME } from './tasks/org-ops-watch.js';
 import { ORG_FINANCE_TICK_TASK_NAME } from './tasks/org-finance-tick.js';
 import { ORG_KDP_SCREEN_TASK_NAME } from './tasks/org-kdp-screen.js';
 import { PROMOTION_PLAYBOOK_REFRESH_TASK_NAME } from './tasks/promotion-playbook-refresh.js';
+import { NOTE_ACCOUNT_RESEARCH_TASK_NAME } from './tasks/note-account-research.js';
 import { PROMOTION_METRICS_FETCH_TASK_NAME } from './tasks/promotion-metrics-fetch.js';
 import { ORG_PROMO_TICK_TASK_NAME } from './tasks/org-promo-tick.js';
 import { KDP_PUBLISH_DIGEST_TASK_NAME } from './tasks/kdp-publish-digest.js';
@@ -133,6 +134,13 @@ export const KDP_PUBLISH_STATUS_SYNC_CRON = '0 */6 * * *';
  * web検索コストを抑えるため頻度は週次。
  */
 export const PROMOTION_PLAYBOOK_REFRESH_CRON = '0 16 * * 1';
+
+/**
+ * docs/11-anp-design.md F-ANP-56: note アカウント別 週次リサーチ。
+ * 月曜 JST 11:00 = UTC 02:00。A2P の販促プレイブック更新 (月曜 UTC 16:00) と時間をずらし、
+ * 週明けのテーマ自動生成より前に成果が入るようにする (リサーチ → 企画の順にしたい)。
+ */
+export const NOTE_ACCOUNT_RESEARCH_CRON = '0 2 * * 1';
 
 /**
  * 販促実測トラッキング: 投稿済みSNSの実エンゲージメント取得 (2026-08-10, まず X)。
@@ -766,6 +774,13 @@ export const CRON_ITEMS: CronItem[] = [
     task: PROMOTION_PLAYBOOK_REFRESH_TASK_NAME,
     match: PROMOTION_PLAYBOOK_REFRESH_CRON,
     identifier: 'promotion-playbook-refresh-weekly',
+  },
+  // F-ANP-56: note アカウント別 週次リサーチ — 観点をアカウントごとに決めて調べ、
+  // 画作り/コピー規則/狙う題材を research_json に入れる (各 ANP エージェントへ実行時注入)。
+  {
+    task: NOTE_ACCOUNT_RESEARCH_TASK_NAME,
+    match: NOTE_ACCOUNT_RESEARCH_CRON,
+    identifier: 'note-account-research-weekly',
   },
   // 販促実測: 投稿済みSNSの実エンゲージメント取得 (まず X)。日次・常時ON。
   {

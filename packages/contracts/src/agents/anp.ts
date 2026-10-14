@@ -39,6 +39,13 @@ export const NoteAccountContextSchema = z.object({
    * テーマ生成のユーザーメッセージに「【収益化方針】」ブロックとして注入される (theme 以外は無視)。
    */
   monetization: z.lazy(() => NoteMonetizationPolicySchema).optional(),
+  /**
+   * F-ANP-56 (2026-10-14): 週次リサーチ (`anp.research`) の成果。
+   * アカウント固有の勝ち筋・画作り・避ける題材を各エージェントへ**実行時注入**する。
+   * 役割プロンプト本文は全アカウント共有なので、アカウント固有の指示は本文に焼かず
+   * 必ずここを通す。
+   */
+  research: z.lazy(() => NoteAccountResearchSchema).optional(),
 });
 export type NoteAccountContext = z.infer<typeof NoteAccountContextSchema>;
 
@@ -879,6 +886,8 @@ export const NoteSeoInputSchema = z.object({
     target_reader: z.string().nullable().optional(),
     tone: z.string().nullable().optional(),
     editorial_policy: z.string().nullable().optional(),
+    /** F-ANP-56: 週次リサーチの成果 (アイキャッチのコピー規則・効いている型を注入する)。 */
+    research: z.lazy(() => NoteAccountResearchSchema).optional(),
   }),
   current_title: z.string().min(1),
   hook: z.string().nullable().optional(),
@@ -986,3 +995,110 @@ export const NoteEyecatchTextCheckOutputSchema = z.object({
   confidence: z.number().min(0).max(1),
 });
 export type NoteEyecatchTextCheckOutput = z.infer<typeof NoteEyecatchTextCheckOutputSchema>;
+
+// ---------------------------------------------------------------------------
+// F-ANP-56 — アカウント別 週次リサーチ (role='anp.research')
+//
+// 運営者指示 (2026-10-14):
+//   「週次リサーチは ANP にも入れてね。アカウントごとにジャンルが違うから
+//     アカウントごとに観点を決めてリサーチすべきやね」
+//   「サムネ画像生成のプロンプトはアカウントごとに変わってくるはずです。
+//     週次リサーチの後にプロンプトも必要に応じて改変するようにしてね」
+//
+// 設計:
+//  - **観点 (angles) は固定表ではなく、アカウントのニッチ・読者・方針・直近実績から
+//    AI が毎回決める**。副業系と競馬系で「見るべきもの」が違うため、共通の観点では
+//    どちらにも効かない。
+//  - 成果は `note_accounts.research_json` に入れ、各 ANP エージェントのプロンプトへ
+//    **実行時注入**する (`NoteAccountContext.research`)。
+//    役割プロンプト本文 (prompts テーブル) は**書き換えない** — 本文は全アカウント共有で、
+//    アカウント固有の指示を焼き込むと他アカウントに漏れる。2026-10-14 の A2P 障害
+//    (prompt_editor がジャンル固有の書式を本文に書き戻し、小説 17 冊に見出しが混入) と
+//    同じ失敗を繰り返さないため、共有本文への自動改訂は行わない。
+//  - 「プロンプトの改変」はアカウント単位の注入値 (art_direction / copy_rules /
+//    topics / editorial_policy の改訂提案) として実現する。
+// ---------------------------------------------------------------------------
+
+/** リサーチの「観点」1 件。AI がアカウントごとに決める。 */
+export const NoteResearchAngleSchema = z.object({
+  /** 観点の名前 (例「競馬 note で伸びている回収率の見せ方」)。 */
+  angle: z.string().min(1).max(200),
+  /** なぜこのアカウントでこの観点を見るのか。 */
+  why: z.string().max(400).optional(),
+  /** この観点で投げた検索クエリ。 */
+  queries: z.array(z.string().max(200)).max(5).default([]),
+});
+export type NoteResearchAngle = z.infer<typeof NoteResearchAngleSchema>;
+
+/** 観点から得られた知見 1 件 (出典つき)。 */
+export const NoteResearchFindingSchema = z.object({
+  angle: z.string().max(200).optional(),
+  /** 知見の本体 (1〜2 文)。 */
+  finding: z.string().min(1).max(600),
+  /** 記事づくりへの示唆 (何をどう変えるか)。 */
+  implication: z.string().max(600).optional(),
+  sources: z.array(z.string().max(500)).max(5).default([]),
+});
+export type NoteResearchFinding = z.infer<typeof NoteResearchFindingSchema>;
+
+/**
+ * 週次リサーチの成果。`note_accounts.research_json` に保存し、
+ * 各 ANP エージェントのユーザーメッセージへ注入する。
+ */
+export const NoteAccountResearchSchema = z.object({
+  /** 今回の観点 (0〜5 件)。何を見たかを運営者に見せるため保持する。 */
+  angles: z.array(NoteResearchAngleSchema).max(5).default([]),
+  /** 得られた知見 (0〜10 件)。 */
+  findings: z.array(NoteResearchFindingSchema).max(10).default([]),
+  /** 今このアカウントで効いている記事の型 (タイトル・導入・構成)。 */
+  winning_patterns: z.array(z.string().max(300)).max(8).default([]),
+  /**
+   * アイキャッチの画作り指示。`anp.eyecatch` の `accountArtDirection` に入り、
+   * ジャンル既定の画風を**上書き**する。空なら既定のまま。
+   */
+  art_direction: z.string().max(1200).default(''),
+  /** アイキャッチのコピーの作り方 (語数・言い回し・数字の入れ方)。`anp.seo` に注入。 */
+  copy_rules: z.array(z.string().max(300)).max(8).default([]),
+  /** 次に狙うべき題材。`anp.theme` に注入。 */
+  topics_to_pursue: z.array(z.string().max(200)).max(10).default([]),
+  /** 避けるべき題材 (飽和・規約リスク・読者が離れる)。`anp.theme` に注入。 */
+  topics_to_avoid: z.array(z.string().max(200)).max(10).default([]),
+  /**
+   * `editorial_policy` (記事の方針・トンマナ) の改訂提案。
+   * 本文を全文で返させず**差分の意図**だけを返させる (全文置換は運営者の設定を壊す)。
+   */
+  editorial_policy_suggestion: z.string().max(2000).default(''),
+  /** 運営者向けの総括 (1〜3 文)。 */
+  summary: z.string().max(800).default(''),
+});
+export type NoteAccountResearch = z.infer<typeof NoteAccountResearchSchema>;
+
+/** `note_accounts.research_json` (unknown/Json) を安全にパースする。失敗時は null。 */
+export function parseNoteAccountResearch(json: unknown): NoteAccountResearch | null {
+  if (json == null) return null;
+  const parsed = NoteAccountResearchSchema.safeParse(json);
+  return parsed.success ? parsed.data : null;
+}
+
+/** `anp.research` の入力。 */
+export const NoteAccountResearchInputSchema = z.object({
+  noteAccountId: z.string().min(1),
+  jobId: z.string().optional(),
+  account: NoteAccountContextSchema,
+  /** 直近記事の実績 (何が読まれたか)。観点決定の材料。 */
+  recentArticles: z
+    .array(
+      z.object({
+        title: z.string().max(300),
+        views: z.number().int().min(0).optional(),
+        likes: z.number().int().min(0).optional(),
+        sales_jpy: z.number().int().min(0).optional(),
+        is_paid: z.boolean().optional(),
+      }),
+    )
+    .max(30)
+    .default([]),
+  /** 前回のリサーチ結果 (同じ知見を繰り返さないために渡す)。 */
+  previous: NoteAccountResearchSchema.nullable().optional(),
+});
+export type NoteAccountResearchInput = z.infer<typeof NoteAccountResearchInputSchema>;

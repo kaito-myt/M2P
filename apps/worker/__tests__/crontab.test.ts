@@ -5,7 +5,9 @@ import { PAPERBACK_STATUS_SYNC_TASK_NAME } from '../src/tasks/paperback-status-s
 import { PAPERBACK_SUBMIT_DISPATCHER_TASK_NAME } from '../src/tasks/paperback-submit-dispatcher.js';
 import { PAPERBACK_DRAFT_DISPATCHER_TASK_NAME } from '../src/tasks/paperback-draft-dispatcher.js';
 
+import { NOTE_ACCOUNT_RESEARCH_TASK_NAME } from '../src/tasks/note-account-research.js';
 import {
+  NOTE_ACCOUNT_RESEARCH_CRON,
   ALERT_COST_CHECK_CRON,
   PAPERBACK_QUEUE_SWEEP_CRON,
   ARCHIVE_DB_BACKUP_CRON,
@@ -100,8 +102,16 @@ describe('crontab.ts', () => {
     expect(KDP_PUBLISH_STATUS_SYNC_CRON).toBe('0 */6 * * *');
   });
 
-  it('CRON_ITEMS は archive.db.backup / fx.fetch / ads.spend.fetch / bw.retag.tick / catalog.fetch / batch_plan.dispatcher / alert.cost.check / archive.jobs / kdp.publish.status.sync / promotion.playbook.refresh / promotion.metrics.fetch / org.promo.tick / kdp.publish.digest / promotion.growth.todo / promotion.x.engage / promotion.sns.engage / note.engage / promotion.growth.loop / recurring.cost.refresh / model.health.probe / note.publish.status.sync / note.sales.fetch.dispatch / paperback.queue.sweep / paperback.status.sync / paperback.submit.dispatch / paperback.draft.dispatch / locks.sweep の 27 件', () => {
-    expect(CRON_ITEMS).toHaveLength(27);
+  it('CRON_ITEMS は archive.db.backup / fx.fetch / ads.spend.fetch / bw.retag.tick / catalog.fetch / batch_plan.dispatcher / alert.cost.check / archive.jobs / kdp.publish.status.sync / promotion.playbook.refresh / promotion.metrics.fetch / org.promo.tick / kdp.publish.digest / promotion.growth.todo / promotion.x.engage / promotion.sns.engage / note.engage / promotion.growth.loop / recurring.cost.refresh / model.health.probe / note.publish.status.sync / note.sales.fetch.dispatch / paperback.queue.sweep / paperback.status.sync / paperback.submit.dispatch / paperback.draft.dispatch / locks.sweep / note.account.research の 28 件', () => {
+    expect(CRON_ITEMS).toHaveLength(28);
+
+    // F-ANP-56: note アカウント別 週次リサーチ。月曜 JST 11:00 = UTC 02:00。
+    // A2P の playbook 更新 (月曜 UTC 16:00) とずらし、週明けのテーマ自動生成より前に
+    // リサーチ成果が入るようにしている (リサーチ → 企画 の順にしたい)。
+    const anpResearch = CRON_ITEMS.find((c) => c.task === NOTE_ACCOUNT_RESEARCH_TASK_NAME);
+    expect(anpResearch).toBeDefined();
+    expect(anpResearch!.match).toBe(NOTE_ACCOUNT_RESEARCH_CRON);
+    expect(anpResearch!.identifier).toBe('note-account-research-weekly');
 
     // F-097f: ペーパーバックのサーバー側下書き作成 (30 分毎・出版側と 15 分ずらす)。
     const pbDraft = CRON_ITEMS.find((c) => c.task === PAPERBACK_DRAFT_DISPATCHER_TASK_NAME);
@@ -262,6 +272,7 @@ describe('crontab.ts', () => {
         PAPERBACK_SUBMIT_DISPATCHER_TASK_NAME,
         PAPERBACK_DRAFT_DISPATCHER_TASK_NAME,
         LOCKS_SWEEP_TASK_NAME,
+        NOTE_ACCOUNT_RESEARCH_TASK_NAME,
       ].sort(),
     );
   });

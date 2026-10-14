@@ -5,7 +5,7 @@ import Link from 'next/link';
 import { notFound } from 'next/navigation';
 
 import { prisma } from '@a2p/db';
-import { parseNoteAccountSettings, parseNoteMonetizationPolicy } from '@a2p/contracts/agents/anp';
+import { parseNoteAccountResearch, parseNoteAccountSettings, parseNoteMonetizationPolicy } from '@a2p/contracts/agents/anp';
 
 import { loadAccountProfileState } from '@/lib/account-profile-core';
 import { messages } from '@/lib/messages';
@@ -15,6 +15,7 @@ import { HandleForm } from './handle-form';
 import { EditorialPanel } from './editorial-panel';
 import { NoteLinkForm } from './note-link-form';
 import { ProfilePanel } from './profile-panel';
+import { ResearchPanel } from './research-panel';
 
 export default async function AccountDetailPage({
   params,
@@ -35,6 +36,9 @@ export default async function AccountDetailPage({
       handle: true,
       settings_json: true,
       monetization_policy_json: true,
+      // F-ANP-56: 週次リサーチの成果 (観点・知見・画作り・狙う/避ける題材・方針提案)。
+      research_json: true,
+      research_updated_at: true,
       session_state_enc: true,
       session_linked_at: true,
       session_source: true,
@@ -51,6 +55,7 @@ export default async function AccountDetailPage({
   const adoptedDesign = account.designs[0] ?? null;
   const profileState = await loadAccountProfileState(id);
   const accountSettings = parseNoteAccountSettings(account.settings_json);
+  const research = parseNoteAccountResearch(account.research_json);
   const monetization = parseNoteMonetizationPolicy(account.monetization_policy_json);
 
   const [appSettings, pendingReauth] = await Promise.all([
@@ -153,6 +158,17 @@ export default async function AccountDetailPage({
           />
         </div>
       </section>
+
+      {/* F-ANP-56: 週次リサーチ。観点をアカウントごとに AI が決めるので、何を見たかも表示する。 */}
+      <ResearchPanel
+        noteAccountId={account.id}
+        research={research}
+        updatedAt={
+          account.research_updated_at
+            ? account.research_updated_at.toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' })
+            : null
+        }
+      />
 
       {/* テーマ候補と記事は横断ページ (/themes, /articles) へ移動 (運営者要望 2026-09-22)。 */}
       <section className="mt-space-loose rounded-container border border-border-warm bg-white p-space-relaxed">

@@ -89,6 +89,12 @@ export type AgentRole =
   | 'anp.strategist'
   // F-ANP-04 — note アカウント戦略の AI 相談 (チャット壁打ち + Tavily リサーチ → ブリーフ草案)。
   | 'anp.consultant'
+  // F-ANP-56 — note アカウント別 週次リサーチ。**観点そのものをアカウントごとに決める**
+  // 2 段構成 (観点決定 → Tavily 検索 → まとめ)。成果 (画作り/コピー規則/狙う題材/
+  // 方針改訂案) は note_accounts.research_json に入り、各 ANP エージェントへ実行時注入される。
+  // アカウントごとにニッチが違うため、A2P の promotion.playbook.refresh のような
+  // 「固定の観点」方式は使えない。
+  | 'anp.research'
   // F-ANP-42 — note 内 SEO 担当。完成原稿からタイトル/リード/キーワード/ハッシュタグ/
   // 見出し改善/アイキャッチのコピーを一括で決める (note は meta description を編集できず
   // リード文が検索結果の説明になるため、リードも SEO の担当範囲に含める)。

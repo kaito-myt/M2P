@@ -38,3 +38,53 @@ export function editorialPolicyLines(account: Pick<NoteAccountContext, 'editoria
     policy,
   ];
 }
+
+/**
+ * F-ANP-56: 週次リサーチ (`anp.research`) の成果をプロンプトへ注入する行。
+ *
+ * 役割プロンプト本文 (prompts テーブル) は**全アカウント共有**なので、アカウント固有の
+ * 勝ち筋をそこに焼き込むと他アカウントに漏れる。必ずこの経路 (実行時注入) を通す。
+ *
+ * @param kinds 載せる項目。エージェントによって要るものが違うので選べるようにする
+ *              (例: anp.seo はコピー規則、anp.theme は題材)。
+ */
+export function accountResearchLines(
+  account: Pick<NoteAccountContext, 'research'>,
+  kinds: ReadonlyArray<'patterns' | 'topics' | 'copy' | 'findings'> = [
+    'patterns',
+    'topics',
+    'copy',
+  ],
+): string[] {
+  const r = account.research;
+  if (!r) return [];
+  const want = new Set(kinds);
+  const lines: string[] = [];
+
+  if (want.has('patterns') && r.winning_patterns.length > 0) {
+    lines.push('', '【今このアカウントで効いている記事の型 (週次リサーチ)】', ...r.winning_patterns.map((p) => `- ${p}`));
+  }
+  if (want.has('findings') && r.findings.length > 0) {
+    lines.push(
+      '',
+      '【週次リサーチの知見】',
+      ...r.findings.map((f) => `- ${f.finding}${f.implication ? ` → ${f.implication}` : ''}`),
+    );
+  }
+  if (want.has('topics')) {
+    if (r.topics_to_pursue.length > 0) {
+      lines.push('', '【次に狙う題材 (週次リサーチ)】', ...r.topics_to_pursue.map((t) => `- ${t}`));
+    }
+    if (r.topics_to_avoid.length > 0) {
+      lines.push(
+        '',
+        '【避ける題材 (週次リサーチ・飽和/規約リスク/読者が離れる)】',
+        ...r.topics_to_avoid.map((t) => `- ${t}`),
+      );
+    }
+  }
+  if (want.has('copy') && r.copy_rules.length > 0) {
+    lines.push('', '【コピーの作り方 (週次リサーチ)】', ...r.copy_rules.map((c) => `- ${c}`));
+  }
+  return lines;
+}

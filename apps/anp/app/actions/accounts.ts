@@ -483,3 +483,63 @@ export async function updateAccountEditorial(input: unknown): Promise<ActionResu
     return { ok: false, error: err instanceof Error ? err.message : messages.accounts.editorial.errors.saveFailed };
   }
 }
+
+// ---------------------------------------------------------------------------
+// F-ANP-56 — アカウント別 週次リサーチ
+// ---------------------------------------------------------------------------
+
+const NOTE_ACCOUNT_RESEARCH_TASK = 'note.account.research';
+
+const RunResearchSchema = z.object({ note_account_id: z.string().min(1) });
+
+/**
+ * 週次リサーチを今すぐ回す (通常は月曜の cron が回す)。
+ *
+ * 多重起動すると同じアカウントの research_json を二重に上書きし、どちらの結果が
+ * 残ったか分からなくなるので、queued/running が居たら弾く。
+ */
+export async function runAccountResearch(input: unknown): Promise<ActionResult<{ job_id: string }>> {
+  const session = await auth();
+  if (!session?.user) return { ok: false, error: messages.common.unauthorized };
+
+  const parsed = RunResearchSchema.safeParse(input);
+  if (!parsed.success) return { ok: false, error: messages.accounts.research.errors.runFailed };
+  const noteAccountId = parsed.data.note_account_id;
+
+  try {
+    const account = await prisma.noteAccount.findUnique({
+      where: { id: noteAccountId },
+      select: { id: true },
+    });
+    if (!account) return { ok: false, error: messages.accounts.errors.notFound };
+
+    const inflight = await prisma.job.count({
+      where: {
+        kind: NOTE_ACCOUNT_RESEARCH_TASK,
+        status: { in: ['queued', 'running'] },
+        payload_json: { path: ['note_account_id'], equals: noteAccountId },
+      },
+    });
+    if (inflight > 0) return { ok: false, error: messages.accounts.research.errors.alreadyRunning };
+
+    const job = await prisma.job.create({
+      data: {
+        kind: NOTE_ACCOUNT_RESEARCH_TASK,
+        status: 'queued',
+        payload_json: { note_account_id: noteAccountId },
+      },
+    });
+    await enqueueJob(
+      NOTE_ACCOUNT_RESEARCH_TASK,
+      { note_account_id: noteAccountId, job_id: job.id },
+      { maxAttempts: 2 },
+    );
+    revalidatePath(`/accounts/${noteAccountId}`);
+    return { ok: true, data: { job_id: job.id } };
+  } catch (err) {
+    return {
+      ok: false,
+      error: err instanceof Error ? err.message : messages.accounts.research.errors.runFailed,
+    };
+  }
+}

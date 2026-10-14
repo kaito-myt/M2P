@@ -2,7 +2,8 @@ import type { JobHelpers, Task } from 'graphile-worker';
 import { z } from 'zod';
 
 import { generateNoteThemes as defaultGenerateNoteThemes } from '@a2p/agents/anp/theme';
-import { parseNoteMonetizationPolicy, type NoteThemeInput, type NoteThemeOutput } from '@a2p/contracts/agents/anp';
+import {
+  parseNoteAccountResearch, parseNoteMonetizationPolicy, type NoteThemeInput, type NoteThemeOutput } from '@a2p/contracts/agents/anp';
 import { NotFoundError, ValidationError } from '@a2p/contracts/errors';
 import { createLogger, type Logger } from '@a2p/contracts/logger';
 import { prisma as defaultPrisma } from '@a2p/db';
@@ -57,7 +58,7 @@ export interface NoteThemeGeneratePrisma {
   noteAccount: {
     findUnique: (args: {
       where: { id: string };
-      select: { id: true; niche: true; target_reader: true; tone: true; editorial_policy?: true; monetization_policy_json?: true };
+      select: { id: true; niche: true; target_reader: true; tone: true; editorial_policy?: true; monetization_policy_json?: true; research_json?: true };
     }) => Promise<{
       id: string;
       niche: string;
@@ -65,6 +66,7 @@ export interface NoteThemeGeneratePrisma {
       tone: string | null;
       editorial_policy?: string | null;
       monetization_policy_json?: unknown;
+      research_json?: unknown;
     } | null>;
   };
   noteTheme: {
@@ -140,7 +142,7 @@ export async function runNoteThemeGenerate(
   try {
     const account = await prisma.noteAccount.findUnique({
       where: { id: noteAccountId },
-      select: { id: true, niche: true, target_reader: true, tone: true, editorial_policy: true },
+      select: { id: true, niche: true, target_reader: true, tone: true, editorial_policy: true, research_json: true },
     });
     if (!account) {
       throw new NotFoundError(`NoteAccount not found: ${noteAccountId}`, {
@@ -163,6 +165,10 @@ export async function runNoteThemeGenerate(
         target_reader: account.target_reader,
         tone: account.tone,
         editorial_policy: account.editorial_policy ?? null,
+        // F-ANP-56: 週次リサーチの「狙う題材 / 避ける題材 / 効いている型」を企画に効かせる。
+        ...(parseNoteAccountResearch(account.research_json)
+          ? { research: parseNoteAccountResearch(account.research_json)! }
+          : {}),
         monetization: parseNoteMonetizationPolicy(account.monetization_policy_json),
       },
       count,

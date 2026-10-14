@@ -11,6 +11,7 @@ import {
   type GenerateNoteEyecatchResult,
 } from '@a2p/agents/anp/eyecatch';
 import { NotFoundError, ValidationError } from '@a2p/contracts/errors';
+import { parseNoteAccountResearch } from '@a2p/contracts/agents/anp';
 import { createLogger, type Logger } from '@a2p/contracts/logger';
 import { prisma as defaultPrisma } from '@a2p/db';
 
@@ -107,13 +108,14 @@ export interface PipelineNoteEyecatchPrisma {
   noteAccount: {
     findUnique: (args: {
       where: { id: string };
-      select: { id: true; niche: true; editorial_policy?: true; tone?: true; target_reader?: true };
+      select: { id: true; niche: true; editorial_policy?: true; tone?: true; target_reader?: true; research_json?: true };
     }) => Promise<{
       id: string;
       niche: string;
       editorial_policy?: string | null;
       tone?: string | null;
       target_reader?: string | null;
+      research_json?: unknown;
     } | null>;
   };
   noteTheme: {
@@ -213,7 +215,7 @@ export async function runPipelineNoteEyecatch(
     } else {
       const account = await prisma.noteAccount.findUnique({
         where: { id: article.note_account_id },
-        select: { id: true, niche: true, editorial_policy: true, tone: true, target_reader: true },
+        select: { id: true, niche: true, editorial_policy: true, tone: true, target_reader: true, research_json: true },
       });
       if (!account) {
         throw new NotFoundError(`NoteAccount not found: ${article.note_account_id}`, {
@@ -229,6 +231,11 @@ export async function runPipelineNoteEyecatch(
       const recent = deps.recentStyleKeys
         ? await deps.recentStyleKeys(article.note_account_id).catch(() => [])
         : await defaultRecentStyleKeys(prisma, article.note_account_id).catch(() => []);
+
+      // F-ANP-56: 週次リサーチ (anp.research) の成果。アカウント固有の画作り指示と
+      // コピー規則を注入する。役割プロンプト本文は全アカウント共有なので、
+      // アカウント固有の指示は必ずこの経路 (実行時注入) を通す。
+      const research = parseNoteAccountResearch(account.research_json);
 
       // F-ANP-42: 画像を作る前に note 内 SEO。タイトル/リード/見出し/ハッシュタグを確定し、
       // アイキャッチに焼き込むキャッチコピーを受け取る (失敗しても続行)。
@@ -246,6 +253,7 @@ export async function runPipelineNoteEyecatch(
             tone: account.tone ?? null,
             target_reader: account.target_reader ?? null,
             editorial_policy: account.editorial_policy ?? null,
+            ...(research ? { research } : {}),
           },
         },
         { logger: log },
@@ -267,6 +275,8 @@ export async function runPipelineNoteEyecatch(
         ...(seo.eyecatchCopy ? { eyecatchCopy: seo.eyecatchCopy } : {}),
         ...(seo.eyecatchSub ? { eyecatchSub: seo.eyecatchSub } : {}),
         ...(account.editorial_policy ? { editorialPolicy: account.editorial_policy } : {}),
+        // 指定時はジャンル既定の画風を上書きする (eyecatch.ts の accountArtDirection)。
+        ...(research?.art_direction ? { accountArtDirection: research.art_direction } : {}),
       });
       r2Key = result.r2Key;
       styleKey = result.styleKey;

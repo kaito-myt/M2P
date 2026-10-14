@@ -22,6 +22,7 @@
  * エラー方針: 他の ANP エージェントと同型 (AgentError / ProviderError 透過 / ConfigError)。
  */
 import { AgentError } from '@a2p/contracts/errors';
+import { accountResearchLines } from './account-context.js';
 import { classifyNicheGenre } from '@a2p/contracts/note-genre';
 import type { LLMClient } from '@a2p/contracts/agents';
 import {
@@ -162,6 +163,10 @@ export async function generateNoteSeo(
     '',
     `【${genre.label}のアイキャッチのコピー (eyecatch_copy) の作り方】`,
     genre.copy,
+    // F-ANP-56: 週次リサーチで分かった、このアカウント固有のコピー規則と勝ち型。
+    // ジャンル表 (genre.copy) は 2 分類しか持てないので、アカウント単位の知見で補強する。
+    // 衝突したらリサーチ側 (後に書かれる方) を優先させる。
+    ...accountResearchLines(parsed.account, ['copy', 'patterns']),
     '',
     headings.length > 0 ? `現在の見出し:\n${headings.map((h) => ` - ${h}`).join('\n')}` : '',
     '',

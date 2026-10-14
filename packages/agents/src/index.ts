@@ -331,3 +331,9 @@ export {
   type WebSearchResult,
   type WebSearchResultItem,
 } from './tools/web-search.js';
+
+export { researchNoteAccount } from './anp/research.js';
+export type {
+  ResearchNoteAccountDeps,
+  ResearchNoteAccountResult,
+} from './anp/research.js';

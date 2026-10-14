@@ -4387,3 +4387,22 @@ writer が正しく だ・である調 で書いても、**校閲工程で実用
 `{editor_format_rules}` が「見出し記号を外す／だ・である調に揃える」を実行するため
 全文再執筆より安価に修復できる。出版済み 6 冊は KDP への再アップロードが必要なため、
 ファイル再生成と出版操作は分けて扱う。
+
+---
+
+### F-ANP-56 note アカウント別 週次リサーチ (2026-10-14)
+
+`note.account.research` (週次 cron, 月曜 JST 11:00) が active な note アカウントごとに
+`anp.research` を回し、成果を `note_accounts.research_json` / `research_updated_at` に保存する。
+
+**A2P の `promotion.playbook.refresh` と設計が違う点**: ANP はアカウントごとにニッチが
+違うため「固定の観点」が使えない。観点そのものを AI に決めさせる 2 段構成
+(観点決定 → Tavily 検索 → まとめ) にしている。
+
+成果は各 ANP エージェントのユーザーメッセージへ**実行時注入**する
+(`NoteAccountContext.research` / `accountResearchLines`)。
+`prompts` の本文は**書き換えない** — 本文は全アカウント共有で、アカウント固有の指示を
+焼き込むと他アカウントに漏れる。同日 F-100 で、共有本文への自動改訂 (prompt_editor) が
+小説 17 冊に見出しを混入させる事故になったのと同じ構造を避ける。
+
+詳細は `docs/11-anp-design.md` の「アカウント別 週次リサーチ (F-ANP-56)」を参照。

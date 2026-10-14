@@ -2182,3 +2182,81 @@ gpt-image-2 は任意解像度に対応する (幅・高さが 16 の倍数、�
 旧方式 (`composeNoteEyecatch`) は**削除していない**。
 `deps.composeEyecatch` を明示注入したときだけ旧経路に倒せる
 (画像モデルが日本語を崩す機種へ割当を変えたときの退避路)。既定では使わない。
+
+---
+
+## アカウント別 週次リサーチ (F-ANP-56, 2026-10-14)
+
+運営者指示:
+
+> 週次リサーチは ANP にも入れてね。アカウントごとにジャンルが違うから
+> アカウントごとに観点を決めてリサーチすべきやね
+
+> サムネ画像生成のプロンプトはアカウントごとに変わってくるはずです。
+> 週次リサーチの後にプロンプトも必要に応じて改変するようにしてね
+
+### 1. なぜ「観点」から AI に決めさせるのか
+
+A2P 側の週次リサーチ (`promotion.playbook.refresh`, F-064) は
+「チャンネル × 固定の観点」で調べる。ANP はこれが使えない。本番の 2 アカウントは
+`副業×AI活用` と `競馬予想` で、読者が反応するもの・タイトルの作り・画の作りが
+まったく違うため、**共通の観点ではどちらにも効かない**。
+
+そこで 2 段構成にした。
+
+| 段 | やること | 失敗時 |
+|---|---|---|
+| 1 | アカウントのニッチ・読者・方針・**直近記事の実績**・前回のリサーチから、今週見るべき観点 (1〜4) と検索クエリ (最大 8) を決める | 観点なしで段 2 に進む (リサーチ全体は止めない) |
+| 2 | Tavily の検索結果を根拠ブロックとして注入し、`NoteAccountResearch` を返させる | `AgentError('anp.research.invalid_output')` — そのアカウントだけ失敗扱い |
+
+観点は **段 1 の計画を正** として保存する。段 2 が言い換えた観点を採ると
+「何を見たのか」が追えなくなるため、まとめ側の `angles` は捨てる。
+
+観点を AI に決めさせる設計の安全弁として、**UI に観点をそのまま表示する**
+(アカウント詳細の「週次リサーチ」節)。観点がニッチからズレていたら運営者が気づける。
+
+### 2. 成果の使い道 — 役割プロンプト本文は書き換えない
+
+`note_accounts.research_json` (`NoteAccountResearch`) に保存し、各 ANP エージェントの
+**ユーザーメッセージへ実行時注入**する。
+
+| 注入先 | 使う項目 | 経路 |
+|---|---|---|
+| `anp.eyecatch` | `art_direction` | `accountArtDirection` (ジャンル既定の `genre.art` を**上書き**) |
+| `anp.seo` | `copy_rules` / `winning_patterns` | `accountResearchLines(account, ['copy','patterns'])` |
+| `anp.theme` | `topics_to_pursue` / `topics_to_avoid` / `winning_patterns` | `accountResearchLines(account, ['patterns','topics'])` |
+
+**`prompts` テーブルの本文は一切書き換えない。** 本文は全アカウント共有なので、
+アカウント固有の勝ち筋を焼き込むと他アカウントに漏れる。さらに同日 A2P 側で、
+自律改訂する `prompt_editor` が共有本文へジャンル固有の書式規則を書き戻し、
+**小説 17 冊の本文に見出しが混入する事故**になっている (docs/05 F-100)。
+「プロンプトの改変」は**アカウント単位の注入値**として実現するのが正解だと確定した。
+
+`editorial_policy` (記事の方針・トンマナ) は運営者が UI で編集する設定なので、
+**自動では書き換えず提案だけ** を `editorial_policy_suggestion` に残す。
+プロンプトにも「変えるべき差分だけを書く。全文を書き直さない」と明記している
+(全文置換は運営者の設定を壊す)。
+
+### 3. 実装
+
+| 要素 | 場所 |
+|---|---|
+| 契約 | `packages/contracts/src/agents/anp.ts` (`NoteAccountResearchSchema` / `NoteAccountResearchInputSchema` / `parseNoteAccountResearch`)。`NoteAccountContext.research` が全エージェント共通の注入点 |
+| エージェント | `packages/agents/src/anp/research.ts` (role=`anp.research`, opus-5) |
+| 注入ヘルパ | `packages/agents/src/anp/account-context.ts` の `accountResearchLines(account, kinds)` |
+| タスク | `apps/worker/src/tasks/note-account-research.ts` (`note.account.research`) |
+| cron | `NOTE_ACCOUNT_RESEARCH_CRON = '0 2 * * 1'` (月曜 JST 11:00)。A2P の playbook 更新 (月曜 UTC 16:00) とずらし、**週明けのテーマ自動生成より前**に成果が入るようにする |
+| DB | `note_accounts.research_json` / `research_updated_at` (migration `20261014000000_note_account_research`) |
+| プロンプト | `packages/db/seed-anp.ts` の `buildAnpResearchPrompt()` |
+| UI | アカウント詳細の `ResearchPanel` (結果表示 + 「今すぐリサーチ」)。Server Action `runAccountResearch` |
+
+### 4. 落とさない設計
+
+- **アカウント単位で catch**。1 アカウントの `invalid_output` で週次リサーチ全体を
+  落とさない (`{ accounts, updated, failed }` を返す)。
+- **Tavily キーが無くても動く**。検索を飛ばし、アカウント情報と実績から読めることだけを
+  書かせる。このときプロンプトは「外部トレンドを装った記述はしない / findings は空配列で
+  よい」と明示する — 検索なしで知見を捏造させないため。
+- **クエリ上限 8 / 観点上限 4**。コストと所要時間の天井。
+- 壊れた `research_json` は `parseNoteAccountResearch` が `null` を返すので、
+  前回値が壊れていても今回のリサーチは走る。

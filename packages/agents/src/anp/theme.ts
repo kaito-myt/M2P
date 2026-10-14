@@ -29,7 +29,7 @@ import {
 import type { LoggingContext, WithTokenLoggingDeps } from '../lib/with-token-logging.js';
 import type { LoadModelAssignmentDeps } from '../lib/load-model-assignment.js';
 import { extractJson } from './lib/extract-json.js';
-import { editorialPolicyLines, monetizationLines } from './account-context.js';
+import { accountResearchLines, editorialPolicyLines, monetizationLines } from './account-context.js';
 
 const DEFAULT_MAX_OUTPUT_TOKENS = 8192;
 const MAX_PARSE_RETRIES = 2;
@@ -85,6 +85,9 @@ export async function generateNoteThemes(
     `トーン: ${parsedInput.account.tone ?? '(指定なし)'}`,
     ...editorialPolicyLines(parsedInput.account),
     ...monetizationLines(parsedInput.account, parsedInput.count),
+    // F-ANP-56: 週次リサーチの成果 (効いている型 / 狙う題材 / 避ける題材)。
+    // アカウント固有なので役割プロンプト本文ではなくここから注入する。
+    ...accountResearchLines(parsedInput.account, ['patterns', 'topics']),
     `件数: ${parsedInput.count}`,
     parsedInput.exclude_titles_recent.length > 0
       ? `除外 (直近採用済タイトル):\n${parsedInput.exclude_titles_recent.map((t) => ` - ${t}`).join('\n')}`
