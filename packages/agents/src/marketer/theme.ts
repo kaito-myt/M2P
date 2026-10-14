@@ -21,7 +21,9 @@
  *     Prisma を引かないため)。
  */
 import { GENRE_CATALOG, genreLabel } from '@a2p/contracts/agents';
+import { findConceptOverlap } from '@a2p/contracts/title-similarity';
 import { AgentError } from '@a2p/contracts/errors';
+import { createLogger } from '@a2p/contracts/logger';
 import type { LLMClient } from '@a2p/contracts/agents';
 import {
   MarketerThemeInputSchema,
@@ -54,6 +56,8 @@ import type { LoadModelAssignmentDeps } from '../lib/load-model-assignment.js';
 // Anthropic SDK が「非ストリーミングでは 10 分を超えうる」と判断し messages.create を
 // 即エラーにする (ProviderError: Streaming is required)。16384 はこの閾値未満かつ
 // 実測 (3.5k tokens 程度で完結) に対し十分な余裕があるため 16384 を上限とする。
+const log = createLogger('agents.marketer.theme');
+
 const DEFAULT_MAX_OUTPUT_TOKENS = 16384;
 
 /**
@@ -202,18 +206,46 @@ export async function generateMarketerThemes(
     );
   }
 
-  // 6. 重複除外: candidates 内同一 title + excludeTitlesRecent と一致
+  // 6. 重複除外。
+  //
+  // 2026-10-14 まではここが **タイトルの完全一致のみ**で、日次自動生成が
+  // 6 日連続で中身の同じ競馬本を作っていた (「オッズ×血統×AI 三刀流で馬券を制す」
+  // 「回収率120%への道：血統×ペース×AI」「競馬データ革命――AIと血統指数で」…)。
+  // 1 文字も同じでないので完全一致では 1 件も捕まらない。
+  // 企画の骨格語の共有で見る (`findConceptOverlap`)。
   const excludeSet = new Set(
     parsedInput.excludeTitlesRecent.map((t) => normalizeTitle(t)),
   );
   const seen = new Set<string>();
   const deduped: ThemeCandidate[] = [];
+  /** 企画が被って落とした候補 (何と被ったかを添える)。ログと再生成の指示に使う。 */
+  const conceptDupes: Array<{ title: string; overlapWith: string; shared: string[] }> = [];
+  // 同セッション内の採用済みも比較対象に足す (1 回の生成で似た企画が並ぶのを防ぐ)。
+  const acceptedTitles: string[] = [...parsedInput.excludeTitlesRecent];
+
   for (const c of validated.data.candidates) {
     const norm = normalizeTitle(c.title);
     if (excludeSet.has(norm)) continue;
     if (seen.has(norm)) continue;
+    const overlap = findConceptOverlap(c.title, acceptedTitles);
+    if (overlap) {
+      conceptDupes.push({ title: c.title, overlapWith: overlap.title, shared: overlap.shared });
+      continue;
+    }
     seen.add(norm);
+    acceptedTitles.push(c.title);
     deduped.push(c);
+  }
+
+  if (conceptDupes.length > 0) {
+    log.info(
+      {
+        dropped: conceptDupes.length,
+        kept: deduped.length,
+        examples: conceptDupes.slice(0, 3),
+      },
+      '企画が既出と被る候補を除外した',
+    );
   }
 
   if (deduped.length === 0) {
@@ -221,6 +253,8 @@ export async function generateMarketerThemes(
       details: {
         originalCount: validated.data.candidates.length,
         excludedRecent: parsedInput.excludeTitlesRecent.length,
+        // 「何と被ったか」を残す — これが無いと再生成しても同じ所に戻る。
+        conceptDupes: conceptDupes.slice(0, 10),
       },
     });
   }
@@ -245,7 +279,16 @@ function buildUserMessage(input: MarketerThemeInput, researchBlock?: string | nu
     `ジャンル: ${genreLabel(input.genre) ?? 'general'}`,
   ];
   if (input.excludeTitlesRecent.length > 0) {
-    lines.push(`直近採用済みタイトル (避ける):\n${input.excludeTitlesRecent.map((t) => ` - ${t}`).join('\n')}`);
+    // 「タイトルを避ける」だけでは足りない。本番で 6 日連続、1 文字も同じでないのに
+    // 中身の同じ競馬本が出た (血統×オッズ×AI で回収率100%超え)。
+    // **企画の骨格 (主要キーワードの組み合わせ) を避ける** と明示する。
+    lines.push(
+      `直近採用済みタイトル (**この企画の骨格を避ける**):\n${input.excludeTitlesRecent.map((t) => ` - ${t}`).join('\n')}`,
+      ' - 上のタイトルと**主要キーワードの組み合わせが同じ企画は出さない**。言い回しを変えただけ、',
+      '   数字を変えただけ、切り口の語を 1 つ足しただけの企画は「同じ本」とみなして自動で除外される。',
+      ' - 同じ読者層を狙うなら**解決する悩みそのものを変える** (例: 予想の当て方 → 資金管理、',
+      '   買い方の技術 → 買わない判断、データの読み方 → 記録と振り返りの習慣)。',
+    );
   }
   if (researchBlock) {
     // Tavily で事前リサーチ済み: web_search を指示せず、渡した根拠だけで判断させる。
