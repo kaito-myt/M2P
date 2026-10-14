@@ -49,7 +49,12 @@ import { editorialPolicyLines } from './account-context.js';
 const log = createLogger('agents.anp.research');
 
 const ROLE = 'anp.research' as const;
-const PLAN_MAX_OUTPUT_TOKENS = 1536;
+// 2026-10-14 本番実測: 1536 では観点が 1 件も返らず (angles=0)、検索クエリが出ないため
+// 外部情報ゼロのリサーチになっていた。観点は「名前 + なぜ + クエリ 1〜3」× 最大 4 件で
+// 日本語だと 1000 トークンを超えるので、途中で切れない余裕を持たせる。
+const PLAN_MAX_OUTPUT_TOKENS = 4096;
+/** 観点決定は 0 件だとリサーチの価値が無いので、空振りしたら 1 回だけ作り直す。 */
+const MAX_PLAN_RETRIES = 2;
 const REPORT_MAX_OUTPUT_TOKENS = 8192;
 const MAX_PARSE_RETRIES = 2;
 /** 1 クエリあたりの Tavily 取得件数 / 根拠ブロックの最大件数。 */
@@ -186,17 +191,28 @@ async function planAngles(args: {
   systemPrompt: string;
   input: NoteAccountResearchInput;
 }): Promise<ResearchPlan> {
-  try {
-    const completion = await args.client.complete<string>({
-      role: ROLE,
-      genre: null,
-      messages: [
-        { role: 'system', content: args.systemPrompt },
-        { role: 'user', content: buildPlanUserMessage(args.input) },
-      ],
-      maxOutputTokens: PLAN_MAX_OUTPUT_TOKENS,
-    });
-    const raw = typeof completion.text === 'string' ? completion.text : '';
+  for (let attempt = 1; attempt <= MAX_PLAN_RETRIES; attempt++) {
+    let raw = '';
+    try {
+      const completion = await args.client.complete<string>({
+        role: ROLE,
+        genre: null,
+        messages: [
+          { role: 'system', content: args.systemPrompt },
+          { role: 'user', content: buildPlanUserMessage(args.input) },
+        ],
+        maxOutputTokens: PLAN_MAX_OUTPUT_TOKENS,
+      });
+      raw = typeof completion.text === 'string' ? completion.text : '';
+    } catch (err) {
+      // 観点決定の失敗でリサーチ全体を落とさない。
+      log.warn(
+        { err: err instanceof Error ? err.message : String(err), attempt },
+        'angle planning call failed',
+      );
+      continue;
+    }
+
     const parsed = extractLlmJson<ResearchPlan>(raw, hasAngles);
     const angles = (parsed?.angles ?? [])
       .filter((a) => typeof a?.angle === 'string' && a.angle.trim().length > 0)
@@ -209,15 +225,34 @@ async function planAngles(args: {
           .slice(0, 5)
           .map((q) => q.trim().slice(0, 200)),
       }));
-    return { angles };
-  } catch (err) {
-    // 観点決定の失敗でリサーチ全体を落とさない。検索なしでまとめに進む。
+    if (angles.length > 0) return { angles };
+
+    // 0 件は「静かに外部情報ゼロのリサーチ」になるので必ず記録する
+    // (2026-10-14 本番の初回実行がこれで、ログからは原因が追えなかった)。
     log.warn(
-      { err: err instanceof Error ? err.message : String(err) },
-      'angle planning failed — continuing without search',
+      { attempt, rawLength: raw.length, rawHead: raw.slice(0, 200) },
+      'angle planning returned no angles',
     );
-    return { angles: [] };
   }
+  return { angles: fallbackAngles(args.input) };
+}
+
+/**
+ * 観点決定が空振りしたときの保険。ニッチから機械的にクエリを作る。
+ *
+ * LLM が観点を返さなくても**外部情報ゼロのリサーチにはしない**ことを優先する。
+ * 観点名は「アカウントのニッチ」から派生するので、アカウントごとに違う点は保たれる。
+ */
+function fallbackAngles(input: NoteAccountResearchInput): ResearchPlan['angles'] {
+  const niche = input.account.niche.trim();
+  if (!niche) return [];
+  return [
+    {
+      angle: `${niche} で今読まれている note 記事`,
+      why: '観点の自動決定に失敗したため、ニッチの定番クエリで最低限の外部情報を取る',
+      queries: [`${niche} note 人気記事`, `${niche} note 有料記事`, `${niche} 2026 トレンド`],
+    },
+  ];
 }
 
 async function runSearch(

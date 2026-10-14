@@ -208,12 +208,28 @@ describe('researchNoteAccount', () => {
     expect(research.summary).not.toBe('');
   });
 
-  it('観点決定が壊れてもまとめに進む (週次リサーチを止めない)', async () => {
-    const { deps, calls } = makeDeps(['これは JSON ではない', REPORT]);
+  it('観点決定が空振りしてもニッチ由来のクエリで検索する (外部情報ゼロにしない)', async () => {
+    // 2026-10-14 本番の初回実行: 観点が 0 件返り、クエリが出ないため検索が走らず
+    // 「外部情報ゼロ」のリサーチになっていた。空振り時はニッチから機械的にクエリを作る。
+    const searched: string[] = [];
+    const { deps } = makeDeps(['これは JSON ではない', 'これも JSON ではない', REPORT], {
+      search: async (q: string) => {
+        searched.push(q);
+        return [];
+      },
+    });
     const { research } = await researchNoteAccount(INPUT, deps);
-    expect(research.angles).toEqual([]);
-    const report = String(calls[1]!.messages[1]!.content);
-    expect(report).toContain('観点決定に失敗したため');
+    expect(research.angles).toHaveLength(1);
+    // 観点名はアカウントのニッチから派生する (アカウントごとに違う点は保つ)
+    expect(research.angles[0]!.angle).toContain('競馬予想');
+    expect(searched.some((q) => q.includes('競馬予想'))).toBe(true);
+  });
+
+  it('観点決定は空振りしたら作り直す', async () => {
+    // 1 回目は壊れた JSON、2 回目は正常 → 計画を採用する (フォールバックに落ちない)。
+    const { deps } = makeDeps(['壊れた応答', PLAN, REPORT]);
+    const { research } = await researchNoteAccount(INPUT, deps);
+    expect(research.angles[0]!.angle).toBe('競馬 note で伸びている回収率の見せ方');
   });
 
   it('まとめの JSON が壊れていれば AgentError', async () => {

@@ -88,8 +88,21 @@ export async function runNoteAccountResearch(
     orderBy: { created_at: 'asc' },
   });
 
+  // 観測用の内部 Job 行を running にする。
+  // 2026-10-14 初回実行時にこの遷移が無く、UI の多重起動ガード
+  // (queued/running を数える) が永久に「実行中」と判定して「今すぐリサーチ」が
+  // 二度と押せない状態になっていた。
+  if (jobId) {
+    await prisma.job
+      .update({ where: { id: jobId }, data: { status: 'running', started_at: now() } })
+      .catch((err: unknown) => {
+        log.warn({ task: NOTE_ACCOUNT_RESEARCH_TASK_NAME, jobId, err }, '内部 Job を running にできなかった');
+      });
+  }
+
   if (accounts.length === 0) {
     log.info({ task: NOTE_ACCOUNT_RESEARCH_TASK_NAME }, 'リサーチ対象の note アカウントが無い');
+    await finishJob(prisma, log, jobId, now, { accounts: 0, updated: 0, failed: 0 });
     return { accounts: 0, updated: 0, failed: 0 };
   }
 
@@ -151,7 +164,38 @@ export async function runNoteAccountResearch(
     }
   }
 
-  return { accounts: accounts.length, updated, failed };
+  const result = { accounts: accounts.length, updated, failed };
+  await finishJob(prisma, log, jobId, now, result);
+  return result;
+}
+
+/**
+ * 観測用の内部 Job 行を done にする。
+ * アカウント単位の失敗は result_json の failed 件数で表すので、
+ * **全滅でなければ Job 自体は done** とする (週次 cron を赤くし続けない)。
+ */
+async function finishJob(
+  prisma: typeof defaultPrisma,
+  log: Logger,
+  jobId: string | undefined,
+  now: () => Date,
+  result: NoteAccountResearchRunResult,
+): Promise<void> {
+  if (!jobId) return;
+  const allFailed = result.accounts > 0 && result.updated === 0;
+  await prisma.job
+    .update({
+      where: { id: jobId },
+      data: {
+        status: allFailed ? 'failed' : 'done',
+        finished_at: now(),
+        result_json: { ...result },
+        ...(allFailed ? { error: `全 ${result.accounts} アカウントのリサーチが失敗しました` } : { error: null }),
+      },
+    })
+    .catch((err: unknown) => {
+      log.warn({ task: NOTE_ACCOUNT_RESEARCH_TASK_NAME, jobId, err }, '内部 Job を完了にできなかった');
+    });
 }
 
 /**

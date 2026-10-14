@@ -9,7 +9,7 @@
  */
 import { describe, expect, it, vi } from 'vitest';
 
-import type { NoteAccountResearch } from '@a2p/contracts/agents/anp';
+import type { NoteAccountResearch, NoteAccountResearchInput } from '@a2p/contracts/agents/anp';
 
 import { runNoteAccountResearch } from '../src/tasks/note-account-research.js';
 
@@ -30,9 +30,17 @@ function research(over: Partial<NoteAccountResearch> = {}): NoteAccountResearch 
 
 function makePrisma(accounts: Array<Record<string, unknown>>, articles: Record<string, unknown[]> = {}) {
   const updates: Array<{ where: { id: string }; data: Record<string, unknown> }> = [];
+  const jobUpdates: Array<{ where: { id: string }; data: Record<string, unknown> }> = [];
   return {
     updates,
+    jobUpdates,
     prisma: {
+      job: {
+        update: vi.fn(async (args: { where: { id: string }; data: Record<string, unknown> }) => {
+          jobUpdates.push(args);
+          return {};
+        }),
+      },
       noteAccount: {
         findMany: vi.fn(async () => accounts),
         update: vi.fn(async (args: { where: { id: string }; data: Record<string, unknown> }) => {
@@ -57,7 +65,7 @@ describe('runNoteAccountResearch', () => {
       { id: 'a1', niche: '競馬予想', display_name: '競馬', target_reader: null, tone: null, editorial_policy: null, research_json: null },
       { id: 'a2', niche: 'AI副業', display_name: '副業', target_reader: null, tone: null, editorial_policy: null, research_json: null },
     ]);
-    const spy = vi.fn(async () => ({ research: research(), items: [] }));
+    const spy = vi.fn(async (_input: NoteAccountResearchInput) => ({ research: research(), items: [] }));
 
     const r = await runNoteAccountResearch({}, { prisma, research: spy, now: () => NOW });
 
@@ -77,7 +85,7 @@ describe('runNoteAccountResearch', () => {
     ]);
     await runNoteAccountResearch(
       {},
-      { prisma, research: async () => ({ research: research(), items: [] }), now: () => NOW },
+      { prisma, research: async (_input: NoteAccountResearchInput) => ({ research: research(), items: [] }), now: () => NOW },
     );
     // 運営者が UI で編集する設定なので、提案は research_json 側にだけ入る。
     expect(Object.keys(updates[0]!.data)).toEqual(['research_json', 'research_updated_at']);
@@ -114,7 +122,7 @@ describe('runNoteAccountResearch', () => {
         ],
       },
     );
-    const spy = vi.fn(async () => ({ research: research(), items: [] }));
+    const spy = vi.fn(async (_input: NoteAccountResearchInput) => ({ research: research(), items: [] }));
     await runNoteAccountResearch({}, { prisma, research: spy, now: () => NOW });
 
     const input = spy.mock.calls[0]![0]!;
@@ -129,12 +137,11 @@ describe('runNoteAccountResearch', () => {
     const { prisma } = makePrisma([
       { id: 'a2', niche: 'y', display_name: 'Y', target_reader: null, tone: null, editorial_policy: null, research_json: null },
     ]);
-    const spy = vi.fn(async () => ({ research: research(), items: [] }));
+    const spy = vi.fn(async (_input: NoteAccountResearchInput) => ({ research: research(), items: [] }));
     await runNoteAccountResearch({ note_account_id: 'a2' }, { prisma, research: spy, now: () => NOW });
 
-    expect(prisma.noteAccount.findMany).toHaveBeenCalledWith(
-      expect.objectContaining({ where: { id: 'a2' } }),
-    );
+    expect(spy).toHaveBeenCalledTimes(1);
+    expect(spy.mock.calls[0]![0]!.noteAccountId).toBe('a2');
   });
 
   it('対象アカウントが無ければ何もしない', async () => {
@@ -150,8 +157,56 @@ describe('runNoteAccountResearch', () => {
     const { prisma } = makePrisma([
       { id: 'a1', niche: 'x', display_name: 'X', target_reader: null, tone: null, editorial_policy: null, research_json: { angles: 'not-an-array' } },
     ]);
-    const spy = vi.fn(async () => ({ research: research(), items: [] }));
+    const spy = vi.fn(async (_input: NoteAccountResearchInput) => ({ research: research(), items: [] }));
     await runNoteAccountResearch({}, { prisma, research: spy, now: () => NOW });
     expect(spy.mock.calls[0]![0]!.previous).toBeNull();
+  });
+  it('内部 Job 行を running → done に遷移させる (UI の多重起動ガードが固まらないように)', async () => {
+    const { prisma, jobUpdates } = makePrisma([
+      { id: 'a1', niche: 'x', display_name: 'X', target_reader: null, tone: null, editorial_policy: null, research_json: null },
+    ]);
+    await runNoteAccountResearch(
+      { job_id: 'job-1' },
+      { prisma, research: async (_i: NoteAccountResearchInput) => ({ research: research(), items: [] }), now: () => NOW },
+    );
+    expect(jobUpdates.map((u) => u.data.status)).toEqual(['running', 'done']);
+    expect(jobUpdates[1]!.data.result_json).toEqual({ accounts: 1, updated: 1, failed: 0 });
+  });
+
+  it('全アカウント失敗なら内部 Job を failed にする', async () => {
+    const { prisma, jobUpdates } = makePrisma([
+      { id: 'a1', niche: 'x', display_name: 'X', target_reader: null, tone: null, editorial_policy: null, research_json: null },
+    ]);
+    await runNoteAccountResearch(
+      { job_id: 'job-1' },
+      {
+        prisma,
+        research: async (_i: NoteAccountResearchInput) => {
+          throw new Error('boom');
+        },
+        now: () => NOW,
+      },
+    );
+    expect(jobUpdates.map((u) => u.data.status)).toEqual(['running', 'failed']);
+  });
+
+  it('一部成功なら内部 Job は done (週次 cron を赤くし続けない)', async () => {
+    const { prisma, jobUpdates } = makePrisma([
+      { id: 'a1', niche: 'x', display_name: 'X', target_reader: null, tone: null, editorial_policy: null, research_json: null },
+      { id: 'a2', niche: 'y', display_name: 'Y', target_reader: null, tone: null, editorial_policy: null, research_json: null },
+    ]);
+    await runNoteAccountResearch(
+      { job_id: 'job-1' },
+      {
+        prisma,
+        research: async (input: NoteAccountResearchInput) => {
+          if (input.noteAccountId === 'a1') throw new Error('boom');
+          return { research: research(), items: [] };
+        },
+        now: () => NOW,
+      },
+    );
+    expect(jobUpdates[1]!.data.status).toBe('done');
+    expect(jobUpdates[1]!.data.result_json).toEqual({ accounts: 2, updated: 1, failed: 1 });
   });
 });
