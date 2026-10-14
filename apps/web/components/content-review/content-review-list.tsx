@@ -11,7 +11,7 @@ import { useState, useTransition } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 
-import { approveBookContent, requestContentRevision } from '@/app/actions/books';
+import { approveBookContent, approveBookContentBulk, requestContentRevision } from '@/app/actions/books';
 import { messages } from '@/lib/messages';
 
 const m = messages.contentReview;
@@ -26,11 +26,65 @@ export interface ContentReviewBook {
 
 export function ContentReviewList({ books }: { books: ContentReviewBook[] }) {
   return (
-    <ul className="flex flex-col gap-space-snug" data-testid="content-review-list">
-      {books.map((book) => (
-        <ContentReviewRow key={book.id} book={book} />
-      ))}
-    </ul>
+    <div className="flex flex-col gap-space-snug">
+      <BulkApprove books={books} />
+      <ul className="flex flex-col gap-space-snug" data-testid="content-review-list">
+        {books.map((book) => (
+          <ContentReviewRow key={book.id} book={book} />
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+/**
+ * 一括承認 (2026-10-14)。
+ *
+ * F-100 の修復で小説 11 冊を校閲し直したら全冊が本文承認待ちに入り、
+ * 1 冊ずつしか進められなかったため追加した。
+ * **確認ダイアログを必ず挟む** — 本文承認は人手ゲートなので、押し間違いで
+ * 全冊が先へ進んでしまうのは避ける。個別の承認ボタンはそのまま残す。
+ */
+function BulkApprove({ books }: { books: ContentReviewBook[] }) {
+  const router = useRouter();
+  const [pending, startTransition] = useTransition();
+  const [error, setError] = useState<string | null>(null);
+  const [info, setInfo] = useState<string | null>(null);
+
+  if (books.length < 2) return null;
+
+  function approveAll() {
+    if (!window.confirm(m.bulk.confirm(books.length))) return;
+    setError(null);
+    setInfo(null);
+    startTransition(async () => {
+      const res = await approveBookContentBulk({ book_ids: books.map((b) => b.id) });
+      if (!res.ok) {
+        setError(res.error?.message ?? m.bulk.error);
+        return;
+      }
+      const { approved, failed } = res.data;
+      setInfo(failed.length === 0 ? m.bulk.done(approved.length) : m.bulk.partial(approved.length, failed.length));
+      router.refresh();
+    });
+  }
+
+  return (
+    <div className="flex flex-wrap items-center justify-between gap-space-snug rounded-card border border-border-warm bg-cream-light p-space-relaxed">
+      <div className="flex min-w-0 flex-col">
+        {error && <span className="text-button-sm text-destructive">{error}</span>}
+        {info && <span className="text-button-sm text-charcoal">{info}</span>}
+      </div>
+      <button
+        type="button"
+        onClick={approveAll}
+        disabled={pending}
+        data-testid="content-review-bulk-approve"
+        className="inline-flex shrink-0 items-center rounded-card border border-border-warm bg-cream px-3 py-1.5 text-button-sm text-charcoal hover:bg-charcoal-04 disabled:opacity-50"
+      >
+        {pending ? m.bulk.running : m.bulk.button(books.length)}
+      </button>
+    </div>
   );
 }
 

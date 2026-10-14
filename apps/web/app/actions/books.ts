@@ -18,6 +18,10 @@ import { messages } from '@/lib/messages';
 import { createComment } from '@/app/actions/comments';
 import { createRevisionRun } from '@/app/actions/revision-runs';
 import {
+  ApproveContentBulkSchema,
+  approveBookContentBulkCore,
+} from '@/lib/content-approval-bulk-core';
+import {
   approveJudgeOverrideCore,
   discardJudgeFailedCore,
   type JudgeOverrideDeps,
@@ -319,6 +323,43 @@ export async function approveBookContent(
     if (isA2PError(err)) return err.toActionResult();
     return fail('unknown', messages.books.contentApproval.error);
   }
+}
+
+/**
+ * 本文承認の一括実行 (2026-10-14)。
+ *
+ * **なぜ要るか**: F-100 の修復で小説 11 冊を校閲し直したところ、全冊が
+ * `content_review` に入り、1 冊ずつ承認する以外に進める手段が無かった。
+ * 承認そのものは既存の `approveBookContent` と**完全に同じ処理**を回す
+ * (サムネ生成 or 再審査への分岐・監査ログを含む) — 一括用の別経路は作らない。
+ *
+ * **1 冊の失敗で全体を止めない。** `content_review` から外れた本 (他のタブで先に
+ * 承認した等) が混ざっても、残りは進める。結果は成功/失敗の内訳で返す。
+ */
+export async function approveBookContentBulk(
+  input: unknown,
+): Promise<ActionResult<{ approved: string[]; failed: Array<{ book_id: string; error: string }> }>> {
+  try {
+    await getSessionOrThrow();
+  } catch (err) {
+    if (isA2PError(err)) return err.toActionResult();
+    return fail('unknown', messages.books.contentApproval.error);
+  }
+
+  const parsed = ApproveContentBulkSchema.safeParse(input);
+  if (!parsed.success) return fail('validation', messages.books.contentApproval.error);
+
+  const { approved, failed } = await approveBookContentBulkCore(parsed.data.book_ids, {
+    approveOne: async (bookId) => {
+      const res = await approveBookContent({ book_id: bookId });
+      return res.ok ? { ok: true } : { ok: false, ...(res.error?.message ? { error: res.error.message } : {}) };
+    },
+    fallbackError: messages.books.contentApproval.error,
+  });
+
+  revalidatePath('/content-review');
+  revalidatePath('/books');
+  return ok({ approved, failed });
 }
 
 // ---------------------------------------------------------------------------
