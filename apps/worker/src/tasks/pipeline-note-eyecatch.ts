@@ -277,6 +277,10 @@ export async function runPipelineNoteEyecatch(
         ...(account.editorial_policy ? { editorialPolicy: account.editorial_policy } : {}),
         // 指定時はジャンル既定の画風を上書きする (eyecatch.ts の accountArtDirection)。
         ...(research?.art_direction ? { accountArtDirection: research.art_direction } : {}),
+        // コピーの装飾規則 (袋文字・多重縁取りの可否) は画像プロンプト側に無いと効かない。
+        ...(research?.copy_rules && research.copy_rules.length > 0
+          ? { accountCopyRules: research.copy_rules }
+          : {}),
       });
       r2Key = result.r2Key;
       styleKey = result.styleKey;

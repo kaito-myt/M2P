@@ -94,6 +94,14 @@ export interface GenerateNoteEyecatchInput {
    * 勝ち筋 (何が今伸びているか) はリサーチで上書きする。
    */
   accountArtDirection?: string | null;
+  /**
+   * F-ANP-56: 週次リサーチが決めた「コピーの見せ方」の規則。
+   * 字数や言い回しだけでなく**装飾の可否** (袋文字・多重縁取り・グラデーション) を
+   * 含むため、コピーを書く `anp.seo` だけでなく**画像プロンプトにも渡す必要がある**。
+   * 2026-10-14 実測: 「装飾文字・縁取り3重は使わない」とリサーチが決めたのに、
+   * この経路が無く金色の多重縁取りが生成されていた。
+   */
+  accountCopyRules?: readonly string[];
 }
 
 export interface GenerateNoteEyecatchResult {
@@ -159,8 +167,22 @@ export function buildPrompt(
   const copy = (input.eyecatchCopy ?? '').trim();
   const sub = (input.eyecatchSub ?? '').trim();
   const hasText = copy.length > 0;
-  // F-ANP-56: アカウント固有の指示があればジャンル既定を置き換える。
-  const art = (input.accountArtDirection ?? '').trim() || genre.art;
+  // F-ANP-56: アカウント固有の指示 (週次リサーチ) があればジャンル既定を置き換える。
+  const accountArt = (input.accountArtDirection ?? '').trim();
+  const art = accountArt || genre.art;
+  const copyRules = (input.accountCopyRules ?? []).map((r) => r.trim()).filter((r) => r.length > 0);
+
+  // 2026-10-14 実測の教訓: アカウント指示を「ジャンルの作法」の位置に置くだけでは効かない。
+  // 後続の【文字と帯の色】が「ここは厳密に守る」、【絵の画風】が具体的な既定値を出すため、
+  // モデルは**後に書かれた強い既定**に従ってしまった
+  // (リサーチが「実写風・曇天・低彩度・芝の深緑」と決めたのに、黒地×金の装飾文字が出た)。
+  // アカウント指示があるときは、既定側を「指定が無い項目だけ」に格下げする。
+  const colorHeader = accountArt
+    ? '【文字と帯の色 (既定。上のアカウント指定に書かれていない項目だけ適用する)】'
+    : '【文字と帯の色 (アカウント共通。ここは厳密に守る)】';
+  const styleHeader = accountArt
+    ? '【絵の画風 (既定。上のアカウント指定に書かれていない項目だけ適用する)】'
+    : '【絵の画風】';
 
   return [
     'Web メディア (note) の記事アイキャッチを 1 枚作成してください。',
@@ -190,6 +212,12 @@ export function buildPrompt(
             + '文字列は**まっすぐ水平**に組む (波打たせない・歪ませない)。',
           '- 改行するなら**意味の切れ目**で折る (語の途中で折らない)。',
           `- ${genre.typography}`,
+          ...(copyRules.length > 0
+            ? [
+                '- **このアカウントの文字の作法 (週次リサーチ。上の一般則と矛盾したらこちらを優先)**:',
+                ...copyRules.map((r) => `  - ${r}`),
+              ]
+            : []),
           '- 上記のメイン/サブ以外の文字・英単語・数字・ロゴ・透かし・署名・'
             + 'キャプション・URL・ページ番号は描かない。',
           '',
@@ -200,16 +228,21 @@ export function buildPrompt(
           '- ABSOLUTELY NO text, letters, numbers, captions, watermarks or logos anywhere.',
           '',
         ]),
-    // ---- 2. ジャンルの作法 ----
-    `【${genre.label}の作法 (絵と文字の両方に効かせる)】`,
-    art,
-    '',
+    // ---- 2. 画作り ----
+    // アカウント指定があるときは「最優先」と明示し、以降の既定より上に置く。
+    ...(accountArt
+      ? [
+          '【このアカウントの画作り (週次リサーチ。**これが最優先**。以降の既定と矛盾したらこちらに従う)】',
+          accountArt,
+          '',
+        ]
+      : [`【${genre.label}の作法 (絵と文字の両方に効かせる)】`, art, '']),
     // ---- 3. 版面 ----
     '【版面 (絵と文字の配置)】',
     `- ${layout.textPlacement}`,
     '',
     // ---- 4. 色 (アカウント統一 = 「あの人のサムネ」と認識させる) ----
-    '【文字と帯の色 (アカウント共通。ここは厳密に守る)】',
+    colorHeader,
     `- 地・帯・ボックスの色: ${scheme.base}`,
     `- 文字の色: ${scheme.main}`,
     `- 差し色 (マーカー・下線・バッジ): ${scheme.accent}`,
@@ -217,7 +250,7 @@ export function buildPrompt(
     '- 文字と背景の明暗差を強く取り、小さく表示されても読めるようにする。',
     '',
     // ---- 5. 絵 ----
-    '【絵の画風】',
+    styleHeader,
     `- 画材・質感: ${style.medium}`,
     `- 構図: ${style.composition}`,
     `- 絵の配色: ${style.palette}`,
