@@ -80,6 +80,10 @@ const EXPECTED_MODELS = [
   // 「モデル数が一覧と一致する」テストだけが赤いまま放置されていた (2026-10-09 に追加)。
   'AnpAgentRole',
   'OrgCodeRequest',
+  // 3DP (docs/12-3dp-design.md)。3Dモデル商材の企画・生成・検査・出品。
+  'TdpProduct',
+  'TdpAsset',
+  'TdpPreview',
 ] as const;
 
 describe('schema.prisma', () => {

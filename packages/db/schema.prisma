@@ -1372,6 +1372,13 @@ model AppSettings {
   anp_auto_theme_enabled          Boolean   @default(false)
   // 1アカウントあたり1日に自動生成するテーマ数 (1..20)。
   anp_themes_per_day              Int       @default(1)
+  // [3DP R-1] 月間の出品上限。BOOTH は「大量・連続的な出品」を監視対象にしており
+  // (2025-07-18 発表) 閾値は非開示。**分からない以上、少なく出す方に倒す。**
+  // これは上限であって目標ではない。0 にすると出品を完全に止められる。
+  tdp_monthly_publish_limit       Int       @default(8)
+  // [3DP R-2] 運営者が登録する禁止語 (作品名・ブランド名・キャラクター名)。string[]。
+  // 固有名詞は網羅不能なので既定では入れず、運営者が設定画面で足していく。
+  tdp_derivative_denylist         String[]  @default([])
   // note.theme.auto の既定 cron。A2P の pipeline_theme_cron (07:00 JST) と衝突しないよう
   // 1 時間ずらした 08:00 JST (`0 23 * * *` UTC) を既定とする。
   anp_theme_cron                  String    @default("0 23 * * *")
@@ -1765,4 +1772,92 @@ model OrgCodeRequest {
 
   @@index([status, created_at(sort: Desc)], map: "org_code_requests_status_idx")
   @@map("org_code_requests")
+}
+
+// ─────────────────────────────────────────────────────────────
+// 3DP (3D Products) — docs/12-3dp-design.md
+// 3Dモデル商材 (ワールド用プロップ・家具・小物 / アクセサリ / 改変用テクスチャ) を
+// 企画・生成・検査し BOOTH で販売する。**アバター本体は扱わない**。
+//
+// BOOTH の AI 生成物規制 (2025-07-18) が前提: 依拠性の高い商品と大量・連続出品は
+// 商品の強制非公開 → ショップ強制非公開 → アカウント停止。よって
+//  R-1 月間出品上限をツール側に持つ (app_settings.tdp_monthly_publish_limit)
+//  R-2 依拠性のある企画を機械的に弾く (derivative_check_json に判定を残す)
+//  R-3 AI 生成であることを商品ページに明記する
+// ─────────────────────────────────────────────────────────────
+
+model TdpProduct {
+  id      String @id @default(cuid())
+  /// prop | furniture | accessory | texture (アバター/衣装本体は作らない)
+  kind    String
+  title   String
+  /// 企画 (何を・誰に・なぜ)。tdp.planner の出力。
+  concept String @db.Text
+
+  /// R-2 依拠性ガードの判定結果 (DerivativeCheckResult)。
+  /// **拒否された企画も監査のため残す** — 何を弾いたかが運用の判断材料になる。
+  derivative_check_json Json?
+
+  price_jpy Int?
+  /// planned | generating | inspecting | needs_fix | ready | review | listed | failed | rejected
+  /// review = 人間のプレビュー承認待ち。3DP ではこのゲートを自動パスにしない (docs/12 §6)。
+  status    String @default("planned")
+
+  booth_item_url String?
+  listed_at      DateTime?
+  /// 生成コスト (token_usage.tool='3dp' の合算をここに集約)。
+  cost_jpy_total Decimal   @default(0) @db.Decimal(12, 2)
+  last_error     String?   @db.Text
+
+  created_at DateTime @default(now())
+  updated_at DateTime @updatedAt
+
+  assets   TdpAsset[]
+  previews TdpPreview[]
+
+  @@index([status, created_at(sort: Desc)], map: "tdp_products_status_time_idx")
+  @@index([listed_at(sort: Desc)], map: "tdp_products_listed_idx")
+  @@map("tdp_products")
+}
+
+model TdpAsset {
+  id         String @id @default(cuid())
+  product_id String
+  /// 生成元 (meshy | openai-image など)。credit を使うので token_usage にも記録する。
+  provider   String
+  /// 生成プロンプト。再現性のため必ず残す (同じ物をもう一度作れないと商品が維持できない)。
+  prompt     String @db.Text
+  r2_key     String
+  /// glb | fbx | png
+  format     String
+
+  /// 自動検査の結果 (docs/12 §4.3: ポリゴン数/テクスチャ/スケール/原点/マテリアル数/non-manifold)。
+  /// NG があれば product.status='needs_fix' に落ちる。
+  inspect_json Json?
+  poly_count   Int?
+  byte_size    Int?
+  /// 作り直しの版。旧版は消さない (どの版を出品したか追えるようにする)。
+  version      Int   @default(1)
+
+  created_at DateTime @default(now())
+
+  product TdpProduct @relation(fields: [product_id], references: [id], onDelete: Cascade)
+
+  @@index([product_id, version(sort: Desc)], map: "tdp_assets_product_version_idx")
+  @@map("tdp_assets")
+}
+
+model TdpPreview {
+  id         String @id @default(cuid())
+  product_id String
+  r2_key     String
+  /// thumbnail | angle | scale_reference (寸法が分かる画。小物は実寸が分からないと売れない)
+  kind       String
+
+  created_at DateTime @default(now())
+
+  product TdpProduct @relation(fields: [product_id], references: [id], onDelete: Cascade)
+
+  @@index([product_id, kind], map: "tdp_previews_product_kind_idx")
+  @@map("tdp_previews")
 }

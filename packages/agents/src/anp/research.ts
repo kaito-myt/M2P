@@ -55,7 +55,14 @@ const ROLE = 'anp.research' as const;
 const PLAN_MAX_OUTPUT_TOKENS = 4096;
 /** 観点決定は 0 件だとリサーチの価値が無いので、空振りしたら 1 回だけ作り直す。 */
 const MAX_PLAN_RETRIES = 2;
-const REPORT_MAX_OUTPUT_TOKENS = 8192;
+// 2026-10-14 本番実測: 観点 4 件・出典 16 件が入った回の まとめ が 8192 で切れ、
+// JSON が途中で終わって 2 回とも parse に失敗した (競馬アカウントが invalid_output)。
+// schema の上限 (findings 10 / copy_rules 8 / topics 各 10 / art_direction 1200字) を
+// 全部埋めると日本語で 6,000〜9,000 トークンになるので 8192 では足りない。
+// 32768 まで上げると Anthropic SDK が「非ストリーミングでは 10 分を超えうる」と判断して
+// messages.create を即エラーにするため、その閾値未満の 16384 を上限とする
+// (marketer/theme.ts と同じ判断)。
+const REPORT_MAX_OUTPUT_TOKENS = 16384;
 const MAX_PARSE_RETRIES = 2;
 /** 1 クエリあたりの Tavily 取得件数 / 根拠ブロックの最大件数。 */
 const PER_QUERY_RESULTS = 5;
@@ -154,6 +161,12 @@ export async function researchNoteAccount(
     const raw = typeof completion.text === 'string' ? completion.text : '';
     const parsed = extractLlmJson<unknown>(raw, hasFindings);
     if (parsed === undefined) {
+      // 出力上限で切れたのか、形が違うのかをログで切り分けられるようにする
+      // (2026-10-14: 8192 で切れていたが AgentError の message だけでは分からなかった)。
+      log.warn(
+        { attempt, rawLength: raw.length, rawTail: raw.slice(-200) },
+        'report JSON parse failed',
+      );
       lastError = new AgentError('anp.research.invalid_output: failed to parse JSON', {
         details: { attempt, rawTextLength: raw.length },
       });
@@ -161,6 +174,10 @@ export async function researchNoteAccount(
     }
     const validated = NoteAccountResearchSchema.safeParse(parsed);
     if (!validated.success) {
+      log.warn(
+        { attempt, issues: validated.error.issues.slice(0, 5) },
+        'report schema validation failed',
+      );
       lastError = new AgentError('anp.research.invalid_output: schema validation failed', {
         details: { attempt, issues: validated.error.issues },
         cause: validated.error,

@@ -17,9 +17,9 @@
  */
 
 /** コストを帰属させる単位。`m2p` = どのツールにも属さないプラットフォーム活動。 */
-export type ToolKey = 'a2p' | 'anp' | 'm2p';
+export type ToolKey = 'a2p' | 'anp' | '3dp' | 'm2p';
 
-export const TOOL_KEYS: readonly ToolKey[] = ['a2p', 'anp', 'm2p'] as const;
+export const TOOL_KEYS: readonly ToolKey[] = ['a2p', 'anp', '3dp', 'm2p'] as const;
 
 /** 既定値。未知の role は書籍側として数える (A2P が第1ツールで既存行の大半がこれ)。 */
 export const DEFAULT_TOOL: ToolKey = 'a2p';
@@ -27,6 +27,7 @@ export const DEFAULT_TOOL: ToolKey = 'a2p';
 export const TOOL_LABEL: Record<ToolKey, string> = {
   a2p: 'A2P (Amazon KDP 出版)',
   anp: 'ANP (note 記事出版)',
+  '3dp': '3DP (3Dモデル商材)',
   m2p: 'M2P (プラットフォーム共通)',
 };
 
@@ -34,6 +35,7 @@ export const TOOL_LABEL: Record<ToolKey, string> = {
 export const TOOL_SHORT_LABEL: Record<ToolKey, string> = {
   a2p: 'A2P',
   anp: 'ANP',
+  '3dp': '3DP',
   m2p: '共通',
 };
 
@@ -79,6 +81,8 @@ const PLATFORM_ROLES: ReadonlySet<string> = new Set([
  */
 export function defaultToolForRole(role: string): ToolKey {
   if (role.startsWith('anp.')) return 'anp';
+  // 3DP も role 名前空間で分離する (`tdp.*`)。docs/12 §7。
+  if (role.startsWith('tdp.')) return '3dp';
   if (PLATFORM_ROLES.has(role)) return 'm2p';
   return DEFAULT_TOOL;
 }

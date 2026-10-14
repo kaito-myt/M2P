@@ -89,6 +89,13 @@ export type AgentRole =
   | 'anp.strategist'
   // F-ANP-04 — note アカウント戦略の AI 相談 (チャット壁打ち + Tavily リサーチ → ブリーフ草案)。
   | 'anp.consultant'
+  // docs/12 §8 — 3DP (3Dモデル商材)。role 名前空間を `tdp.*` で分離する。
+  // tdp.research = 市場リサーチ (週次) / tdp.planner = 企画 /
+  // tdp.prompter = 3D 生成プロンプト設計 / tdp.listing = 商品名・紹介文。
+  | 'tdp.research'
+  | 'tdp.planner'
+  | 'tdp.prompter'
+  | 'tdp.listing'
   // F-ANP-56 — note アカウント別 週次リサーチ。**観点そのものをアカウントごとに決める**
   // 2 段構成 (観点決定 → Tavily 検索 → まとめ)。成果 (画作り/コピー規則/狙う題材/
   // 方針改訂案) は note_accounts.research_json に入り、各 ANP エージェントへ実行時注入される。

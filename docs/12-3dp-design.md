@@ -300,3 +300,46 @@ Inc-2 の完了条件を「椅子 1 個」にしているのは、**3D 生成の
 
 > U-3 は重要。**閾値が分からない以上、少なく出す方に倒す。**
 > 「月 8 商品」は上限であって目標ではない。
+
+---
+
+## 12. 実装状況
+
+### Inc-1 (基盤) — 2026-10-14 着手
+
+| 要素 | 状態 | 場所 |
+|---|---|---|
+| 依拠性ガード (R-2) | **完了・本番適用不要 (純ロジック)** | `packages/contracts/src/tdp/derivative-guard.ts` (テスト 20 件) |
+| 月間出品上限 (R-1) | **完了** | 同ファイルの `canListMore()` |
+| DB 3 テーブル | **完了・本番適用済** | `tdp_products` / `tdp_assets` / `tdp_previews` (migration `20261014010000_tdp_tables`) |
+| 設定列 | **完了・本番適用済** | `app_settings.tdp_monthly_publish_limit` (既定 8) / `tdp_derivative_denylist` (既定 空) |
+| コスト帰属 | **完了** | `ToolKey` に `'3dp'` を追加。`tdp.*` role は自動で `3dp` に帰属 |
+| ロール定義 | **完了** | `AgentRole` に `tdp.research` / `tdp.planner` / `tdp.prompter` / `tdp.listing` |
+| `apps/3dp` スケルトン | **未着手** | 次 |
+| ポータルタイル | **未着手** | `NEXT_PUBLIC_3DP_URL` 設定時のみ点灯 (docs/10) |
+
+#### 依拠性ガードの判定仕様 (実装済み)
+
+弾く:
+
+| 種別 | 例 |
+|---|---|
+| `style_imitation` | 「◯◯風」「◯◯っぽい」「◯◯系」「オマージュ」「インスパイア」「テイスト」 |
+| `fan_work_wording` | 二次創作 / ファンアート / 原作 / 公式 / 版権 / キャラクター再現 / 完全再現 |
+| `specific_avatar_fit` | 「◯◯ちゃん専用衣装」「◯◯対応アクセサリ」(3DP は汎用の小物だけを扱う) |
+| `creator_reference` | 「◯◯先生の」「@handle」 |
+| `denylisted_term` | 運営者が設定画面で登録した作品名・ブランド名・キャラクター名 |
+| `trademark_marker` | ™ ® © |
+
+通す (ここを弾くと作れるものが無くなるため明示的に除外):
+
+- **一般的な様式名**: 和風 / 洋風 / 北欧風 / 中華風 / アンティーク風 など
+- **プラットフォーム・フォーマットへの「対応」**: VRChat / Unity / Blender / Quest / VRM / MMD など
+  (動作環境の表示であって作品への依拠ではない)
+
+判定は**決定論的**。LLM に判定させない — 「前は通ったのに今日は弾かれた」が起きると
+ガードとして信用できないため。禁止語の比較は NFKC + lower-case + 空白除去で行うので、
+全半角・大文字小文字・空白の違いでは抜けられない。
+
+拒否された企画も `tdp_products.derivative_check_json` に残す。
+**何を弾いたかが運用の判断材料になる**ため消さない。

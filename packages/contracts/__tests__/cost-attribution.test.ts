@@ -96,8 +96,17 @@ describe('ラベル', () => {
     }
   });
 
-  it('キーは 3 つ', () => {
-    expect([...TOOL_KEYS]).toEqual(['a2p', 'anp', 'm2p']);
+  it('キーは 4 つ (a2p / anp / 3dp / m2p)', () => {
+    expect([...TOOL_KEYS]).toEqual(['a2p', 'anp', '3dp', 'm2p']);
+  });
+
+  it('tdp.* の role は 3dp に帰属する (docs/12 §7)', () => {
+    expect(defaultToolForRole('tdp.research')).toBe('3dp');
+    expect(defaultToolForRole('tdp.planner')).toBe('3dp');
+    // 名前空間が違う役はこれまで通り
+    expect(defaultToolForRole('anp.theme')).toBe('anp');
+    expect(defaultToolForRole('writer')).toBe('a2p');
+    expect(defaultToolForRole('ceo')).toBe('m2p');
   });
 });
 
