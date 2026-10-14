@@ -43,7 +43,7 @@ export async function buildDocx(
   const sorted = [...chapters].sort((a, b) => a.index - b.index);
 
   const titleSection = buildTitleSection(book);
-  const chapterSections = sorted.map((ch) => buildChapterSection(ch));
+  const chapterSections = sorted.map((ch) => buildChapterSection(ch, opts.isNovel === true));
 
   // 構成をジャンルで分岐 (docs/02 F-… 生成本の基本構成)。
   let contentSections: ISectionOptions[];
@@ -203,8 +203,9 @@ function buildTocSection(chapters: BuildDocxChapter[]): ISectionOptions {
   };
 }
 
-function buildChapterSection(chapter: BuildDocxChapter): ISectionOptions {
-  const bodyElements = markdownToDocxElements(chapter.body_md);
+function buildChapterSection(chapter: BuildDocxChapter, isNovel: boolean): ISectionOptions {
+  // 小説は本文中に見出しを入れない (ジャンル誤判定で混入した `##` も見出し化しない)。
+  const bodyElements = markdownToDocxElements(chapter.body_md, { suppressHeadings: isNovel });
 
   const heading = new Paragraph({
     heading: HeadingLevel.HEADING_1,

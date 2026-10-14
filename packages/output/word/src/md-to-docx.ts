@@ -102,18 +102,42 @@ function inlineTokensToParagraph(
   return new Paragraph({ ...opts, children });
 }
 
-export function markdownToDocxElements(md: string): Paragraph[] {
+/**
+ * Markdown → docx 段落列。
+ *
+ * `suppressHeadings` (小説・ラノベ等のフィクション) を立てると、本文中の `#`/`##` 見出しを
+ * **見出しスタイルではなく通常段落** として描画する。
+ * 2026-10-14: ジャンル誤判定 (全候補が 'practical' 固定) でラノベ・小説が実用書として
+ * 執筆され、本文に小見出しが残った本が出た。ジャンル判定自体は修正済みだが、
+ * 出力側でも「小説に見出しは入れない」を担保する (文字は落とさず見出し化だけ止める)。
+ */
+export function markdownToDocxElements(
+  md: string,
+  opts: { suppressHeadings?: boolean } = {},
+): Paragraph[] {
   const tokens = marked.lexer(md);
-  return tokensToElements(tokens);
+  return tokensToElements(tokens, opts);
 }
 
-function tokensToElements(tokens: Token[]): Paragraph[] {
+function tokensToElements(
+  tokens: Token[],
+  opts: { suppressHeadings?: boolean } = {},
+): Paragraph[] {
   const paragraphs: Paragraph[] = [];
 
   for (const token of tokens) {
     switch (token.type) {
       case 'heading': {
         const t = token as Tokens.Heading;
+        if (opts.suppressHeadings) {
+          // 小説: 見出しにはせず、本文の一段落として流す (文字は捨てない)。
+          paragraphs.push(
+            inlineTokensToParagraph(t.tokens, {
+              spacing: { after: 180, line: 336, lineRule: LineRuleType.AUTO },
+            }),
+          );
+          break;
+        }
         const level =
           t.depth === 1
             ? HeadingLevel.HEADING_2

@@ -5,7 +5,7 @@
 #     bash scripts/kdp-assist.sh
 #   → Chrome が開き、既存の下書きを1冊ずつ resume して各ステップを自動入力する。
 #     「保存して続行 / 出版」は自分で押す（各ステップ最大30分待機）。
-#     本棚に Kindle の下書きが無い場合は新規タイトル作成に切り替わる（1日5冊の作成上限まで）。
+#     本棚に Kindle の下書きが無い場合は新規タイトル作成に切り替わる（Amazon の【週間】作成上限まで）。
 #     出版まで押さずに下書きだけ作りたいときは:  bash scripts/kdp-assist.sh create --dry-run
 #
 # 秘密情報は Railway から実行時に取得し、ファイルには保存しない。
@@ -37,9 +37,9 @@ if [ -z "$DBURL" ] || [ -z "$R2_BUCKET_NAME" ]; then
   exit 1
 fi
 # 実行モード（第1引数で切替、既定=assist）:
-#   assist … 本棚の既存「下書き」をresumeして上書き入力（5冊/日の作成上限を消費しない）。
+#   assist … 本棚の既存「下書き」をresumeして上書き入力（作成枠を消費しない）。
 #            下書きを使い切ったら、残りは自動で新規作成に切り替わる（既定5冊まで。--max-create=0 で無効）
-#   create … 最初から新規タイトル作成で出版（5冊/日の作成上限あり・OTP再認証が発生）
+#   create … 最初から新規タイトル作成で出版（週間作成上限あり＝リセットは日曜9:00 JST・OTP再認証が発生）
 #   auto   … 既存下書きをresumeし、保存/出版まで全自動クリック
 MODE="assist"
 if [ "$1" = "assist" ] || [ "$1" = "create" ] || [ "$1" = "auto" ] || [ "$1" = "overwrite" ]; then MODE="$1"; shift; fi

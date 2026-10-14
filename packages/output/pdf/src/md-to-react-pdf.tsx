@@ -183,14 +183,24 @@ function inlineToElements(
   return elements;
 }
 
+/**
+ * Markdown → react-pdf 要素列。
+ *
+ * `suppressHeadings` (小説・ラノベ等のフィクション) を立てると、本文中の `#`/`##` 見出しを
+ * **見出しではなく通常段落** として描画する (build-docx 側と同じ方針)。
+ */
 export function markdownToReactPdfElements(
   md: string,
+  opts: { suppressHeadings?: boolean } = {},
 ): React.ReactElement[] {
   const tokens = marked.lexer(md);
-  return tokensToElements(tokens);
+  return tokensToElements(tokens, opts);
 }
 
-function tokensToElements(tokens: Token[]): React.ReactElement[] {
+function tokensToElements(
+  tokens: Token[],
+  opts: { suppressHeadings?: boolean } = {},
+): React.ReactElement[] {
   const elements: React.ReactElement[] = [];
 
   for (let i = 0; i < tokens.length; i++) {
@@ -200,6 +210,17 @@ function tokensToElements(tokens: Token[]): React.ReactElement[] {
     switch (token.type) {
       case 'heading': {
         const t = token as Tokens.Heading;
+        if (opts.suppressHeadings) {
+          // 小説: 見出しにはせず、本文の一段落として流す (文字は捨てない)。
+          elements.push(
+            <View key={key} style={{ marginBottom: 8 }}>
+              <Text style={{ lineHeight: LINE_HEIGHT }}>
+                {inlineToElements(t.tokens)}
+              </Text>
+            </View>,
+          );
+          break;
+        }
         const fontSize =
           t.depth === 1 ? 18 : t.depth === 2 ? 14 : 12;
         const marginTop =

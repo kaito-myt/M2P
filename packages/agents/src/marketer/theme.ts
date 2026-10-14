@@ -20,7 +20,7 @@
  *     `deps?.prisma` は loadActivePrompt 内部の repo 差し替えに使う (vitest テストで
  *     Prisma を引かないため)。
  */
-import { genreLabel } from '@a2p/contracts/agents';
+import { GENRE_CATALOG, genreLabel } from '@a2p/contracts/agents';
 import { AgentError } from '@a2p/contracts/errors';
 import type { LLMClient } from '@a2p/contracts/agents';
 import {
@@ -276,6 +276,7 @@ function buildUserMessage(input: MarketerThemeInput, researchBlock?: string | nu
     '各 candidate は以下のキーを必ず含めます (docs/05 §6.3.1 準拠):',
     ' - title: string (200 字以内)',
     ' - subtitle?: string (200 字以内、任意)',
+    ...genreInstruction(input),
     ' - hook: string (差別化要素、800 字以内)',
     ' - target_reader: string (想定読者、300 字以内)',
     ' - competitors: Array<{ title, asin?, author?, url?, rank?, review_summary?, note? }> (web_search で見つけた競合)',
@@ -301,6 +302,27 @@ function buildUserMessage(input: MarketerThemeInput, researchBlock?: string | nu
     ' - 引用文・paraphrase・hook・reasoning など長文を含むフィールドも例外なく `\\n` エスケープし、生改行を絶対に混ぜないこと。',
   );
   return lines.join('\n');
+}
+
+/**
+ * 出力形式に入れる `genre` フィールドの指示行。
+ *
+ * 2026-10-14: ジャンル未指定 (日次自動生成はジャンル横断で企画させるため常に未指定) の
+ * 候補は保存時に一律 'practical' が刻印され、ラノベ・小説・競馬本まで実用書として
+ * 執筆/採点されていた。Marketer は自分が何の本を企画したか分かっているので、
+ * **候補ごとに genre を申告させる** のが最も確度が高い。
+ * ジャンルが指定済みのときはその値で固定されるので、申告させず指示も出さない
+ * (出力トークンとブレの節約)。
+ */
+function genreInstruction(input: MarketerThemeInput): string[] {
+  if (input.genre) return [];
+  const catalog = GENRE_CATALOG.map((g) => `${g.slug} (${g.label})`).join(' / ');
+  return [
+    ' - genre: string (**必須**。この候補が「どのジャンルの本か」を次の一覧から 1 つだけ選び、',
+    '   slug をそのまま入れる。小説・物語を企画したときに実用書系の slug を選ぶと、',
+    '   後段の執筆者が実用書の文体・章立てで書いてしまうため、必ず実態に合わせること)',
+    `   ${catalog}`,
+  ];
 }
 
 /**

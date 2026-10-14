@@ -168,11 +168,16 @@ function ChapterTitlePage({
 function ChapterBodyPages({
   bodyMd,
   sidePad,
+  isNovel,
 }: {
   bodyMd: string;
   sidePad?: SidePad;
+  isNovel?: boolean;
 }): React.ReactElement {
-  const bodyElements = markdownToReactPdfElements(bodyMd);
+  // 小説は本文中に見出しを入れない (ジャンル誤判定で混入した `##` も見出し化しない)。
+  const bodyElements = markdownToReactPdfElements(bodyMd, {
+    suppressHeadings: isNovel === true,
+  });
 
   return (
     <Page size={[A5_WIDTH_PT, A5_HEIGHT_PT]} style={[styles.page, sidePad ?? {}]} wrap>
@@ -224,7 +229,7 @@ export function buildBookDocument(
   const chapterFragment = (ch: BuildPdfChapter) => (
     <React.Fragment key={`ch-${ch.index}`}>
       <ChapterTitlePage heading={ch.heading} sidePad={sidePad} />
-      <ChapterBodyPages bodyMd={ch.body_md} sidePad={sidePad} />
+      <ChapterBodyPages bodyMd={ch.body_md} sidePad={sidePad} isNovel={opts.isNovel === true} />
     </React.Fragment>
   );
 

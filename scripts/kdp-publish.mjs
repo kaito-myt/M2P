@@ -23,7 +23,7 @@
  *   node scripts/kdp-publish.mjs --all                # 従来挙動: 未出品(done/unlisted)全冊
  *   node scripts/kdp-publish.mjs --assist             # 準自動: 既存の下書きをresumeして各ステップを自動入力。
  *                                                     #   「保存して続行/出版」は運営者が押す(下書きresumeは日次上限を消費しない)
- *   node scripts/kdp-publish.mjs --max-create=5       # 下書きが足りない分を新規作成する上限(既定5=Amazonの作成上限)
+ *   node scripts/kdp-publish.mjs --max-create=5       # 下書きが足りない分を新規作成する上限(既定5)
  *                                                     #   --max-create=0 で新規作成せず下書きの消化だけで終える
  *
  * --assist / --auto は「本棚のKindle下書きを使い切ってから、残りを新規作成に回す」。
@@ -1241,7 +1241,7 @@ async function main() {
     else if (MAX_CREATE <= 0) log(`\n残り ${rest.length}冊 は新規作成が必要ですが --max-create=0 のため作成しません`);
     else {
       log(`\n下書きで消化できなかった ${rest.length}冊 → 新規タイトル作成に切り替えます`);
-      log('  (新規作成は Amazon の 1日5冊 の作成上限を消費し、OTP 再認証が出ることがあります)');
+      log('  (新規作成は Amazon の【週間】タイトル作成枠を消費し、OTP 再認証が出ることがあります)');
       await runCreate(c, page, s3, rest, MAX_CREATE);
     }
     await page.waitForTimeout(2000); await ctx.close(); await c.end(); return;

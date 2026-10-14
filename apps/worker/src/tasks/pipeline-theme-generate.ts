@@ -7,6 +7,7 @@ import type {
   MarketerThemeOutput,
   ThemeCandidate as MarketerThemeCandidate,
 } from '@a2p/contracts/agents/marketer';
+import { resolveCandidateGenre } from '@a2p/contracts/genres';
 import { NotFoundError, ValidationError } from '@a2p/contracts/errors';
 import { createLogger, type Logger } from '@a2p/contracts/logger';
 import { prisma as defaultPrisma } from '@a2p/db';
@@ -341,9 +342,19 @@ export function mapCandidateToRow(args: {
   return {
     account_id: args.accountId,
     theme_session_id: args.themeSessionId,
-    // DB.theme_candidates.genre は NOT NULL string。genre が null の場合は 'practical'
-    // を fallback とする (UI 側で必ず指定させる前提だが、防御的に既定値を設定)。
-    genre: args.genre ?? 'practical',
+    // DB.theme_candidates.genre は NOT NULL string。
+    // 2026-10-14 修正: 以前はここで `args.genre ?? 'practical'` としており、
+    // ジャンル横断で企画させる日次自動生成 (genre=null) の候補が **全て実用書**
+    // として保存されていた (本番実測: practical 70 件中 小説 3・競馬 8 が誤り)。
+    // 以降は 明示指定 → Marketer の申告 → 本文からの推定 → 'practical' の順に決める。
+    genre: resolveCandidateGenre({
+      explicit: args.genre,
+      declared: args.candidate.genre ?? null,
+      title: args.candidate.title,
+      subtitle: args.candidate.subtitle ?? null,
+      // hook はフィクション判定にのみ使われる (市場分析の長文なのでジャンル語照合には不向き)。
+      context: args.candidate.hook,
+    }),
     title: args.candidate.title,
     subtitle: args.candidate.subtitle ?? null,
     hook: args.candidate.hook,

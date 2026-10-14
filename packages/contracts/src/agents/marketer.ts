@@ -148,6 +148,15 @@ export const ThemeCandidateSchema = z.object({
   hook: z.string().min(1).max(800),
   /** 想定読者 (docs/05 §6.3.1)。F-001: 「想定読者」。 */
   target_reader: z.string().min(1).max(300),
+  /**
+   * 候補ごとのジャンル slug (任意)。**ジャンル横断で企画させる場合の一次情報**。
+   *
+   * 2026-10-14: genre 未指定 (日次自動生成) の候補は保存時に一律 'practical' が
+   * 刻印され、ラノベ・小説・競馬本まで実用書ルーブリックで執筆/採点されていた。
+   * Marketer は自分が何の本を企画したか分かっているので、候補ごとに申告させる。
+   * カタログ外の値も通し (loose)、採用判断は `resolveCandidateGenre` が行う。
+   */
+  genre: z.preprocess(optionalText, GenreValueSchema.optional()),
   /** 参考競合書籍リスト → DB `competitors_json`。F-001: 「参考競合 ASIN」。 */
   competitors: z.array(ThemeCompetitorSchema).default([]),
   /** Marketer 算出シグナル → DB `signals_json`。 */

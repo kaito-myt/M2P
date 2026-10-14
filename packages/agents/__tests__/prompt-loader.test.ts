@@ -380,3 +380,72 @@ describe('loadActivePrompt — {genre_guidance} 注入', () => {
     expect(r.template).toBe('ジャンル「歴史・教養」の読者');
   });
 });
+
+// ---------------------------------------------------------------------------
+// 書式ルール注入 (2026-10-14: 小説 17 冊に `##` 見出しが混入した障害の回帰テスト)
+// ---------------------------------------------------------------------------
+
+describe('loadActivePrompt — 書式トークン注入 (フィクション/実用書の分岐)', () => {
+  function repoWith(role: string, body: string) {
+    return makePromptRepo([
+      { id: 'p-fmt', role, genre: null, version: 1, body, status: 'active' },
+    ]);
+  }
+
+  it('{writer_format_rules}: 小説は「見出しを一切入れない」「だ・である調」になる', async () => {
+    const repo = repoWith('writer', '# writer\n\n{writer_format_rules}\n');
+    const r = await loadActivePrompt('writer', 'light_novel', { prisma: repo });
+    expect(r.template).not.toContain('{writer_format_rules}');
+    expect(r.template).toContain('本文に見出しを一切入れない');
+    expect(r.template).toContain('「だ・である」調');
+    // 実用書の書式規則が混ざってはいけない (これが混ざって矛盾し障害になった)。
+    expect(r.template).not.toContain('「ですます」調で統一する');
+    expect(r.template).not.toContain('`## ` 見出しとして用いる');
+  });
+
+  it('{writer_format_rules}: 実用書は従来どおり「ですます調」「## 小見出し」', async () => {
+    const repo = repoWith('writer', '# writer\n\n{writer_format_rules}\n');
+    const r = await loadActivePrompt('writer', 'health', { prisma: repo });
+    expect(r.template).toContain('「ですます」調で統一する');
+    expect(r.template).toContain('`## ` 見出しとして用いる');
+    expect(r.template).not.toContain('本文に見出しを一切入れない');
+  });
+
+  it('{editor_format_rules}: 小説は だ・である調 に揃え、見出しを外す', async () => {
+    const repo = repoWith('editor', '# editor\n\n{editor_format_rules}\n');
+    const r = await loadActivePrompt('editor', 'novel', { prisma: repo });
+    // 校閲が「ですます調に揃える」をやると、小説の地の文が実用書に戻ってしまう。
+    expect(r.template).not.toContain('「ですます」調に揃える');
+    expect(r.template).toContain('「だ・である」調に揃える');
+    expect(r.template).toContain('見出し記号を外して');
+  });
+
+  it('{editor_format_rules}: 実用書は ですます調 に揃える', async () => {
+    const repo = repoWith('editor', '# editor\n\n{editor_format_rules}\n');
+    const r = await loadActivePrompt('editor', 'business', { prisma: repo });
+    expect(r.template).toContain('「ですます」調に揃える');
+  });
+
+  it('{judge_rubric_note}: 小説は実用書の基準で採点させない', async () => {
+    const repo = repoWith('judge', '# judge\n\n{judge_rubric_note}\n');
+    const r = await loadActivePrompt('judge', 'mystery', { prisma: repo });
+    expect(r.template).toContain('実用書の基準で採点してはならない');
+    expect(r.template).toContain('物語としての牽引力');
+  });
+
+  it('{judge_rubric_note}: 実用書はベネフィット明確性で採点する', async () => {
+    const repo = repoWith('judge', '# judge\n\n{judge_rubric_note}\n');
+    const r = await loadActivePrompt('judge', 'practical', { prisma: repo });
+    expect(r.template).toContain('実用書系');
+    expect(r.template).not.toContain('実用書の基準で採点してはならない');
+  });
+
+  it('複数トークンが同一本文にあっても全て注入される', async () => {
+    const repo = repoWith('writer', '{genre_label}\n{genre_guidance}\n{writer_format_rules}');
+    const r = await loadActivePrompt('writer', 'horror', { prisma: repo });
+    expect(r.template).toContain('ホラー・怪談');
+    expect(r.template).toContain('【ジャンル方針：ホラー・怪談】');
+    expect(r.template).toContain('本文に見出しを一切入れない');
+    expect(r.template).not.toMatch(/\{[a-z_]+\}/);
+  });
+});

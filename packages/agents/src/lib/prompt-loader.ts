@@ -16,7 +16,13 @@
  */
 import { ConfigError } from '@a2p/contracts/errors';
 import type { AgentRole, Genre } from '@a2p/contracts/agents';
-import { genreGuidance, genreLabel } from '@a2p/contracts/agents';
+import {
+  editorFormatRules,
+  genreGuidance,
+  genreLabel,
+  judgeRubricNote,
+  writerFormatRules,
+} from '@a2p/contracts/agents';
 import { prisma as defaultPrisma } from '@a2p/db';
 
 export interface LoadedPrompt {
@@ -114,18 +120,33 @@ export async function loadActivePrompt(
   };
 }
 
+/** 実行時にジャンルから解決するトークン一覧 (本文に出てこないものは無視される)。 */
+const GENRE_TOKENS: ReadonlyArray<readonly [string, (g: Genre | null) => string]> = [
+  ['genre_guidance', (g) => genreGuidance(g)],
+  ['genre_label', (g) => genreLabel(g) ?? '汎用'],
+  // 2026-10-14: 書式 (文体・見出し・箇条書き) は役割プロンプト本文に焼き込むと
+  // フィクションと衝突するため、ここから注入する。詳細は contracts/genres.ts の
+  // 「形式ルール」節を参照。
+  ['writer_format_rules', (g) => writerFormatRules(g)],
+  ['editor_format_rules', (g) => editorFormatRules(g)],
+  ['judge_rubric_note', (g) => judgeRubricNote(g)],
+];
+
 /**
- * プロンプト本文中の `{genre_guidance}` / `{genre_label}` を、要求 genre の値で置換する。
+ * プロンプト本文中のジャンル依存トークン (`{genre_guidance}` / `{genre_label}` /
+ * `{writer_format_rules}` / `{editor_format_rules}` / `{judge_rubric_note}`) を、
+ * 要求 genre の値で置換する。
  * トークンが無い本文には無害 (置換なし)。fillPlaceholders より前に処理するため、
  * 各エージェントの placeholder 差込では未充填警告が出ない。
  */
 export function injectGenreTokens(body: string, genre: Genre | null): string {
-  if (!body.includes('{genre_guidance}') && !body.includes('{genre_label}')) {
-    return body;
+  let out = body;
+  for (const [token, resolve] of GENRE_TOKENS) {
+    const needle = `{${token}}`;
+    if (!out.includes(needle)) continue;
+    out = out.split(needle).join(resolve(genre));
   }
-  return body
-    .replace(/\{genre_guidance\}/g, genreGuidance(genre))
-    .replace(/\{genre_label\}/g, genreLabel(genre) ?? '汎用');
+  return out;
 }
 
 // ---------------------------------------------------------------------------
