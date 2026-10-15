@@ -79,6 +79,8 @@ function makeMockPrisma(overrides?: {
   confirmedSamples?: Array<{ year_month: string; kenp_read: number; kenp_royalty_jpy: number }>;
   /** 既存行の KENP 確定金額 (book_id → 円) */
   existingKenpConfirmed?: Record<string, number>;
+  /** 運営者設定の KENP 推計レート (円/頁) */
+  kenpSetting?: number | null;
 }) {
   const runUpdates: Array<Parameters<SalesFetchPrisma['salesFetchRun']['update']>[0]> = [];
   const upserts: Array<Parameters<SalesFetchPrisma['salesRecord']['upsert']>[0]> = [];
@@ -120,6 +122,9 @@ function makeMockPrisma(overrides?: {
         );
       }),
       upsert: vi.fn().mockImplementation((a) => { upserts.push(a); return Promise.resolve({}); }),
+    },
+    appSettings: {
+      findUnique: vi.fn().mockResolvedValue({ kenp_rate_jpy_per_page: overrides?.kenpSetting ?? null }),
     },
     modelCatalog: { findFirst: vi.fn().mockResolvedValue({ fx_rate_usd_jpy: 150 }) },
   };
@@ -183,6 +188,30 @@ describe('runSalesFetch (auto-fetch Phase2)', () => {
       expect(upserts[0]!.create.royalty_jpy).toBe(558 + 543); // 1000 頁 × 0.5426
       expect(upserts[0]!.create.kenp_royalty_estimated_jpy).toBe(543);
       expect(upserts[0]!.create.kenp_royalty_jpy).toBe(0);
+    });
+
+    it('確定月が無くても運営者設定レートで推計する (推計として計上・確定 KENP は 0)', async () => {
+      const { db, upserts } = makeMockPrisma({ kenpSetting: 0.5426 });
+      await run(db);
+      expect(upserts[0]!.create.kenp_royalty_estimated_jpy).toBe(543);
+      expect(upserts[0]!.create.kenp_royalty_jpy).toBe(0);
+      expect(upserts[0]!.create.royalty_jpy).toBe(558 + 543);
+    });
+
+    it('設定レートが帯外 (5000 円/頁) なら推計しない', async () => {
+      const { db, upserts } = makeMockPrisma({ kenpSetting: 5000 });
+      await run(db);
+      expect(upserts[0]!.create.kenp_royalty_estimated_jpy).toBe(0);
+      expect(upserts[0]!.create.royalty_jpy).toBe(558);
+    });
+
+    it('確定月のレートがあれば設定レートより優先する', async () => {
+      const { db, upserts } = makeMockPrisma({
+        kenpSetting: 0.9,
+        confirmedSamples: [{ year_month: '2026-09', kenp_read: 10000, kenp_royalty_jpy: 5000 }],
+      });
+      await run(db);
+      expect(upserts[0]!.create.kenp_royalty_estimated_jpy).toBe(500);
     });
 
     it('確定月が無ければ推計しない (¥0 のまま・推計分 0)', async () => {

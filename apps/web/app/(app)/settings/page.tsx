@@ -37,6 +37,7 @@ const DEFAULT_SETTINGS = {
   prompt_auto_approval_rollback_h: 24,
   sales_auto_fetch_enabled: false,
   sales_auto_fetch_cron: '0 17 * * *',
+  kenp_rate_jpy_per_page: null,
   kdp_auto_submit_enabled: false,
   kdp_submit_dry_run: false,
   kdp_creation_paused_until: null,

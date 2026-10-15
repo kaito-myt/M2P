@@ -71,6 +71,12 @@ export interface KdpSheetDiagnostic {
   superseded?: boolean;
   /** 統合シートの「ロイヤリティの種類」値の出現数 (有料/KENP 行の判別根拠の確認用) */
   typeValues?: Record<string, number>;
+  /**
+   * 統合シートの部数の内訳 (KDP ダッシュボードの「注文」との差の切り分け用)。
+   * orders = 注文数列 (有料行) / refunds = 払い戻し数列 / net = 採用値 (実質販売件数列の有料行) /
+   * ordersAll = 注文数列の全行合計 (KENP 行含む) / paidRows = 有料行数
+   */
+  unitsBreakdown?: { orders: number; refunds: number; net: number; ordersAll: number; paidRows: number };
   /** 当シートから出した行の合計 (units / kenp / royalty は元通貨のまま) */
   sums: { units: number; kenp: number; royalty: number };
 }
@@ -85,6 +91,7 @@ type ColumnKey =
   | 'royalty'
   | 'royalty_jpy'
   | 'royalty_type'
+  | 'refunds'
   | 'date';
 
 /** ヘッダ正規化: 小文字化 + 空白/記号/かっこ除去 (日本語はそのまま残す)。 */
@@ -143,7 +150,7 @@ const isDate = (h: string): boolean =>
  */
 function isKenpRowType(type: string, ordersCol: number): boolean {
   const t = type.trim().toLowerCase();
-  if (/kenp|既読|unlimited|アンリミ|koll|lending|貸出/.test(t)) return true;
+  if (/kenp|既読|unlimited|アンリミ|koll|lending|貸出|該当なし/.test(t)) return true;
   if (/^\d+(\.\d+)?\s*%$/.test(t)) return false;
   return ordersCol === 0;
 }
@@ -214,6 +221,7 @@ function mapCells(cells: unknown[]): Partial<Record<ColumnKey, number>> {
     if (map.royalty === undefined && isRoyaltyAmount(h)) map.royalty = ci;
     if (map.royalty_jpy === undefined && isRoyaltyJpy(h)) map.royalty_jpy = ci;
     if (map.royalty_type === undefined && isRoyaltyType(h)) map.royalty_type = ci;
+    if (map.refunds === undefined && (h.includes('払い戻し') || h.includes('refund'))) map.refunds = ci;
     if (map.currency === undefined && isCurrency(h)) map.currency = ci;
     if (map.marketplace === undefined && isMarketplace(h)) map.marketplace = ci;
     if (map.title === undefined && isTitle(h)) map.title = ci;
@@ -337,7 +345,10 @@ export function parseKdpReportWorkbook(buffer: Buffer | ArrayBuffer): ParseResul
       map.royalty !== undefined &&
       map.kenp_read !== undefined &&
       isDualUnitsKenp(normHeader(matrix[headerRow]?.[map.kenp_read]));
-    if (unified) diag.typeValues = {};
+    if (unified) {
+      diag.typeValues = {};
+      diag.unitsBreakdown = { orders: 0, refunds: 0, net: 0, ordersAll: 0, paidRows: 0 };
+    }
     unifiedNames.add(unified ? sheetName : '');
     sheetRows.set(sheetName, []);
     const out = sheetRows.get(sheetName)!;
@@ -372,6 +383,14 @@ export function parseKdpReportWorkbook(buffer: Buffer | ArrayBuffer): ParseResul
         const unitsCol = map.units_sold !== undefined ? parseNumber(cells[map.units_sold]) : 0;
         const isKenpRow = isKenpRowType(typeRaw, unitsCol);
         const royaltyU = parseNumber(cells[map.royalty!]);
+        const ub = diag.unitsBreakdown!;
+        ub.ordersAll += unitsCol;
+        if (!isKenpRow) {
+          ub.paidRows++;
+          ub.orders += unitsCol;
+          ub.net += value;
+          ub.refunds += map.refunds !== undefined ? parseNumber(cells[map.refunds]) : 0;
+        }
         const key = typeRaw || '(空)';
         if (Object.keys(diag.typeValues!).length < 12 || key in diag.typeValues!) {
           diag.typeValues![key] = (diag.typeValues![key] ?? 0) + 1;

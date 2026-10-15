@@ -2691,6 +2691,15 @@ export const messages = {
         workerRestartNote: '設定変更は worker 再起動後に反映されます。',
         cronErrorInvalid: '5 フィールドの cron 式を入力してください（例: 0 17 * * *）',
       },
+      kenpRate: {
+        title: 'KENP 推計レート',
+        subtitle:
+          'KDP は当月の KENP 収益を翌月15日頃に確定します。ここで入れる値は推計で、確定値が取得できれば自動で置き換わります。',
+        label: 'KENP レート (円/頁)',
+        placeholder: '例: 0.5426',
+        hint: 'KDP ダッシュボードの「推計ロイヤリティ − 有料分」÷「既読KENPC」から求められます。0.1〜1.0 の範囲で指定。空欄で未設定 (推計しない)。確定月から導出できたレートが常に優先されます。',
+        errorRange: 'KENP レートは 0.1〜1.0 円/頁で指定してください',
+      },
       promotionAutomation: {
         title: '販促自動運用',
         subtitle: '本が「出版済み」になったら販促プランを自動立案し、SNS/note/ブログへ自動投稿します',

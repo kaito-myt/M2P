@@ -50,6 +50,8 @@ export interface SettingsPageData {
   prompt_auto_approval_rollback_h: number;
   sales_auto_fetch_enabled: boolean;
   sales_auto_fetch_cron: string;
+  /** KENP 推計レート (円/頁)。未設定は null */
+  kenp_rate_jpy_per_page: number | null;
   promo_auto_on_publish_enabled: boolean;
   promo_auto_post_enabled: boolean;
   kdp_auto_submit_enabled: boolean;
@@ -81,6 +83,7 @@ interface RawAppSettings {
   prompt_auto_approval_rollback_h: number;
   sales_auto_fetch_enabled: boolean;
   sales_auto_fetch_cron: string;
+  kenp_rate_jpy_per_page?: unknown; // Decimal?
   promo_auto_on_publish_enabled: boolean;
   promo_auto_post_enabled: boolean;
   kdp_auto_submit_enabled: boolean;
@@ -175,6 +178,7 @@ export function serializeSettingsPage(
     prompt_auto_approval_rollback_h: raw.prompt_auto_approval_rollback_h,
     sales_auto_fetch_enabled: raw.sales_auto_fetch_enabled,
     sales_auto_fetch_cron: raw.sales_auto_fetch_cron,
+    kenp_rate_jpy_per_page: raw.kenp_rate_jpy_per_page == null ? null : toNumber(raw.kenp_rate_jpy_per_page),
     promo_auto_on_publish_enabled: raw.promo_auto_on_publish_enabled,
     promo_auto_post_enabled: raw.promo_auto_post_enabled,
     kdp_auto_submit_enabled: raw.kdp_auto_submit_enabled,

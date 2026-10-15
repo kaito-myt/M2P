@@ -7,6 +7,7 @@ import {
   parseKdpReportWorkbook,
   normalizeKdpRows,
   deriveKenpRateFromRecords,
+  resolveKenpRate,
   type KenpEffectiveRate,
 } from '@a2p/kdp-report';
 
@@ -116,6 +117,13 @@ export interface SalesFetchPrisma {
         source: string;
       };
     }): Promise<unknown>;
+  };
+  /** 運営者設定の KENP 推計レート (任意。無ければ設定値フォールバックなし) */
+  appSettings?: {
+    findUnique(args: {
+      where: { id: string };
+      select: { kenp_rate_jpy_per_page: true };
+    }): Promise<{ kenp_rate_jpy_per_page: unknown } | null>;
   };
   modelCatalog: {
     findFirst(args: {
@@ -356,7 +364,7 @@ export async function runSalesFetch(deps: SalesFetchDeps): Promise<SalesFetchRes
               skippedProtected > 0 ? `手動確定 ${skippedProtected} 件は上書き回避` : null,
               skippedEstimate > 0 ? `確定済み KENP ${skippedEstimate} 件は推計での上書き回避` : null,
               normalized.estimatedKenpRoyaltyJpy > 0
-                ? `KENP 推計 ¥${normalized.estimatedKenpRoyaltyJpy} を計上 (根拠 ${normalized.kenpRateUsed?.month} レート)`
+                ? `KENP 推計 ¥${normalized.estimatedKenpRoyaltyJpy} を計上 (根拠 ${normalized.kenpRateUsed?.month || "運営者設定"} レート)`
                 : null,
             ]
               .filter(Boolean)
@@ -374,6 +382,7 @@ export async function runSalesFetch(deps: SalesFetchDeps): Promise<SalesFetchRes
  * 確定月が無ければ null = 推計しない。取得失敗も推計しない側に倒す (既定レートは置かない)。
  */
 async function getKenpRate(db: SalesFetchPrisma, yearMonth: string): Promise<KenpEffectiveRate | null> {
+  let derived: KenpEffectiveRate | null;
   try {
     const confirmed = await db.salesRecord.findMany({
       where: {
@@ -383,10 +392,19 @@ async function getKenpRate(db: SalesFetchPrisma, yearMonth: string): Promise<Ken
       },
       select: { year_month: true, kenp_read: true, kenp_royalty_jpy: true, source: true },
     });
-    return deriveKenpRateFromRecords(confirmed, yearMonth);
+    derived = deriveKenpRateFromRecords(confirmed, yearMonth);
   } catch {
-    return null;
+    derived = null;
   }
+  // 月別ロイヤリティ PMR には KENP 金額が無く確定月から導出できないため、運営者設定をフォールバックにする
+  let setting: number | null = null;
+  try {
+    const row = await db.appSettings?.findUnique({ where: { id: 'singleton' }, select: { kenp_rate_jpy_per_page: true } });
+    setting = row?.kenp_rate_jpy_per_page == null ? null : Number(row.kenp_rate_jpy_per_page);
+  } catch {
+    setting = null;
+  }
+  return resolveKenpRate(derived, setting);
 }
 
 type DupRow = {

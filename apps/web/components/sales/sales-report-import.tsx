@@ -246,7 +246,7 @@ export function SalesReportImport({ accounts }: { accounts: AccountOption[] }) {
                         '¥' + preview.estimatedKenpRoyaltyJpy.toLocaleString('ja-JP'),
                       )}
                       {preview.kenpRateUsed &&
-                        ` ・ ${preview.kenpRateUsed.month} 確定レート ${preview.kenpRateUsed.jpyPerPage.toFixed(4)}円/頁`}
+                        ` ・ ${preview.kenpRateUsed.basis === 'setting' ? '運営者設定' : preview.kenpRateUsed.month + ' 確定'}レート ${preview.kenpRateUsed.jpyPerPage.toFixed(4)}円/頁`}
                     </span>
                   )}
                   {Object.keys(preview.unconvertedCurrencies).length > 0 && (

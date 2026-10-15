@@ -12,6 +12,7 @@ import { NotificationSettingsForm } from './notification-settings-form';
 import { ThresholdSettingsForm } from './threshold-settings-form';
 import { AutoApprovalToggle } from './auto-approval-toggle';
 import { SalesAutoFetchSettings } from './sales-auto-fetch-settings';
+import { KenpRateSettings } from './kenp-rate-settings';
 import { PromotionAutomationSettings } from './promotion-automation-settings';
 import { DataRetentionForm } from './data-retention-form';
 import { KdpSubmissionSettingsForm } from './kdp-submission-settings-form';
@@ -49,6 +50,8 @@ export function SettingsPageShell({ data }: SettingsPageShellProps) {
         initialEnabled={data.sales_auto_fetch_enabled}
         initialCron={data.sales_auto_fetch_cron}
       />
+
+      <KenpRateSettings initialRate={data.kenp_rate_jpy_per_page} />
 
       <PromotionAutomationSettings
         initialOnPublish={data.promo_auto_on_publish_enabled}

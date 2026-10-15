@@ -62,11 +62,14 @@ export interface KenpEffectiveRate {
   /** レートの根拠にした確定月 (YYYY-MM) */
   month: string;
   jpyPerPage: number;
-  /** 根拠の種類。detail = 明細に KENP 金額あり / allocated = 概要サマリ按分由来 (劣後)。 */
+  /** 根拠の種類。detail = 明細に KENP 金額あり / allocated = 概要サマリ按分由来 (劣後) / setting = 運営者設定 (最劣後)。 */
   basis?: KenpRateBasis;
 }
 
-export type KenpRateBasis = 'detail' | 'allocated';
+export type KenpRateBasis = 'detail' | 'allocated' | 'setting';
+
+/** 運営者設定レートの month 表記 (根拠月が無いため空)。 */
+export const KENP_RATE_SETTING_MONTH = '';
 
 /**
  * 妥当性ガード (docs/09 §10.2)。単月レートは実データで ±46% ぶれる
@@ -131,8 +134,9 @@ export function deriveKenpRate(
 }
 
 function isBetterRate(a: KenpEffectiveRate, b: KenpEffectiveRate): boolean {
-  const ra = a.basis === 'allocated' ? 1 : 0;
-  const rb = b.basis === 'allocated' ? 1 : 0;
+  const rank = (r: KenpEffectiveRate): number => (r.basis === 'setting' ? 2 : r.basis === 'allocated' ? 1 : 0);
+  const ra = rank(a);
+  const rb = rank(b);
   if (ra !== rb) return ra < rb;
   return a.month > b.month;
 }
@@ -420,4 +424,18 @@ export function deriveKenpRateFromRecords(
     byMonth.set(r.year_month, s);
   }
   return deriveKenpRate(Array.from(byMonth.values()), beforeMonth);
+}
+
+/**
+ * 呼び出し側 (DB) の実効レート解決: 確定月から導出したレートを優先し、無ければ運営者設定値を使う。
+ * 設定値も帯ガード (isPlausibleKenpRate) を通す。帯外/未設定は null (= 推計しない)。
+ * 設定値による推計も「推計」であり、確定値ではない (kenp_royalty_estimated_jpy に入る)。
+ */
+export function resolveKenpRate(
+  derived: KenpEffectiveRate | null,
+  settingJpyPerPage: number | null | undefined,
+): KenpEffectiveRate | null {
+  if (derived) return derived;
+  if (settingJpyPerPage == null || !isPlausibleKenpRate(settingJpyPerPage)) return null;
+  return { month: KENP_RATE_SETTING_MONTH, jpyPerPage: settingJpyPerPage, basis: 'setting' };
 }

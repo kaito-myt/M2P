@@ -18,6 +18,8 @@ export {
   normalizeCurrency,
   deriveKenpRate,
   deriveKenpRateFromRecords,
+  resolveKenpRate,
+  KENP_RATE_SETTING_MONTH,
   KENP_RATE_MIN_JPY_PER_PAGE,
   KENP_RATE_MAX_JPY_PER_PAGE,
   KENP_RATE_MAX_RATIO,

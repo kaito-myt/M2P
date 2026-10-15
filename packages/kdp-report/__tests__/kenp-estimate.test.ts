@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { deriveKenpRate, deriveKenpRateFromRecords, normalizeKdpRows, type KdpReportRow } from '../src/index.js';
+import { deriveKenpRate, deriveKenpRateFromRecords, normalizeKdpRows, resolveKenpRate, type KdpReportRow } from '../src/index.js';
 
 /**
  * 2026-10-15 実測の再現 (docs/09 §KENP 当月推計)。
@@ -261,5 +261,42 @@ describe('帯ガードの強制 (given 経路 / 上限 1.0 / 相対チェック)
       kenpRate: { month: '2026-10', jpyPerPage: 0.9 },
     });
     expect(res2.kenpRateUsed?.month).toBe('2026-09'); // 当月以降の given は不採用
+  });
+});
+
+describe('resolveKenpRate: 運営者設定レート (導出できないときのフォールバック)', () => {
+  it('確定月から導出できればそれを優先し、設定値は使わない', () => {
+    const derived = { month: '2026-09', jpyPerPage: 0.5, basis: 'detail' as const };
+    expect(resolveKenpRate(derived, 0.9)).toBe(derived);
+  });
+
+  it('導出できなければ設定値 (帯内) を使う。basis=setting', () => {
+    expect(resolveKenpRate(null, 0.5426)).toEqual({ month: '', jpyPerPage: 0.5426, basis: 'setting' });
+  });
+
+  it('設定値も帯ガードを通す: 帯外 / 未設定 / NaN は null (推計しない)', () => {
+    expect(resolveKenpRate(null, 5000)).toBeNull();
+    expect(resolveKenpRate(null, 0.05)).toBeNull();
+    expect(resolveKenpRate(null, null)).toBeNull();
+    expect(resolveKenpRate(null, Number.NaN)).toBeNull();
+  });
+
+  it('設定レートで 2026-10 の ¥1,708 → ¥3,211 になる。推計扱い (確定 KENP 金額は 0)', () => {
+    const res = normalizeKdpRows(octoberRows(), {
+      targetMonth: '2026-10',
+      kenpRate: resolveKenpRate(null, 0.5426),
+    });
+    expect(res.totals.royalty_jpy).toBe(3211);
+    expect(res.estimatedKenpRoyaltyJpy).toBe(1503);
+    expect(res.rows.every((r) => r.kenp_royalty_jpy === 0)).toBe(true);
+    expect(res.kenpRateUsed?.basis).toBe('setting');
+  });
+
+  it('設定レートよりレポート内の確定月 (明細金額) を優先する', () => {
+    const res = normalizeKdpRows([...septemberRows(), ...octoberRows()], {
+      targetMonth: '2026-10',
+      kenpRate: resolveKenpRate(null, 0.9),
+    });
+    expect(res.kenpRateUsed).toMatchObject({ month: '2026-09', basis: 'detail' });
   });
 });

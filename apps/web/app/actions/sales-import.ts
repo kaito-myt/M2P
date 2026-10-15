@@ -23,6 +23,7 @@ import { getSessionOrThrow } from '@/lib/auth-helpers';
 import { parseKdpReportWorkbook, type KdpReportKind } from '@/lib/kdp-sales/parse';
 import {
   deriveKenpRateFromRecords,
+  resolveKenpRate,
   normalizeKdpRows,
   type KenpEffectiveRate,
   type NormalizedSalesRow,
@@ -68,7 +69,7 @@ export interface SalesImportPreview {
 }
 
 /** model_catalog から USD→JPY の代表レートを取得 (無ければ 150 fallback)。 */
-/** 対象月より前の確定月 (推計でない KENP 金額) から実効レートを導出する。無ければ null。 */
+/** 対象月より前の確定月 (推計でない KENP 金額) から実効レートを導出し、無ければ運営者設定値。どちらも無ければ null。 */
 async function getKenpRate(yearMonth: string): Promise<KenpEffectiveRate | null> {
   const records = await prisma.salesRecord.findMany({
     where: {
@@ -78,7 +79,12 @@ async function getKenpRate(yearMonth: string): Promise<KenpEffectiveRate | null>
     },
     select: { year_month: true, kenp_read: true, kenp_royalty_jpy: true, source: true },
   });
-  return deriveKenpRateFromRecords(records, yearMonth);
+  const settings = await prisma.appSettings.findUnique({
+    where: { id: 'singleton' },
+    select: { kenp_rate_jpy_per_page: true },
+  });
+  const setting = settings?.kenp_rate_jpy_per_page == null ? null : Number(settings.kenp_rate_jpy_per_page);
+  return resolveKenpRate(deriveKenpRateFromRecords(records, yearMonth), setting);
 }
 
 async function getFxUsdJpy(): Promise<number> {

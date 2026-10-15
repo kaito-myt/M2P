@@ -237,3 +237,13 @@ describe('updateSettingsCore — audit_log API key safety', () => {
     expect(updateArg.data).not.toHaveProperty('api_key');
   });
 });
+
+describe('UpdateSettingsInputSchema: kenp_rate_jpy_per_page (帯ガード)', () => {
+  it('0.1〜1.0 と null は受理、帯外は拒否', async () => {
+    const { UpdateSettingsInputSchema } = await import('../../lib/settings-core');
+    expect(UpdateSettingsInputSchema.safeParse({ kenp_rate_jpy_per_page: 0.5426 }).success).toBe(true);
+    expect(UpdateSettingsInputSchema.safeParse({ kenp_rate_jpy_per_page: null }).success).toBe(true);
+    expect(UpdateSettingsInputSchema.safeParse({ kenp_rate_jpy_per_page: 5000 }).success).toBe(false);
+    expect(UpdateSettingsInputSchema.safeParse({ kenp_rate_jpy_per_page: 0.01 }).success).toBe(false);
+  });
+});

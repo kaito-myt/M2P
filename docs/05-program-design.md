@@ -975,6 +975,7 @@ model AppSettings {
   prompt_auto_approval_rollback_h   Int      @default(24)
   sales_auto_fetch_enabled          Boolean  @default(false)
   sales_auto_fetch_cron             String   @default("0 17 * * *") // 02:00 JST
+  kenp_rate_jpy_per_page            Decimal? @db.Decimal(6, 4) // 運営者設定の KENP 推計レート(円/頁)。帯 0.1〜1.0。docs/09 §10.7
   // docs/06 増分7: ToDo 自動承認。true=起票を(人手前提kind除き)即approved自動実行/false=proposedで人手承認待ち。
   org_auto_approve_tasks            Boolean  @default(true)
   // ※ org_* の自律運用フラグ(auto_plan/execute/ops_watch/finance_tick/kdp_auto_publish + 各cron)も存在。詳細は docs/06。
@@ -1492,6 +1493,7 @@ export const updateSettingsInput = z.object({
   prompt_auto_approval_rollback_h: z.number().int().min(1).max(168).optional(),
   sales_auto_fetch_enabled: z.boolean().optional(),
   sales_auto_fetch_cron: z.string().optional(),
+  kenp_rate_jpy_per_page: z.number().nullable().optional(), // 0.1〜1.0 のみ受理 (docs/09 §10.7)
   kdp_submit_timeout_minutes: z.number().int().min(1).max(60).optional(),
   kdp_submit_retry_count: z.number().int().min(0).max(5).optional(),
   job_log_retention_days: z.number().int().min(7).max(365).optional(),

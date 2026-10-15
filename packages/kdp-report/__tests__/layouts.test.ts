@@ -142,3 +142,29 @@ describe('従来の 2 シート構成 (回帰)', () => {
     expect(norm.totals.kenp_read).toBeGreaterThan(0);
   });
 });
+
+describe('統合シート: 実測の種類値「該当なし」と部数内訳の診断', () => {
+  it('KENP 行の種類=該当なし・収益=0 を KENP 行として読み、unitsBreakdown に 注文/払い戻し/採用値 を残す', () => {
+    const b = XLSX.utils.book_new();
+    const meta = ['販売期間', '10月 2026'];
+    const row = (a: number, orders: number, refunds: number, net: number, type: string, rev: number) =>
+      ['t', 'a', asin(a), MP, orders, refunds, net, type, 'x', 'JPY', '', '', '', '', rev];
+    XLSX.utils.book_append_sheet(
+      b,
+      XLSX.utils.aoa_to_sheet([
+        meta,
+        TOTAL_HEAD.map((h) => (h === '払い戻し数' ? '払い戻し数' : h)),
+        row(1, 4, 1, 3, '70%', 900), // 注文 4 / 払い戻し 1 / 実質 3
+        row(2, 3, 1, 2, '35%', 400),
+        row(3, 0, 0, 459, '該当なし', 0),
+      ]),
+      '総収益',
+    );
+    const parsed = parseKdpReportWorkbook(XLSX.write(b, { type: 'buffer', bookType: 'xlsx' }) as Buffer);
+    const d = parsed.sheetDiagnostics.find((x) => x.name === '総収益')!;
+    expect(d.typeValues).toEqual({ '70%': 1, '35%': 1, 該当なし: 1 });
+    expect(d.unitsBreakdown).toEqual({ orders: 7, refunds: 2, net: 5, ordersAll: 7, paidRows: 2 });
+    const norm = normalizeKdpRows(parsed.rows, { targetMonth: '2026-10' });
+    expect(norm.totals).toMatchObject({ units_sold: 5, kenp_read: 459, royalty_jpy: 1300 });
+  });
+});

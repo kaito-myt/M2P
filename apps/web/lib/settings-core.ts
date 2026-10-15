@@ -18,6 +18,7 @@ import {
   type ActionResult,
 } from '@a2p/contracts';
 import { Prisma } from '@a2p/db';
+import { isPlausibleKenpRate } from '@a2p/kdp-report';
 
 import type { AuthenticatedSession } from './auth-helpers';
 import { messages } from './messages';
@@ -39,6 +40,12 @@ export const UpdateSettingsInputSchema = z.object({
   prompt_auto_approval_rollback_h: z.number().int().min(1).max(168).optional(),
   sales_auto_fetch_enabled: z.boolean().optional(),
   sales_auto_fetch_cron: z.string().optional(),
+  // KENP 推計レート (円/頁)。null で未設定に戻す。帯ガード (0.1〜1.0) 外は拒否。
+  kenp_rate_jpy_per_page: z
+    .number()
+    .nullable()
+    .refine((v) => v === null || isPlausibleKenpRate(v), { message: 'KENP レートは 0.1〜1.0 円/頁で指定してください' })
+    .optional(),
   promo_auto_on_publish_enabled: z.boolean().optional(),
   promo_auto_post_enabled: z.boolean().optional(),
   kdp_auto_submit_enabled: z.boolean().optional(),
@@ -72,6 +79,7 @@ export interface AppSettingsRow {
   prompt_auto_approval_rollback_h: number;
   sales_auto_fetch_enabled: boolean;
   sales_auto_fetch_cron: string;
+  kenp_rate_jpy_per_page?: unknown;
   promo_auto_on_publish_enabled: boolean;
   promo_auto_post_enabled: boolean;
   kdp_auto_submit_enabled: boolean;
@@ -204,6 +212,9 @@ export async function updateSettingsCore(
     }
     if (data.sales_auto_fetch_cron !== undefined) {
       updateData.sales_auto_fetch_cron = data.sales_auto_fetch_cron;
+    }
+    if (data.kenp_rate_jpy_per_page !== undefined) {
+      updateData.kenp_rate_jpy_per_page = data.kenp_rate_jpy_per_page;
     }
     if (data.promo_auto_on_publish_enabled !== undefined) {
       updateData.promo_auto_on_publish_enabled = data.promo_auto_on_publish_enabled;

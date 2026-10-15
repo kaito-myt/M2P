@@ -1253,6 +1253,9 @@ model AppSettings {
   prompt_auto_approval_rollback_h Int       @default(24)
   sales_auto_fetch_enabled        Boolean   @default(false)
   sales_auto_fetch_cron           String    @default("0 17 * * *") // 02:00 JST
+  // 運営者が設定する KENP 推計レート (円/頁)。確定月から導出できないときのフォールバック。null = 未設定 (推計しない)。
+  // 設定値による計上もあくまで推計 (kenp_royalty_estimated_jpy)。帯 0.1〜1.0 のみ受理 (docs/09 §10.2/§10.7)。
+  kenp_rate_jpy_per_page          Decimal?  @db.Decimal(6, 4)
   // F-052: 販促自動運用。入稿(publish)で販促プランを自動立案し投稿キューを自動生成するか。
   promo_auto_on_publish_enabled   Boolean   @default(false)
   // F-052: 期限到来した投稿を自動投稿するディスパッチャ cron を有効化するマスタスイッチ。
