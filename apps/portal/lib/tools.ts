@@ -26,12 +26,14 @@ export interface PlatformTool {
 }
 
 /**
- * 現状ツールは A2P のみ。今後 note 記事ツール等を追加していく。
+ * A2P (Amazon KDP 書籍) / ANP (note 記事) / 3DP (3Dモデル商材)。
  * A2P の URL は `NEXT_PUBLIC_TOOL_A2P_URL`（未設定時はローカル dev の 3001）。
+ * ANP / 3DP は URL 未設定なら「準備中」で点灯しない（壊れたリンクを出さない）。
  */
 export function getTools(): PlatformTool[] {
   const a2pUrl = process.env.NEXT_PUBLIC_TOOL_A2P_URL || 'http://localhost:3001';
   const anpUrl = process.env.NEXT_PUBLIC_TOOL_ANP_URL; // 未設定=準備中
+  const tdpUrl = process.env.NEXT_PUBLIC_TOOL_3DP_URL; // 未設定=準備中 (本番予定 3dp.m2p.tools)
   return [
     {
       id: 'a2p',
@@ -53,6 +55,17 @@ export function getTools(): PlatformTool[] {
       logo: '/tools/anp.png',
       status: anpUrl ? 'live' : 'coming_soon',
       accent: '#2dd4bf',
+    },
+    {
+      id: '3dp',
+      name: '3DP',
+      description:
+        '3Dモデル商材（ワールド用プロップ・家具・小物／アクセサリ／改変用テクスチャ）を企画・生成・検査して BOOTH で販売（3D Products）。',
+      url: tdpUrl,
+      icon: 'Box',
+      logo: '/tools/3dp.png',
+      status: tdpUrl ? 'live' : 'coming_soon',
+      accent: '#22c3d6',
     },
   ];
 }

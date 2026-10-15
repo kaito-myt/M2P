@@ -60,15 +60,16 @@ describe('computePlatformCost', () => {
     expect(d.callsThisMonth).toBe(256);
 
     const byTool = Object.fromEntries(d.byTool.map((t) => [t.tool, t.cost_jpy]));
-    expect(byTool).toEqual({ anp: 1500, m2p: 400, a2p: 100 });
-    // コスト降順
-    expect(d.byTool.map((t) => t.tool)).toEqual(['anp', 'm2p', 'a2p']);
+    // 3DP は第3ツールとして TOOL_KEYS に入っているので、使っていなくても 0 円の行が出る。
+    expect(byTool).toEqual({ anp: 1500, m2p: 400, a2p: 100, '3dp': 0 });
+    // コスト降順 (0 円の 3dp は末尾)
+    expect(d.byTool.map((t) => t.tool)).toEqual(['anp', 'm2p', 'a2p', '3dp']);
     expect(Math.round(d.byTool[0]!.sharePct)).toBe(75);
   });
 
   it('全ツールが常に行として出る (0 円でも消えない)', () => {
     const d = computePlatformCost({ usage: [row('2026-10-01', 'a2p', 10)], now: NOW, budgetJpy: 1000 });
-    expect(d.byTool).toHaveLength(3);
+    expect(d.byTool).toHaveLength(4);
     expect(d.byTool.find((t) => t.tool === 'anp')?.cost_jpy).toBe(0);
     expect(d.byTool.find((t) => t.tool === 'anp')?.sharePct).toBe(0);
   });

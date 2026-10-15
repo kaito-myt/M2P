@@ -1,9 +1,11 @@
-import { BookOpen, FileText, LayoutGrid, ArrowUpRight } from 'lucide-react';
+import { BookOpen, Box, FileText, LayoutGrid, ArrowUpRight } from 'lucide-react';
 import type { CSSProperties } from 'react';
 import type { PlatformTool } from '@/lib/tools';
 
+/** `PlatformTool.icon` の解決先。logo 未設定のツールのフォールバックに使う。 */
 const ICONS: Record<string, typeof BookOpen> = {
   BookOpen,
+  Box,
   FileText,
   LayoutGrid,
 };

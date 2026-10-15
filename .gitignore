@@ -68,4 +68,7 @@ scripts/kobo/*.png
 # note (ANP) セッション取り込み — 秘密情報 / 偵察スクショ (railway up のアップロード肥大防止)
 scripts/.note-userdata*/
 scripts/anp/out/
+
+# 3DP — ロゴ生成の生出力 (採用した版は apps/ 配下に配置済み。生出力は 1MB 超あるので持たない)
+scripts/3dp/out/
 scripts/paperback/.auto.lock
