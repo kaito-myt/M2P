@@ -42,6 +42,7 @@ import {
 import type { LoggingContext, WithTokenLoggingDeps } from '../lib/with-token-logging.js';
 import type { LoadModelAssignmentDeps } from '../lib/load-model-assignment.js';
 import { withPersonaVisualRules } from '../lib/persona-visual.js';
+import { operatorInstructionLines } from './account-context.js';
 import {
   generateImage as defaultGenerateImage,
   type GenerateImageFn,
@@ -163,7 +164,6 @@ export function buildUserMessage(brief: NoteAccountDesignBrief): string {
     brief.reference_accounts && brief.reference_accounts.length > 0
       ? `【参考にしたいアカウント】\n${brief.reference_accounts.map((r) => ` - ${r}`).join('\n')}`
       : '',
-    brief.feedback ? `【前回案への追加指示 (必ず反映すること)】\n${brief.feedback}` : '',
     '',
     '設計要件:',
     '- display_name_candidates: 覚えやすく検索されやすい表示名を3件。',
@@ -195,6 +195,9 @@ export function buildUserMessage(brief: NoteAccountDesignBrief): string {
     '',
     '出力形式: 上記フィールドを持つ JSON のみを返してください。JSON 以外の前置き・説明・',
     'コードフェンスは出力しないこと。日本語で出力する。',
+    // 追加指示は**最後**に置く。前方に置くと後続の「設計要件」に負けて反映されない
+    // (2026-10-15 運営者指摘「指示してから作りなおしても反映されない」)。
+    ...operatorInstructionLines(brief.feedback),
   ];
   return lines.filter((l) => l !== '').join('\n');
 }
@@ -297,7 +300,6 @@ export function buildProfileUserMessage(input: NoteAccountProfileInput): string 
     input.character_sheet ? `【キャラクター設定】\n${input.character_sheet}` : '',
     `【人物設定】${personaHint}`,
     input.existing_bio ? `【現在の自己紹介文 (これを改善する)】\n${input.existing_bio}` : '',
-    input.instruction ? `【運営者からの追加指示 (必ず反映)】\n${input.instruction}` : '',
     input.reference_images && input.reference_images.length > 0
       ? `【添付された参考画像 ${input.reference_images.length} 枚】この画像の雰囲気・配色・構図・世界観を読み取り、avatar_prompt / header_prompt に具体的な言葉で反映してください (人物の顔は使わない)。bio の生成でも参考にしてよい。`
       : '',
@@ -314,6 +316,7 @@ export function buildProfileUserMessage(input: NoteAccountProfileInput): string 
     '',
     '出力形式: {"bio": "...", "bio_alternatives": ["...", "..."], "avatar_prompt": "...", "header_prompt": "...", "persona_type": "person"|"brand"}',
     'の JSON のみを返してください。JSON 以外の前置き・説明・コードフェンスは出力しないこと。日本語で出力する。',
+    ...operatorInstructionLines(input.instruction),
   ];
   return lines.filter((l) => l !== '').join('\n');
 }
@@ -417,7 +420,6 @@ export function buildEditorialUserMessage(input: NoteAccountProfileInput, existi
     input.character_sheet ? `【キャラクター設定】` + String.fromCharCode(10) + input.character_sheet : '',
     input.existing_bio ? `【自己紹介文】${input.existing_bio}` : '',
     existingPolicy ? `【現在の方針 (これを改善する。見出し【主なテーマ】等の区分はそのまま使う)】` + String.fromCharCode(10) + existingPolicy : '',
-    input.instruction ? `【運営者からの追加指示 (必ず反映)】` + String.fromCharCode(10) + input.instruction : '',
     input.reference_images && input.reference_images.length > 0
       ? `【添付された参考画像 ${input.reference_images.length} 枚】参考にしたい記事/アカウントのスクリーンショット等。文体・構成・見せ方の特徴を読み取って方針に反映すること。`
       : '',
@@ -438,6 +440,7 @@ export function buildEditorialUserMessage(input: NoteAccountProfileInput, existi
     '',
     '出力形式: {"target_reader": "...", "tone": "...", "sections": {"themes": "...", "format": "...", "style_rules": "...", "cta": "...", "quality": "...", "seo": "...", "other": "..."}, "rationale": "..."} の JSON のみ。',
     'JSON 以外の前置き・説明・コードフェンスは出力しないこと。日本語で出力する。',
+    ...operatorInstructionLines(input.instruction),
   ];
   return lines.filter((l) => l !== '').join(String.fromCharCode(10));
 }
@@ -542,7 +545,6 @@ export function buildPromotionPolicyUserMessage(input: NotePromotionPolicyInput)
     a.editorial_policy ? `【記事の方針・トンマナ】` + String.fromCharCode(10) + a.editorial_policy : '',
     ex?.policy ? `【現在の施策 (これを改善する)】` + String.fromCharCode(10) + ex.policy : '',
     ex && ex.hashtags.length > 0 ? `【現在のハッシュタグ】${ex.hashtags.join(' ')}` : '',
-    input.instruction ? `【運営者からの追加指示 (必ず反映)】` + String.fromCharCode(10) + input.instruction : '',
     input.reference_images && input.reference_images.length > 0
       ? `【添付された参考画像 ${input.reference_images.length} 枚】参考にしたい投稿/アカウントのスクリーンショット等。見せ方・構成・トーンの特徴を読み取って施策に反映すること。`
       : '',
@@ -559,6 +561,7 @@ export function buildPromotionPolicyUserMessage(input: NotePromotionPolicyInput)
     '',
     '出力形式: {"policy": "...", "hashtags": ["..."], "posts_per_week": 5, "cta": "...", "rationale": "..."} の JSON のみ。',
     'JSON 以外の前置き・説明・コードフェンスは出力しないこと。日本語で出力する。',
+    ...operatorInstructionLines(input.instruction),
   ];
   return lines.filter((l) => l !== '').join(String.fromCharCode(10));
 }

@@ -22,6 +22,8 @@ const {
   generateNoteAccountDesignImages,
   generateNoteAccountProfile,
   buildProfileUserMessage,
+  buildEditorialUserMessage,
+  buildPromotionPolicyUserMessage,
 } = await import('../../src/anp/strategist.js');
 import type {
   PlanNoteAccountDesignDeps,
@@ -143,10 +145,22 @@ describe('buildUserMessage', () => {
     expect(msg).toContain('メンタルケア×習慣化');
   });
 
-  it('feedback があれば「必ず反映すること」の指示付きで含める', () => {
+  it('feedback は「最優先」として設計要件より後ろに置く', () => {
+    // 2026-10-15: 運営者「指示してから作りなおしても反映されない」。
+    // 原因は配線ではなく**位置**で、追加指示が前方にあり後続の「設計要件」
+    // (字数・構成・含める項目の細かい既定) に負けていた。順序そのものを検証する。
     const msg = buildUserMessage(brief({ feedback: 'もっとカジュアルなトーンにしたい' }));
     expect(msg).toContain('もっとカジュアルなトーンにしたい');
-    expect(msg).toContain('必ず反映すること');
+    expect(msg).toContain('これが最優先');
+    expect(msg.indexOf('もっとカジュアルなトーンにしたい')).toBeGreaterThan(msg.indexOf('設計要件:'));
+    expect(msg).toContain('この追加指示に従ってください');
+    // 字数上限と出力形式は譲らない (note 側の制約なので上書きされると保存で弾かれる)。
+    expect(msg).toContain('出力形式 (JSON) と字数上限は媒体側の制約なので必ず守ること');
+  });
+
+  it('feedback が無ければ最優先ブロックを出さない', () => {
+    const msg = buildUserMessage(brief());
+    expect(msg).not.toContain('これが最優先');
   });
 
   it('persona_type=person の希望をヒントに含める', () => {
@@ -253,5 +267,53 @@ describe('generateNoteAccountProfile (F-ANP-05)', () => {
     expect(msg).toContain('カジュアルに');
     expect(msg).toContain('140 字以内');
     expect(msg).toContain('ブランド型');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 2026-10-15 — 運営者の追加指示が反映されない件 (位置の問題)
+//
+// 運営者指摘「AIへの指示をしてから戦略を作りなおしているのにあんまり反映されない」。
+// anp.strategist の 4 つのプロンプトすべてで、追加指示が前方にあり後続の
+// 「要件:」(字数・構成・含める項目の細かい既定) に負けていた。
+// 2026-10-14 の art_direction / A2P writer と同じ構図なので、**順序を固定するテスト**を置く。
+// ---------------------------------------------------------------------------
+describe('運営者の追加指示は要件より後ろに置く (4 プロンプト共通)', () => {
+  const INSTRUCTION = '有料記事の比率を上げて単価も 1,500 円まで引き上げたい';
+
+  it('プロフィール素材 (buildProfileUserMessage)', () => {
+    const msg = buildProfileUserMessage({
+      display_name: 'A', niche: 'B', persona_type: 'brand', instruction: INSTRUCTION,
+    });
+    expect(msg.indexOf(INSTRUCTION)).toBeGreaterThan(msg.indexOf('要件:'));
+    expect(msg).toContain('これが最優先');
+  });
+
+  it('記事の方針・トンマナ (buildEditorialUserMessage)', () => {
+    const msg = buildEditorialUserMessage(
+      { display_name: 'A', niche: 'B', persona_type: 'auto', instruction: INSTRUCTION },
+      '現在の方針',
+    );
+    expect(msg.indexOf(INSTRUCTION)).toBeGreaterThan(msg.indexOf('要件:'));
+    // 「現在の方針を改善する」より後ろ = 改善指示そのものを上書きできる位置。
+    expect(msg.indexOf(INSTRUCTION)).toBeGreaterThan(msg.indexOf('現在の方針'));
+    expect(msg).toContain('これが最優先');
+  });
+
+  it('販促施策 (buildPromotionPolicyUserMessage)', () => {
+    const msg = buildPromotionPolicyUserMessage({
+      channel: 'x',
+      account: { display_name: 'A', niche: 'B' },
+      instruction: INSTRUCTION,
+    });
+    expect(msg.indexOf(INSTRUCTION)).toBeGreaterThan(msg.indexOf('要件:'));
+    expect(msg).toContain('これが最優先');
+  });
+
+  it('指示が空文字/空白だけなら最優先ブロックを出さない', () => {
+    const msg = buildProfileUserMessage({
+      display_name: 'A', niche: 'B', persona_type: 'brand', instruction: '   ',
+    });
+    expect(msg).not.toContain('これが最優先');
   });
 });
