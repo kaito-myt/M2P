@@ -29,8 +29,17 @@ import type { KdpReportRow, KdpMonthlySummary } from './normalize.js';
  */
 export type KdpReportKind = 'confirmed' | 'estimate';
 
+/**
+ * シート構成。
+ *  - 'unified': 「総収益」型の統合シート (ロイヤリティの種類 + 実質販売件数または既読 KENP + 収益) がある。
+ *    有料・KENP の両行と金額を単独で持つため**これだけを正**とし、他の ASIN 別シートは重複なので集計しない。
+ *  - 'legacy' : 従来の 2 シート (電子書籍 + 既読 KENPC) / Estimator / 単一シート。全シートを集計する。
+ */
+export type KdpReportLayout = 'unified' | 'legacy';
+
 export interface ParseResult {
   rows: KdpReportRow[];
+  layout: KdpReportLayout;
   /** 「概要」シート由来の月次サマリ (Estimator の KENP ロイヤリティ按分に使う) */
   monthlySummaries: KdpMonthlySummary[];
   /** レポート種別 (確定 or 見込み)。「概要」シートを持つものを Estimator=見込みとみなす。 */
@@ -58,6 +67,10 @@ export interface KdpSheetDiagnostic {
   columns: Record<string, number>;
   month: string | null;
   rowsEmitted: number;
+  /** 統合シート (総収益) があるため集計から除外したシート */
+  superseded?: boolean;
+  /** 統合シートの「ロイヤリティの種類」値の出現数 (有料/KENP 行の判別根拠の確認用) */
+  typeValues?: Record<string, number>;
   /** 当シートから出した行の合計 (units / kenp / royalty は元通貨のまま) */
   sums: { units: number; kenp: number; royalty: number };
 }
@@ -71,6 +84,7 @@ type ColumnKey =
   | 'kenp_read'
   | 'royalty'
   | 'royalty_jpy'
+  | 'royalty_type'
   | 'date';
 
 /** ヘッダ正規化: 小文字化 + 空白/記号/かっこ除去 (日本語はそのまま残す)。 */
@@ -111,11 +125,28 @@ const isRoyaltyAmount = (h: string): boolean =>
   h === 'ロイヤルティ' ||
   h === 'royalty' ||
   h === '推定ロイヤリティ' ||
-  h === 'ロイヤリティ額';
+  h === 'ロイヤリティ額' ||
+  h === '収益'; // 4 シート構成「総収益」の金額列 (2026-10 本番ログで確認)
+/** 「ロイヤリティの種類」列 (有料行は 70% 等、KENP 行は別表記)。 */
+const isRoyaltyType = (h: string): boolean => h === 'ロイヤリティの種類' || h === 'royaltytype';
+/** 「実質販売件数または既読 KENP」: 有料行では部数、KENP 行ではページ数という二重の意味を持つ列。 */
+const isDualUnitsKenp = (h: string): boolean =>
+  h.includes('kenp') && (h.includes('販売') || h.includes('注文') || h.includes('netunits'));
 /** 「概要」シートの通貨別ロイヤリティ列のうち JPY 建て。 */
 const isRoyaltyJpy = (h: string): boolean => h === 'ロイヤリティjpy' || h === 'royaltyjpy';
 const isDate = (h: string): boolean =>
   h.includes('発生日') || h === '日付' || h.includes('date') || h === '販売期間' || h === '日';
+
+/**
+ * 統合シートの行が KENP 行か。種類が % 表記なら有料、KENP/既読/Unlimited 系の語なら KENP。
+ * どちらでもない表記は、注文数列が 0 なら KENP とみなす (種類の実表記は本番ログ typeValues で確認する)。
+ */
+function isKenpRowType(type: string, ordersCol: number): boolean {
+  const t = type.trim().toLowerCase();
+  if (/kenp|既読|unlimited|アンリミ|koll|lending|貸出/.test(t)) return true;
+  if (/^\d+(\.\d+)?\s*%$/.test(t)) return false;
+  return ordersCol === 0;
+}
 
 /** 数値パース: ¥ $ , スペース 全角 を除去して Number 化。空/不正は 0。 */
 function parseNumber(v: unknown): number {
@@ -182,6 +213,7 @@ function mapCells(cells: unknown[]): Partial<Record<ColumnKey, number>> {
     if (map.kenp_read === undefined && isKenp(h)) map.kenp_read = ci;
     if (map.royalty === undefined && isRoyaltyAmount(h)) map.royalty = ci;
     if (map.royalty_jpy === undefined && isRoyaltyJpy(h)) map.royalty_jpy = ci;
+    if (map.royalty_type === undefined && isRoyaltyType(h)) map.royalty_type = ci;
     if (map.currency === undefined && isCurrency(h)) map.currency = ci;
     if (map.marketplace === undefined && isMarketplace(h)) map.marketplace = ci;
     if (map.title === undefined && isTitle(h)) map.title = ci;
@@ -246,6 +278,8 @@ export function parseKdpReportWorkbook(buffer: Buffer | ArrayBuffer): ParseResul
   const sheetsSeen: string[] = [];
   const sheetsParsed: string[] = [];
   const sheetDiagnostics: KdpSheetDiagnostic[] = [];
+  const sheetRows = new Map<string, KdpReportRow[]>();
+  const unifiedNames = new Set<string>();
   const clip = (cells: unknown[]): string[] =>
     cells.slice(0, 16).map((c) => String(c ?? '').slice(0, 40));
   let detectedHeaders: string[] = [];
@@ -258,6 +292,7 @@ export function parseKdpReportWorkbook(buffer: Buffer | ArrayBuffer): ParseResul
       rows,
       monthlySummaries,
       sheetDiagnostics: [],
+      layout: 'legacy',
       reportKind: 'confirmed',
       months: [],
       sheetsSeen,
@@ -296,6 +331,16 @@ export function parseKdpReportWorkbook(buffer: Buffer | ArrayBuffer): ParseResul
     };
     sheetDiagnostics.push(diag);
     if (role === 'ignore') continue;
+    const unified =
+      role === 'combined' &&
+      map.royalty_type !== undefined &&
+      map.royalty !== undefined &&
+      map.kenp_read !== undefined &&
+      isDualUnitsKenp(normHeader(matrix[headerRow]?.[map.kenp_read]));
+    if (unified) diag.typeValues = {};
+    unifiedNames.add(unified ? sheetName : '');
+    sheetRows.set(sheetName, []);
+    const out = sheetRows.get(sheetName)!;
 
     sheetsParsed.push(sheetName);
     if (detectedHeaders.length === 0) detectedHeaders = header.headers.filter(Boolean);
@@ -320,6 +365,39 @@ export function parseKdpReportWorkbook(buffer: Buffer | ArrayBuffer): ParseResul
       const asin = String(map.asin !== undefined ? cells[map.asin] ?? '' : '').trim().toUpperCase();
       if (!looksLikeAsin(asin)) continue; // フッタ/合計行など
 
+      if (unified) {
+        // 統合シート: 同じ列が有料行では部数、KENP 行ではページ数。種類で解釈を切り替える。
+        const value = parseNumber(cells[map.kenp_read!]);
+        const typeRaw = String(cells[map.royalty_type!] ?? '').trim();
+        const unitsCol = map.units_sold !== undefined ? parseNumber(cells[map.units_sold]) : 0;
+        const isKenpRow = isKenpRowType(typeRaw, unitsCol);
+        const royaltyU = parseNumber(cells[map.royalty!]);
+        const key = typeRaw || '(空)';
+        if (Object.keys(diag.typeValues!).length < 12 || key in diag.typeValues!) {
+          diag.typeValues![key] = (diag.typeValues![key] ?? 0) + 1;
+        }
+        const u = isKenpRow ? 0 : value;
+        const k = isKenpRow ? value : 0;
+        if (u === 0 && k === 0 && royaltyU === 0) continue;
+        out.push({
+          asin,
+          title: map.title !== undefined ? String(cells[map.title] ?? '').trim() || null : null,
+          marketplace: map.marketplace !== undefined ? String(cells[map.marketplace] ?? '').trim() || null : null,
+          currency: map.currency !== undefined ? String(cells[map.currency] ?? '').trim() || null : null,
+          month: rowMonth,
+          units_sold: u,
+          kenp_read: k,
+          royalty: royaltyU,
+          royalty_kind: isKenpRow ? 'kenp' : 'paid',
+          sheet: sheetName,
+        });
+        diag.rowsEmitted++;
+        diag.sums.units += u;
+        diag.sums.kenp += k;
+        diag.sums.royalty += royaltyU;
+        continue;
+      }
+
       // combined: units も kenp も royalty も同一行に存在 (単一シート型レポート)
       // paid: 有料販売シート → units + royalty
       // kenp: KENP シート → kenp + (あれば KENP ロイヤリティ)
@@ -330,7 +408,7 @@ export function parseKdpReportWorkbook(buffer: Buffer | ArrayBuffer): ParseResul
       const royalty = map.royalty !== undefined ? parseNumber(cells[map.royalty]) : 0;
       if (units === 0 && kenp === 0 && royalty === 0) continue;
 
-      rows.push({
+      out.push({
         asin,
         title: map.title !== undefined ? String(cells[map.title] ?? '').trim() || null : null,
         marketplace:
@@ -350,6 +428,18 @@ export function parseKdpReportWorkbook(buffer: Buffer | ArrayBuffer): ParseResul
     }
   }
 
+  // 統合シートがあれば、それだけを正とする (他の ASIN 別シートは同じ数字の重複。docs/09 §10.4)。
+  const layout: KdpReportLayout = Array.from(unifiedNames).some((n) => n !== '') ? 'unified' : 'legacy';
+  const unifiedSheets = new Set(sheetDiagnostics.filter((d) => d.typeValues).map((d) => d.name));
+  for (const [name, list] of sheetRows) {
+    if (layout === 'unified' && !unifiedSheets.has(name)) {
+      const d = sheetDiagnostics.find((x) => x.name === name);
+      if (d) d.superseded = true;
+      continue;
+    }
+    rows.push(...list);
+  }
+
   const monthSet = new Set<string>();
   for (const r of rows) if (r.month) monthSet.add(r.month);
   for (const s of monthlySummaries) monthSet.add(s.month);
@@ -358,5 +448,5 @@ export function parseKdpReportWorkbook(buffer: Buffer | ArrayBuffer): ParseResul
   // 「概要」シート (月次サマリ) を持つのは Estimator のみ → 見込み扱い。
   const reportKind: KdpReportKind = monthlySummaries.length > 0 ? 'estimate' : 'confirmed';
 
-  return { rows, monthlySummaries, sheetDiagnostics, reportKind, months, sheetsSeen, sheetsParsed, detectedHeaders };
+  return { rows, layout, monthlySummaries, sheetDiagnostics, reportKind, months, sheetsSeen, sheetsParsed, detectedHeaders };
 }

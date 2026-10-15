@@ -248,6 +248,7 @@ export async function runSalesFetch(deps: SalesFetchDeps): Promise<SalesFetchRes
     log.info(
       {
         runId,
+        layout: parsed.layout,
         sheetsParsed: parsed.sheetsParsed,
         rowCount: parsed.rows.length,
         months: parsed.months,
