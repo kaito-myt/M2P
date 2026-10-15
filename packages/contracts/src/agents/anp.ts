@@ -119,6 +119,17 @@ export const NoteOutlineInputSchema = z.object({
   }),
   paid: z.boolean(),
   target_chars: z.number().int().min(500).max(20000).default(4000),
+  /**
+   * judge 不合格で構成からやり直すときの指摘 (`pipeline.note.judge` の `toFeedbackItems`)。
+   *
+   * [2026-10-15] 69 点以下は「構成・切り口の問題」として outline から書き直す経路になっているのに、
+   * **この入力が無かったため outline だけが不合格理由を知らずに書き直していた**。
+   * 結果、差し戻しを 2 回使い切っても同じ構成が再生成され、65〜69 点で止まった記事が 24 本
+   * 溜まった (運営者指摘「スコアが足りない理由をちゃんとライターに伝達してない」)。
+   */
+  feedback: z.array(z.string().max(2000)).max(20).optional(),
+  /** 前回のリード文。同じ入りを繰り返さないために渡す (差し戻し時のみ)。 */
+  previous_lead: z.string().max(1000).optional(),
 });
 export type NoteOutlineInput = z.infer<typeof NoteOutlineInputSchema>;
 

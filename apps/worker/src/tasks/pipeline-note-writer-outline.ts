@@ -76,6 +76,7 @@ export interface PipelineNoteWriterOutlinePrisma {
         theme_id: true;
         title: true;
         paid: true;
+        lead: true;
       };
     }) => Promise<{
       id: string;
@@ -83,6 +84,7 @@ export interface PipelineNoteWriterOutlinePrisma {
       theme_id: string | null;
       title: string;
       paid: boolean;
+      lead: string | null;
     } | null>;
   } & NoteArticleRepo;
   tokenUsage: NoteArticleCostPrisma['tokenUsage'];
@@ -182,7 +184,7 @@ export async function runPipelineNoteWriterOutline(
   try {
     const article = await prisma.noteArticle.findUnique({
       where: { id: noteArticleId },
-      select: { id: true, note_account_id: true, theme_id: true, title: true, paid: true },
+      select: { id: true, note_account_id: true, theme_id: true, title: true, paid: true, lead: true },
     });
     if (!article) {
       throw new NotFoundError(`NoteArticle not found: ${noteArticleId}`, {
@@ -225,6 +227,11 @@ export async function runPipelineNoteWriterOutline(
       },
       paid: article.paid,
       target_chars: resolveTargetChars(account.monetization_policy_json, article.paid),
+      // [2026-10-15] judge の不合格理由を **outline 自身に** 渡す。
+      // それまでは payload に feedback を持っていながら body writer へ素通しするだけで、
+      // 構成を作り直す当人が理由を知らなかった (運営者指摘)。これが 65〜69 点で止まる原因。
+      ...(feedback && feedback.length > 0 ? { feedback } : {}),
+      ...(feedback && feedback.length > 0 && article.lead ? { previous_lead: article.lead } : {}),
     };
 
     const outline = await generateOutline(input);

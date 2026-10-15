@@ -57,6 +57,7 @@ export async function generateNoteOutline(
     theme_hook: parsedInput.theme.hook,
     paid: parsedInput.paid ? '有料記事 (無料パート+続きは有料)' : '無料記事',
     target_chars: parsedInput.target_chars,
+    feedback: (parsedInput.feedback ?? []).map((f) => `- ${f}`).join('\n'),
   });
 
   const ctx: LoggingContext = { role: 'anp.outline' };
@@ -69,7 +70,7 @@ export async function generateNoteOutline(
 
   const client: LLMClient = await makeClient('anp.outline', null, ctx, factoryDeps);
 
-  const userMessage = [
+  const lines = [
     `記事タイトル: ${parsedInput.theme.title}`,
     `差別化フック: ${parsedInput.theme.hook}`,
     `想定読者: ${parsedInput.theme.target_reader ?? parsedInput.account.target_reader ?? '(指定なし)'}`,
@@ -83,8 +84,28 @@ export async function generateNoteOutline(
     '  "lead": string,          // 冒頭リード文 (読者の悩みを言い当て続きを読みたくさせる)',
     '  "headings": string[]     // 見出し (2〜12 個、上から順)',
     '}',
-    'JSON 以外のテキストは出力しないこと。',
-  ].join('\n');
+  ];
+
+  // 差し戻しで戻ってきた場合の指摘。**出力形式より後ろ**に置く — 前に置くと
+  // 既定の設計指示に埋もれて効かない (theme/strategist で 4 度確認した位置の問題)。
+  // JSON 以外を出力させない最後の一行だけは、パースを守るためこの後に残す。
+  if (parsedInput.feedback && parsedInput.feedback.length > 0) {
+    lines.push(
+      '',
+      '【この記事は品質判定で不合格になり、構成からやり直している — 指摘は必ず直す】',
+      parsedInput.feedback.map((f) => `- ${f}`).join('\n'),
+      '上の指摘は前回の「構成・切り口」に対するものである。見出しの言い換えで済ませず、' +
+        '扱う論点・順序・具体性の持たせ方を変えること。',
+    );
+    if (parsedInput.previous_lead) {
+      lines.push(
+        `前回のリード文 (同じ入り方を繰り返さない): ${parsedInput.previous_lead}`,
+      );
+    }
+  }
+
+  lines.push('JSON 以外のテキストは出力しないこと。');
+  const userMessage = lines.join('\n');
 
   let lastError: AgentError | undefined;
   for (let attempt = 1; attempt <= MAX_PARSE_RETRIES; attempt++) {

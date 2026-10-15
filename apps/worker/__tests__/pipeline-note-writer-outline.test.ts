@@ -35,6 +35,8 @@ interface ArticleRecord {
   theme_id: string | null;
   title: string;
   paid: boolean;
+  /** 差し戻し時に「前回のリード文」として outline へ渡す (2026-10-15)。 */
+  lead?: string | null;
 }
 interface AccountRecord {
   id: string;
@@ -88,7 +90,10 @@ function buildPrisma(args: {
       },
     },
     noteArticle: {
-      findUnique: async ({ where }) => args.articles.find((a) => a.id === where.id) ?? null,
+      findUnique: async ({ where }) => {
+        const found = args.articles.find((a) => a.id === where.id);
+        return found ? { ...found, lead: found.lead ?? null } : null;
+      },
       update: async ({ where, data }) => {
         articleUpdates.push({ where, data: data as Record<string, unknown> });
         return { id: where.id };
@@ -198,6 +203,74 @@ describe('pipeline.note.writer.outline', () => {
       { maxAttempts: 3 },
     );
     expect(jobUpdates.some((u) => u.data.status === 'done')).toBe(true);
+  });
+
+  // [2026-10-15] judge の不合格理由 (feedback) は payload に来ていたのに
+  // **outline の入力には渡されず** body writer へ素通ししていた。構成を作り直す当人が
+  // 理由を知らないので同じ構成が再生成され、65〜69 点の記事が 24 本滞留した。
+  it('差し戻し (feedback 付き) なら outline 自身に理由と前回リードを渡す', async () => {
+    const { prisma } = buildPrisma({
+      jobs: [{ id: 'job1', status: 'queued' }],
+      articles: [
+        {
+          id: 'art1',
+          note_account_id: 'acc1',
+          theme_id: 'theme1',
+          title: 'タイトル',
+          paid: true,
+          lead: '前回のリード文',
+        },
+      ],
+      accounts: [{ id: 'acc1', niche: '競馬', target_reader: '会社員', tone: '淡々' }],
+      themes: [{ id: 'theme1', hook: 'フック', target_reader: '会社員' }],
+    });
+    const addJob: AddJobLike = vi.fn();
+    const generateOutline = vi.fn().mockResolvedValue(SAMPLE_OUTLINE);
+    const feedback = ['品質スコア: 67/100', 'フック強度 (62/100): 一般論から始まっている'];
+
+    await runPipelineNoteWriterOutline(
+      { note_article_id: 'art1', job_id: 'job1', feedback, retry_count: 2 },
+      addJob,
+      {
+        prisma,
+        logger: makeLogger(),
+        generateOutline,
+        acquireLock: vi.fn().mockResolvedValue(undefined),
+        releaseLock: vi.fn().mockResolvedValue(undefined),
+      },
+    );
+
+    expect(generateOutline).toHaveBeenCalledWith(
+      expect.objectContaining({ feedback, previous_lead: '前回のリード文' }),
+    );
+  });
+
+  it('初回執筆 (feedback 無し) では feedback/previous_lead を渡さない', async () => {
+    const { prisma } = buildPrisma({
+      jobs: [{ id: 'job1', status: 'queued' }],
+      articles: [
+        { id: 'art1', note_account_id: 'acc1', theme_id: null, title: 'タイトル', paid: false, lead: '既存リード' },
+      ],
+      accounts: [{ id: 'acc1', niche: '副業', target_reader: null, tone: null }],
+    });
+    const addJob: AddJobLike = vi.fn();
+    const generateOutline = vi.fn().mockResolvedValue(SAMPLE_OUTLINE);
+
+    await runPipelineNoteWriterOutline(
+      { note_article_id: 'art1', job_id: 'job1' },
+      addJob,
+      {
+        prisma,
+        logger: makeLogger(),
+        generateOutline,
+        acquireLock: vi.fn().mockResolvedValue(undefined),
+        releaseLock: vi.fn().mockResolvedValue(undefined),
+      },
+    );
+
+    const input = generateOutline.mock.calls[0]![0] as Record<string, unknown>;
+    expect(input).not.toHaveProperty('feedback');
+    expect(input).not.toHaveProperty('previous_lead');
   });
 
   it('タスク名が docs/11 §7 と一致する', () => {
