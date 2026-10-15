@@ -620,9 +620,12 @@ ANP の機能は A2P の対応機能を note 向けに写像したもの。**太
   （`scripts/models/catalog-fix-2026-09-24.cjs`）。これを直すまで Claude のコストは実際の 2〜5 倍で表示されていた。
 - **F-ANP-44 judge のスコア別ルーティング（実装済み 2026-09-24）**: 合格ラインを 80 → **85** に引き上げ、
   `routeByJudgeScore(score, retryCount, limit)` で **85 以上=公開 / 70〜84=校閲 (anp.editor) / 69 以下=構成から
-  やり直し (pipeline.note.writer.outline)** に分岐（差し戻し上限 1 回は従来どおり、超えたら needs_human_review）。
+  やり直し (pipeline.note.writer.outline)** に分岐（超えたら needs_human_review。差し戻し上限は
+  その後 2026-09-25 に `RETRY_LIMIT=2` へ、合格ラインは 2026-10-11 に 80 へ戻し、下限 70 以上は
+  公開に回すよう変更済み — §F-ANP-57 と `pipeline-note-judge.ts` の冒頭コメントが現行仕様）。
   低スコアは「文章の粗」ではなく「切り口の問題」なので校閲では直らない、という運営者の設計に合わせた。
-  outline/body は `feedback` と `retry_count` を受け取って judge まで持ち回る。
+  outline/body は `feedback` と `retry_count` を受け取って judge まで持ち回る
+  （**outline のプロンプトに `feedback` が載るのは 2026-10-15 の F-ANP-57 から**）。
   **自動リトライ回数 (2026-09-25 実測を受けて 1→2)**: 合格ライン 85 + judge=gpt-6-sol(high) にした直後の
   夜間生成 10 本が **1 回の差し戻しでは全滅** (平均 75 / 最高 82 / 最低 56) し、全部 needs_human_review に
   溜まった。「修正は自動でやってほしい」という運営者の意図に合わせ `RETRY_LIMIT=2` に引き上げた。
@@ -1001,7 +1004,7 @@ note.theme.generate (アカウント別・手動起動。UI の「テーマ生�
 | タスク名 | ペイロード | 処理概要 | 完了後の遷移 |
 |---|---|---|---|
 | `note.theme.generate` | `{ note_account_id, job_id, count?, instruction? }` | note Marketer (`@a2p/agents/anp/theme`, role=`anp.theme`) がニッチ/トーン/記事の方針/収益化方針/週次リサーチ/直近採用済タイトル (90日除外) を入力にテーマ候補を生成し `NoteTheme(status='pending')` を `createMany`。**`instruction`** (F-ANP-10b) は運営者がテーマ一覧で書いた指示で、`operatorInstructionLines` により**ユーザーメッセージ最後**に「これが最優先」として置かれる (前方に置くと後続の既定に負ける) | 次タスクなし (UI 承認待ちで停止) |
-| `pipeline.note.writer.outline` | `{ note_article_id, job_id }` | note Writer/Outline (role=`anp.outline`) がリード文+見出し構成 (2〜12) を生成。`NoteArticle.lead` 確定、`status='writing'` | `pipeline.note.writer.body` を自動 enqueue（`lead`/`headings` は子 Job の `payload_json` で forward — `NoteArticle` に永続列を持たないため） |
+| `pipeline.note.writer.outline` | `{ note_article_id, job_id, feedback?, retry_count? }` | note Writer/Outline (role=`anp.outline`) がリード文+見出し構成 (2〜12) を生成。`NoteArticle.lead` 確定、`status='writing'`。**差し戻しで来た場合 (`feedback` 付き) は judge の指摘と前回リード文を `NoteOutlineInput.feedback` / `.previous_lead` としてプロンプトに注入する (F-ANP-57)** — 以前は payload で受け取るだけで構成を作り直す当人に渡っておらず、同じ構成が再生成されていた | `pipeline.note.writer.body` を自動 enqueue（`lead`/`headings` は子 Job の `payload_json` で forward — `NoteArticle` に永続列を持たないため） |
 | `pipeline.note.writer.body` | `{ note_article_id, job_id, lead, headings, feedback? }` | note Writer/Body (role=`anp.writer`) が本文を執筆 (目標は無料 4,000 字 / 有料 6,000 字 — `lib/note-target-chars.ts`。目標の 85% を下回ったら不足字数と前回本文を渡して最大 2 回書き足させる)。記事末の関連記事リンクは `related_articles` で渡した**公開済みの実 URL だけ**を使わせる。有料記事は本文中に `<<<PAYWALL>>>` マーカーを 1 回挿入させ、呼出側でマーカー位置を `paywall_line_pos` として抽出・除去。`NoteArticle.body_md`/`paywall_line_pos` 確定、`status='editing'` | `pipeline.note.editor` を自動 enqueue |
 | `pipeline.note.editor` | `{ note_article_id, job_id, feedback?, retry_count? }` | note Editor (role=`anp.editor`) が短段落・リード文中心に校閲。`paywall_line_pos` 指定時はマーカーを再挿入して LLM に渡し「保持したまま校閲」を指示、新しい位置を再抽出。`status='eyecatch'` | `pipeline.note.numcheck` を自動 enqueue（`retry_count` を forward） |
 | `pipeline.note.numcheck` | `{ note_article_id, job_id, retry_count? }` | **本文内の数値の自己整合だけ**を確かめて直す (role=`anp.numcheck`, 2026-10-09)。表の内訳と合計・率と件数÷母数・本文と表・無料部分と有料部分の食い違いを突き合わせる。**訂正の範囲を超えた出力 (見出しが変わる / 本文長が ±15% 超) は採用せず入力本文を素通し**する。有料記事はマーカーを再挿入して渡し、返ってこなければ本文を書き換えない (位置ズレで課金事故になる)。**この工程の失敗ではパイプラインを止めない** (数値の不整合は judge が拾う)。直した内容/直せなかった内容は `Job.result_json.fixes`/`unresolved` に残す。`status='eyecatch'` | `pipeline.note.eyecatch` を自動 enqueue（`retry_count` を forward） |
@@ -1121,8 +1124,12 @@ API を提供するか、運営者が手動でステップアップ認証を突�
 - **申し送り6 解消**: `/accounts/[id]` の記事一覧で `status='needs_human_review'` の記事に
   「再審査(judge 再実行)」「校閲からやり直す(editor 再実行)」「そのまま公開可にする(ready に戻す)」
   の3ボタン(`article-review-actions.tsx` + `app/actions/review.ts`)を追加。手動リトライは
-  `retry_count=1`(judge の `RETRY_LIMIT` を使い切った状態)から再開し、際限のない
+  `retry_count=1`(judge の自動差し戻しを 1 回消費した状態)から再開し、際限のない
   editor↔judge 往復を防ぐ。
+  **2026-10-15 (F-ANP-57) に拡張**: 「構成からやり直す」(`retryOutline`)を追加し、手動差し戻しにも
+  **直近 judge の実際の指摘**を渡すようにした(それまでは中身の無い汎用文 1 行だけ)。
+  さらに `/articles` の先頭に**横断の「要確認」ゲート**(`articles/review-queue.tsx`、一括承認つき)を
+  置いた — アカウント詳細に 1 本ずつしか導線が無く、実測で 24 本が最長 2 週間以上滞留していた。
 - **申し送り13 解消**: `/accounts/[id]` に `note_accounts.handle` の編集フォーム
   (`handle-form.tsx` + `app/actions/accounts.ts` の `updateAccountHandle`)を追加。
   加えて `pipeline.note.publish` の実公開成功時、`handle` が未設定なら公開 URL(§2.1 参照 —
@@ -2451,3 +2458,77 @@ ANP ホームの「直近の失敗」(直近 24 時間の `jobs` を `Job.error`
 
 > **教訓 (再掲・3 度目)**: 注入した指示は、強い既定より**後ろ**に置いて初めて効く。
 > 同じ構図を 1 箇所直したら、**同型の既存プロンプトを全部探して直す**。
+
+---
+
+## 品質ゲートの人間判断と、不合格理由のライターへの伝達 (F-ANP-57, 2026-10-15)
+
+運営者指示 2 件:
+
+1. 「ANPもA2P同様にスコアが足りないものは人間判断で承認できるようにしてください」
+2. 「スコアが足りない理由をちゃんとライターに伝達してないからスコア達成できないんじゃない？」
+
+### 実測 — 24 本が 1〜5 点足りないまま 2 週間以上止まっていた
+
+`needs_human_review` の記事を数えると **24 本**（手堅く勝つ馬券術 19 / あや＠AI副業 5、
+最古 2026-09-29）。スコアは全部 **65〜68 点**で、公開下限 `NOTE_JUDGE_PUBLISH_FLOOR` = 70 に
+**1〜5 点届かないだけ**だった。公開済みは 馬券術 62 / あや 68 なので、
+運営者の「競馬系の方が全然リリースできてない」はここが機械的な原因だった
+（馬券術の記事が不釣り合いに多くこの終端に落ちている）。
+
+### 原因 — 構成からやり直す経路だけ、不合格理由が渡っていなかった
+
+`routeByJudgeScore` は **69 点以下を「構成・切り口の問題」として `pipeline.note.writer.outline`
+へ差し戻す**（70〜84 は `pipeline.note.editor`）。ところが:
+
+| 差し戻し先 | payload に `feedback` | **エージェントのプロンプトに入る** |
+|---|---|---|
+| `pipeline.note.editor` → `anp.editor` | あり | **入る** |
+| `pipeline.note.writer.body` → `anp.writer` | あり | **入る** |
+| `pipeline.note.writer.outline` → `anp.outline` | あり | **入っていなかった** |
+
+`pipeline-note-writer-outline.ts` は `feedback` を payload で受け取りながら、
+**`NoteOutlineInput` に載せず body writer へ素通ししていただけ**だった。つまり
+**構成を作り直す当人だけが落ちた理由を知らない**。結果、差し戻しを 2 回使い切っても
+同じ切り口の構成が再生成され、65〜69 点で止まる。body writer は理由を知っているが、
+判定が否定しているのは構成なので、文章を直しても届かない。
+
+**対策**:
+
+- `NoteOutlineInputSchema` に `feedback?: string[]` と `previous_lead?: string` を追加
+  （`packages/contracts/src/agents/anp.ts`）
+- `anp.outline` のプロンプトに「【この記事は品質判定で不合格になり、構成からやり直している
+  — 指摘は必ず直す】」として注入。**出力形式より後ろ**に置く（注入は強い既定より後ろでないと
+  効かない — §前節の教訓の 5 度目）。JSON 以外を出力させない 1 行だけはパースを守るため最後に残す。
+  「見出しの言い換えで済ませず、扱う論点・順序・具体性の持たせ方を変えること」まで書く
+- `previous_lead`（前回のリード文）も渡して同じ入り方の再生産を止める
+- テストは**位置**を固定する（`indexOf('"headings"') < indexOf('品質判定で不合格')`）
+
+### 画面 — `/articles` 先頭の「要確認」ゲート
+
+承認アクション自体 (`forceReady`) は記事詳細とアカウント詳細に前からあったが、
+**横断して一覧する場所が無く 1 本ずつ開かないと承認できなかった**。
+A2P の `/content-review` にある「judge が基準点に届かず止まった本」の節 (F-099) と
+同じ役割を `/articles` の先頭に置く（`app/(app)/articles/review-queue.tsx`）。
+
+- 絞り込みに**連動させない** — タブを切り替えた運営者から滞留が見えなくなるため、常に全件出す
+- スコアの数字だけでは判断できないので、**落ちた理由（judge の軸別コメント）をその場に出す**。
+  judge は内訳を `Job.result_json` に残しているので `lib/judge-feedback.ts` で読む
+  （`jobs` に `note_article_id` 列は無く payload_json の中にしかないため、一覧用は
+  `DISTINCT ON` の生 SQL で 1 往復にまとめる）
+- 操作: **一括承認**（チェックボックス + 表示中すべて）/ 承認 / 構成からやり直す /
+  校閲からやり直す / 再判定。69 点以下は「構成からやり直す」を推奨として明示する
+- 承認 = `status='ready'` なので、`anp_auto_publish_enabled` の `note.publish.dispatch` が
+  そのまま公開まで運ぶ（新しい経路を作らない = 合格した記事と以降の挙動が同じ）
+
+### 手動差し戻しにも実際の指摘を渡す
+
+`retryEditor` が渡していたのは
+「運営者による手動差し戻し: 内容を見直してください。」という**中身の無い 1 行だけ**だった。
+手で蹴り直しても同じ点数で戻ってくる。直近の judge 結果を読んで
+`toFeedbackItems()` の形（worker 側と同形）でエージェントへ渡す。
+`retryOutline`（構成からやり直す）も新設した。
+
+> **教訓**: 「差し戻す」実装は、**差し戻し先のエージェントのプロンプトに理由が載るところまで**
+> 見て初めて完成する。payload に積んだだけでは伝わっていない。
+> `feedback` を足すときは、受け取る側のエージェント全部で注入を確認する。

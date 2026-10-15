@@ -178,3 +178,51 @@ Reasoning is in `docs/03-tech-selection.md` once produced.
 6. **Never commit secrets.** `.env.local`, `.env.production` are gitignored. Use Railway env vars in production.
 7. **Keep design docs current.** Whenever you add or change a feature (a DB table, an agent role, a worker task, a page/screen, an env var), update the relevant `docs/` in the same body of work — primarily `docs/05-program-design.md` (DB/API/job/agent specs), plus `docs/02-functional-requirements.md` / `docs/04-ui-design.md` when behavior or screens change. Periodically (at least at the end of a working session that shipped features) reconcile `docs/` against the codebase so the design docs never silently drift from reality.
 8. **Upstream-docs-first, and record every spec change / new discovery there.** Implement from the upstream design docs (`docs/01`→`02`→`03`/`04`→`05`), not ad-hoc. Any spec change, decision reversal, or newly-discovered fact about how an external system actually behaves (e.g. a KDP wizard selector, an anti-bot behavior, a re-auth rule, an API quirk) MUST be written into the relevant upstream doc in the same change — `docs/02-functional-requirements.md` for behavior/acceptance changes and `docs/05-program-design.md` for DB/API/job/agent/flow specs (and `docs/03`/`04` when stack or screens change). The design docs — not chat, not memory, not code comments alone — are the durable source of truth; memory files are a personal aide, not a substitute. If reality contradicts a doc, fix the doc.
+
+## 稼働中の出版自動化 — 「できる/できない」の確定事実
+
+> **ここは推測で答えてはいけない節。** 一度解決した能力を「できない」と答える事故が起きたので、
+> 稼働中の到達点を確定事実として置く。詳細な根拠は `docs/02` / `docs/05` の該当節にある。
+
+### A2P (KDP) — サーバーからの完全自動出版は **できる**（2026-08-01 に実証済み）
+
+- **タスク `kdp.submit`** (`apps/worker/src/tasks/kdp-submit.ts`, F-041 Phase 3) が、Railway の worker 上で
+  Playwright を動かして **入稿〜出版まで無人で完走する**。原稿/表紙は R2 から取り、
+  セッションは `accounts.kdp_session_state_enc` を再利用する。
+- **2FA / 再認証ウォールは突破済み。** 出版に近い遷移で `openid.pape.max_auth_age=0` の再認証が
+  割り込むが、**パスワード実タイプ + OTP（`AMAZON_TOTP_SECRET` の TOTP 自動生成 → 無ければ
+  LINE 双方向認証リレー `kdp_auth_requests`）** で各段ごとに通す (`isReauthWall`→`passReauth`)。
+  「2FA があるからサーバー無人化は不能」という**旧判断は覆っている**（docs/05 §5.3.15 の設計転換）。
+- **既存下書きの resume が基本経路**なので KDP の作成枠を消費しない。下書きが無ければ新規作成に
+  切り替わり、そこで初めて週次の作成上限を 1 消費する。`target_title_id` を渡すと販売中タイトルの
+  上書きもできる（不可逆なので自動 dispatcher は付けない）。
+- **自動運転**: cron `kdp.submit.dispatch`（30 分毎）が `kdp_auto_submit_enabled=true` のとき
+  入稿キューから **1 冊だけ** enqueue する。抑制は 2 つ:
+  `books.kdp_submit_cooldown_until`（その本を ~20h 待たせる）と
+  `app_settings.kdp_creation_paused_until`（作成上限に当たったら全体を止める）。
+- **作成上限は【週次・フォーマット別】**で、リセットは**日曜 0:00 UTC = 日曜 9:00 JST**
+  （「1 日 5 冊」は誤り。2026-10-14 にモーダル実測で確定）。
+- `scripts/kdp-assist.sh`（`kdp-publish.mjs --assist`）は**運営者が自分の端末で動かす別経路**。
+  サーバーが使えないから在るのではなく、**週次の作成枠や審査の都合で手元から押したいとき**に使う。
+  選択順は `done_at` 昇順（dispatcher 側は `updated_at` 昇順）。
+
+### 他チャネルの到達点
+
+| チャネル | 自動化 | 根拠 |
+|---|---|---|
+| KDP 電子書籍 | **完全自動**（上記） | docs/05 §5.3.15 |
+| ペーパーバック | **完全自動**（`paperback.draft` → `paperback.submit`） | docs/05 F-097 系 |
+| BookWalker | **完全自動**（サーバー入稿） | docs/02 F-094 |
+| 楽天 Kobo | **完全自動** | docs/02 F-095 |
+| BOOTH | **半自動**（作品ファイル UP と公開だけ人手。reCAPTCHA enterprise で自動化不可） | docs/02 F-096 |
+| note (ANP) | **完全自動**（企画〜執筆〜公開〜販促） | docs/11 |
+
+### 自動運転のスイッチを触るときの必須手順
+
+条件付き cron (`buildCronItemsWithSettings`) は **worker 起動時に 1 回だけ**組み立てられる。
+`app_settings` のフラグを変えても **worker を再起動しないと永久に発火しない**（UI に警告も出ない）。
+実害: `promotion-dispatch` が 3 週間、`note-theme-auto-daily` が 6 日止まっていた（2026-10-15 発覚）。
+→ **フラグ変更と `railway redeploy --service A2P-Worker` は必ずセット**。確認は
+`graphile_worker._private_known_crontabs` の `identifier` 在席 + `last_execution`。
+engage 系（`note.engage` / `promotion.x.engage` / `promotion.sns.engage`）は cron 常時登録で
+タスク内でフラグを見るので再起動不要 — どちらの方式かは必ずコードで確認する。
