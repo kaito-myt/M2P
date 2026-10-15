@@ -9,6 +9,7 @@
 import Link from 'next/link';
 
 import { prisma } from '@a2p/db';
+import { getSignedDownloadUrl } from '@a2p/storage';
 
 import { AccountPills } from '@/components/account-pills';
 import { cn } from '@/lib/cn';
@@ -36,7 +37,7 @@ export default async function PromotionPage({ searchParams }: { searchParams: Pr
   const accounts = await prisma.noteAccount.findMany({
     where: { status: { not: 'archived' } },
     orderBy: [{ status: 'asc' }, { created_at: 'asc' }],
-    select: { id: true, display_name: true, handle: true, niche: true },
+    select: { id: true, display_name: true, handle: true, niche: true, avatar_r2_key: true },
   });
   const requested = typeof sp.account === 'string' ? sp.account : '';
   const account = accounts.find((a) => a.id === requested) ?? accounts[0] ?? null;
@@ -61,9 +62,10 @@ export default async function PromotionPage({ searchParams }: { searchParams: Pr
 
   // promotion_posts は NoteArticle と FK を持たない (docs/11 §6) ので、アカウントの記事 id で絞る。
   const articles = account
-    ? await prisma.noteArticle.findMany({ where: { note_account_id: account.id }, select: { id: true, title: true } })
+    ? await prisma.noteArticle.findMany({ where: { note_account_id: account.id }, select: { id: true, title: true, eyecatch_r2_key: true } })
     : [];
   const titleById = new Map(articles.map((a) => [a.id, a.title]));
+  const eyecatchKeyById = new Map(articles.map((a) => [a.id, a.eyecatch_r2_key]));
   const [state, postRows, linked, zernio] = account
     ? await Promise.all([
         loadAccountPromotionState(account.id, channel),
@@ -80,6 +82,7 @@ export default async function PromotionPage({ searchParams }: { searchParams: Pr
                 posted_at: true,
                 external_url: true,
                 error: true,
+                media_key: true,
                 impressions: true,
                 likes: true,
                 reposts: true,
@@ -101,14 +104,40 @@ export default async function PromotionPage({ searchParams }: { searchParams: Pr
           : Promise.resolve(null),
       ])
     : [null, [], null, null];
+  // F-ANP-32b: プレビュー用の画像。署名 URL は 15 分 (ページを開いている間だけ要る)。
+  // 失敗しても投稿一覧自体は出す (画像が出ないだけ)。
+  const signed = async (key: string | null | undefined): Promise<string | null> => {
+    if (!key) return null;
+    try {
+      return await getSignedDownloadUrl(key, 900);
+    } catch (err: unknown) {
+      console.error('[anp] signed url failed', { key, err: err instanceof Error ? err.message : String(err) });
+      return null;
+    }
+  };
+  const mediaUrls = new Map(
+    await Promise.all(
+      postRows.filter((r) => r.media_key).map(async (r) => [r.id, await signed(r.media_key)] as const),
+    ),
+  );
+  const eyecatchUrls = new Map(
+    await Promise.all(
+      [...new Set(postRows.map((r) => r.note_article_id).filter((id): id is string => id !== null))].map(
+        async (id) => [id, await signed(eyecatchKeyById.get(id))] as const,
+      ),
+    ),
+  );
   const posts = postRows.map((r) =>
     toPromotionPostView({
       ...r,
       article_title: r.note_article_id ? (titleById.get(r.note_article_id) ?? null) : null,
       article_id: r.note_article_id,
+      media_url: mediaUrls.get(r.id) ?? null,
+      article_eyecatch_url: r.note_article_id ? (eyecatchUrls.get(r.note_article_id) ?? null) : null,
     }),
   );
   const summary = summarizePromotionPosts(postRows);
+  const avatarUrl = account ? await signed(account.avatar_r2_key) : null;
 
   return (
     <div className="mx-auto flex max-w-6xl flex-col">
@@ -171,7 +200,17 @@ export default async function PromotionPage({ searchParams }: { searchParams: Pr
           </nav>
 
           {state && linked && (
-            <PromotionPanel key={`${account.id}:${channel}`} noteAccountId={account.id} initial={state} posts={posts} summary={summary} linked={linked} zernio={zernio} flash={flash} />
+            <PromotionPanel
+              key={`${account.id}:${channel}`}
+              noteAccountId={account.id}
+              initial={state}
+              posts={posts}
+              summary={summary}
+              linked={linked}
+              zernio={zernio}
+              flash={flash}
+              author={{ name: account.display_name, handle: linked.handle ?? account.handle, avatar_url: avatarUrl }}
+            />
           )}
         </>
       )}

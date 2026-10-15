@@ -604,7 +604,17 @@ export const messages = {
     unsaved: '未保存の変更があります',
     updatedAt: (at: string) => `最終更新 ${at}`,
     postsTitle: 'この媒体での投稿',
-    summary: { posted: '投稿済み', scheduled: '予約中', impressions: '表示回数' },
+    summary: { posted: '投稿済み', scheduled: '予約中', failed: '失敗', impressions: '表示回数' },
+    // F-ANP-32b (2026-10-15 運営者要望「Xっぽい見た目にしないとプレビューにならない」)
+    preview: {
+      hint: {
+        x: '実際に X に出る見た目でのプレビューです（本文は全文・改行そのまま）',
+        instagram: '実際に Instagram に出る本文のプレビューです',
+        tiktok: '動画に付くキャプションのプレビューです',
+        blog: 'ブログ記事の冒頭プレビューです',
+      } as Record<'x' | 'instagram' | 'tiktok' | 'blog', string>,
+      scheduledBadge: (label: string) => `${label}（未投稿）`,
+    },
     postsEmpty: {
       x: 'まだ X への告知投稿はありません。記事が公開されると自動で予約されます。',
       instagram: 'まだ Instagram への告知投稿はありません。記事が公開されると自動で予約されます。',
@@ -613,7 +623,9 @@ export const messages = {
     } as Record<'x' | 'instagram' | 'tiktok' | 'blog', string>,
     postStatus: { scheduled: '予約中', draft: '下書き', queued: '待機中', posting: '投稿中', posted: '投稿済み', failed: '失敗', cancelled: '取消', skipped: 'スキップ' } as Record<string, string>,
     openPost: '投稿を開く',
-    metrics: { impressions: (n: number) => `表示 ${n.toLocaleString('ja-JP')}`, likes: (n: number) => `いいね ${n.toLocaleString('ja-JP')}` },
+    // 投稿プレビューのアクション行はアイコン＋数字なので、読み上げ/ホバー用の名前をここに持つ。
+    metricLabel: { replies: '返信', reposts: 'リポスト', likes: 'いいね', impressions: '表示' } as Record<'replies' | 'reposts' | 'likes' | 'impressions', string>,
+    metricUnknown: '未取得',
     errors: { saveFailed: '販促施策の保存に失敗しました', generateFailed: '販促施策の生成を開始できませんでした' },
     // F-ANP-33 — 投稿先アカウント連携
     link: {

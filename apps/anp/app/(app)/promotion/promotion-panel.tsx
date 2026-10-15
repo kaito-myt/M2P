@@ -6,9 +6,8 @@
  *   - 「AI で生成」(note.account.profile targets=['promotion']) と進捗ポーリング。指示欄は画像添付可
  *   - この媒体でのこのアカウントの告知投稿一覧 (promotion_posts) と集計
  */
-import Link from 'next/link';
 import { useCallback, useEffect, useState } from 'react';
-import { ExternalLink, Loader2, Sparkles } from 'lucide-react';
+import { Loader2, Sparkles } from 'lucide-react';
 
 import { generateAccountPromotionPolicy, getAccountPromotionState, updateAccountPromotionPolicy } from '@/app/actions/promotion';
 import { GenerationProgress } from '@/components/generation-progress';
@@ -20,6 +19,7 @@ import { formatHashtags, type AccountPromotionState, type PromotionChannelSummar
 import type { ZernioAccountView } from '@/lib/zernio';
 
 import { LinkedAccountCard } from './linked-account-card';
+import { PostPreview } from './post-preview';
 import { formatJstShort } from '@/lib/datetime';
 
 const POLL_MS = 3000;
@@ -38,6 +38,7 @@ export function PromotionPanel({
   linked,
   zernio,
   flash,
+  author,
 }: {
   noteAccountId: string;
   initial: AccountPromotionState;
@@ -47,6 +48,8 @@ export function PromotionPanel({
   linked: LinkedPromotionAccountView;
   zernio: { configured: boolean; accounts: ZernioAccountView[] } | null;
   flash?: { tone: 'ok' | 'err'; text: string } | null;
+  /** F-ANP-32b: 投稿プレビューの「誰として出るか」(連携済みなら SNS 側のハンドル)。 */
+  author: { name: string; handle: string | null; avatar_url: string | null };
 }) {
   const channel = initial.channel;
   const [state, setState] = useState<AccountPromotionState>(initial);
@@ -137,7 +140,9 @@ export function PromotionPanel({
   const job = generating ? state.job : null;
 
   return (
-    <div className="mt-space-relaxed grid grid-cols-1 gap-space-relaxed lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]">
+    <div className="mt-space-relaxed flex flex-col gap-space-relaxed">
+      {/* 上段: 施策 (広め) ＋ 投稿先アカウント連携 */}
+      <div className="grid grid-cols-1 gap-space-relaxed lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]">
       {/* 施策 */}
       <section className="rounded-container border border-border-warm bg-cream-light p-space-relaxed" data-testid="promotion-policy-panel">
         <div className="flex items-start justify-between gap-3">
@@ -239,23 +244,34 @@ export function PromotionPanel({
         </div>
       </section>
 
-      <div className="flex flex-col gap-space-relaxed">
       {/* 投稿先アカウント連携 (F-ANP-33) */}
       <LinkedAccountCard noteAccountId={noteAccountId} channel={channel} initial={linked} zernio={zernio} flash={flash ?? null} />
+      </div>
 
-      {/* 投稿一覧 */}
-      <section className="rounded-container border border-border-warm bg-white p-space-relaxed" data-testid="promotion-posts-panel">
-        <h2 className="text-card-title font-medium text-charcoal">{m.postsTitle}</h2>
-        <dl className="mt-2 grid grid-cols-3 gap-2 text-caption">
-          <div className="rounded-card border border-border-warm bg-cream-light px-2 py-1.5">
+      {/*
+        投稿一覧 — 運営者要望 (2026-10-15)「投稿一覧は下に横幅いっぱいに表示させて。
+        あと、Xっぽい見た目にしないとプレビューにならないからよろしく」。
+        右カラムの狭い抜粋リストから、フル幅 × 実物の見た目のカードに変えた。
+      */}
+      <section className="w-full rounded-container border border-border-warm bg-cream-light p-space-relaxed" data-testid="promotion-posts-panel">
+        <div className="flex flex-wrap items-baseline justify-between gap-space-snug">
+          <h2 className="text-card-title font-medium text-charcoal">{m.postsTitle}</h2>
+          <p className="text-caption text-muted">{m.preview.hint[channel]}</p>
+        </div>
+        <dl className="mt-space-snug grid grid-cols-2 gap-2 text-caption sm:grid-cols-4">
+          <div className="rounded-card border border-border-warm bg-white px-2 py-1.5">
             <dt className="text-muted">{m.summary.posted}</dt>
             <dd className="text-body tabular-nums text-charcoal">{summary.posted}</dd>
           </div>
-          <div className="rounded-card border border-border-warm bg-cream-light px-2 py-1.5">
+          <div className="rounded-card border border-border-warm bg-white px-2 py-1.5">
             <dt className="text-muted">{m.summary.scheduled}</dt>
             <dd className="text-body tabular-nums text-charcoal">{summary.scheduled}</dd>
           </div>
-          <div className="rounded-card border border-border-warm bg-cream-light px-2 py-1.5">
+          <div className="rounded-card border border-border-warm bg-white px-2 py-1.5">
+            <dt className="text-muted">{m.summary.failed}</dt>
+            <dd className="text-body tabular-nums text-charcoal">{summary.failed}</dd>
+          </div>
+          <div className="rounded-card border border-border-warm bg-white px-2 py-1.5">
             <dt className="text-muted">{m.summary.impressions}</dt>
             <dd className="text-body tabular-nums text-charcoal">{summary.impressions.toLocaleString('ja-JP')}</dd>
           </div>
@@ -263,36 +279,14 @@ export function PromotionPanel({
         {posts.length === 0 ? (
           <p className="mt-space-snug text-body text-muted">{m.postsEmpty[channel]}</p>
         ) : (
-          <ul className="mt-space-snug flex flex-col gap-2">
+          // フル幅を使い切りつつ 1 枚の幅が X の実物に近くなるよう、広い画面だけ 2 列にする。
+          <div className="mt-space-snug grid grid-cols-1 gap-space-snug xl:grid-cols-2" data-testid="promotion-posts-list">
             {posts.map((p) => (
-              <li key={p.id} className="rounded-card border border-border-warm bg-cream-light px-3 py-2">
-                <div className="flex items-center justify-between gap-2 text-caption text-muted">
-                  <span>
-                    {m.postStatus[p.status as keyof typeof m.postStatus] ?? p.status} ・ {fmt(p.posted_at ?? p.scheduled_for)}
-                  </span>
-                  {p.external_url && (
-                    <a href={p.external_url} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 text-charcoal underline">
-                      {m.openPost} <ExternalLink className="h-3 w-3" />
-                    </a>
-                  )}
-                </div>
-                <p className="mt-1 text-body text-charcoal">{p.excerpt}</p>
-                <div className="mt-1 flex flex-wrap items-center gap-x-3 text-caption text-muted">
-                  {p.article_id && p.article_title && (
-                    <Link href={`/articles/${p.article_id}`} className="truncate text-muted no-underline hover:underline">
-                      {p.article_title}
-                    </Link>
-                  )}
-                  {p.impressions != null && <span>{m.metrics.impressions(p.impressions)}</span>}
-                  {p.likes != null && <span>{m.metrics.likes(p.likes)}</span>}
-                  {p.error && <span className="text-red-600">{p.error}</span>}
-                </div>
-              </li>
+              <PostPreview key={p.id} post={p} channel={channel} authorName={author.name} authorHandle={author.handle} avatarUrl={author.avatar_url} />
             ))}
-          </ul>
+          </div>
         )}
       </section>
-      </div>
     </div>
   );
 }

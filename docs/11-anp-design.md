@@ -714,7 +714,23 @@ ANP の機能は A2P の対応機能を note 向けに写像したもの。**太
   Server Action は `app/actions/promotion.ts`（`updateAccountPromotionPolicy` / `generateAccountPromotionPolicy` /
   `getAccountPromotionState`）、純関数は `lib/promotion-view.ts`（クライアント可）、DB ローダは `lib/promotion-core.ts`。
   投稿一覧は `promotion_posts`（`note_article_id` がそのアカウントの記事、`channel` 一致）の直近 30 件＋投稿済み/予約/
-  表示回数の集計。ブログは施策設計のみ（自動投稿の配線は未接続、UI に明記）。
+  失敗/表示回数の集計。ブログは施策設計のみ（自動投稿の配線は未接続、UI に明記）。
+- **F-ANP-32b 投稿一覧を実物のプレビューにする（実装済み 2026-10-15）**: 運営者要望「投稿一覧は下に横幅いっぱいに
+  表示させて。あと、Xっぽい見た目にしないとプレビューにならないからよろしく」。
+  それまでの投稿一覧は右カラムの狭い枠に**本文を 140 字で切り改行も空白 1 個に潰した 1 行の抜粋**を出していたため、
+  「投稿前に中身を確かめる」用途に使えなかった。
+  - レイアウト: 上段を「施策（広め）＋ 投稿先アカウント連携」の 2 カラム、**投稿一覧はその下にフル幅**。
+    カード 1 枚の幅が X の実物に近くなるよう `xl` 以上だけ 2 列（`promotion-panel.tsx`）。
+  - 見た目: `post-preview.tsx`（新規）が 1 件を X の投稿として描く — アイコン（`note_accounts.avatar_r2_key` の署名 URL、
+    無ければ表示名の頭文字）、表示名、`@ハンドル`（**連携済みならその媒体のハンドル**＝実際に出る名前、未連携は note の
+    ハンドル）、時刻、状態チップ、**本文全文・改行保持**、ハッシュタグ/URL/メンションを X のリンク色 `#1d9bf0` で着色、
+    アクション行（返信/リポスト/いいね/表示。X 以外はいいね/コメント/表示）。
+  - 画像: `promotion_posts.media_key` があればそれ（TikTok 動画・IG カルーセル先頭等）、無ければ紐づく note 記事の
+    アイキャッチを **X のリンクカード風**に出す（X 用の販促画像は `promotion.post.publish` が投稿時に生成するため
+    事前には存在しない。ここで出すのは note 側の見え方）。署名 URL は RSC 側（`page.tsx`）で 15 分で作り、
+    失敗しても一覧は出す（画像が出ないだけ）。
+  - `PromotionPostView.excerpt` を `body`（全文・2000 字の安全弁のみ）に置き換え、`media_url` /
+    `article_eyecatch_url` を追加（`lib/__tests__/promotion-view.test.ts` で全文・改行保持を固定）。
 - **F-ANP-33 販促 SNS アカウントの連携（note アカウント別、実装済み 2026-09-22）**: 運営者要望「販促施策で各媒体と連携する
   機能がないから実装して。note アカウントごとに販促を行う SNS アカウントも違うはずだからそれも考慮して」。A2P の販促アカウント台帳
   `promotion_accounts` に `note_account_id`（migration `20260922000000_anp_promotion_account_link`、FK SetNull、index

@@ -75,12 +75,23 @@ export interface PromotionPostRow {
   replies: number | null;
   article_title: string | null;
   article_id: string | null;
+  /** 事前レンダリング済みメディアの署名 URL (呼出側=RSC が R2 から作る)。 */
+  media_url?: string | null;
+  /** 紐づく note 記事のアイキャッチ署名 URL (X のリンクカードを模すのに使う)。 */
+  article_eyecatch_url?: string | null;
 }
 
 export interface PromotionPostView {
   id: string;
   status: string;
-  excerpt: string;
+  /**
+   * 投稿本文 (全文・改行そのまま)。
+   *
+   * 2026-10-15 まではここが 140 字で切って改行も潰した `excerpt` だったため、
+   * 「投稿前に中身を確かめる」用途に使えなかった (運営者指摘
+   * 「Xっぽい見た目にしないとプレビューにならない」)。長すぎる本文だけ安全弁で切る。
+   */
+  body: string;
   scheduled_for: string;
   posted_at: string | null;
   external_url: string | null;
@@ -91,14 +102,19 @@ export interface PromotionPostView {
   replies: number | null;
   article_title: string | null;
   article_id: string | null;
+  media_url: string | null;
+  article_eyecatch_url: string | null;
 }
 
+/** プレビューに載せる本文の安全弁 (X は 280 字制限なので実運用では当たらない)。 */
+const BODY_MAX = 2000;
+
 export function toPromotionPostView(row: PromotionPostRow): PromotionPostView {
-  const flat = row.body.replace(/\s+/g, ' ').trim();
+  const body = row.body.trim();
   return {
     id: row.id,
     status: row.status,
-    excerpt: flat.length > 140 ? `${flat.slice(0, 140)}…` : flat,
+    body: body.length > BODY_MAX ? `${body.slice(0, BODY_MAX)}…` : body,
     scheduled_for: row.scheduled_for.toISOString(),
     posted_at: row.posted_at ? row.posted_at.toISOString() : null,
     external_url: row.external_url,
@@ -109,6 +125,8 @@ export function toPromotionPostView(row: PromotionPostRow): PromotionPostView {
     replies: row.replies,
     article_title: row.article_title,
     article_id: row.article_id,
+    media_url: row.media_url ?? null,
+    article_eyecatch_url: row.article_eyecatch_url ?? null,
   };
 }
 
