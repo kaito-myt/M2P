@@ -40,6 +40,11 @@ docs/wireframes/
    - prompt.md が更新される
    - 必要な画像のみ再生成（古い画像は上書き）
 
+## 3DP (S-3DP-xx)
+
+3DP の画面は `S-3DP-{番号}-{slug}/` に置く (設計 = `docs/12-3dp-design.md` §9)。A2P の `S-0xx` とは ID 体系が別。
+状態違いの画像は固定名以外も使う (例: `blocked.png` `preview-fail.png` `halted.png` `stage0.png`)。各 `prompt.md` の「想定画像」に列挙する。
+
 ## 注意
 
 - 画像ファイルは git にコミットして良い（参照用 low-fi なのでサイズ小）
