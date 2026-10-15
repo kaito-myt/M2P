@@ -98,4 +98,27 @@ describe('runPromotionXEngage', () => {
     );
     expect(res.skipped_reason).toBe('cap_reached');
   });
+  it('スイッチ ON なら result.enabled が立つ (記録とログが実態と合う)', async () => {
+    // 2026-10-15: ここを立て忘れていたため、実際にフォロー/いいねした回でも
+    // 結果が enabled=false と記録され「切れているのに動いた」ように見えていた。
+    const tokenJson = JSON.stringify({ kind: 'oauth1', apiKey: 'k', apiSecret: 's', accessToken: 'at', accessTokenSecret: 'ats' });
+    const res = await runPromotionXEngage(
+      {},
+      { prisma: makePrisma({ enabled: true, today: 30 }), doFetch: makeFetch() as never, decryptToken: () => tokenJson, sleep: async () => {}, lineConfigured: () => false },
+    );
+    expect(res.enabled).toBe(true);
+  });
+
+  it('cron 起動 (job_id 無し) でも観測用の Job 行を自分で作る', async () => {
+    const create = vi.fn(async (_args: { data: Record<string, unknown>; select: { id: true } }) => ({ id: 'job-self' }));
+    const update = vi.fn(async (_args: { where: { id: string }; data: Record<string, unknown> }) => ({}));
+    const prisma = { ...makePrisma({ enabled: false }), job: { create, update } } as PromotionXEngagePrisma;
+    await runPromotionXEngage({}, { prisma, doFetch: makeFetch() as never, decryptToken: () => 'tok', sleep: async () => {}, lineConfigured: () => false });
+    const created = create.mock.calls[0]![0] as unknown as { data: { kind: string; payload_json: { trigger: string } } };
+    expect(created.data.kind).toBe('promotion.x.engage');
+    expect(created.data.payload_json.trigger).toBe('cron');
+    const updated = update.mock.calls[0]![0] as unknown as { where: { id: string }; data: { status: string; result_json: { skipped_reason: string } } };
+    expect(updated.where.id).toBe('job-self');
+    expect(updated.data.result_json.skipped_reason).toBe('disabled');
+  });
 });

@@ -63,7 +63,11 @@ export interface PromotionSnsEngagePrisma {
     count: (args: unknown) => Promise<number>;
     upsert: (args: unknown) => Promise<unknown>;
   };
-  job?: { update: (args: { where: { id: string }; data: Record<string, unknown> }) => Promise<unknown> };
+  job?: {
+    update: (args: { where: { id: string }; data: Record<string, unknown> }) => Promise<unknown>;
+    /** cron 起動 (payload なし) のとき観測用の行を自分で作る。 */
+    create?: (args: { data: Record<string, unknown>; select: { id: true } }) => Promise<{ id: string }>;
+  };
 }
 
 export interface PromotionSnsEngageDeps {
@@ -109,12 +113,30 @@ export async function runPromotionSnsEngage(
       }));
 
   const parsed = PromotionSnsEngagePayloadSchema.safeParse(payload);
-  const jobId = parsed.success ? parsed.data.job_id : undefined;
+  const parsedJobId = parsed.success ? parsed.data.job_id : undefined;
   const only = parsed.success ? parsed.data.channel : undefined;
   const overrideCap = parsed.success ? parsed.data.override_cap : undefined;
   const channels = only ? [only] : [...SNS_ENGAGE_CHANNELS];
 
   const result: PromotionSnsEngageResult = { enabled: false, per_channel: {}, skipped: [] };
+
+  // cron 起動 (`promotion-sns-engage`) は payload を持たないので `job_id` が無く、内部 `Job` 行が
+  // 1 行も作られていなかった = **定期実行の成功も失敗も UI (jobs) に一切出ない**。
+  // 運営者が「フォロワーを増やす活動」として依頼した機能なので、黙って止まるのは困る
+  // (2026-10-15 に `note.account.research` で同じ穴を直した。docs/05 F-ANP-56 / F-076)。
+  let jobId = parsedJobId;
+  if (!jobId && prisma.job?.create) {
+    try {
+      const created = await prisma.job.create({
+        data: { kind: PROMOTION_SNS_ENGAGE_TASK_NAME, status: 'running', started_at: now(), payload_json: { trigger: 'cron' } },
+        select: { id: true },
+      });
+      jobId = created.id;
+    } catch (err) {
+      // 観測用の行が作れないだけで本体は止めない。
+      log.warn({ task: PROMOTION_SNS_ENGAGE_TASK_NAME, err }, '観測用の内部 Job 行を作れなかった');
+    }
+  }
 
   try {
     const settings = await prisma.appSettings.findUnique({ where: { id: 'singleton' }, select: { sns_engage_enabled: true } });

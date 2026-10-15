@@ -3733,6 +3733,33 @@ gpt-image-2 単価行を seed 済 (`apply-openai-catalog.ts`)。本ドキュメ�
   - `promotion.dispatch` (cron) — `auto_enabled` チャンネル × `publish_status='published'` の本 ×
     期限到来 scheduled 投稿を publish に流す。`AppSettings.promo_auto_post_enabled` で cron を条件付き有効化
     (sales.fetch.dispatch と同じ `buildCronItemsWithSettings` 方式、worker再起動で反映)。
+    **1 tick で最大 100 件をまとめて enqueue する (間隔の制御は持たない)** — 間隔は
+    `promotion.posts.generate` が `scheduled_for` に書いた日程だけが担保する。
+
+#### 配信停止中に積み上がったキューを再開するときの手順 (2026-10-15)
+
+運営者指摘「X の投稿が全然できてない」の実体: **`promo_auto_post_enabled=false` の間は cron 自体が
+登録されない**ので、`promotion.posts.generate` は投稿を作り続けるのに配信は 1 件も走らない。
+2026-09-23 21:01 JST を最後に実投稿が止まり、**期限到来済みが 139 件** (x 54 / instagram 49 /
+tiktok 12 / note 12 / blog 12) 積まれていた。
+
+このままスイッチを ON にすると**次の tick で 100 件が一斉投稿**され、スパム判定・凍結のリスクがある
+(2026-09-02 の SNS リブートで「頻度 2/日」に落とした判断と真逆になる)。再開は必ず次の順で行う:
+
+1. `scripts/.stage/restage-promo-queue.cjs` で **scheduled 全件の `scheduled_for` を再配置**
+   (本文・紐付けは触らない)。channel ごとの 1 日の本数は x/instagram 4 本・tiktok/note/blog 2 本、
+   時刻は JST 08:30 / 12:30 / 16:30 / 00:30 (dispatcher の tick は 09/17/01 JST なので 1 tick 1 本になる)。
+   X だけは **ANP アカウント (account_id あり) と既定アカウントを交互**にする — 運営者の関心は
+   ANP の X 投稿が 1 件も出ていないことなので、初日から ANP 分が出るようにする。
+2. `app_settings.promo_auto_post_enabled = true`。
+3. **worker を再起動** (cron はブート時にしか組み立てられない)。`graphile_worker._private_known_crontabs`
+   に `promotion-dispatch` が現れ、`last_execution` が更新されることを確認する。
+
+⚠️ **フラグだけ変えても cron は変わらない**: UI でスイッチを入れても worker を再起動するまで
+何も起きない (条件付き cron 全般に当てはまる)。実際に `anp_auto_theme_enabled=true` のまま
+`note-theme-auto-daily` が 2026-10-09 08:00 JST 以降発火しておらず、ANP の日次テーマ生成が
+6 日間止まっていた (今回の再起動で再登録)。cron を条件付きで足している設定を変えたら
+**必ず worker 再起動までセットで行う**。
   - **PublisherPort** DI 境界 (`apps/worker/src/tasks/promotion-post/`): 契約+stub は publisher-port.ts、
     実 HTTP (Webhook 汎用経路 / X API v2) は http-publisher-port.ts に隔離。env `PROMOTION_PUBLISHER=stub`。
   - **トリガー**: `updateBookPublishStatus` で「未出版→published」かつ `promo_auto_on_publish_enabled` の時に

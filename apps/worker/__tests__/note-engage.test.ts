@@ -232,3 +232,78 @@ describe('runNoteEngage', () => {
     expect(pushAlert.mock.calls[0]?.[0]).toContain('note-session-capture.sh acc1');
   });
 });
+
+describe('note.engage の観測と鍵 (2026-10-15)', () => {
+  it('cron 起動 (job_id 無し) でも観測用の Job 行を自分で作り、結果を書き戻す', async () => {
+    const create = vi.fn().mockResolvedValue({ id: 'job-self' });
+    const update = vi.fn().mockResolvedValue({});
+    const prisma: NoteEngagePrisma = {
+      appSettings: { findUnique: vi.fn().mockResolvedValue({ note_engage_enabled: true }) },
+      noteAccount: { findMany: vi.fn().mockResolvedValue([]), update: vi.fn() },
+      promotionSnsEngagement: { findMany: vi.fn(), count: vi.fn(), upsert: vi.fn() },
+      noteAuthRequest: { findFirst: vi.fn(), create: vi.fn() },
+      job: { create, update },
+    };
+    await runNoteEngage({}, { prisma, lineConfigured: () => false, resolveProxy: async () => null, generate: vi.fn() });
+
+    expect(create).toHaveBeenCalledTimes(1);
+    const created = create.mock.calls[0]![0] as { data: { kind: string; status: string; payload_json: { trigger: string } } };
+    expect(created.data.kind).toBe('note.engage');
+    expect(created.data.status).toBe('running');
+    expect(created.data.payload_json.trigger).toBe('cron');
+    // 作った行に結果が入る (これが無いと定期実行の成否が UI に出ない)。
+    expect(update).toHaveBeenCalledWith(expect.objectContaining({ where: { id: 'job-self' } }));
+    const updated = update.mock.calls[0]![0] as { data: { status: string; result_json: { skipped: string[] } } };
+    expect(updated.data.status).toBe('done');
+    expect(updated.data.result_json.skipped).toContain('no_active_account_with_session');
+  });
+
+  it('job_id が渡されたときは Job 行を作らない (二重計上しない)', async () => {
+    const create = vi.fn();
+    const update = vi.fn().mockResolvedValue({});
+    const prisma: NoteEngagePrisma = {
+      appSettings: { findUnique: vi.fn().mockResolvedValue({ note_engage_enabled: true }) },
+      noteAccount: { findMany: vi.fn().mockResolvedValue([]), update: vi.fn() },
+      promotionSnsEngagement: { findMany: vi.fn(), count: vi.fn(), upsert: vi.fn() },
+      noteAuthRequest: { findFirst: vi.fn(), create: vi.fn() },
+      job: { create, update },
+    };
+    await runNoteEngage(
+      { job_id: 'job-given' },
+      { prisma, lineConfigured: () => false, resolveProxy: async () => null, generate: vi.fn() },
+    );
+    expect(create).not.toHaveBeenCalled();
+    expect(update).toHaveBeenCalledWith(expect.objectContaining({ where: { id: 'job-given' } }));
+  });
+
+  it('セッションは ANP が書いた鍵 (KDP_CRED_KEY) で復号する', async () => {
+    // 2026-10-15: ここが API_CRED_KEY だったため本番の 2 アカウントが毎回
+    // session_decrypt_failed になり、F-091 は一度も動いていなかった。
+    process.env.KDP_CRED_KEY = 'a'.repeat(64);
+    const { encryptKdpCredentials } = await import('@a2p/crypto');
+    const enc = encryptKdpCredentials(JSON.stringify({ cookies: [] }));
+    const prisma: NoteEngagePrisma = {
+      appSettings: { findUnique: vi.fn().mockResolvedValue({ note_engage_enabled: true }) },
+      noteAccount: {
+        findMany: vi.fn().mockResolvedValue([
+          { id: 'acc1', niche: '読書', display_name: '本の虫', target_reader: '20代', session_state_enc: enc },
+        ]),
+        update: vi.fn(),
+      },
+      promotionSnsEngagement: { findMany: vi.fn().mockResolvedValue([]), count: vi.fn().mockResolvedValue(0), upsert: vi.fn() },
+      noteAuthRequest: { findFirst: vi.fn(), create: vi.fn() },
+    };
+    const res = await runNoteEngage(
+      {},
+      {
+        prisma,
+        lineConfigured: () => false,
+        resolveProxy: async () => null,
+        // decryptSession は渡さない = 既定の復号経路を検証する。
+        generate: async () => ({ channel: 'note', summary: '', actions: [], search_hashtags: [], notes: [] }),
+        port: { engageAll: async () => ({ outcomes: [] }) },
+      },
+    );
+    expect(res.skipped).not.toContain('acc1:session_decrypt_failed');
+  });
+});

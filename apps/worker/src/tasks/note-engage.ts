@@ -1,7 +1,7 @@
 import type { JobHelpers, Task } from 'graphile-worker';
 import { z } from 'zod';
 
-import { decryptApiKey } from '@a2p/crypto';
+import { decryptKdpCredentials } from '@a2p/crypto';
 import { createLogger, type Logger } from '@a2p/contracts/logger';
 import type { GrowthScoutOutput } from '@a2p/contracts/agents/growth-scout';
 import { prisma as defaultPrisma } from '@a2p/db';
@@ -69,7 +69,11 @@ export interface NoteEngagePrisma {
     upsert: (args: unknown) => Promise<unknown>;
   };
   noteAuthRequest: NoteAuthRelayPrisma['noteAuthRequest'];
-  job?: { update: (args: { where: { id: string }; data: Record<string, unknown> }) => Promise<unknown> };
+  job?: {
+    update: (args: { where: { id: string }; data: Record<string, unknown> }) => Promise<unknown>;
+    /** cron 起動 (payload なし) のとき観測用の行を自分で作る。 */
+    create?: (args: { data: Record<string, unknown>; select: { id: true } }) => Promise<{ id: string }>;
+  };
 }
 
 export interface NoteEngageDeps {
@@ -110,7 +114,12 @@ export async function runNoteEngage(payload: unknown, deps: NoteEngageDeps = {})
   const prisma = deps.prisma ?? (defaultPrisma as unknown as NoteEngagePrisma);
   const now = deps.now ?? (() => new Date());
   const port = deps.port ?? createPlaywrightNoteEngagePort();
-  const decrypt = deps.decryptSession ?? ((enc: string) => decryptApiKey(enc));
+  // `note_accounts.session_state_enc` は ANP の連携画面が **KDP_CRED_KEY** で暗号化して書く
+  // (`apps/anp/app/actions/accounts.ts` の `encryptKdpCredentials`)。
+  // ここは 2026-10-15 まで `decryptApiKey` (API_CRED_KEY) を使っていたため、
+  // **全アカウントが毎回 `session_decrypt_failed` でスキップ**= F-091 は一度も動いていなかった。
+  // 同じ列を読む `pipeline.note.publish` は `decryptKdpCredentials` なので公開だけは動いていた。
+  const decrypt = deps.decryptSession ?? ((enc: string) => decryptKdpCredentials(enc));
   const pushAlert = deps.pushAlert ?? pushLine;
   const lineConfigured = deps.lineConfigured ?? isLineRelayConfigured;
   const resolveProxy =
@@ -133,11 +142,29 @@ export async function runNoteEngage(payload: unknown, deps: NoteEngageDeps = {})
       ));
 
   const parsed = NoteEngagePayloadSchema.safeParse(payload);
-  const jobId = parsed.success ? parsed.data.job_id : undefined;
+  const parsedJobId = parsed.success ? parsed.data.job_id : undefined;
   const onlyAccount = parsed.success ? parsed.data.note_account_id : undefined;
   const overrideCap = parsed.success ? parsed.data.override_cap : undefined;
 
   const result: NoteEngageResult = { enabled: false, per_account: {}, skipped: [] };
+
+  // cron 起動 (`note-engage`) は payload を持たないので `job_id` が無く、内部 `Job` 行が
+  // 1 行も作られていなかった = **定期実行の成功も失敗も UI (jobs) に一切出ない**。
+  // 運営者が「フォロワーを増やす活動」として依頼した機能なので、黙って止まるのは困る
+  // (2026-10-15 に `note.account.research` で同じ穴を直した。docs/05 F-ANP-56 / F-076)。
+  let jobId = parsedJobId;
+  if (!jobId && prisma.job?.create) {
+    try {
+      const created = await prisma.job.create({
+        data: { kind: NOTE_ENGAGE_TASK_NAME, status: 'running', started_at: now(), payload_json: { trigger: 'cron' } },
+        select: { id: true },
+      });
+      jobId = created.id;
+    } catch (err) {
+      // 観測用の行が作れないだけで本体は止めない。
+      log.warn({ task: NOTE_ENGAGE_TASK_NAME, err }, '観測用の内部 Job 行を作れなかった');
+    }
+  }
 
   try {
     const settings = await prisma.appSettings.findUnique({
@@ -210,6 +237,18 @@ export async function runNoteEngage(payload: unknown, deps: NoteEngageDeps = {})
         continue;
       }
 
+      // セッション復号は **growth_scout より前**に行う (2026-10-15)。
+      // 復号できないアカウントのために ¥40/回 (web 検索つき) の偵察を払ってから捨てていた。
+      // 実際 2026-10-13 までこの順序で **¥4,700/月を払いながらフォロー/スキは 0 件**だった
+      // (原因は鍵違い — ANP は KDP_CRED_KEY で書くのにここは API_CRED_KEY で読んでいた)。
+      let sessionState: string;
+      try {
+        sessionState = decrypt(account.session_state_enc);
+      } catch {
+        result.skipped.push(`${account.id}:session_decrypt_failed`);
+        continue;
+      }
+
       // 対象を growth_scout(channel=note)で特定。
       let out: GrowthScoutOutput;
       try {
@@ -234,15 +273,6 @@ export async function runNoteEngage(payload: unknown, deps: NoteEngageDeps = {})
       const targets = pickNoteTargets(out.actions, engaged, remainingFollow, remainingLike);
       if (targets.length === 0) {
         result.skipped.push(`${account.id}:no_targets`);
-        continue;
-      }
-
-      // セッション復号 → ブラウザで操作。
-      let sessionState: string;
-      try {
-        sessionState = decrypt(account.session_state_enc);
-      } catch {
-        result.skipped.push(`${account.id}:session_decrypt_failed`);
         continue;
       }
 
