@@ -253,6 +253,10 @@ export async function runSalesFetch(deps: SalesFetchDeps): Promise<SalesFetchRes
         months: parsed.months,
         duplicateKeyCount: dupes.count,
         maxDuplicate: dupes.max,
+        duplicateExamples: dupes.examples,
+        // 4 シート構成 (電子書籍/既読KENPC/ペーパーバック/総収益) の分類・検出ヘッダ・集計 (docs/09 §10.4)
+        sheetDiagnostics: parsed.sheetDiagnostics,
+        monthlySummaries: parsed.monthlySummaries,
       },
       'sales.fetch parsed report',
     );
@@ -267,7 +271,10 @@ export async function runSalesFetch(deps: SalesFetchDeps): Promise<SalesFetchRes
     log.warn({ err, runId }, 'failed to parse KDP report');
     return fail(db, runId, now, 'parse_error', 'レポートの解析に失敗しました', log);
   }
-  log.info({ runId, totals: normalized.totals }, 'sales.fetch normalized totals');
+  log.info(
+    { runId, totals: normalized.totals, kenpDiagnostics: normalized.kenpDiagnostics, kenpRateUsed: normalized.kenpRateUsed },
+    'sales.fetch normalized totals',
+  );
 
   if (normalized.rows.length === 0) {
     // 当月にまだ実績が無いケース等。エラーではなく 0 件 done。
@@ -381,23 +388,50 @@ async function getKenpRate(db: SalesFetchPrisma, yearMonth: string): Promise<Ken
   }
 }
 
-/** 同一 asin|marketplace|month|royalty_kind の行が複数あるか (二重計上調査用。docs/09 §10.4)。 */
-function countDuplicateKeys(rows: ReadonlyArray<{ asin: string; marketplace?: string | null; month?: string | null; royalty_kind?: string }>): {
+type DupRow = {
+  asin: string;
+  marketplace?: string | null;
+  month?: string | null;
+  royalty_kind?: string;
+  sheet?: string;
+  units_sold: number;
+  kenp_read: number;
+  royalty: number;
+};
+
+/**
+ * 同一 asin|marketplace|month|royalty_kind の行の重複を数え、例を最大 3 件返す (二重計上調査用。docs/09 §10.4)。
+ * 例には由来シートと各行の値を含め、「同一シート内の重複 (日別行など)」か「別シート由来の二重計上」かを判別できるようにする。
+ */
+function countDuplicateKeys(rows: ReadonlyArray<DupRow>): {
   count: number;
   max: number;
+  examples: Array<{
+    key: string;
+    n: number;
+    crossSheet: boolean;
+    rows: Array<{ sheet: string | null; units: number; kenp: number; royalty: number }>;
+  }>;
 } {
-  const seen = new Map<string, number>();
+  const groups = new Map<string, DupRow[]>();
   for (const r of rows) {
     const k = `${r.asin}|${r.marketplace ?? ''}|${r.month ?? ''}|${r.royalty_kind ?? 'paid'}`;
-    seen.set(k, (seen.get(k) ?? 0) + 1);
+    const g = groups.get(k);
+    if (g) g.push(r);
+    else groups.set(k, [r]);
   }
-  let count = 0;
-  let max = 1;
-  for (const n of seen.values()) {
-    if (n > 1) count++;
-    if (n > max) max = n;
-  }
-  return { count, max };
+  const dup = Array.from(groups.entries()).filter(([, g]) => g.length > 1);
+  dup.sort((a, b) => b[1].length - a[1].length);
+  return {
+    count: dup.length,
+    max: dup.reduce((m, [, g]) => Math.max(m, g.length), 1),
+    examples: dup.slice(0, 3).map(([key, g]) => ({
+      key,
+      n: g.length,
+      crossSheet: new Set(g.map((r) => r.sheet ?? '')).size > 1,
+      rows: g.map((r) => ({ sheet: r.sheet ?? null, units: r.units_sold, kenp: r.kenp_read, royalty: r.royalty })),
+    })),
+  };
 }
 
 async function getFxUsdJpy(db: SalesFetchPrisma): Promise<number> {

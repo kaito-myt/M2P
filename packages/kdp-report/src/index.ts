@@ -9,6 +9,7 @@ export {
   parseMonth,
   type ParseResult,
   type KdpReportKind,
+  type KdpSheetDiagnostic,
 } from './parse.js';
 
 export {

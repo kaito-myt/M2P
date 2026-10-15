@@ -28,6 +28,8 @@ export interface KdpReportRow {
   royalty: number;
   /** ロイヤリティの種別 (有料販売 or KENP)。未指定は 'paid' 扱い。 */
   royalty_kind?: 'paid' | 'kenp';
+  /** 由来シート名 (診断用。集計には使わない) */
+  sheet?: string;
 }
 
 /** 「概要」シート由来の月次サマリ (KENP ロイヤリティ按分の原資)。 */
@@ -146,6 +148,19 @@ export interface NormalizeResult {
   allocatedKenpRoyaltyJpy: number;
   /** 確定月レートによる KENP 推計の総額 (JPY)。0 なら推計を含まない。 */
   estimatedKenpRoyaltyJpy: number;
+  /** 診断用: KENP 金額が確定できなかった理由を切り分けるための中間値 (docs/09 §10.4) */
+  kenpDiagnostics: {
+    /** 明細に KENP 金額 (royalty_kind='kenp' の金額) が 1 件でもあったか */
+    kenpRoyaltyInDetail: boolean;
+    /** 対象月の概要サマリが見つかったか */
+    summaryFound: boolean;
+    summaryRoyaltyJpy: number | null;
+    /** 有料販売ロイヤリティ合計 (JPY・按分の控除額) */
+    paidTotalJpy: number;
+    /** 按分原資 = max(0, summary − paidTotal)。サマリ無しは null */
+    pool: number | null;
+    totalPages: number;
+  };
   /** 推計に使った実効レート。推計しなかった場合は null。 */
   kenpRateUsed: KenpEffectiveRate | null;
 }
@@ -252,11 +267,22 @@ export function normalizeKdpRows(
   // 概要合計 − 有料販売合計 = KENP 原資 を、各書籍の KENP ページ数で按分する。
   let allocatedKenpRoyaltyJpy = 0;
   const anyKenpRoyaltyPresent = accs.some((a) => a.kenp_royalty_present);
+  const diag: NormalizeResult['kenpDiagnostics'] = {
+    kenpRoyaltyInDetail: anyKenpRoyaltyPresent,
+    summaryFound: false,
+    summaryRoyaltyJpy: null,
+    paidTotalJpy: Math.round(accs.reduce((t, a) => t + a.paid_jpy, 0)),
+    pool: null,
+    totalPages: accs.reduce((t, a) => t + a.kenp_read, 0),
+  };
   if (!anyKenpRoyaltyPresent && target && options.monthlySummaries) {
     const summary = options.monthlySummaries.find((s) => s.month === target);
     if (summary) {
       const paidTotal = accs.reduce((t, a) => t + a.paid_jpy, 0);
       const pool = Math.max(0, Math.round(summary.royalty_jpy) - Math.round(paidTotal));
+      diag.summaryFound = true;
+      diag.summaryRoyaltyJpy = Math.round(summary.royalty_jpy);
+      diag.pool = pool;
       const totalPages = accs.reduce((t, a) => t + a.kenp_read, 0);
       if (pool > 0 && totalPages > 0) {
         for (const [acc, add] of allocateByPages(accs, pool)) {
@@ -314,6 +340,7 @@ export function normalizeKdpRows(
     totals,
     allocatedKenpRoyaltyJpy,
     estimatedKenpRoyaltyJpy,
+    kenpDiagnostics: diag,
     kenpRateUsed,
   };
 }

@@ -37,12 +37,29 @@ export interface ParseResult {
   reportKind: KdpReportKind;
   /** rows / summaries に現れた月 (YYYY-MM) の昇順ユニーク一覧 */
   months: string[];
+  /** シートごとの診断 (分類結果・検出ヘッダ・集計値)。ログ/調査用で、取込ロジックは使わない。 */
+  sheetDiagnostics: KdpSheetDiagnostic[];
   /** 走査したシート名 */
   sheetsSeen: string[];
   /** データを抽出できたシート名 */
   sheetsParsed: string[];
   /** デバッグ用: 検出したヘッダの例 (先頭シート) */
   detectedHeaders: string[];
+}
+
+export interface KdpSheetDiagnostic {
+  name: string;
+  /** 'noheader' = ヘッダ行を検出できなかった */
+  role: SheetRole | 'noheader';
+  headerRow: number | null;
+  /** 検出したヘッダ行 (無ければ先頭 3 行) のセル。各 40 字・最大 16 セルに切り詰め */
+  headerCells: string[];
+  /** 列マッピング結果 (列名 → 列番号) */
+  columns: Record<string, number>;
+  month: string | null;
+  rowsEmitted: number;
+  /** 当シートから出した行の合計 (units / kenp / royalty は元通貨のまま) */
+  sums: { units: number; kenp: number; royalty: number };
 }
 
 type ColumnKey =
@@ -228,6 +245,9 @@ export function parseKdpReportWorkbook(buffer: Buffer | ArrayBuffer): ParseResul
   const monthlySummaries: KdpMonthlySummary[] = [];
   const sheetsSeen: string[] = [];
   const sheetsParsed: string[] = [];
+  const sheetDiagnostics: KdpSheetDiagnostic[] = [];
+  const clip = (cells: unknown[]): string[] =>
+    cells.slice(0, 16).map((c) => String(c ?? '').slice(0, 40));
   let detectedHeaders: string[] = [];
 
   let wb: XLSX.WorkBook;
@@ -237,6 +257,7 @@ export function parseKdpReportWorkbook(buffer: Buffer | ArrayBuffer): ParseResul
     return {
       rows,
       monthlySummaries,
+      sheetDiagnostics: [],
       reportKind: 'confirmed',
       months: [],
       sheetsSeen,
@@ -255,13 +276,27 @@ export function parseKdpReportWorkbook(buffer: Buffer | ArrayBuffer): ParseResul
       defval: null,
     });
     const header = findHeaderRow(matrix);
-    if (!header) continue;
+    if (!header) {
+      sheetDiagnostics.push({
+        name: sheetName, role: 'noheader', headerRow: null,
+        headerCells: matrix.slice(0, 3).flatMap((r) => clip(r ?? [])), columns: {}, month: null,
+        rowsEmitted: 0, sums: { units: 0, kenp: 0, royalty: 0 },
+      });
+      continue;
+    }
 
     const { headerRow, map } = header;
     const role = classify(map);
+    const sheetMonth = detectSheetMonth(matrix, headerRow);
+    const diag: KdpSheetDiagnostic = {
+      name: sheetName, role, headerRow,
+      headerCells: clip(matrix[headerRow] ?? []),
+      columns: Object.fromEntries(Object.entries(map).filter(([, v]) => v !== undefined)) as Record<string, number>,
+      month: sheetMonth, rowsEmitted: 0, sums: { units: 0, kenp: 0, royalty: 0 },
+    };
+    sheetDiagnostics.push(diag);
     if (role === 'ignore') continue;
 
-    const sheetMonth = detectSheetMonth(matrix, headerRow);
     sheetsParsed.push(sheetName);
     if (detectedHeaders.length === 0) detectedHeaders = header.headers.filter(Boolean);
 
@@ -276,6 +311,9 @@ export function parseKdpReportWorkbook(buffer: Buffer | ArrayBuffer): ParseResul
         const royaltyJpy = map.royalty_jpy !== undefined ? parseNumber(cells[map.royalty_jpy]) : 0;
         if (kenp === 0 && royaltyJpy === 0) continue;
         monthlySummaries.push({ month: rowMonth, kenp_read: kenp, royalty_jpy: royaltyJpy });
+        diag.rowsEmitted++;
+        diag.sums.kenp += kenp;
+        diag.sums.royalty += royaltyJpy;
         continue;
       }
 
@@ -303,7 +341,12 @@ export function parseKdpReportWorkbook(buffer: Buffer | ArrayBuffer): ParseResul
         kenp_read: kenp,
         royalty,
         royalty_kind: role === 'kenp' ? 'kenp' : 'paid',
+        sheet: sheetName,
       });
+      diag.rowsEmitted++;
+      diag.sums.units += units;
+      diag.sums.kenp += kenp;
+      diag.sums.royalty += royalty;
     }
   }
 
@@ -315,5 +358,5 @@ export function parseKdpReportWorkbook(buffer: Buffer | ArrayBuffer): ParseResul
   // 「概要」シート (月次サマリ) を持つのは Estimator のみ → 見込み扱い。
   const reportKind: KdpReportKind = monthlySummaries.length > 0 ? 'estimate' : 'confirmed';
 
-  return { rows, monthlySummaries, reportKind, months, sheetsSeen, sheetsParsed, detectedHeaders };
+  return { rows, monthlySummaries, sheetDiagnostics, reportKind, months, sheetsSeen, sheetsParsed, detectedHeaders };
 }

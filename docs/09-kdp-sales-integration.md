@@ -281,6 +281,7 @@ CAPTCHA/停滞などの anti-bot に高確率で当たり、ヘッドレス自�
   確定時に自動で置換される。
 
 ### 10.4 KENP ページ数が KDP ダッシュボードの約 2 倍になる件 (未解明)
+(2026-10-15 追記: 本番ログで行の重複が実在すると判明。詳細と次回ログの読み方は §10.6)
 同日の実測で `kenp_read` 合計 **5,467** vs ダッシュボード **2,770** (約 1.97 倍)。按分とは別問題。
 - **調べたこと**: `parseKdpReportWorkbook` / `normalizeKdpRows` を精読し、リポジトリ内の実 PMR
   (`scripts/.kdp-captures` の 6・7 月分) をパースして確認した。
@@ -308,3 +309,38 @@ CAPTCHA/停滞などの anti-bot に高確率で当たり、ヘッドレス自�
 - 手順: ① マイグレーション適用 → ② **前月を 1 回取り直す** (`sales.fetch` を前月で enqueue。確定済みなら明細の KENP 金額が `kenp_royalty_jpy` に入る)
   → ③ 以降は日次取得 (前月＋当月) で自走し、当月は DB の前月以前の確定月レートで推計される。
 - 前月がまだ未確定 (翌月15日前) の場合は前月も推計扱いになり、さらにその前の確定月のサンプルが必要。必要なら過去月も取り直す。
+
+### 10.6 本番ログで判明したこと (2026-10-15 10:00 UTC, year_month=2026-09 を取り直し)
+実レポートは **4 シート構成**: `電子書籍のロイヤリティ` / `既読 KENPC` / `ペーパーバックのロイヤリティ` / `総収益`
+(リポジトリ内の実物 `scripts/.kdp-captures` は 2 シート構成の 6・7 月分のみで、4 シート構成の実物は手元に無い)。
+ログ: `rowCount=84`, `duplicateKeyCount=7`, `maxDuplicate=3`, totals = 売上 ¥1,230 / 販売 36 / KENP 10,108。
+DB 結果: 2026-09 は `kenp_royalty_jpy=0` / `kenp_royalty_estimated_jpy=0` → **レート根拠が埋まらず、立ち上げ (§10.5) が未完了**。
+
+**確定した事実**
+- `sheetsParsed` に 4 シート全部が入っている = 4 シートとも `classify` が `ignore` 以外を返した (ヘッダは検出できている)。
+- 同一 `asin|marketplace|month|royalty_kind` の行が実際に重複している (7 キー・最大 3 行)。**§10.4 の仮説「行の重複」は実在**。
+- 9 月の KENP 確定金額は取れていない (`kenp_royalty_jpy=0`)。
+
+**分かっていないこと (推測で実装していない)**
+1. **KENP 金額が取れていない理由**。次の可能性が区別できていない:
+   (i) 取得時点 (JST 10/15 19:00) で KDP が 9 月分 KENP を未確定で、`既読 KENPC` の金額列が空 (6 月分の実物は過去月に金額列があった)。
+   (ii) 4 シート構成では `既読 KENPC` に金額列が無く、KENP 収益は `総収益` 等から引く必要がある。
+   (iii) `総収益` は `summary` に分類されているが、PB ロイヤリティが含まれ `pool = 総収益 − 有料合計` が 0 以下/不正になる。
+   `総収益` シートの分類 (`summary` か ASIN 行を持つ `paid` か) も不明。
+2. **重複の正体**。同一シート内の重複 (ロイヤリティの種類 70%/35% など別行 = 合算が正しい) か、別シート由来 (例: `総収益` が ASIN 別に
+   `paid` として読まれ、電子書籍/PB と二重計上) か。7 キーのうちどれが何かはログから分からない。
+   ※ `kenp_read=10,108` が KDP ダッシュボード側 (10 月分 2,770 に対し 5,467 だった件と同系) と食い違うかの判定にも、これが必要。
+
+**今回足した診断 (パーサ/集計は変更していない。値の合算ロジックは従来どおり)**
+- `KdpReportRow.sheet` (由来シート名)、`ParseResult.sheetDiagnostics` (シートごとの `role` (`noheader` 含む) / 検出ヘッダ行 /
+  列マッピング / 月 / 出力行数 / 元通貨のままの units・kenp・royalty 合計)。
+- `NormalizeResult.kenpDiagnostics` (`kenpRoyaltyInDetail` / `summaryFound` / `summaryRoyaltyJpy` / `paidTotalJpy` / `pool` / `totalPages`)。
+- worker ログ `sales.fetch parsed report` に `sheetDiagnostics`、`monthlySummaries`、`duplicateExamples` (重複キー上位 3 件の
+  由来シート・各行の units/kenp/royalty・`crossSheet`)。`sales.fetch normalized totals` に `kenpDiagnostics` と `kenpRateUsed`。
+
+**次回 (2026-09 を再取得) のログの読み方**
+- `sheetDiagnostics['既読 KENPC'].columns.royalty` が無い/`sums.royalty=0` → 金額列なし (i) か (ii)。10/16 以降に再取得して変わるなら (i)。
+- `kenpDiagnostics.summaryFound`: false なら `総収益` は summary 扱いではない (`sheetDiagnostics['総収益'].role` を見る)。
+  true なら `summaryRoyaltyJpy` と `paidTotalJpy` から `pool` が 0 になった理由が分かる (PB 分の混入は `ペーパーバックのロイヤリティ` の `sums.royalty` と突き合わせる)。
+- `duplicateExamples[].crossSheet`: false = 同一シート内重複 (`rows` の値が別物なら別行の合算で正しい) / true = 別シート由来 = 二重計上。
+- 上記で確証が取れるまで、KENP 収益の取得経路 (「総収益 − 電子書籍 − PB」など) と重複排除は実装しない。
