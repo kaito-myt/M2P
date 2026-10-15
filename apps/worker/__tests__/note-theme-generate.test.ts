@@ -33,6 +33,7 @@ interface AccountRecord {
   niche: string;
   target_reader: string | null;
   tone: string | null;
+  monetization_policy_json?: unknown;
 }
 
 function buildPrisma(args: {
@@ -68,7 +69,18 @@ function buildPrisma(args: {
       },
     },
     noteAccount: {
-      findUnique: async ({ where }) => args.accounts.find((a) => a.id === where.id) ?? null,
+      // 本物の Prisma と同じく **select したキーだけ** 返す。
+      // こうしないと「select 漏れで設定が既定に落ちる」バグをテストが見逃す
+      // (2026-10-15: monetization_policy_json の select 漏れを実際に見逃していた)。
+      findUnique: async ({ where, select }) => {
+        const found = args.accounts.find((a) => a.id === where.id);
+        if (!found) return null;
+        const row: Record<string, unknown> = {};
+        for (const key of Object.keys(select) as Array<keyof AccountRecord>) {
+          if ((select as Record<string, unknown>)[key]) row[key] = found[key] ?? null;
+        }
+        return row as unknown as AccountRecord;
+      },
     },
     noteTheme: {
       findMany: async () => [],
@@ -159,6 +171,64 @@ describe('note.theme.generate', () => {
     const doneUpdate = jobUpdates.find((u) => u.data.status === 'done');
     expect(doneUpdate).toBeDefined();
     expect((doneUpdate!.data.result_json as { candidate_count: number }).candidate_count).toBe(1);
+  });
+
+  it('F-ANP-10b: 運営者の指示をそのままエージェントへ渡す', async () => {
+    const { prisma } = buildPrisma({
+      jobs: [{ id: 'job1', status: 'queued' }],
+      accounts: [{ id: 'acc1', niche: 'AI副業', target_reader: null, tone: null }],
+    });
+    const generateThemes = vi.fn().mockResolvedValue(SAMPLE_OUTPUT);
+
+    await runNoteThemeGenerate(
+      { note_account_id: 'acc1', job_id: 'job1', count: 1, instruction: '  週末の重賞だけを軸に  ' },
+      { prisma, logger: makeLogger(), generateThemes },
+    );
+
+    expect(generateThemes).toHaveBeenCalledWith(
+      expect.objectContaining({ instruction: '週末の重賞だけを軸に' }),
+    );
+  });
+
+  it('指示が空白だけなら instruction は渡さない', async () => {
+    const { prisma } = buildPrisma({
+      jobs: [{ id: 'job1', status: 'queued' }],
+      accounts: [{ id: 'acc1', niche: 'AI副業', target_reader: null, tone: null }],
+    });
+    const generateThemes = vi.fn().mockResolvedValue(SAMPLE_OUTPUT);
+
+    await runNoteThemeGenerate(
+      { note_account_id: 'acc1', job_id: 'job1', count: 1, instruction: '   ' },
+      { prisma, logger: makeLogger(), generateThemes },
+    );
+
+    expect(generateThemes.mock.calls[0]![0]).not.toHaveProperty('instruction');
+  });
+
+  it('F-ANP-08: 収益化方針 (有料比率・価格帯) がエージェントに届く', async () => {
+    const { prisma } = buildPrisma({
+      jobs: [{ id: 'job1', status: 'queued' }],
+      accounts: [
+        {
+          id: 'acc1',
+          niche: 'AI副業',
+          target_reader: null,
+          tone: null,
+          monetization_policy_json: { free_ratio: 0.2, membership: true, paid_ratio: 0.6, price_band: [500, 1500] },
+        },
+      ],
+    });
+    const generateThemes = vi.fn().mockResolvedValue(SAMPLE_OUTPUT);
+
+    await runNoteThemeGenerate({ note_account_id: 'acc1', job_id: 'job1', count: 1 }, { prisma, logger: makeLogger(), generateThemes });
+
+    expect(generateThemes).toHaveBeenCalledWith(
+      expect.objectContaining({
+        account: expect.objectContaining({
+          monetization: expect.objectContaining({ paid_ratio: 0.6, free_ratio: 0.2, price_band: [500, 1500] }),
+        }),
+      }),
+    );
   });
 
   it('タスク名が docs/11 §7 と一致する', () => {

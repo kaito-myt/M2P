@@ -13,7 +13,7 @@ import { AccountPills } from '@/components/account-pills';
 import { cn } from '@/lib/cn';
 import { messages } from '@/lib/messages';
 
-import { GenerateThemesButton } from './generate-themes-button';
+import { GenerateThemesPanel } from './generate-themes-panel';
 import { ThemeCard } from './theme-card';
 
 export const dynamic = 'force-dynamic';
@@ -79,7 +79,7 @@ export default async function ThemesPage({ searchParams }: { searchParams: Promi
           <p className="mt-1 text-body text-muted">{m.pageDescription}</p>
         </div>
         {selectedAccount ? (
-          <GenerateThemesButton noteAccountId={selectedAccount.id} accountName={selectedAccount.display_name} disabled={selectedAccount.status === 'pending_session' || selectedAccount.status === 'paused'} />
+          <GenerateThemesPanel noteAccountId={selectedAccount.id} accountName={selectedAccount.display_name} disabled={selectedAccount.status === 'pending_session' || selectedAccount.status === 'paused'} />
         ) : (
           <p className="text-caption text-muted">{m.selectAccountToGenerate}</p>
         )}

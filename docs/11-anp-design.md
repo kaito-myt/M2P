@@ -268,6 +268,9 @@ ANP の機能は A2P の対応機能を note 向けに写像したもの。**太
 
 ### 3.2 記事生成パイプライン（A2P の書籍パイプラインを短尺・高頻度化）
 - **F-ANP-10 テーマ候補生成（Marketer）**: アカウントのニッチ＋トレンド（Web検索）から記事テーマ候補を生成。A2P Marketer 準拠、出力は「記事タイトル/フック/想定読者/有料無料の推奨/想定価格/競合note」。
+- **F-ANP-10b テーマ一覧からの指示つき生成（実装済み 2026-10-15）**: 運営者がテーマ一覧で **AI への指示** と **作る件数** を
+  与えて生成できる（指示はプロンプト最後に「これが最優先」として注入され、記事の方針・リサーチ・収益化方針の既定に勝つ）。
+  件数 1 + 具体的な題材で「手で決めた 1 本」も作れる。生成ジョブの成否は画面でポーリングし、失敗理由は `Job.error` をそのまま出す。§7 参照。
 - **F-ANP-11 構成生成（Outline）**: 記事の見出し構成。A2P Writer/outline 準拠（短尺）。
 - **F-ANP-12 本文執筆（Writer）**: note 記事本文（数千字）。**無料パート＋有料パートの「ライン」構造**（続きは有料）に対応。
 - **F-ANP-13 校閲（Editor）**: A2P Editor 準拠。note の読みやすさ（短段落・強調・リード文）に最適化。
@@ -385,8 +388,9 @@ ANP の機能は A2P の対応機能を note 向けに写像したもの。**太
 - **S-ANP-13 テーマ一覧（実装済み 2026-09-22）**: 運営者要望「テーマ一覧はアカウント詳細じゃなくて、メニューにテーマ一覧を
   作って」「記事もアカウント詳細には乗せなくていいよ」。`/themes`（`app/(app)/themes/page.tsx`、URL `?status=&account=`）に
   全アカウントのテーマ候補を状態タブ（すべて / 未承認 / 承認済み / 却下、件数付き）とアカウント切替ピルで横断表示。承認/却下は
-  カード上（`theme-card.tsx`、承認済みなら記事詳細へのリンク）、「<アカウント> のテーマを生成」は右上（アカウント選択時のみ、
-  `generate-themes-button.tsx`、起動 45 秒後に自動 refresh）。`app/actions/themes.ts` は `/themes`・`/articles` も revalidate。
+  カード上（`theme-card.tsx`、承認済みなら記事詳細へのリンク）、「<アカウント> のテーマを作る」は右上（アカウント選択時のみ、
+  `generate-themes-panel.tsx`。2026-10-15 に F-ANP-10b で指示入力つきの開閉パネルへ差し替え＝旧 `generate-themes-button.tsx` は削除、
+  待ち方も固定 45 秒の refresh からジョブのポーリングへ）。`app/actions/themes.ts` は `/themes`・`/articles` も revalidate。
   **アカウント詳細からテーマ候補と記事一覧の節を撤去**し、「このアカウントのテーマ一覧 / 記事一覧」リンク（`?account=`
   付き）に置き換えた。サイドメニューは アカウント / テーマ一覧 / 記事一覧 / 販促施策 の順。
 - **F-ANP-07b 記事の方針の区分化（実装済み 2026-09-22）**: 運営者要望「想定読者とトーンが見切れていて読みづらいので横幅
@@ -980,7 +984,7 @@ note.theme.generate (アカウント別・手動起動。UI の「テーマ生�
 
 | タスク名 | ペイロード | 処理概要 | 完了後の遷移 |
 |---|---|---|---|
-| `note.theme.generate` | `{ note_account_id, job_id, count? }` | note Marketer (`@a2p/agents/anp/theme`, role=`anp.theme`) がニッチ/トーン/直近採用済タイトル (90日除外) を入力にテーマ候補を生成し `NoteTheme(status='pending')` を `createMany` | 次タスクなし (UI 承認待ちで停止) |
+| `note.theme.generate` | `{ note_account_id, job_id, count?, instruction? }` | note Marketer (`@a2p/agents/anp/theme`, role=`anp.theme`) がニッチ/トーン/記事の方針/収益化方針/週次リサーチ/直近採用済タイトル (90日除外) を入力にテーマ候補を生成し `NoteTheme(status='pending')` を `createMany`。**`instruction`** (F-ANP-10b) は運営者がテーマ一覧で書いた指示で、`operatorInstructionLines` により**ユーザーメッセージ最後**に「これが最優先」として置かれる (前方に置くと後続の既定に負ける) | 次タスクなし (UI 承認待ちで停止) |
 | `pipeline.note.writer.outline` | `{ note_article_id, job_id }` | note Writer/Outline (role=`anp.outline`) がリード文+見出し構成 (2〜12) を生成。`NoteArticle.lead` 確定、`status='writing'` | `pipeline.note.writer.body` を自動 enqueue（`lead`/`headings` は子 Job の `payload_json` で forward — `NoteArticle` に永続列を持たないため） |
 | `pipeline.note.writer.body` | `{ note_article_id, job_id, lead, headings, feedback? }` | note Writer/Body (role=`anp.writer`) が本文を執筆 (目標は無料 4,000 字 / 有料 6,000 字 — `lib/note-target-chars.ts`。目標の 85% を下回ったら不足字数と前回本文を渡して最大 2 回書き足させる)。記事末の関連記事リンクは `related_articles` で渡した**公開済みの実 URL だけ**を使わせる。有料記事は本文中に `<<<PAYWALL>>>` マーカーを 1 回挿入させ、呼出側でマーカー位置を `paywall_line_pos` として抽出・除去。`NoteArticle.body_md`/`paywall_line_pos` 確定、`status='editing'` | `pipeline.note.editor` を自動 enqueue |
 | `pipeline.note.editor` | `{ note_article_id, job_id, feedback?, retry_count? }` | note Editor (role=`anp.editor`) が短段落・リード文中心に校閲。`paywall_line_pos` 指定時はマーカーを再挿入して LLM に渡し「保持したまま校閲」を指示、新しい位置を再抽出。`status='eyecatch'` | `pipeline.note.numcheck` を自動 enqueue（`retry_count` を forward） |
@@ -993,7 +997,34 @@ note.theme.generate (アカウント別・手動起動。UI の「テーマ生�
 - `NoteLock`（`@a2p/agents/lib/note-lock` の `acquireNoteLock`/`releaseNoteLock`/`sweepExpiredNoteLocks`）が `BookLock` と完全対称の実装で `pipeline.note.*` の排他を担う（holder 規約 `pipeline:<job_id>`、TTL 30 分）。
 - 各タスクは内部 `Job`（既存 `jobs` テーブル、`book_id=null`）を `queued/failed → running → done/failed` で CAS 遷移させる、A2P と同型の冪等性パターン（`Job.status==='done'` は skip）。
 - コスト計上: ANP のエージェント呼出は `withTokenLogging`/`withImageLogging` に `bookId` を渡さない（`NoteArticle` は `Book` と無関係の別テーブルのため FK 混線を避ける）。代わりに各タスクが呼出直後に `applyNoteArticleCostFromJob`（`apps/worker/src/tasks/lib/note-article-cost.ts`）で「自分の内部 `Job.id` に紐づく `token_usage.cost_jpy` 合計」を `NoteArticle.cost_jpy_total` に加算する（失敗時は warn のみでタスク自体は継続）。
-- `note.theme.generate` は Phase 1 では **cron 化せず** UI の手動起動のみ（`/accounts/[id]` の「テーマ生成」ボタン → `note.theme.generate` を enqueue）。
+- `note.theme.generate` は Phase 1 では **cron 化せず** UI の手動起動のみ（`/themes` の「テーマを作る」→ `note.theme.generate` を enqueue。Phase 4 以降は `note.theme.auto` が同じ経路を cron で踏む）。
+
+#### F-ANP-10b — テーマ一覧からの指示つき生成 (2026-10-15)
+
+運営者要望「テーマ一覧のところで、人がテーマの指示を与えて作成できるようにして」。
+
+- UI (`apps/anp/app/(app)/themes/generate-themes-panel.tsx`): アカウントを選ぶと「テーマを作る」ボタンが出て、
+  開くと **AI への指示 (任意・2000 字)** と **作る件数 (1/3/5/10)** を入れられる。
+  件数 1 + 具体的な題材を書けば「手で決めた 1 本だけ作る」用途になる (テーマの手入力列は増やさない)。
+- 経路: `generateThemes` server action → `Job(kind='note.theme.generate', payload_json.instruction)` → worker →
+  `NoteThemeInput.instruction` → `anp.theme` のユーザーメッセージ**最後**。
+  指示は `payload_json` に残すので「どの指示で作らせた候補か」を後から追える。
+- 待ち方: 以前は「45 秒後にページ再読込」だけで、失敗すると運営者には何も起きなかったように見えていた。
+  `getThemeJobState` で内部 `Job` を 3 秒ごとに見て、`done` なら件数を出して一覧を更新、
+  `failed` なら `Job.error` をそのまま画面に出す (2026-10-15 のリサーチ失敗と同じ構図への対策)。
+
+#### 2026-10-15 に見つかった注入漏れ 2 件 (同じクラスの不具合)
+
+テーマ生成は手動 (`note.theme.generate`) と自動 (`note.theme.auto`) で**別々に入力を組み立てている**ため、
+片方にしか渡っていない設定があった。どちらも `select` 漏れで、`parse*` が既定値を返すので**エラーにならず静かに無視**されていた。
+
+| 経路 | 漏れていたもの | 影響 |
+|---|---|---|
+| `note.theme.generate` (手動) | `monetization_policy_json` | 有料比率・価格帯 (F-ANP-08) が既定に落ち、運営者設定が効かない |
+| `note.theme.auto` (cron=無人運転の本番経路) | `research_json` | **週次リサーチ (F-ANP-56) の「狙う題材/避ける題材/効いている型」が日々のテーマに 1 文字も効いていなかった** |
+
+再発防止: `apps/worker/__tests__/note-theme-generate.test.ts` の fake Prisma を
+**`select` したキーだけ返す**実装に変えた (本物と同じ挙動)。これにより select 漏れがテストで落ちる。
 - ⚠️ **`pipeline.note.*` は `org.ops.watch`（孤児ジョブ検知・自己修復, docs/06）の対象外** — `ops.watch` は `Job.book_id` を起点に停止書籍を検知するが、ANP の `Job.book_id` は常に `null`（`Book` FK 制約のため）。孤児化した note パイプラインは `locks.sweep`（`NoteLock` の TTL 掃除、§7 実装表参照）と `sweepStaleJobs`（`running/queued` かつ 120 分超過の内部 `Job` を `failed` に降格、`apps/worker/src/tasks/locks-sweep.ts`）のみが救済する。Phase 2 で `note_account_id`/`note_article_id` を軸にした専用の自己修復ジョブが必要になった場合はここに追記する。
 
 ### Phase 2 実装済みタスク — note 公開オートメーション (`apps/worker/src/tasks/`)

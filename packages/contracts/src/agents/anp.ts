@@ -78,6 +78,13 @@ export const NoteThemeInputSchema = z.object({
   account: NoteAccountContextSchema,
   count: z.number().int().min(1).max(20).default(5),
   exclude_titles_recent: z.array(z.string()).max(200).default([]),
+  /**
+   * 運営者がテーマ一覧から与える指示 (2026-10-15 運営者要望「テーマ一覧のところで、人が
+   * テーマの指示を与えて作成できるようにして」)。`operatorInstructionLines` で**プロンプト最後**に
+   * 置くので、役割プロンプトやアカウント既定より優先される。
+   * 件数 1 + 具体的な題材を書けば「1 本だけ手で指定して作る」用途にもなる。
+   */
+  instruction: z.string().max(2000).optional(),
 });
 export type NoteThemeInput = z.infer<typeof NoteThemeInputSchema>;
 

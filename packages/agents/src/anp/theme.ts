@@ -29,7 +29,12 @@ import {
 import type { LoggingContext, WithTokenLoggingDeps } from '../lib/with-token-logging.js';
 import type { LoadModelAssignmentDeps } from '../lib/load-model-assignment.js';
 import { extractJson } from './lib/extract-json.js';
-import { accountResearchLines, editorialPolicyLines, monetizationLines } from './account-context.js';
+import {
+  accountResearchLines,
+  editorialPolicyLines,
+  monetizationLines,
+  operatorInstructionLines,
+} from './account-context.js';
 
 const DEFAULT_MAX_OUTPUT_TOKENS = 8192;
 const MAX_PARSE_RETRIES = 2;
@@ -108,6 +113,9 @@ export async function generateNoteThemes(
     '  ]',
     '}',
     'JSON 以外のテキストは出力しないこと。',
+    // 運営者の指示は**最後**に置く。前方に置くとこの後ろの「出力形式」「件数」「除外」や
+    // アカウント既定に負けて反映されない (2026-10-15 に strategist の 4 プロンプトで実証済み)。
+    ...operatorInstructionLines(parsedInput.instruction),
   ]
     .filter((l) => l !== '')
     .join('\n');

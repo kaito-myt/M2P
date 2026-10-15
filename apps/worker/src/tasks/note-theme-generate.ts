@@ -34,6 +34,8 @@ export const NoteThemeGeneratePayloadSchema = z.object({
   note_account_id: z.string().min(1),
   job_id: z.string().min(1),
   count: z.number().int().min(1).max(20).default(5),
+  /** F-ANP-10b: 運営者がテーマ一覧で書いた指示。プロンプト最後に注入され最優先で効く。 */
+  instruction: z.string().max(2000).optional(),
 });
 export type NoteThemeGeneratePayload = z.infer<typeof NoteThemeGeneratePayloadSchema>;
 
@@ -114,7 +116,7 @@ export async function runNoteThemeGenerate(
       details: { issues: parsed.error.issues },
     });
   }
-  const { note_account_id: noteAccountId, job_id: jobId, count } = parsed.data;
+  const { note_account_id: noteAccountId, job_id: jobId, count, instruction } = parsed.data;
 
   const log = deps.logger ?? createLogger(`worker.${NOTE_THEME_GENERATE_TASK_NAME}`);
   const prisma = deps.prisma ?? (defaultPrisma as unknown as NoteThemeGeneratePrisma);
@@ -142,7 +144,10 @@ export async function runNoteThemeGenerate(
   try {
     const account = await prisma.noteAccount.findUnique({
       where: { id: noteAccountId },
-      select: { id: true, niche: true, target_reader: true, tone: true, editorial_policy: true, research_json: true },
+      // monetization_policy_json を 2026-10-15 まで select していなかったため、
+      // 手動の「テーマを作る」では有料比率・価格帯 (F-ANP-08) が既定値に落ちていた
+      // (undefined を parse すると既定が返るので、エラーにならず静かに無視されていた)。
+      select: { id: true, niche: true, target_reader: true, tone: true, editorial_policy: true, research_json: true, monetization_policy_json: true },
     });
     if (!account) {
       throw new NotFoundError(`NoteAccount not found: ${noteAccountId}`, {
@@ -173,6 +178,7 @@ export async function runNoteThemeGenerate(
       },
       count,
       exclude_titles_recent: recentAccepted.map((r) => r.title),
+      ...(instruction && instruction.trim().length > 0 ? { instruction: instruction.trim() } : {}),
     };
 
     const result = await generateThemes(input);

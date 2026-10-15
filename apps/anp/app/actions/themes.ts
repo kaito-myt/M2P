@@ -26,6 +26,11 @@ const PIPELINE_NOTE_WRITER_OUTLINE_TASK_NAME = 'pipeline.note.writer.outline';
 const GenerateThemesSchema = z.object({
   note_account_id: z.string().min(1),
   count: z.coerce.number().int().min(1).max(20).default(5),
+  /**
+   * F-ANP-10b (2026-10-15 運営者要望「テーマ一覧のところで、人がテーマの指示を与えて
+   * 作成できるようにして」)。worker → `anp.theme` のプロンプト**最後**に注入され最優先で効く。
+   */
+  instruction: z.string().max(2000).optional(),
 });
 
 export async function generateThemes(input: unknown): Promise<ActionResult<{ job_id: string }>> {
@@ -39,6 +44,7 @@ export async function generateThemes(input: unknown): Promise<ActionResult<{ job
     return { ok: false, error: messages.accountDetail.errors.generateFailed };
   }
   const { note_account_id: noteAccountId, count } = parsed.data;
+  const instruction = parsed.data.instruction?.trim() ? parsed.data.instruction.trim() : undefined;
 
   try {
     const account = await prisma.noteAccount.findUnique({ where: { id: noteAccountId } });
@@ -50,7 +56,8 @@ export async function generateThemes(input: unknown): Promise<ActionResult<{ job
       data: {
         kind: NOTE_THEME_GENERATE_TASK_NAME,
         status: 'queued',
-        payload_json: { note_account_id: noteAccountId, count },
+        // 指示は payload にも残す — 後から「どの指示で作らせた候補か」を追えるようにする。
+        payload_json: { note_account_id: noteAccountId, count, trigger: 'manual', ...(instruction ? { instruction } : {}) },
       },
     });
     await enqueueJob(
@@ -59,6 +66,7 @@ export async function generateThemes(input: unknown): Promise<ActionResult<{ job
         note_account_id: noteAccountId,
         job_id: job.id,
         count,
+        ...(instruction ? { instruction } : {}),
       },
       { maxAttempts: 3 },
     );
@@ -187,4 +195,56 @@ export async function rejectTheme(input: unknown): Promise<ActionResult<void>> {
       error: err instanceof Error ? err.message : messages.accountDetail.errors.rejectFailed,
     };
   }
+}
+
+// ---------------------------------------------------------------------------
+// F-ANP-10b: テーマ生成ジョブの進捗/結果を UI から見る
+// ---------------------------------------------------------------------------
+
+const ThemeJobStateSchema = z.object({ job_id: z.string().min(1) });
+
+export interface ThemeJobState {
+  id: string;
+  status: string;
+  /** 生成できた候補数 (done のとき)。 */
+  candidate_count: number | null;
+  /** 失敗理由 (そのまま出す — 運営者に理由が届かないのが過去の失敗だった)。 */
+  error: string | null;
+  created_at: string;
+}
+
+/**
+ * 生成ボタンが作った内部 `Job` を見に行く。
+ *
+ * 以前は「45 秒待ってページを再読込」だけだったので、失敗したときに運営者には
+ * 何も起きなかったように見えていた (2026-10-15 のリサーチ失敗と同じ構図)。
+ */
+export async function getThemeJobState(input: unknown): Promise<ActionResult<ThemeJobState>> {
+  const session = await auth();
+  if (!session?.user) {
+    return { ok: false, error: messages.common.unauthorized };
+  }
+  const parsed = ThemeJobStateSchema.safeParse(input);
+  if (!parsed.success) {
+    return { ok: false, error: messages.accountDetail.errors.generateFailed };
+  }
+  const job = await prisma.job.findUnique({
+    where: { id: parsed.data.job_id },
+    select: { id: true, status: true, error: true, result_json: true, created_at: true },
+  });
+  if (!job) {
+    return { ok: false, error: messages.accountDetail.errors.generateFailed };
+  }
+  const result = job.result_json as { candidate_count?: unknown } | null;
+  const count = typeof result?.candidate_count === 'number' ? result.candidate_count : null;
+  return {
+    ok: true,
+    data: {
+      id: job.id,
+      status: job.status,
+      candidate_count: count,
+      error: job.error ?? null,
+      created_at: job.created_at.toISOString(),
+    },
+  };
 }

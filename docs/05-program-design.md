@@ -4423,6 +4423,31 @@ writer が正しく だ・である調 で書いても、**校閲工程で実用
 
 ---
 
+### F-ANP-10b テーマ一覧からの指示つき生成 (2026-10-15)
+
+運営者要望「テーマ一覧のところで、人がテーマの指示を与えて作成できるようにして」。
+
+| 項目 | 仕様 |
+|---|---|
+| ジョブ payload | `note.theme.generate` に `instruction?: string (<=2000)` を追加。`Job.payload_json` にも残す (`trigger='manual'` と併記) ので、後から「どの指示で作らせた候補か」を追える |
+| エージェント入力 | `NoteThemeInput.instruction`。`anp.theme` のユーザーメッセージ**最後**に `operatorInstructionLines` で「これが最優先」として置く。出力形式 (JSON) と字数上限だけは譲らない |
+| UI | `/themes` の「テーマを作る」= 開閉パネル (`generate-themes-panel.tsx`)。指示 (任意) ＋ 件数 (1/3/5/10)。件数 1 + 具体的な題材で「手で決めた 1 本」も作れるため、テーマの手入力列は増やさない |
+| 進捗/失敗 | `getThemeJobState({job_id})` が内部 `Job` の `status`/`error`/`result_json.candidate_count` を返し、UI が 3 秒ごとに見る。`failed` なら `Job.error` をそのまま表示。旧実装の「45 秒後に refresh」では失敗が運営者に届かなかった |
+
+**同時に直した注入漏れ 2 件** (どちらも `select` 漏れ → `parse*` が既定を返すため**エラーにならず静かに無視**):
+
+| 経路 | 漏れ | 影響 |
+|---|---|---|
+| `note.theme.generate` (手動) | `monetization_policy_json` を select していない | 有料比率・価格帯 (F-ANP-08) が既定に落ちる |
+| `note.theme.auto` (cron = 無人運転の本番経路) | `research_json` を select せず `account.research` も渡していない | **週次リサーチ (F-ANP-56) が日々のテーマ生成に 1 文字も効いていなかった** |
+
+テーマ生成は手動と自動で**別々に入力を組み立てている**のがこの穴の構造的な原因。
+片方に注入を足したら**もう片方も必ず見る**。再発防止として
+`apps/worker/__tests__/note-theme-generate.test.ts` の fake Prisma を
+**`select` したキーだけ返す**実装に変えた (本物と同じ挙動 = select 漏れでテストが落ちる)。
+
+---
+
 ### F-101 企画レベルの自己重複を止める (2026-10-14)
 
 運営者指摘「完了なのに未出版」を調べる過程で見つけた。**日次テーマ自動生成が

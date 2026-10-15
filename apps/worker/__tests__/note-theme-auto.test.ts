@@ -30,6 +30,8 @@ interface AccountRow {
   target_reader: string | null;
   tone: string | null;
   settings_json?: unknown;
+  monetization_policy_json?: unknown;
+  research_json?: unknown;
 }
 
 function buildPrisma(args: {
@@ -264,5 +266,45 @@ describe('runNoteThemeAuto — anp_autopass_enabled ON', () => {
     expect(onResult).toEqual({ note_account_id: 'acc_on', generated: 1, accepted: 1 });
     // acc_off 分は job.create 自体が呼ばれない(スキップ)。acc_on 分のみ (テーマ生成Job + outline Job = 2件)。
     expect(captures.jobCreates).toHaveLength(2);
+  });
+
+  it('F-ANP-56: 週次リサーチの成果が自動生成にも届く (2026-10-15 まで渡していなかった)', async () => {
+    const { prisma } = buildPrisma({
+      appSettings: { anp_auto_theme_enabled: true, anp_themes_per_day: 1 },
+      accounts: [
+        {
+          id: 'acc1',
+          niche: '競馬予想',
+          target_reader: null,
+          tone: null,
+          research_json: {
+            angles: [{ angle: '観点A', queries: ['q'] }],
+            findings: [{ finding: '開催日＋レース名始まりが並ぶ', sources: [] }],
+            winning_patterns: ['冒頭に回収率の実績'],
+            copy_rules: [],
+            topics_to_pursue: ['金曜の週末予想'],
+            topics_to_avoid: ['必勝を謳う記事'],
+            summary: '総括',
+          },
+          monetization_policy_json: { free_ratio: 0.2, membership: false, paid_ratio: 0.5, price_band: [500, 1000] },
+        },
+      ],
+    });
+    const generateThemes = vi.fn(async () => makeCandidates(1));
+
+    await runNoteThemeAuto({ prisma, logger: makeLogger(), generateThemes });
+
+    expect(generateThemes).toHaveBeenCalledWith(
+      expect.objectContaining({
+        account: expect.objectContaining({
+          research: expect.objectContaining({
+            topics_to_pursue: ['金曜の週末予想'],
+            topics_to_avoid: ['必勝を謳う記事'],
+            winning_patterns: ['冒頭に回収率の実績'],
+          }),
+          monetization: expect.objectContaining({ paid_ratio: 0.5 }),
+        }),
+      }),
+    );
   });
 });

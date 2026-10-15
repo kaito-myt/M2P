@@ -1,7 +1,12 @@
 import type { JobHelpers, Task } from 'graphile-worker';
 
 import { generateNoteThemes as defaultGenerateNoteThemes } from '@a2p/agents/anp/theme';
-import { parseNoteMonetizationPolicy, type NoteThemeInput, type NoteThemeOutput } from '@a2p/contracts/agents/anp';
+import {
+  parseNoteAccountResearch,
+  parseNoteMonetizationPolicy,
+  type NoteThemeInput,
+  type NoteThemeOutput,
+} from '@a2p/contracts/agents/anp';
 import { createLogger, type Logger } from '@a2p/contracts/logger';
 import { prisma as defaultPrisma } from '@a2p/db';
 
@@ -44,6 +49,8 @@ interface NoteAccountRow {
   settings_json?: unknown;
   /** [F-ANP-08] 収益化方針 (`NoteMonetizationPolicySchema`)。未選択/旧テストでは undefined。 */
   monetization_policy_json?: unknown;
+  /** [F-ANP-56] 週次リサーチの成果 (`NoteAccountResearchSchema`)。未選択/旧テストでは undefined。 */
+  research_json?: unknown;
 }
 
 interface CreatedTheme {
@@ -58,7 +65,7 @@ export interface NoteThemeAutoPrisma extends AnpAutopassPrisma {
   noteAccount: {
     findMany: (args: {
       where: { status: string };
-      select: { id: true; niche: true; target_reader: true; tone: true; settings_json?: true; editorial_policy?: true; monetization_policy_json?: true };
+      select: { id: true; niche: true; target_reader: true; tone: true; settings_json?: true; editorial_policy?: true; monetization_policy_json?: true; research_json?: true };
       orderBy: { created_at: 'asc' };
     }) => Promise<NoteAccountRow[]>;
   };
@@ -170,7 +177,7 @@ export async function runNoteThemeAuto(deps: NoteThemeAutoDeps = {}): Promise<No
 
   const accounts = await prisma.noteAccount.findMany({
     where: { status: 'active' },
-    select: { id: true, niche: true, target_reader: true, tone: true, settings_json: true, editorial_policy: true, monetization_policy_json: true },
+    select: { id: true, niche: true, target_reader: true, tone: true, settings_json: true, editorial_policy: true, monetization_policy_json: true, research_json: true },
     orderBy: { created_at: 'asc' },
   });
 
@@ -219,6 +226,12 @@ export async function runNoteThemeAuto(deps: NoteThemeAutoDeps = {}): Promise<No
           target_reader: account.target_reader,
           tone: account.tone,
           editorial_policy: account.editorial_policy ?? null,
+          // F-ANP-56: 週次リサーチの「狙う題材 / 避ける題材 / 効いている型」。
+          // 2026-10-15 まで**この自動経路だけ渡していなかった** — 無人運転で作られる
+          // 日々のテーマにリサーチが 1 文字も効いていなかった (手動ボタン側は渡していた)。
+          ...(parseNoteAccountResearch(account.research_json)
+            ? { research: parseNoteAccountResearch(account.research_json)! }
+            : {}),
           monetization: parseNoteMonetizationPolicy(account.monetization_policy_json),
         },
         count: effective.themes_per_day,

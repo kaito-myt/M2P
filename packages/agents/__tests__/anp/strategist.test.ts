@@ -291,7 +291,7 @@ describe('運営者の追加指示は要件より後ろに置く (4 プロンプ
 
   it('記事の方針・トンマナ (buildEditorialUserMessage)', () => {
     const msg = buildEditorialUserMessage(
-      { display_name: 'A', niche: 'B', persona_type: 'auto', instruction: INSTRUCTION },
+      { display_name: 'A', niche: 'B', instruction: INSTRUCTION },
       '現在の方針',
     );
     expect(msg.indexOf(INSTRUCTION)).toBeGreaterThan(msg.indexOf('要件:'));
@@ -302,6 +302,7 @@ describe('運営者の追加指示は要件より後ろに置く (4 プロンプ
 
   it('販促施策 (buildPromotionPolicyUserMessage)', () => {
     const msg = buildPromotionPolicyUserMessage({
+      note_account_id: 'acc-1',
       channel: 'x',
       account: { display_name: 'A', niche: 'B' },
       instruction: INSTRUCTION,
