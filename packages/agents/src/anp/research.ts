@@ -64,6 +64,38 @@ const MAX_PLAN_RETRIES = 2;
 // (marketer/theme.ts と同じ判断)。
 const REPORT_MAX_OUTPUT_TOKENS = 16384;
 const MAX_PARSE_RETRIES = 2;
+/**
+ * 「出力が上限で切れた」と見なす残りトークン数。
+ *
+ * プロバイダの報告値が上限ぴったりにならないことがあるので少し余裕を持たせる。
+ * この判定は **parse に失敗した後にしか使わない**ので、多少広く取っても
+ * 成功した応答を誤って壊すことはない。
+ */
+const TRUNCATION_MARGIN_TOKENS = 64;
+/**
+ * 出力上限で切れた直後の再試行に足す指示。
+ *
+ * 2026-10-14 本番 (競馬アカウント): まとめ段が上限ちょうど 8192/8192 で切れ、
+ * **同じ依頼をそのまま 2 回投げたので同じ所で切れて 2 回とも失敗**した
+ * (¥42 × 2 を無駄に払い、運営者には「全 1 アカウントのリサーチが失敗しました」
+ * としか出なかった)。上限を 16384 に上げたが、schema を全部埋めれば入らない回は
+ * また出る (実測で 10,004 トークン使っている)。
+ * 上限を上げ続けるのではなく、**切れたら次の試行で要求そのものを小さくする**。
+ */
+const TIGHTEN_OUTPUT_INSTRUCTION = [
+  '【重要 — 前回の出力は長すぎて途中で切れた】',
+  'JSON が完結しなかった。今回は量を削り、必ず閉じ括弧まで出し切ること。',
+  '- findings は最も重要な 3 件まで',
+  '- art_direction は 300 字以内',
+  '- copy_rules / topics_to_pursue / topics_to_avoid は各 3 件まで',
+  '- editorial_policy_suggestion は 200 字以内 (不要なら空文字)',
+  '- summary は 1 文',
+].join('\n');
+
+/** 出力が上限で切れたか。切れているなら同じ依頼を繰り返しても同じ所で切れる。 */
+function isTruncated(outputTokens: number, cap: number): boolean {
+  return outputTokens >= cap - TRUNCATION_MARGIN_TOKENS;
+}
 /** 1 クエリあたりの Tavily 取得件数 / 根拠ブロックの最大件数。 */
 const PER_QUERY_RESULTS = 5;
 const MAX_RESEARCH_ITEMS = 16;
@@ -146,9 +178,14 @@ export async function researchNoteAccount(
   const items = await runSearch(plan, deps);
 
   // --- 段階 2: まとめ ---
-  const userMessage = buildReportUserMessage(input, plan, items);
+  const baseUserMessage = buildReportUserMessage(input, plan, items);
   let lastError: AgentError | undefined;
+  /** 直前の試行が出力上限で切れたか。切れていたら次は要求を小さくして投げ直す。 */
+  let truncatedBefore = false;
   for (let attempt = 1; attempt <= MAX_PARSE_RETRIES; attempt++) {
+    const userMessage = truncatedBefore
+      ? `${baseUserMessage}\n\n${TIGHTEN_OUTPUT_INSTRUCTION}`
+      : baseUserMessage;
     const completion = await client.complete<string>({
       role: ROLE,
       genre: null,
@@ -159,19 +196,27 @@ export async function researchNoteAccount(
       maxOutputTokens: REPORT_MAX_OUTPUT_TOKENS,
     });
     const raw = typeof completion.text === 'string' ? completion.text : '';
+    const outputTokens = completion.usage?.outputTokens ?? 0;
+    const truncated = isTruncated(outputTokens, REPORT_MAX_OUTPUT_TOKENS);
     const parsed = extractLlmJson<unknown>(raw, hasFindings);
     if (parsed === undefined) {
-      // 出力上限で切れたのか、形が違うのかをログで切り分けられるようにする
-      // (2026-10-14: 8192 で切れていたが AgentError の message だけでは分からなかった)。
+      // 出力上限で切れたのか、形が違うのかを**エラー本文で**切り分けられるようにする。
+      // 2026-10-14: 8192 で切れていたのに message が 'failed to parse JSON' だけで、
+      // 運営者側 (ANP ホームの「直近の失敗」) からは原因に辿り着けなかった。
+      truncatedBefore = truncated;
       log.warn(
-        { attempt, rawLength: raw.length, rawTail: raw.slice(-200) },
+        { attempt, truncated, outputTokens, rawLength: raw.length, rawTail: raw.slice(-200) },
         'report JSON parse failed',
       );
-      lastError = new AgentError('anp.research.invalid_output: failed to parse JSON', {
-        details: { attempt, rawTextLength: raw.length },
-      });
+      lastError = new AgentError(
+        truncated
+          ? `anp.research.invalid_output: 出力が上限 (${REPORT_MAX_OUTPUT_TOKENS} トークン) で切れて JSON が完結しなかった`
+          : 'anp.research.invalid_output: failed to parse JSON',
+        { details: { attempt, truncated, outputTokens, rawTextLength: raw.length } },
+      );
       continue;
     }
+    truncatedBefore = false;
     const validated = NoteAccountResearchSchema.safeParse(parsed);
     if (!validated.success) {
       log.warn(

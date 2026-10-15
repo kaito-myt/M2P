@@ -56,16 +56,21 @@ const REPORT = JSON.stringify({
   summary: '回収率の見せ方が勝敗を分けている。',
 });
 
-function makeClient(texts: string[]): { client: LLMClient; calls: LLMCompleteArgs[] } {
+function makeClient(
+  texts: string[],
+  /** 呼び出しごとの出力トークン数。出力上限で切れた回を再現するのに使う。 */
+  outputTokens: number[] = [],
+): { client: LLMClient; calls: LLMCompleteArgs[] } {
   const calls: LLMCompleteArgs[] = [];
   let i = 0;
   const complete = async <T = string>(a: LLMCompleteArgs): Promise<LLMCompleteResult<T>> => {
     calls.push(a);
     const text = texts[Math.min(i, texts.length - 1)]!;
+    const out = outputTokens[i] ?? 200;
     i += 1;
     return {
       text: text as unknown as T,
-      usage: { inputTokens: 300, outputTokens: 200 },
+      usage: { inputTokens: 300, outputTokens: out },
       costJpy: 0,
       provider: 'anthropic',
       model: 'claude-opus-5',
@@ -86,8 +91,9 @@ function makeClient(texts: string[]): { client: LLMClient; calls: LLMCompleteArg
 function makeDeps(
   texts: string[],
   over: Partial<ResearchNoteAccountDeps> = {},
+  outputTokens: number[] = [],
 ): { deps: ResearchNoteAccountDeps; calls: LLMCompleteArgs[] } {
-  const { client, calls } = makeClient(texts);
+  const { client, calls } = makeClient(texts, outputTokens);
   return {
     deps: {
       loadActivePrompt: (async () => ({
@@ -255,5 +261,35 @@ describe('researchNoteAccount', () => {
     expect(research.angles.length).toBeLessThanOrEqual(4);
     for (const a of research.angles) expect(a.queries.length).toBeLessThanOrEqual(5);
     expect(searched.length).toBeLessThanOrEqual(8);
+  });
+  // --- 2026-10-15: 出力上限で切れた回の扱い (本番で競馬アカウントが 8192/8192 で
+  //     切れ、同じ依頼を 2 回投げて 2 回とも同じ所で切れていた) ---
+
+  it('出力上限で切れたら、そう書いたエラーにする (原因が運営者から追える)', async () => {
+    // 2 回とも上限で切れた場合 (本番で起きた形)。最後のエラーが運営者に残る。
+    const { deps } = makeDeps([PLAN, '{"findings": [{"finding": "途中で切れ'], {}, [200, 16384, 16384]);
+    await expect(researchNoteAccount(INPUT, deps)).rejects.toThrow(/出力が上限/);
+  });
+
+  it('切れたときの再試行は要求を小さくして投げる (同じ依頼では同じ所で切れる)', async () => {
+    const truncated = '{"findings": [{"finding": "途中で切れ';
+    // 1 回目のまとめは上限で切れ、2 回目は量を削って成功する。
+    const { deps, calls } = makeDeps([PLAN, truncated, REPORT], {}, [200, 16384, 900]);
+    const { research } = await researchNoteAccount(INPUT, deps);
+    expect(research.art_direction).toContain('ターフの緑');
+
+    // calls[0] = 観点決定, calls[1] = まとめ 1 回目, calls[2] = まとめ 2 回目
+    const first = String(calls[1]!.messages.at(-1)!.content);
+    const retry = String(calls[2]!.messages.at(-1)!.content);
+    expect(first).not.toContain('前回の出力は長すぎて途中で切れた');
+    expect(retry).toContain('前回の出力は長すぎて途中で切れた');
+    expect(retry).toContain('findings は最も重要な 3 件まで');
+  });
+
+  it('形が違うだけ (切れていない) なら再試行に削減指示を足さない', async () => {
+    // 上限に達していない失敗は量の問題ではないので、同じ依頼で投げ直すのが正しい。
+    const { deps, calls } = makeDeps([PLAN, 'JSON ではない応答', REPORT], {}, [200, 120, 900]);
+    await researchNoteAccount(INPUT, deps);
+    expect(String(calls[2]!.messages.at(-1)!.content)).not.toContain('前回の出力は長すぎて途中で切れた');
   });
 });

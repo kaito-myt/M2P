@@ -517,7 +517,13 @@ export async function runAccountResearch(input: unknown): Promise<ActionResult<{
       where: {
         kind: NOTE_ACCOUNT_RESEARCH_TASK,
         status: { in: ['queued', 'running'] },
-        payload_json: { path: ['note_account_id'], equals: noteAccountId },
+        OR: [
+          { payload_json: { path: ['note_account_id'], equals: noteAccountId } },
+          // 週次 cron は全 active アカウントを回すので、その実行中はこのアカウントも
+          // 対象に含まれる (2026-10-15: cron が内部 Job 行を作るようになったため、
+          // アカウント指定の無い実行も多重起動として見る必要が出た)。
+          { payload_json: { path: ['trigger'], equals: 'cron' } },
+        ],
       },
     });
     if (inflight > 0) return { ok: false, error: messages.accounts.research.errors.alreadyRunning };

@@ -31,11 +31,17 @@ function research(over: Partial<NoteAccountResearch> = {}): NoteAccountResearch 
 function makePrisma(accounts: Array<Record<string, unknown>>, articles: Record<string, unknown[]> = {}) {
   const updates: Array<{ where: { id: string }; data: Record<string, unknown> }> = [];
   const jobUpdates: Array<{ where: { id: string }; data: Record<string, unknown> }> = [];
+  const jobCreates: Array<{ data: Record<string, unknown> }> = [];
   return {
     updates,
     jobUpdates,
+    jobCreates,
     prisma: {
       job: {
+        create: vi.fn(async (args: { data: Record<string, unknown> }) => {
+          jobCreates.push(args);
+          return { id: `auto-job-${jobCreates.length}` };
+        }),
         update: vi.fn(async (args: { where: { id: string }; data: Record<string, unknown> }) => {
           jobUpdates.push(args);
           return {};
@@ -69,7 +75,7 @@ describe('runNoteAccountResearch', () => {
 
     const r = await runNoteAccountResearch({}, { prisma, research: spy, now: () => NOW });
 
-    expect(r).toEqual({ accounts: 2, updated: 2, failed: 0 });
+    expect(r).toEqual({ accounts: 2, updated: 2, failed: 0, errors: [] });
     expect(spy).toHaveBeenCalledTimes(2);
     // アカウントごとに別々の文脈で呼ばれる (観点をアカウントごとに決めるため)
     expect(spy.mock.calls[0]![0]!.account.niche).toBe('競馬予想');
@@ -107,7 +113,12 @@ describe('runNoteAccountResearch', () => {
 
     const r = await runNoteAccountResearch({}, { prisma, research: spy, now: () => NOW });
 
-    expect(r).toEqual({ accounts: 3, updated: 2, failed: 1 });
+    expect(r).toEqual({
+      accounts: 3,
+      updated: 2,
+      failed: 1,
+      errors: [{ note_account_id: 'a2', display_name: 'Y', error: 'anp.research.invalid_output' }],
+    });
     expect(updates.map((u) => u.where.id)).toEqual(['a1', 'a3']);
   });
 
@@ -148,7 +159,7 @@ describe('runNoteAccountResearch', () => {
     const { prisma, updates } = makePrisma([]);
     const spy = vi.fn();
     const r = await runNoteAccountResearch({}, { prisma, research: spy as never, now: () => NOW });
-    expect(r).toEqual({ accounts: 0, updated: 0, failed: 0 });
+    expect(r).toEqual({ accounts: 0, updated: 0, failed: 0, errors: [] });
     expect(spy).not.toHaveBeenCalled();
     expect(updates).toHaveLength(0);
   });
@@ -170,7 +181,7 @@ describe('runNoteAccountResearch', () => {
       { prisma, research: async (_i: NoteAccountResearchInput) => ({ research: research(), items: [] }), now: () => NOW },
     );
     expect(jobUpdates.map((u) => u.data.status)).toEqual(['running', 'done']);
-    expect(jobUpdates[1]!.data.result_json).toEqual({ accounts: 1, updated: 1, failed: 0 });
+    expect(jobUpdates[1]!.data.result_json).toEqual({ accounts: 1, updated: 1, failed: 0, errors: [] });
   });
 
   it('全アカウント失敗なら内部 Job を failed にする', async () => {
@@ -207,6 +218,81 @@ describe('runNoteAccountResearch', () => {
       },
     );
     expect(jobUpdates[1]!.data.status).toBe('done');
-    expect(jobUpdates[1]!.data.result_json).toEqual({ accounts: 2, updated: 1, failed: 1 });
+    expect(jobUpdates[1]!.data.result_json).toEqual({
+      accounts: 2,
+      updated: 1,
+      failed: 1,
+      errors: [{ note_account_id: 'a1', display_name: 'X', error: 'boom' }],
+    });
+  });
+  // --- 2026-10-15: 運営者が ANP ホームで「アカウントリサーチ失敗」を見たが
+  //     理由がどこにも無かった件の是正 ---
+
+  it('job_id の無い週次 cron でも観測用の Job 行を自分で作る (UI に実行の痕跡を残す)', async () => {
+    const { prisma, jobCreates, jobUpdates } = makePrisma([
+      { id: 'a1', niche: 'x', display_name: 'X', target_reader: null, tone: null, editorial_policy: null, research_json: null },
+    ]);
+    await runNoteAccountResearch(
+      {},
+      { prisma, research: async (_i: NoteAccountResearchInput) => ({ research: research(), items: [] }), now: () => NOW },
+    );
+
+    // cron は payload を持たないので、ここで作らないと jobs に 1 行も残らず
+    // ANP ホームの「実行中」「直近の失敗」のどちらにも出ない。
+    expect(jobCreates).toHaveLength(1);
+    expect(jobCreates[0]!.data.kind).toBe('note.account.research');
+    expect(jobCreates[0]!.data.status).toBe('running');
+    expect(jobCreates[0]!.data.payload_json).toEqual({ trigger: 'cron' });
+    // 作成時点で running なので running への update は重ねない。
+    expect(jobUpdates.map((u) => u.data.status)).toEqual(['done']);
+    expect(jobUpdates[0]!.where.id).toBe('auto-job-1');
+  });
+
+  it('job_id が渡されたら Job 行は作らない (UI 起動分を二重に作らない)', async () => {
+    const { prisma, jobCreates } = makePrisma([
+      { id: 'a1', niche: 'x', display_name: 'X', target_reader: null, tone: null, editorial_policy: null, research_json: null },
+    ]);
+    await runNoteAccountResearch(
+      { job_id: 'job-1' },
+      { prisma, research: async (_i: NoteAccountResearchInput) => ({ research: research(), items: [] }), now: () => NOW },
+    );
+    expect(jobCreates).toHaveLength(0);
+  });
+
+  it('全滅時の Job.error にどのアカウントが何で落ちたかを入れる', async () => {
+    // 本番で起きたこと: error が「全 1 アカウントのリサーチが失敗しました」だけで、
+    // 真因 (出力が上限で切れた) は Railway ログにしか無く運営者から辿れなかった。
+    const { prisma, jobUpdates } = makePrisma([
+      { id: 'a1', niche: '競馬予想', display_name: '手堅く勝つ馬券術', target_reader: null, tone: null, editorial_policy: null, research_json: null },
+    ]);
+    await runNoteAccountResearch(
+      { job_id: 'job-1' },
+      {
+        prisma,
+        research: async (_i: NoteAccountResearchInput) => {
+          throw new Error('anp.research.invalid_output: 出力が上限 (16384 トークン) で切れて JSON が完結しなかった');
+        },
+        now: () => NOW,
+      },
+    );
+    const done = jobUpdates[1]!.data;
+    expect(done.status).toBe('failed');
+    expect(String(done.error)).toContain('手堅く勝つ馬券術');
+    expect(String(done.error)).toContain('出力が上限');
+  });
+
+  it('観測用の Job 行が作れなくてもリサーチ本体は走る', async () => {
+    const { prisma, updates } = makePrisma([
+      { id: 'a1', niche: 'x', display_name: 'X', target_reader: null, tone: null, editorial_policy: null, research_json: null },
+    ]);
+    (prisma as unknown as { job: { create: () => Promise<never> } }).job.create = () =>
+      Promise.reject(new Error('DB 接続エラー'));
+
+    const r = await runNoteAccountResearch(
+      {},
+      { prisma, research: async (_i: NoteAccountResearchInput) => ({ research: research(), items: [] }), now: () => NOW },
+    );
+    expect(r.updated).toBe(1);
+    expect(updates).toHaveLength(1);
   });
 });

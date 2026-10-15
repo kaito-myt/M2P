@@ -52,6 +52,13 @@ export interface NoteAccountResearchDeps {
   now?: () => Date;
 }
 
+/** 1 アカウントの失敗。運営者が原因に辿り着けるよう Job 行へ残す。 */
+export interface NoteAccountResearchFailure {
+  note_account_id: string;
+  display_name: string;
+  error: string;
+}
+
 export interface NoteAccountResearchRunResult {
   /** 対象アカウント数。 */
   accounts: number;
@@ -59,6 +66,16 @@ export interface NoteAccountResearchRunResult {
   updated: number;
   /** 失敗した件数 (他アカウントは続行する)。 */
   failed: number;
+  /**
+   * 失敗したアカウントと理由。成功時は空配列。
+   *
+   * 2026-10-14: 競馬アカウントのまとめ段が出力上限で切れて失敗したとき、
+   * Job 行に残ったのは「全 1 アカウントのリサーチが失敗しました」だけで、
+   * 真因 (`出力が上限で切れた`) は Railway ログにしか無かった。運営者は
+   * ANP ホームの「直近の失敗」を見て原因が分からず問い合わせることになった。
+   * **一部失敗のときも** ここに残す (Job 自体は done になるので他に痕跡が無い)。
+   */
+  errors: NoteAccountResearchFailure[];
 }
 
 export async function runNoteAccountResearch(
@@ -72,7 +89,32 @@ export async function runNoteAccountResearch(
 
   const parsed = NoteAccountResearchPayloadSchema.safeParse(payload ?? {});
   const only = parsed.success ? parsed.data.note_account_id : undefined;
-  const jobId = parsed.success ? parsed.data.job_id : undefined;
+  let jobId = parsed.success ? parsed.data.job_id : undefined;
+  // 自分で作った Job 行なら running への遷移は不要 (作成時点で running にする)。
+  let ownsJob = false;
+
+  // 週次 cron (`note-account-research-weekly`) は payload を持たないので `job_id` が無く、
+  // 内部 Job 行が 1 行も作られていなかった。ANP ホームの「実行中」「直近の失敗」は
+  // どちらも `jobs` を見るので、**毎週月曜の実行は成功も失敗も UI に一切出ない**
+  // 状態だった (運営者が週次自動化として依頼した機能なので、黙って失敗するのは困る)。
+  if (!jobId) {
+    try {
+      const created = await prisma.job.create({
+        data: {
+          kind: NOTE_ACCOUNT_RESEARCH_TASK_NAME,
+          status: 'running',
+          started_at: now(),
+          payload_json: { ...(only ? { note_account_id: only } : {}), trigger: 'cron' },
+        },
+        select: { id: true },
+      });
+      jobId = created.id;
+      ownsJob = true;
+    } catch (err) {
+      // 観測用の行が作れないだけでリサーチ本体を止めない。
+      log.warn({ task: NOTE_ACCOUNT_RESEARCH_TASK_NAME, err }, '観測用の内部 Job 行を作れなかった');
+    }
+  }
 
   const accounts = await prisma.noteAccount.findMany({
     where: only ? { id: only } : { status: 'active' },
@@ -92,7 +134,7 @@ export async function runNoteAccountResearch(
   // 2026-10-14 初回実行時にこの遷移が無く、UI の多重起動ガード
   // (queued/running を数える) が永久に「実行中」と判定して「今すぐリサーチ」が
   // 二度と押せない状態になっていた。
-  if (jobId) {
+  if (jobId && !ownsJob) {
     await prisma.job
       .update({ where: { id: jobId }, data: { status: 'running', started_at: now() } })
       .catch((err: unknown) => {
@@ -102,12 +144,14 @@ export async function runNoteAccountResearch(
 
   if (accounts.length === 0) {
     log.info({ task: NOTE_ACCOUNT_RESEARCH_TASK_NAME }, 'リサーチ対象の note アカウントが無い');
-    await finishJob(prisma, log, jobId, now, { accounts: 0, updated: 0, failed: 0 });
-    return { accounts: 0, updated: 0, failed: 0 };
+    const empty = { accounts: 0, updated: 0, failed: 0, errors: [] };
+    await finishJob(prisma, log, jobId, now, empty);
+    return empty;
   }
 
   let updated = 0;
   let failed = 0;
+  const errors: NoteAccountResearchFailure[] = [];
   for (const account of accounts) {
     try {
       const recentArticles = await fetchRecentArticles(prisma, account.id);
@@ -152,6 +196,12 @@ export async function runNoteAccountResearch(
     } catch (err) {
       failed += 1;
       // 1 アカウントの失敗で週次リサーチ全体を落とさない。
+      // 理由はログだけでなく Job 行にも残す (ログは運営者が見られない)。
+      errors.push({
+        note_account_id: account.id,
+        display_name: account.display_name,
+        error: err instanceof Error ? err.message : String(err),
+      });
       log.warn(
         {
           task: NOTE_ACCOUNT_RESEARCH_TASK_NAME,
@@ -164,15 +214,32 @@ export async function runNoteAccountResearch(
     }
   }
 
-  const result = { accounts: accounts.length, updated, failed };
+  const result = { accounts: accounts.length, updated, failed, errors };
   await finishJob(prisma, log, jobId, now, result);
   return result;
+}
+
+/**
+ * 失敗理由を運営者向けの 1 行にする。
+ *
+ * ANP ホームの「直近の失敗」は `Job.error` をそのまま出すだけなので、
+ * ここが「全 N アカウントのリサーチが失敗しました」だと原因に辿り着けない。
+ * **どのアカウントが何で落ちたか**を必ず入れる。
+ */
+function describeFailures(result: NoteAccountResearchRunResult): string {
+  if (result.errors.length === 0) {
+    return `全 ${result.accounts} アカウントのリサーチが失敗しました`;
+  }
+  const detail = result.errors.map((e) => `${e.display_name}: ${e.error}`).join(' / ');
+  return `全 ${result.accounts} アカウントのリサーチが失敗しました — ${detail}`;
 }
 
 /**
  * 観測用の内部 Job 行を done にする。
  * アカウント単位の失敗は result_json の failed 件数で表すので、
  * **全滅でなければ Job 自体は done** とする (週次 cron を赤くし続けない)。
+ * ただし一部失敗の理由は `result_json.errors` に残す — done にしてしまうと
+ * 他にどこにも痕跡が残らないため。
  */
 async function finishJob(
   prisma: typeof defaultPrisma,
@@ -189,8 +256,9 @@ async function finishJob(
       data: {
         status: allFailed ? 'failed' : 'done',
         finished_at: now(),
-        result_json: { ...result },
-        ...(allFailed ? { error: `全 ${result.accounts} アカウントのリサーチが失敗しました` } : { error: null }),
+        // Prisma の InputJsonValue は interface をそのまま受けないので構造だけ渡す。
+        result_json: { ...result } as unknown as object,
+        ...(allFailed ? { error: describeFailures(result) } : { error: null }),
       },
     })
     .catch((err: unknown) => {
