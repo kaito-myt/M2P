@@ -229,83 +229,642 @@ Cults3D 等の 3D プリント系 / Etsy / itch.io / Gumroad。
 
 ## 6. パイプライン
 
+> **2026-10-15 改訂 (program-design)。** 初版は工程名を並べただけで、「1 つの Meshy 待ちが同キューを何十分も塞ぐ」
+> 「再実行すると同じ生成を 2 回払う」「どのタスクが cron でどれがイベント駆動か」が決まっていなかった。
+> 下図は**実装するタスクの単位**で描き直したもの。各タスクの payload・キュー・再試行・次の遷移は **§17.5**、
+> 二重課金を防ぐ台帳は **§17.6**、状態遷移の許可表は **§17.3**、DB は **§7**。
+> 工程名 (`tdp.market.research` 〜 `tdp.sales.fetch`) は初版を継承し、**Meshy の待ちを `tdp.meshy.submit` / `tdp.meshy.poll` に分け**、
+> 承認後の配布物作成 (`tdp.package.build` / `tdp.package.verify`) と日次の `tdp.listing.status.check` / `tdp.gates.snapshot` を足した。
+
 ```
-tdp.market.research  (週次)   市場リサーチ: 何が売れているか / 空白はどこか
-        ↓
-tdp.product.plan              企画: 種別・題材・点数・価格・プレビュー構図
-        ↓  [依拠性ガード R-2]
-tdp.asset.generate            3D 生成 (Meshy API) / テクスチャは画像生成
-        ↓
-tdp.asset.inspect             自動検査 (§4.3) → NG は再生成 (最大 N 回)
-        ↓
-tdp.asset.optimize            weld/dedup/simplify/textureCompress → 配布用 GLB
-        ↓
-tdp.preview.render            商品画像 (多角度・サムネ・寸法入り) を生成
-        ↓
-tdp.listing.compose           商品名・紹介文 (AI 開示節を含む R-3)・タグ・価格
-        ↓  [人間のプレビュー承認]
-tdp.listing.submit            BOOTH 下書き作成 (半自動) → 運営者がファイル UP + 公開
-        ↓  [出品数上限 R-1]
-tdp.sales.fetch     (日次)    売上・閲覧の取得 → 次の企画へ還す
+[cron 週次]  tdp.market.research      市場リサーチ → tdp_research_findings (実行時注入。プロンプト本文は書き換えない)
+                 │
+[cron 日次]  tdp.product.plan  ◄── 試作登録 (Server Action) もここと同じガードを通る
+                 │   企画 N 件 → [R-2 ガード #1] 拒否は rejected で残す / 許可は planned
+                 ▼
+             tdp.asset.generate       ★生成の関所 (orchestrator)。CPU/LLM のみで credit は払わない
+                 │   上限(アセット3/企画10)・credit 予算・停止/撤退/縮退・キー有無・[R-2 #2] を確認し、
+                 │   tdp.prompter でプロンプトを作り、台帳 tdp_generations に「予約」を 1 行書く
+                 ▼
+queue tdp-meshy:  tdp.meshy.submit    ★credit を払う唯一の POST。maxAttempts=1。task_id を直後に永続化
+                 │
+                 ▼  (自己再投入: 1 回 1 GET の短いステップ。待ちで worker を占有しない)
+queue tdp-meshy:  tdp.meshy.poll  ──► SUCCEEDED なら GLB を R2 へ → tdp_assets
+                 ▼
+             tdp.asset.inspect        形だけ(shape)の検査 → 寸法/原点は補正、それ以外の NG は再生成(上限内)
+                 │ 合格
+                 ▼
+             tdp.asset.generate (refine) → submit → poll → tdp.asset.inspect (final)
+                 ▼
+             tdp.asset.optimize       dedup/weld/prune → 再検査。NG 0 でなければ ready にしない
+                 ▼  status = ready
+        ┌────────┴─────────┐
+queue tdp-render:           tdp.listing.compose   商品名・紹介文 (AI 開示 R-3)・タグ。決定論検査 (禁止語/6項目/数値一致)
+tdp.preview.render          │
+  6 枚 + 自己検査            │
+        └────────┬─────────┘
+                 ▼  両方そろった側が status = review に進める (CAS)
+        【人間の承認 — 外せないゲート】 approve / reject(3 種)
+                 ▼  approved
+             tdp.package.build        FBX 変換 (Meshy remesh = 台帳経由) → tdp.package.verify (queue tdp-render) → ZIP
+                 ▼
+        【運営者】 出品作業を開始 (= R-1 の枠を予約) → ZIP を取得 → (ローカル: 下書き作成スクリプト) → BOOTH で UP+公開
+                 ▼
+        【運営者】 公開を記録する (recordPublished) → status = listed
+                 ▼
+[cron 日次]  tdp.sales.fetch / tdp.listing.status.check (G-D・kill switch) / tdp.gates.snapshot
 ```
 
 **A2P/ANP との違い**: 「人間のプレビュー承認」を**外せないゲート**として設計する。
 A2P は自動パス設定で人間を飛ばせるようにしたが、3DP で同じことをすると
 R-1/R-2 を破ってアカウントを失う。**ここは自動化しない。**
+(構造的な担保は §17.3: `approved` / `listed` / `withdrawn` は `approved_at` が無いと DB の CHECK 制約で書けない。)
+
+**テクスチャ種別 (`kind='texture'`) の経路**: Meshy を使わず、画像生成 → `sharp` による継ぎ目判定と派生マップ →
+`tdp_assets` (stage=`texture_map`) → `tdp.asset.inspect` 相当 (テクスチャ専用の検査) → 以降は同じ。
+画像生成の品質は未検証 (U-23) なので、**この経路の task 分解は Inc-3 の前に 1 セット試作してから確定**する (§17.5.4)。
 
 ---
 
-## 7. DB スキーマ (案)
+## 7. DB スキーマ (確定 — 2026-10-15 program-design)
+
+> **初版 (案) からの変更の要点。** 初版の 3 テーブルは**本番適用済** (`20261014010000_tdp_tables`) なので、
+> **既存の列・インデックスは 1 つも消さず変えない** (§7.5 の「既存 3 テーブルへの変更」は**列の追加と制約の追加のみ**)。
+> 新規 12 テーブルと `app_settings` の追加列、`jobs.tdp_product_id` を足す。マイグレーションは次段の実装者が書く。
+> **増分ごとに分割して適用する** (使わないテーブルを先に作らない。割当は §17.15)。
+> Prisma DSL で書けない制約 (部分 UNIQUE / CHECK) は §7.4 に SQL で列挙する — 既存の
+> 「パーシャル UNIQUE は手書きマイグレーション」(`prompts` / `model_assignments`) と同じ作法。
+
+### 7.1 設計判断 (なぜこの形か)
+
+| # | 判断 | 理由 |
+|---|---|---|
+| S-1 | **出品の事実は商品ではなく `tdp_listings` (商品 × 媒体) に持つ** | R-1 の枠・公開状態確認・売上・取り下げは**媒体ごと**に決まる (F-3DP-34/39/44)。商品に持つと Jinxxy 併売で破綻する。`tdp_products.listed_at` / `booth_item_url` は**互換のため残し**、公開記録の同一トランザクションで書く (読むのは listings) |
+| S-2 | **Meshy 呼び出しは台帳 `tdp_generations` を必ず経由する** | 二重課金を防ぐ唯一の仕組み (§17.6)。`tdp_assets` は「できた成果物」、台帳は「払った/払うはずの呼び出し」で、別物として持つ |
+| S-3 | `status` は文字列のまま**増やす** (`approved` / `withdrawn`) | 既存方針 (DB enum を使わない)。許可値は CHECK 制約で縛る (§7.4) |
+| S-4 | **承認を経由しない `listed` を DB が拒否する** | `status IN ('approved','listed','withdrawn')` は `approved_at IS NOT NULL` が要る CHECK。F-3DP-28 ① を「コードの規約」ではなく構造にする |
+| S-5 | 判定値・上限・フラグは `app_settings` の**列**、調整つまみ (滞留時間など) は `tdp_tuning_json` | F-3DP-38 は「列として持つ」。ただし列を 50 本増やすと設定画面とマイグレーションが重い。**範囲検査が要るもの・フラグ・状態は列、閾値の細目は zod 検証つき JSON** に分けた (§7.3) |
+| S-6 | 時刻はすべて UTC の `timestamp` で保存 | 既存と同じ。JST の月境界は `jstMonthRange` で計算する (F-3DP-30 ④)。生 SQL で月を切るときは `AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Tokyo'` の**二重掛け** (`cost-attribution.ts` の罠) |
+| S-7 | R2 の実体の有無 (`r2_state`) と DB 行の存在を分ける | 中間版を R2 から消しても**行は残す** (F-3DP-49)。何があったかを追える |
+
+### 7.2 モデル定義 (Prisma)
 
 ```prisma
-model TdpProduct {
-  id              String   @id @default(cuid())
-  kind            String   // prop | furniture | accessory | texture
-  title           String
-  concept         String   @db.Text   // 企画 (何を・誰に・なぜ)
-  // 依拠性ガードの判定結果。拒否された企画も監査のため残す。
-  derivative_check_json Json?
-  price_jpy       Int?
-  status          String   @default("planned")
-  // planned | generating | inspecting | needs_fix | ready | review | listed | failed | rejected
-  booth_item_url  String?
-  listed_at       DateTime?
-  cost_jpy_total  Decimal  @default(0) @db.Decimal(12, 2)
-  created_at      DateTime @default(now())
-  updated_at      DateTime @updatedAt
+// ───────── 既存 3 テーブル (列の追加のみ。既存の列・index は不変) ─────────
 
-  assets   TdpAsset[]
-  previews TdpPreview[]
+model TdpProduct {
+  id      String @id @default(cuid())
+  /// prop | furniture | accessory | texture
+  kind    String
+  title   String
+  concept String @db.Text
+  derivative_check_json Json?        // 企画時の判定 (R-2 #1)。上書きしない
+  price_jpy Int?
+  /// planned | generating | inspecting | needs_fix | ready | review
+  /// | approved | listed | failed | rejected | withdrawn        (遷移は §17.3)
+  status    String @default("planned")
+  booth_item_url String?             // 互換。最初の BOOTH 公開記録で書く
+  listed_at      DateTime?           // 互換。最初の公開記録で書く (listings が真実)
+  cost_jpy_total Decimal   @default(0) @db.Decimal(12, 2)
+  last_error     String?   @db.Text
+  created_at DateTime @default(now())
+  updated_at DateTime @updatedAt
+
+  // ── 追加 ──
+  /// planner (企画の自動作成) | trial (試作登録。S-3DP-02 の「試作を登録」)
+  origin   String @default("planner")
+  /// tdp.planner の出力のうち product 列に入らないもの (TdpPlanDetail。§17.7.2)
+  plan_json Json?
+  source_research_id String?
+  /// 出品先の媒体 (媒体定義の id)。既定 BOOTH のみ
+  target_media String[] @default(["booth"])
+  /// 後続の再判定の記録 (生成前 / 承認時 / 公開記録時)。{at, point, allowed, risks[]} の配列 (最大 20)
+  derivative_rechecks_json Json?
+  /// 状態が変わった時刻。滞留 (F-3DP-14) はここから測る (updated_at は cost 加算でも動くので使えない)
+  status_changed_at DateTime @default(now())
+  /// 「いま止まっている理由 / 次にやること」(S-3DP-03 節 1, S-3DP-02 理由列)。TdpReason (§17.5.3)
+  status_reason_json Json?
+  /// 差戻し(再生成)のたびに +1。アセット単位の再生成上限 (既定 3) はこの系列の中で数える
+  lineage_no Int @default(1)
+  /// 承認画面を開いて承認/差戻しするたびに +1 (G-E の計測区間を分ける)
+  review_round Int @default(0)
+  review_opened_at        DateTime?   // 承認画面 (/review/[id]) を最初に開いた時刻 (この round の)
+  approved_at             DateTime?
+  approved_by             String?
+  approved_asset_version  Int?        // 承認した配布版の version。以降この版の R2 は消さない
+  zip_first_downloaded_at DateTime?   // 出品作業の開始 (R-1 の枠予約・G-E の計測起点)
+  /// none | building | ready | failed
+  package_state    String    @default("none")
+  package_r2_key   String?
+  package_json     Json?               // {files:[{path,sha256,bytes}], built_from_asset_version, fbx:{...}}
+  package_built_at DateTime?
+
+  assets        TdpAsset[]
+  previews      TdpPreview[]
+  generations   TdpGeneration[]
+  manuscripts   TdpManuscript[]
+  review_events TdpReviewEvent[]
+  listings      TdpListing[]
+  gate_a_judgements TdpGateAJudgement[]
+  jobs          Job[]
+  research      TdpResearchFinding? @relation(fields: [source_research_id], references: [id], onDelete: SetNull)
+
+  @@index([status, created_at(sort: Desc)], map: "tdp_products_status_time_idx")   // 既存
+  @@index([listed_at(sort: Desc)], map: "tdp_products_listed_idx")                // 既存
+  @@index([status, status_changed_at], map: "tdp_products_stall_idx")             // 滞留検出
+  @@index([origin, created_at(sort: Desc)], map: "tdp_products_origin_idx")
+  @@map("tdp_products")
 }
 
 model TdpAsset {
-  id          String   @id @default(cuid())
-  product_id  String
-  // 生成元 (meshy / openai-image など) と生成パラメータ。再現性のため必ず残す。
-  provider    String
-  prompt      String   @db.Text
-  r2_key      String   // 配布用 GLB / テクスチャ
-  format      String   // glb | fbx | png
-  // 検査結果 (§4.3)。NG 項目があれば needs_fix に落ちる。
-  inspect_json Json?
-  poly_count  Int?
-  version     Int      @default(1)
-  created_at  DateTime @default(now())
+  id         String @id @default(cuid())
+  product_id String
+  provider   String                  // meshy | openai-image | local (optimize / normalize)
+  prompt     String @db.Text         // 再現性のため必ず残す (台帳の request_json と同値)
+  r2_key     String
+  format     String                  // glb | fbx | png
+  inspect_json Json?                 // InspectResult + {stage, thresholds_kind}
+  poly_count   Int?
+  byte_size    Int?
+  /// 「版」= プロダクト内で単調増加する生成の試行番号。refine / remesh / optimize は親の版を引き継ぐ
+  version      Int   @default(1)
+  created_at   DateTime @default(now())
+
+  // ── 追加 ──
+  /// shape (preview の形だけ) | textured (refine 後) | distribution (最適化後=配布版) | fbx | texture_map
+  stage        String   @default("textured")
+  /// 同じ版・段階に複数ある場合の区別 (texture_map の albedo / normal ... )。通常 'main'
+  name         String   @default("main")
+  generation_id String? @unique       // この成果物を作った台帳行 (1 対 1。再実行で二重に作らせない)
+  parent_asset_id String?
+  /// 現在の配布版か。商品あたり 1 つ (部分 UNIQUE: §7.4)
+  is_distribution Boolean @default(false)
+  inspect_ok   Boolean?               // inspect_json の NG が 0 件か (一覧・集計用)
+  inspected_at DateTime?
+  sha256       String?
+  /// 寸法・原点の補正を掛けたときの記録 {scale_factor, translate:[x,y,z], reason}
+  normalized_json Json?
+  /// present | purged  (R2 から消しても行は残す: F-3DP-49)
+  r2_state     String   @default("present")
+  r2_purged_at DateTime?
+
+  product    TdpProduct     @relation(fields: [product_id], references: [id], onDelete: Cascade)
+  generation TdpGeneration? @relation(fields: [generation_id], references: [id], onDelete: SetNull)
+
+  @@unique([product_id, version, stage, name], map: "tdp_assets_version_stage_key")
+  @@index([product_id, version(sort: Desc)], map: "tdp_assets_product_version_idx")  // 既存
+  @@index([r2_state, created_at], map: "tdp_assets_retention_idx")
+  @@map("tdp_assets")
 }
 
 model TdpPreview {
-  id         String   @id @default(cuid())
+  id         String @id @default(cuid())
   product_id String
   r2_key     String
-  kind       String   // thumbnail | angle | scale_reference
+  /// thumbnail | angle | scale_reference
+  kind       String
   created_at DateTime @default(now())
+
+  // ── 追加 ──
+  /// thumbnail | front | side | back | iso | scale  (6 枠の名前。R2 キーの末尾と同じ)
+  name          String?
+  /// どの配布版から描いたか。承認時に「現在の配布版の 6 枚」であることを検査する
+  asset_version Int?
+  width         Int?
+  height        Int?
+  /// 描画の自己検査 (§17.5.5): {renderer, webgl2, non_bg_ratio, stddev, passed, failure}
+  selfcheck_json Json?
+
+  product TdpProduct @relation(fields: [product_id], references: [id], onDelete: Cascade)
+
+  @@unique([product_id, asset_version, name], map: "tdp_previews_slot_key")
+  @@index([product_id, kind], map: "tdp_previews_product_kind_idx")  // 既存
+  @@map("tdp_previews")
+}
+
+// ───────── 新規 ─────────
+
+/// Meshy / 画像生成の「払う呼び出し」の台帳。二重課金防止の中核 (§17.6)。
+model TdpGeneration {
+  id         String @id @default(cuid())
+  product_id String
+  /// preview | refine | remesh | image
+  stage      String
+  provider   String                      // meshy | openai-image
+  /// 明示固定したモデル (latest に任せない: §16.4.2)。image は model_assignments の解決値
+  model      String?
+  lineage_no Int
+  /// 系列内の preview 試行番号 (1 始まり)。refine / remesh は親と同じ
+  attempt_no Int
+  /// この生成が生む配布版の version (preview で採番し、refine / remesh は引き継ぐ)
+  asset_version Int
+  /// 一意キー: `{product_id}:{asset_version}:{stage}:{n}`。同じ意図の予約を 2 行作れない
+  purpose_key String @unique
+  /// reserved → submitting → submitted → succeeded | failed | lost | canceled
+  state       String
+  request_json Json                      // POST 本文 (prompt / negative_prompt / target_polycount / ai_model ...)
+  parent_generation_id String?           // refine → preview, remesh → refine/最適化版
+  meshy_task_id String?                  // POST 応答の直後に永続化 (§17.6)
+  credits_estimated Int
+  credits_charged   Int?                 // 確定値が取れたときだけ (U-26)。null = 見積りを課金済みとして扱う
+  /// estimated | confirmed | unknown
+  credit_confidence String @default("estimated")
+  cost_jpy     Decimal @default(0) @db.Decimal(10, 4)
+  feedback_json Json?                    // 再生成の入力: 前回の NG コード [{code, actual, expected}] + 差戻し理由
+  failure_code String?
+  task_error   String? @db.Text
+  submit_started_at DateTime?
+  submitted_at DateTime?
+  finished_at  DateTime?
+  poll_count   Int @default(0)
+  last_polled_at DateTime?
+  last_progress  Int?
+  /// 生成の「寿命」を表す jobs 行 (kind='tdp.meshy.poll'。解決まで running のまま進捗を書く)
+  job_id       String?
+  created_at   DateTime @default(now())
+  updated_at   DateTime @updatedAt
+
+  product TdpProduct @relation(fields: [product_id], references: [id], onDelete: Cascade)
+  asset   TdpAsset?   // 1 対 1 (TdpAsset.generation_id が @unique)
+
+  @@index([product_id, created_at(sort: Desc)], map: "tdp_generations_product_idx")
+  @@index([state, last_polled_at], map: "tdp_generations_state_idx")
+  @@index([created_at(sort: Desc)], map: "tdp_generations_time_idx")   // 月次 credit 集計 (JST 月境界)
+  @@map("tdp_generations")
+}
+
+/// 商品ページ原稿 (媒体別・版管理)。承認ゲートは「最新の passed=true」を読む。
+model TdpManuscript {
+  id         String @id @default(cuid())
+  product_id String
+  medium     String                      // booth | jinxxy
+  version    Int
+  title      String
+  description String @db.Text            // 完成原稿 (LLM 散文 + 決定論ブロック)
+  tags       String[]
+  price_jpy  Int
+  /// {lead, appeal, usage, spec_block, env_block, license_block, ai_disclosure_block}
+  sections_json Json
+  /// ManuscriptChecks: {forbidden_hits[], items_present{...6}, numbers_match, disclosure_targets_ok, passed}
+  checks_json Json
+  passed     Boolean
+  for_asset_version Int                  // どの配布版の実測値で書いたか
+  feedback_in String? @db.Text           // 差戻し/検査不合格の指摘 (再生成の入力)
+  job_id     String?
+  created_at DateTime @default(now())
+
+  product TdpProduct @relation(fields: [product_id], references: [id], onDelete: Cascade)
+
+  @@unique([product_id, medium, version], map: "tdp_manuscripts_version_key")
+  @@index([product_id, medium, passed, version(sort: Desc)], map: "tdp_manuscripts_latest_idx")
+  @@map("tdp_manuscripts")
+}
+
+/// 承認 / 差戻しの履歴 (S-3DP-03 履歴・G-E・台帳 #17)。
+model TdpReviewEvent {
+  id         String @id @default(cuid())
+  product_id String
+  round      Int
+  /// approve | reject_regenerate | reject_rewrite | reject_discard
+  kind       String
+  reason     String? @db.Text            // 差戻しは必須 (空文字不可)
+  actor      String                      // 運営者の識別子 (session.user.email)
+  created_at DateTime @default(now())
+
+  product TdpProduct @relation(fields: [product_id], references: [id], onDelete: Cascade)
+
+  @@index([product_id, created_at(sort: Desc)], map: "tdp_review_events_product_idx")
+  @@map("tdp_review_events")
+}
+
+/// 出品 (商品 × 媒体)。R-1 の枠・公開記録・公開状態確認・売上の主キー。
+model TdpListing {
+  id         String @id @default(cuid())
+  product_id String
+  medium     String                      // booth | jinxxy
+  /// working (出品作業中: 枠を予約済み) | published (運営者が公開を記録) | withdrawn (取り下げを記録)
+  state      String @default("working")
+  slot_reserved_at DateTime?             // 出品作業の開始 = 最初の ZIP 発行 or 下書き作成の早い方
+  draft_url  String?                     // 半自動で作った下書き URL
+  draft_created_at DateTime?
+  item_url   String?                     // 公開記録時に必須。公開状態確認の対象 URL
+  published_recorded_at DateTime?
+  withdrawn_recorded_at DateTime?
+  withdraw_reason String? @db.Text
+  /// 期待は公開か。公開記録で true、取り下げ記録で false。観測との差分だけが異常 (F-3DP-39 ③)
+  expected_public Boolean @default(false)
+  /// 記録時点の媒体設定 (黒字判定に算入するか)。後から設定を変えても過去は変わらない (F-3DP-45)
+  counts_toward_gate Boolean @default(true)
+  /// 停止中・上限超過のまま運営者が公開を記録した事実 (記録は拒否せず、事実として残す)
+  recorded_while_held Boolean @default(false)
+  hold_reasons_at_record Json?
+  last_observation   String?             // confirmed_public | abnormal | unreachable
+  last_observed_at   DateTime?
+  last_confirmed_at  DateTime?           // 最後に confirmed_public を観測した時刻
+  consecutive_unreachable Int @default(0)
+  created_at DateTime @default(now())
+  updated_at DateTime @updatedAt
+
+  product      TdpProduct @relation(fields: [product_id], references: [id], onDelete: Cascade)
+  observations TdpPublicObservation[]
+  sales        TdpSale[]
+
+  @@unique([product_id, medium], map: "tdp_listings_product_medium_key")
+  @@unique([item_url], map: "tdp_listings_item_url_key")
+  @@index([medium, state], map: "tdp_listings_medium_state_idx")
+  @@index([published_recorded_at], map: "tdp_listings_published_idx")
+  @@map("tdp_listings")
+}
+
+/// 公開状態の観測履歴 (処分の一次情報: §14.6.3-2)。3 値。
+model TdpPublicObservation {
+  id         String @id @default(cuid())
+  listing_id String
+  observed_at DateTime @default(now())
+  /// confirmed_public | abnormal | unreachable
+  value      String
+  reason_code String                     // §17.10.3 の表
+  reason_ja  String
+  http_status Int?
+  /// 対照 (ショップトップ等の既知公開ページ) が取れたか。false なら abnormal を出せない
+  control_ok Boolean
+  checks_json Json?                      // {title_match, purchase_cta, final_url, ...}
+  job_id     String?
+
+  listing TdpListing @relation(fields: [listing_id], references: [id], onDelete: Cascade)
+
+  @@index([listing_id, observed_at(sort: Desc)], map: "tdp_obs_listing_idx")
+  @@index([observed_at(sort: Desc)], map: "tdp_obs_time_idx")
+  @@map("tdp_public_observations")
+}
+
+/// 売上 (listing × JST 月)。再取得・再入力は同じ行を上書き (冪等: F-3DP-31 ④)。欠測は「行が無い」で表す (0 円にしない)。
+model TdpSale {
+  id         String @id @default(cuid())
+  listing_id String
+  year_month String                      // 'YYYY-MM' (JST)
+  units      Int
+  gross_jpy  Int
+  /// 手数料モデルの版 ('booth-2025-10-28' ...)。後で手数料が変わっても過去の月は再計算しない
+  fee_model_id String
+  /// manual | booth_manage_readonly | jinxxy_api
+  source     String
+  fetched_at DateTime @default(now())
+  job_id     String?
+  note       String?
+
+  listing TdpListing @relation(fields: [listing_id], references: [id], onDelete: Cascade)
+
+  @@unique([listing_id, year_month], map: "tdp_sales_listing_month_key")
+  @@index([year_month], map: "tdp_sales_month_idx")
+  @@map("tdp_sales")
+}
+
+/// 実入金の記録 (計算上の手取りとの差異 = 丸め方向の確定材料: F-3DP-32 ⑤)。
+model TdpPayout {
+  id         String @id @default(cuid())
+  medium     String
+  year_month String
+  expected_net_jpy Int                   // 記録時点の計算値
+  received_jpy     Int
+  transfer_fee_jpy Int @default(0)
+  diff_jpy   Int                         // received - (expected - transfer_fee)
+  recorded_at DateTime @default(now())
+  note       String?
+
+  @@unique([medium, year_month], map: "tdp_payouts_medium_month_key")
+  @@map("tdp_payouts")
+}
+
+/// 規制ゲート・撤退・縮退の操作ログ (F-3DP-40 / 44)。append-only。現在の状態は app_settings の列が真実。
+model TdpRegulationEvent {
+  id         String @id @default(cuid())
+  at         DateTime @default(now())
+  /// kill_engage | kill_release | retire_on | retire_off | degrade_on | degrade_off
+  kind       String
+  /// auto (公開状態確認が発火) | operator
+  source     String
+  actor      String?
+  reason     String? @db.Text
+  listing_id String?
+  observation_id String?
+
+  @@index([at(sort: Desc)], map: "tdp_regulation_events_time_idx")
+  @@map("tdp_regulation_events")
+}
+
+/// G-A の運営者判定 (「これを ¥500 で売れる」)。無いと G-A は永久に未評価。
+model TdpGateAJudgement {
+  id         String @id @default(cuid())
+  product_id String
+  /// sellable | not_sellable
+  verdict    String
+  reason     String @db.Text             // 必須
+  judged_by  String
+  judged_at  DateTime @default(now())
+
+  product TdpProduct @relation(fields: [product_id], references: [id], onDelete: Cascade)
+
+  @@index([judged_at(sort: Desc)], map: "tdp_gate_a_time_idx")
+  @@map("tdp_gate_a_judgements")
+}
+
+/// 日次ゲート算出 (F-3DP-36)。失敗した算出も ok=false で残す (台帳 #13)。
+model TdpGateSnapshot {
+  id          String @id @default(cuid())
+  computed_at DateTime @default(now())
+  ok          Boolean
+  error       String? @db.Text
+  gates_json  Json?                       // TdpGateRow[] (§17.10.1)
+  inputs_json Json?                       // 算出に使った設定値のスナップショット (後から判定を再現できる)
+  job_id      String?
+
+  @@index([computed_at(sort: Desc)], map: "tdp_gate_snapshots_time_idx")
+  @@map("tdp_gate_snapshots")
+}
+
+/// 外部値の観測 (Meshy 残高 / R2 使用量)。取得失敗も残す (「取得できません: 理由」+ 最終成功。台帳 #16)。
+model TdpResourceSnapshot {
+  id          String @id @default(cuid())
+  /// meshy_balance | r2_usage
+  kind        String
+  ok          Boolean
+  value_json  Json?
+  error       String? @db.Text
+  observed_at DateTime @default(now())
+
+  @@index([kind, observed_at(sort: Desc)], map: "tdp_resource_kind_time_idx")
+  @@map("tdp_resource_snapshots")
+}
+
+/// 週次リサーチの所見 (S-3DP-05)。企画への入力として**実行時注入**する (プロンプト本文は書き換えない)。
+model TdpResearchFinding {
+  id          String @id @default(cuid())
+  week_key    String                      // JST の ISO 週 'YYYY-Www'
+  /// accessory | texture | prop_furniture  (種別の束ね方は §17.7.1)
+  kind_group  String
+  viewpoint   String @db.Text
+  /// TdpResearchOutput (狙う題材 / 避ける題材 / 観測価格帯 / 知見)
+  findings_json Json
+  observed_prices_json Json?              // {min,max,median,sample,observed_at,source:'booth_public'|'web_search'}
+  sources_json Json
+  web_search_used Boolean @default(false) // false = 売上と過去所見のみ (台帳 #3)
+  booth_fetch_json Json?                  // {pages_fetched, failed:[{url,reason}], observed_at}
+  job_id      String?
+  created_at  DateTime @default(now())
+
+  products TdpProduct[]
+
+  @@unique([week_key, kind_group], map: "tdp_research_week_group_key")
+  @@map("tdp_research_findings")
+}
+
+// ───────── 共有テーブルへの追加 ─────────
+
+model Job {
+  // ... 既存の列は不変 ...
+  /// 3DP の商品との紐付け (F-3DP-46 ④の決定: payload_json ではなく列 + index にする。
+  /// S-3DP-03 の履歴・S-3DP-08 の商品列・商品別コスト集計が index で引けるため)
+  tdp_product_id String?
+  tdp_product    TdpProduct? @relation(fields: [tdp_product_id], references: [id], onDelete: SetNull)
+
+  @@index([tdp_product_id, kind], map: "jobs_tdp_product_kind_idx")
+  @@index([kind, created_at(sort: Desc)], map: "jobs_kind_time_idx")   // 定期タスクの最終実行を引く (全ツール共通で有益)
 }
 ```
 
-`token_usage.tool = '3dp'` を追加する (docs/05 §3.3 のコスト帰属。既存は a2p/anp/m2p)。
-**モデル呼び出しを足したら必ず `token_usage` に記録する** (CLAUDE.md Hard Rule #5)。
-Meshy は LLM ではないが credit を消費するので、同じ表に `provider='meshy'` で記録する
-(そうしないとツール別の純利益が出せない)。
+### 7.3 `app_settings` に足す列
+
+既存 2 列 (`tdp_monthly_publish_limit` 既定 8 / `tdp_derivative_denylist`) は不変 (§7.4 で CHECK を足す)。
+既定値の**定義箇所は `packages/contracts/src/tdp/settings.ts` の `TDP_SETTINGS_DEFAULTS` 1 つ**に集約し、
+migration の `DEFAULT` と一致させるテストを置く (F-3DP-38 の「判定ロジックに数値リテラルを残さない」)。
+**【提案値】の印が付くものはすべて運営者未承認** (UR-7)。
+
+| 列 | 型 / 既定 | 意味 | 出典 |
+|---|---|---|---|
+| `tdp_research_enabled` | Boolean / **false** | 週次リサーチ (cron は常時登録、タスク内で見る) | §16.5.2 |
+| `tdp_planner_enabled` | Boolean / **false** | 企画の日次作成 | 同 |
+| `tdp_sales_fetch_enabled` | Boolean / **false** | 売上の**自動**取得。手入力は本フラグと無関係 | 同 / §17.5.6 |
+| `tdp_status_check_enabled` | Boolean / **true** | 公開状態確認。**既定 ON のキルスイッチ** (G-D の検知なので止めにくくする) | F-3DP-39 |
+| `tdp_booth_public_fetch_enabled` | Boolean / **false** | BOOTH 公開カテゴリページの直接取得。**U-8 (ガイドライン本文) を読むまで OFF** | F-3DP-23 |
+| `tdp_kill_switch_on` | Boolean / false | 新規出品の全媒体一括停止の**現在状態** | F-3DP-40 |
+| `tdp_kill_switch_since` | DateTime? | 発火時刻 | 同 |
+| `tdp_retire_mode` | Boolean / false | 撤退モード (企画・生成・出品の恒久停止。既存商品は残す) | F-3DP-44 |
+| `tdp_degrade_mode` | Boolean / false | 縮退 (Meshy を使わない) | 同 |
+| `tdp_jinxxy_monthly_limit` | Int / **0** | Jinxxy の月間枠。0 = 出品しない (保守的な既定) | F-3DP-34 |
+| `tdp_jinxxy_counts_toward_gate` | Boolean / false | Jinxxy を G-B/G-C に算入するか | F-3DP-45 |
+| `tdp_jinxxy_gate_switched_at` | DateTime? | 算入に切り替えた日 | 同 |
+| `tdp_u9_json` | Json? | `{answered_at, shares_pixiv_account: boolean, note}` | F-3DP-42 |
+| `tdp_u10_json` | Json? | `{answered_at, booth_share_pct: number}` | 同 |
+| `tdp_settings_confirmed_json` | Json? | 提案値のグループ別確認 `{[group]: {confirmed_at, values: {列名: 確認時の値}}}`。現在値と `values` が違えば「変更済 (未確認)」。group = `safety` / `plan_price` / `generation` / `gates` / `media` | §9.12-9 |
+| `tdp_meshy_model` | String? / **null** | Meshy の `ai_model`。**null の間は生成を始めない** (理由「Meshy のモデルが未設定です」)。U-17 の実測で決める | §16.4.2 |
+| `tdp_meshy_usd_per_credit` | Decimal(8,5) / 0.02 | **円/credit は導出値** = これ × `latest_fx_rate` (既存の為替取得に乗る。`token_usage.unit_price_snapshot.fx_rate_usd_jpy` と同じ作法)。申し送りの「円/credit」を USD 建てにした理由: 為替追随のため | §16.4.4 |
+| `tdp_meshy_plan_jpy_month` | Int / 3000 | Meshy Pro の月額 (固定費)。**G-C の実コストに加える**。`recurring_costs` には tool 列が無く載せられない (U-27) | §14.3 |
+| `tdp_meshy_credit_table_json` | Json? | `{preview:20, preview_lite:5, refine:10, remesh:5}`。null = コード既定 (出典と取得日つき: §16.4.1) | 同 |
+| `tdp_min_price_jpy` | Int / 500 | 価格下限 | F-3DP-20/38 |
+| `tdp_regen_limit_asset` | Int / 3 | 系列内の preview **試行**の上限 | F-3DP-14/38 |
+| `tdp_regen_limit_product` | Int / 10 | 企画全体の preview 試行の上限 (G-A と同値) | 同 |
+| `tdp_gate_b_min_sales` | Int / 5 | G-B の累計販売本数 | F-3DP-38 |
+| `tdp_gate_b_window_days` | Int / 90 | G-B の観測窓 | 同 |
+| `tdp_gate_c_point_days` | Int / 180 | G-C の判定点 | 同 |
+| `tdp_gate_e_monthly_minutes` | Int / 240 | G-E の月間作業時間上限 (U-12 の回答欄) | 同 |
+| `tdp_yield_warn_pct` | Int / 50 | 検査通過率の警告ライン | 同 |
+| `tdp_derivative_reject_warn_pct` | Int / 50 | 依拠性拒否率の警告ライン | 同 |
+| `tdp_kind_weights_json` | Json? | `{accessory:50, texture:30, prop_furniture:20}` (合計 100)。null = 既定 | F-3DP-19 |
+| `tdp_tuning_json` | Json? | `TdpTuning` (下表)。zod で検証し、欠けたキーは既定で補う | S-5 |
+
+**`tdp_tuning_json` のキー** (`TdpTuningSchema`。すべて【提案値】):
+
+| キー | 既定 | 意味 |
+|---|---|---|
+| `stall_hours` | 24 | 滞留の判定 (A-11) |
+| `status_check_stale_hours` | 48 | 公開状態確認の不発警告 (A-12) |
+| `status_check_full_below` | 30 | カタログがこの件数以下なら毎日全件、超えたら新しい 30 件 + 残りを `cycle_days` で一巡 (§16.6) |
+| `status_check_cycle_days` | 3 | 同上 |
+| `status_check_unreachable_warn_days` | 2 | 「取得できず」が連続したら G-D を `warn` にする日数 (申し送り 7) |
+| `stock_cap_multiplier` | 2 | 在庫の上限 = 残枠 × この値 (A-13) |
+| `intermediate_keep_versions` | 3 | 中間版の保持本数 (A-10) |
+| `r2_warn_gb` | 20 | `3dp/` の使用量警告 (§16.7) |
+| `credit_warn_per_product` | 60 | 1 商品の credit 警告 (A-3) |
+| `credit_cap_per_product` | 250 | **1 商品の credit 上限 (超えると生成を打ち切る)**。G-A 最悪ケース 215 に余裕 |
+| `meshy_monthly_credit_cap` | 900 | 月の生成を止める credit 消費上限 (Pro の 1,000 に対する安全率) |
+| `meshy_balance_warn` | 150 | 残高警告 |
+| `meshy_poll_interval_sec` | null | **U-13 の実測まで null**。null = コードの暫定値 15 秒 (画面に「暫定」と表示) |
+| `meshy_poll_max_minutes` | null | 同。null = 暫定 45 分。**上限 90 分** (`sweepStaleJobs` の 120 分より短く: §17.5.2) |
+| `slot_reserve_expire_days` | 14 | 枠を予約したまま公開記録されない場合に枠を返す日数 |
+| `work_cap_review_min` | 30 | G-E: 承認区間 (画面を開く→承認) の 1 件あたり算入上限 |
+| `work_cap_publish_min` | 60 | G-E: 公開区間 (ZIP 取得→公開記録) の 1 件あたり算入上限 |
+| `release_reason_min_chars` | 20 | kill switch 解除の理由の最小文字数 |
+| `reject_reason_min_chars` | 5 | 差戻し理由の最小文字数 (空文字不可) |
+| `listing_extra_forbidden` | [] | 原稿の禁止語に足す語 (既定 8 語は contracts の定数: F-3DP-26) |
+| `render_selfcheck` | `{min_non_bg_ratio:0.02, min_stddev:6}` | 描画の自己検査 (空画像判定)。**U-15 の実測で決める暫定値** |
+| `sales_source` | `'manual'` | `manual` \| `booth_manage_readonly` (§17.5.6) |
+| `booth_fetch` | `{interval_ms:3000, max_pages:10}` | F-3DP-23 / A-14 |
+
+### 7.4 手書き SQL (Prisma DSL で書けない制約)
+
+```sql
+-- (a) Meshy に投入済みの生成は、全体で同時に 1 本 (F-3DP-48 を DB で強制する。queueName の保険)
+CREATE UNIQUE INDEX tdp_generations_single_inflight
+  ON tdp_generations ((1)) WHERE provider = 'meshy' AND state IN ('submitting', 'submitted');
+
+-- (b) 配布版は商品ごとに 1 つ
+CREATE UNIQUE INDEX tdp_assets_one_distribution
+  ON tdp_assets (product_id) WHERE is_distribution;
+
+-- (c) refine / remesh は親の生成が必須 (preview なしの refine を DB でも拒否: F-3DP-05 の保険)
+ALTER TABLE tdp_generations ADD CONSTRAINT tdp_generations_parent_required
+  CHECK (stage IN ('preview', 'image') OR parent_generation_id IS NOT NULL);
+ALTER TABLE tdp_generations ADD CONSTRAINT tdp_generations_state_valid
+  CHECK (state IN ('reserved','submitting','submitted','succeeded','failed','lost','canceled'));
+-- submitted 以降は task_id が要る (task_id を持たない submitted を作れない)
+ALTER TABLE tdp_generations ADD CONSTRAINT tdp_generations_task_id_required
+  CHECK (provider <> 'meshy' OR state IN ('reserved','submitting','failed','lost') OR meshy_task_id IS NOT NULL);
+
+-- (d) 状態の許可値と、承認を経ない listed の禁止 (F-3DP-28 ①)
+ALTER TABLE tdp_products ADD CONSTRAINT tdp_products_status_valid
+  CHECK (status IN ('planned','generating','inspecting','needs_fix','ready','review',
+                    'approved','listed','failed','rejected','withdrawn'));
+ALTER TABLE tdp_products ADD CONSTRAINT tdp_products_approval_required
+  CHECK (status NOT IN ('approved','listed','withdrawn') OR approved_at IS NOT NULL);
+
+-- (e) 出品: published / withdrawn は URL と記録時刻が要る
+ALTER TABLE tdp_listings ADD CONSTRAINT tdp_listings_state_valid
+  CHECK (state IN ('working','published','withdrawn'));
+ALTER TABLE tdp_listings ADD CONSTRAINT tdp_listings_published_requires_url
+  CHECK (state = 'working' OR (item_url IS NOT NULL AND published_recorded_at IS NOT NULL));
+
+-- (f) R-1 の天井 (F-3DP-41)。**API の拒否が主、これは最後の砦**。コード定数 TDP_MONTHLY_LIMIT_HARD_MAX と同値
+--     適用前に必ず SELECT tdp_monthly_publish_limit を確認し、12 を超えていたら運営者に報告してから直す (黙って丸めない)
+ALTER TABLE app_settings ADD CONSTRAINT app_settings_tdp_limit_range
+  CHECK (tdp_monthly_publish_limit BETWEEN 0 AND 12 AND tdp_jinxxy_monthly_limit BETWEEN 0 AND 12);
+```
+
+テストで固定するもの: (a) は 2 本目の `submitted` が一意制約違反になること / (d) は `approved_at` なしの `listed` が書けないこと /
+CHECK の許可値リストと `PRODUCT_STATUSES` (TypeScript) が一致すること。
+
+### 7.5 既存 3 テーブルへの変更の安全性 (本番適用済みを壊さない)
+
+| 変更 | 安全な理由 |
+|---|---|
+| 列追加はすべて `NULL` 許容または `DEFAULT` つき | 既存行を書き換えない。`ADD COLUMN ... DEFAULT` は PG 11+ でテーブル書き換えなし |
+| `tdp_assets` の UNIQUE `(product_id, version, stage, name)` | 既存の `version` は商品内で一意のはず。**適用前に `SELECT product_id, version, count(*) ... HAVING count(*) > 1` で 0 件を確認** (Inc-1 では生成していないので 0 行の見込み【推測】) |
+| `tdp_products` の CHECK | 既存の許可値は新しい許可値の部分集合。適用前に `SELECT DISTINCT status` で確認 |
+| `tdp_previews` の UNIQUE | `name` / `asset_version` が NULL の行は一意制約の対象外 (PG の NULL は別物) |
+| `jobs` への列・index 追加 | 共有テーブルだが nullable な列と index の追加のみ。A2P/ANP のコードは参照しない。`jobs_kind_time_idx` は他ツールにも有益 |
+
+---
+
+`token_usage.tool = '3dp'` は**実装済み** (`ToolKey`、`defaultToolForRole('tdp.*')`)。
+**モデル呼び出しを足したら必ず `token_usage` に記録する** (CLAUDE.md Hard Rule #5)。記録の形:
+
+| 呼び出し | `provider` / `model` / `role` | 記録する場所 | `cost_jpy` |
+|---|---|---|---|
+| `tdp.*` の LLM | 実際の provider / model / `tdp.research` 等 | 既存の `withTokenLogging` に `{ tool: '3dp', jobId }` | 既存の単価カタログ |
+| Meshy (preview / refine / remesh) | `meshy` / `ai_model` (例 `meshy-6`) / `tdp.meshy` | **`tdp.meshy.submit` が task_id 永続化の直後に** `recordMeshyUsage()` で 1 行 (`job_id` = 生成の jobs 行)。`input_tokens=0`、`unit_price_snapshot = {unit:'credit', credits, usd_per_credit, fx_rate_usd_jpy, stage}`。**credit を `input_tokens` に押し込まない** (トークン合算を歪める) | `credits × usd_per_credit × fx` |
+| テクスチャの画像生成 | 既存の画像ロギング (`withImageLogging`) に `{ tool: '3dp' }` | role `tdp.texture` (Inc-3 で `AgentRole` に追加) | 既存 |
+
+Meshy は FAILED でも credit が返るか不明 (U-26) なので、**確定するまで「払った」として記録する** (原価を過小に見ない)。
 
 ---
 
@@ -321,6 +880,9 @@ Meshy は LLM ではないが credit を消費するので、同じ表に `provi
 プロンプト本体は **DB の `prompts` テーブル** (CLAUDE.md Hard Rule #4)。
 **書式・方針はロール本文に焼かず実行時注入にする** — A2P で共有本文にジャンル固有の
 書式を焼いて事故になった教訓 (docs/05 F-100)。
+
+> 各 role の入出力スキーマ (`packages/contracts/src/agents/tdp.ts`)・使うツール・プロンプト取得・想定モデルは **§17.7**。
+> 実装には 4 role に加えて、画像生成の `tdp.texture` (Inc-3) を `AgentRole` に足す。Meshy は LLM ではないので role を持たず、台帳 (§17.6) で扱う。
 
 ---
 
@@ -1159,6 +1721,21 @@ Inc-2 の完了条件を「椅子 1 個」にしているのは、**3D 生成の
 | **U-21** | **R2 の現使用量 (アカウント合算)。**無料枠 10GB は A2P / ANP / DB バックアップと**共有**で、3DP が使える余白を当方は知らない | R2 ダッシュボード、または `ListObjectsV2` のプレフィックス別集計 |
 | **U-22** | **Meshy クレジットの繰越有無と追加購入の単価** (Pro の 1,000 credits/月が余る / 足りないとき) | Meshy の料金ページ・請求画面。§16.10 の「歩留まり 20% が限界」の前提 |
 | **U-23** | **テクスチャ商品の派生マップ (normal / roughness / AO) を画像生成からどう作るか**と、タイリング継ぎ目の合否基準 | 優先 2 の種別なので Inc-3 の前に 1 セットを試作して判断 (§16.8 行 11) |
+
+> **2026-10-15 追記 (プログラム設計 = §17 から出た未確認事項)。** 既存の U-1'〜U-23 は変更していない。
+> 次の 8 件は**設計の分岐点**で、いずれも**今は安全側の仮置き**で進められる (仮置きの中身は各行)。
+> U-24 / U-26 は**二重課金の防御の精度**に、U-25 / U-30 は**worker 再起動時の安全**に効くので Inc-2 の実キー試行と同時に潰す。
+
+| # | 内容 | 確認方法 / 仮置き |
+|---|---|---|
+| **U-24** | **Meshy の POST 応答を失ったとき、作成済みのタスクを特定できるか** (タスク一覧 API の有無・並び順・絞り込み、冪等キーに相当する仕組み) | 実キーでドキュメントを確認し、一覧で直近タスクを引けるか試す。**仮置き: 特定できない前提** — 応答喪失は `lost` とし、再投入せず次の試行として数える (最悪 1 preview = 20 credits ≒ ¥60 の重複。§17.6) |
+| **U-25** | **graphile-worker 0.16.6 の内部表名 (`_private_jobs` / `_private_job_queues` 等) と、死んだ worker が残した `tdp-*` キューのロックを安全に外す SQL** | 実 PG の統合テストで `\d graphile_worker.*` を確認。**仮置き: 15 分超ロックされた `tdp-*` を起動時に外す。全 `tdp.*` ステップに 10 分のハードタイムアウトを掛けて「15 分超 = 死んでいる」を成立させる** (§17.5.2) |
+| **U-26** | **Meshy: FAILED / CANCELED タスクの credit は返却されるか。課金は作成時か完了時か** | 実キー試行で残高 (`GET /balance`) を前後比較。**仮置き: 作成時に課金され返却されない** (原価を過小に見ない) |
+| **U-27** | **Meshy の月額 (固定費 ¥3,000) をポータルの全社コストにどう載せるか** — `recurring_costs` に `tool` 列が無い | 3DP は `tdp_meshy_plan_jpy_month` で**自分の G-C を閉じる**。ポータル合算への反映は docs/10 側の判断 (`recurring_costs` に tool 列を足す案は A2P/ANP の集計への影響調査が先) |
+| **U-28** | **BOOTH の売上をどう取るか** — 管理画面に商品別の販売数・売上が出るか / CSV 出力があるか / 集計の粒度。**A2P に BOOTH 売上取得の既存実装は無い** (確認済み: `apps/worker` に BOOTH の売上タスクなし) | 運営者が `manage.booth.pm` の売上関連画面を 1 度見る。**仮置き: 手入力 (S-3DP-07)** で G-B/G-C を成立させ、自動取得は読み取り専用の二次案 (§17.5.6) |
+| **U-29** | **Meshy `preview` (形だけ) の GLB に UV が入るか** | 実キー試行で preview の GLB を `inspect`。**仮置き: 形だけの検査 (`stage='shape'`) では `missing_uv` と テクスチャ系の項目を見ない** |
+| **U-30** | **Railway の SIGTERM → SIGKILL の猶予 (コメントは 30 秒) と、デプロイ中に旧 worker と新 worker が並走するか** | Railway のドキュメント/実機のデプロイログ。**並走するなら起動時のロック回収 (U-25) が生きている旧 worker のロックを奪う事故になる**ので、並走が否定できるまで回収は「15 分超」の保守側に固定 |
+| **U-31** | **R2 の CORS: 署名付き URL を `<model-viewer>` が別オリジンから読める最小設定** (Range の要否、`ETag` の公開) | 実機で承認画面から GLB を読む。**仮置き: §17.9.4 の設定** |
 
 > **2026-10-15 追記 (機能要件の検証から出た未確認事項)。** §15.4 の非機能要件を書く過程で、
 > **数字を置けない (= 根拠が無いまま提案値を置くしかない)** 箇所が 4 つ出たので
@@ -2693,3 +3270,1206 @@ worker が `@a2p/mesh` を import する時点で、`apps/worker/package.json` �
 13. **設定画面 (S-3DP-06)**: Meshy の接続テスト結果 (`200` / `401`・`403` / その他、日本語) と**残高**。Meshy の Web UI を使うとキュー枠を食う旨の注意書き (§16.4.1)。
 14. **ホーム**: R2 の `3dp/` 使用量 (20GB 警告)、Meshy の月の credit 残量、`tdp.listing.status.check` の最終成功 (48 時間超で警告 — F-3DP-39 ⑤)。
 15. **プレビュー失敗の表示**: 「白画像を検出して失敗にした」を人間可読に (§16.2.3 の自己検査)。
+
+---
+
+## 17. プログラム設計 (program-design、2026-10-15)
+
+> **位置づけ。** 3DP の実装ブループリント。`docs/05-program-design.md` は A2P 専用で**触らない** (ANP が docs/11 に自分の設計を持つ前例に従う)。
+> DB は **§7**、パイプラインは **§6** を実装可能な水準に改訂し、本節は **状態機械・API・ジョブ・二重課金防止・エージェント・シーケンス・R2・エラー・観測・テスト**を持つ。
+> 次段の `pm` はここからタスク (`T-NN-MM`) に分解し、`programmer` は**ここを読めば再判断なしにコードが書ける**ことを目標にした。
+> **コードは 1 行も触っていない。** 確度表記は §13 の規約 (【一次】/【二次】/【推測】)。実測が要るものは U-NN (§11、新規は U-24〜U-31)。
+>
+> なお本ファイルは 2,500 行を大きく超えている (3DP の設計が 1 ファイルに集約されているため。ハーネスの 1 ファイル上限とは別の事情)。分割は PM の判断事項 (§17.16-TBD-1)。
+
+### 17.0 結論の一覧と、前段からの申し送りの所在
+
+| # | 問い | 決定 | 詳細 |
+|---|---|---|---|
+| D-1 | 出品の事実をどこに持つか | **`tdp_listings` (商品 × 媒体)**。`tdp_products.listed_at` / `booth_item_url` は互換のため残す | §7.1 S-1 |
+| D-2 | R-1 をいつ数えるか | **「出品作業の開始」(最初の ZIP 発行) で枠を予約し、「公開を記録する」で確定**。使用枠 = 当月(JST)の公開記録数 + 有効な予約数 ≤ 上限。予約は 14 日で失効 | §17.10.4 |
+| D-3 | 判定日前の暫定判定 | **`fail` を出さず `warn` まで**。経過に対する進み具合で判定 (ペース規則) | §17.10.1 |
+| D-4 | G-E (稼働) の測り方 | **2 区間の実測**: 承認区間 (画面を開く→承認) と公開区間 (ZIP 取得→公開記録)。各区間に 1 件あたりの算入上限。壁時計の「承認→公開記録」は**参考値で作業時間ではない** | §17.10.1 |
+| D-5 | 公開状態の観測値 | **3 値** (`confirmed_public` / `abnormal` / `unreachable`)。kill switch を発火できるのは `abnormal` だけで、**対照が取れた上で同一実行内の再取得でも異常**のときに限る | §17.10.3 |
+| D-6 | Meshy の待ち方 | **`submit` と `poll` を別ステップにし、poll は 1 回 1 GET の短いジョブが自分を再投入**。worker を何十分も占有しない (SIGTERM の猶予 30 秒に収まる) | §17.5.2 |
+| D-7 | 二重課金の防ぎ方 | **台帳 `tdp_generations` + CAS + 「Meshy 投入済みは全体で 1 本」の部分 UNIQUE + `maxAttempts=1` + POST の結果不明は `lost` にして再投入しない** | §17.6 |
+| D-8 | 寸法・原点の NG | **補正で直す (再生成しない)** — 等倍スケールと平行移動は形を変えない。credit を使わない | §17.5.5 / §17.14 |
+| D-9 | cron の一覧を UI が参照する方法 | **`packages/contracts` の定数 `TDP_CRON_TASKS`** を worker の `CRON_ITEMS` と画面の両方が読む | §17.5.1 |
+| D-10 | 商品と `jobs` の紐付け | **`jobs.tdp_product_id` 列 + index** (F-3DP-46 ④) | §7.2 |
+| D-11 | BOOTH 売上の取得手段 | **手入力 (S-3DP-07) を既定**。A2P に既存実装は無い。自動取得は読み取り専用の二次案で既定 OFF | §17.5.6 |
+| D-12 | BOOTH 下書き作成 | **ローカルスクリプト** (A2P の `booth-submit.mjs` と同じ作法)。Railway の IP から共用セッションを使わない | §17.5.7 |
+| D-13 | API の形 | **Server Action のみ。Route Handler は新設しない** (外部 webhook が無い。副作用のある署名付き URL 発行は GET にしない) | §17.4 |
+| D-14 | G-A の運営者判定の保存先 | **`tdp_gate_a_judgements`** (判定者・理由・時刻つき、追記のみ) | §7.2 |
+| D-15 | 「1 商品あたりの売上」 | **累計売上 (gross) ÷ 公開記録済み商品数** (黒字判定に算入する媒体の分)。月で区切らない | §17.10.1 |
+| D-16 | `furniture` と `prop` | **`kind` は 4 値のまま、構成比は 3 区分** (`accessory` / `texture` / `prop_furniture`) | §7.3 |
+
+**前段の申し送り 14 項目の所在**
+
+| # | 申し送り | 回答の所在 |
+|---|---|---|
+| 1 | `approved` / `withdrawn` と時刻列、`listed` の定義 | §7.2 (`approved_at` 等) / §17.3 |
+| 2 | G-A 判定の保存先 | §7.2 `TdpGateAJudgement` / §17.4 `recordGateAJudgement` |
+| 3 | 判定日前の暫定規則 | §17.10.1 |
+| 4 | R-1 を数える時点 | D-2 / §17.10.4 |
+| 5 | 承認→公開記録は作業時間ではない | D-4 / §7.2 (`zip_first_downloaded_at`, `review_opened_at`) |
+| 6 | 公開状態 3 値 | D-5 / §17.10.3 |
+| 7 | 失敗理由台帳 17 行・cron 一覧の定数化 | §17.5.3 (`TdpJobResult` と 17 行の対応表) / §17.5.1 |
+| 8 | 提案値の確認日時・署名付き URL・CORS | §7.3 (`tdp_settings_confirmed_json`) / §17.4 / §17.9.4 |
+| 9 | キュー 2 本・`maxAttempts` 明示・`task_id` 永続化 | §17.5.2 / §17.6 |
+| 10 | `@a2p/mesh` に Playwright を入れない | §17.1 (描画は `apps/worker/src/tasks/tdp/render/`) |
+| 11 | `app_settings` の追加列 | §7.3 |
+| 12 | BOOTH 売上取得 | D-11 / §17.5.6 |
+| 13 | グレースフルシャットダウン | §17.5.2 末尾 (中断の再投入・起動時回収) / U-25, U-30 |
+| 14 | Dockerfile の `packages/mesh` COPY | §17.15 (実装タスクとして明記) |
+
+### 17.1 アーキテクチャ概観とパッケージ配置
+
+```
+┌───────────────┐  Server Action   ┌─────────────────────────────────────────────┐
+│ apps/3dp      │ ───────────────► │ PostgreSQL                                  │
+│ (Next.js 15)  │ ◄─ RSC で読む ── │  tdp_* 15 表 / jobs / token_usage /         │
+│ 承認・設定・   │                  │  app_settings / prompts / graphile_worker   │
+│ 記録・閲覧     │                  └───────────▲─────────────────────────────────┘
+└──────┬────────┘  署名付き URL                  │ addJob / SELECT FOR UPDATE / CAS
+       │ (ZIP・GLB・プレビュー)                   │
+       ▼                                         │
+┌───────────────┐                   ┌────────────┴───────────────┐      ┌────────────┐
+│ Cloudflare R2 │ ◄──────────────── │ apps/worker (graphile)     │ ───► │ Meshy API  │
+│ 3dp/ 配下     │   GLB/PNG/ZIP     │  queue tdp-meshy (直列)    │      └────────────┘
+└───────────────┘                   │  queue tdp-render (直列)   │ ───► LLM (Claude/OpenAI)
+                                    │  Chromium + three (描画)   │ ───► BOOTH 公開ページ (素の fetch)
+                                    └────────────────────────────┘
+運営者のローカル PC:  scripts/booth/booth-3dp-submit.mjs (下書き作成。DB と R2 は読むだけ・共用セッションは暗号化 DB から読む)
+```
+
+CLAUDE.md の図との差分: **Phase 3 以降の「別 worker による Playwright 自動入稿」は 3DP では採らない** (BOOTH はファイル UP が自動化不能: §5.1)。
+worker は A2P/ANP と**同一プロセス**を共用し、3DP は**キュー名と DB 台帳で A2P から隔離**する (新規サービスなし: §16.1)。
+
+**ファイル配置** (既存レイアウトの内側のみ。新しい最上位の概念は作らない):
+
+| 場所 | 種別 | 責務 | 増分 |
+|---|---|---|---|
+| `packages/contracts/src/tdp/settings.ts` | 新規 | `TDP_SETTINGS_DEFAULTS` / `TdpTuningSchema` / `TDP_MONTHLY_LIMIT_HARD_MAX = 12` / `kindGroup()` | Inc-1 |
+| `packages/contracts/src/tdp/status.ts` | 新規 | `PRODUCT_STATUSES` / 許可遷移表 `ALLOWED_TRANSITIONS` / `canTransition()` | Inc-1 |
+| `packages/contracts/src/tdp/media.ts` | 新規 | 媒体定義 `TDP_MEDIA` (型で 5 項目必須) / `computeNet()` / `missingMediaFields()` | Inc-3 (手取り) → Inc-4 |
+| `packages/contracts/src/tdp/hold.ts` | 新規 | `deriveHoldReasons()` / `computeSlots()` (R-1 の予約込みの枠計算) | Inc-1 (枠) → Inc-5 |
+| `packages/contracts/src/tdp/gates.ts` | 新規 | `computeGates()` (G-A〜G-E、暫定規則つき。**純関数**) | Inc-2 (G-A) → Inc-5 |
+| `packages/contracts/src/tdp/cron-registry.ts` | 新規 | `TDP_CRON_TASKS` (D-9) / `nextCronRun()` | Inc-2 |
+| `packages/contracts/src/tdp/job-result.ts` | 新規 | `TdpReason` / `TdpJobResult` / 理由コード表 | Inc-2 |
+| `packages/contracts/src/tdp/listing-check.ts` | 新規 | 原稿の禁止語・必須 6 項目・数値一致・開示箇所の検査 (純関数) | Inc-4 |
+| `packages/contracts/src/tdp/derivative-guard.ts` | **変更** | 英語プロンプト用の規則を追加 / F-3DP-22 の許可規則 / `canListMore` は `computeSlots` へ委譲 | Inc-2〜3 |
+| `packages/contracts/src/agents/tdp.ts` | 新規 | 4 role の入出力 (zod) | Inc-2 (prompter) / Inc-3 / Inc-4 |
+| `packages/contracts/src/agents/llm-client.ts` | 変更 | `AgentRole` に `'tdp.texture'` | Inc-3 |
+| `packages/contracts/package.json` | 変更 | **`exports` は列挙式** (`./tdp/derivative-guard` が個別に載っている)。上の新規ファイルごとに `./tdp/xxx` と `./agents/tdp` を足す。足し忘れると apps から import できない | 各増分 |
+| `packages/mesh/src/*` | **変更** | §17.14 (d-1) | Inc-2 |
+| `packages/storage/src/keys.ts` | 変更 | `tdpAsset` / `tdpPreview` / `tdpPackage` / `tdpDebug` + `TDP_PREFIX` (§17.9) | Inc-2 |
+| `packages/credentials/src/{spec,store,test}.ts` | 変更 | `meshy` (§16.4.4 の表のとおり) | Inc-2 |
+| `packages/db/schema.prisma` + `migrations/` | 変更 | §7 (増分別に分割: §17.15) | 各増分 |
+| `packages/db/seed-tdp.ts` | 新規 | `tdp.*` の prompts と model_assignments の seed (`seed-anp.ts` と同型・冪等) | Inc-2 (prompter) → |
+| `apps/worker/src/tasks/tdp/*.ts` | 新規 | 各タスク (§17.5.4 の表) | 各増分 |
+| `apps/worker/src/tasks/tdp/lib/` | 新規 | `run-tdp-task.ts` (jobs 行・結果・タイムアウト) / `reserve-generation.ts` / `meshy-usage.ts` / `product-transition.ts` / `shutdown.ts` / `recover.ts` / `cost.ts` | Inc-2 |
+| `apps/worker/src/tasks/tdp/render/` | 新規 | 描画ページ (HTML + three の束) / `render.ts` (Playwright) / `selfcheck.ts` (純関数) | Inc-4 |
+| `apps/worker/src/{runner,crontab}.ts` | 変更 | タスク登録 / `CRON_ITEMS` に `TDP_CRON_TASKS` を展開 / 起動時回収 / 中断シグナル | Inc-2 |
+| `apps/worker/Dockerfile`, `package.json` | **変更** | `COPY packages/mesh/package.json` の追加、`@a2p/mesh` / `three` の依存 (§17.15) | Inc-2 |
+| `apps/3dp/app/actions/*.ts`, `lib/*-core.ts`, ページ | 新規/変更 | §17.4 と §9 | 各増分 |
+| `scripts/booth/booth-3dp-submit.mjs` | 新規 | BOOTH 下書き作成 (ローカル。§17.5.7) | Inc-5 |
+| `.env.example` | 変更 | `MESHY_API_KEY=` (足さないと `check:env` が赤: 直近 `eca75b7` と同じ轍) | Inc-2 |
+
+### 17.2 横断規約 (全タスク・全 Action が守る)
+
+| # | 規約 | 理由 |
+|---|---|---|
+| C-1 | **状態遷移は `transitionProduct(id, {from, to, patch, reason})` の 1 関数だけ**で行う。`UPDATE ... WHERE id=$1 AND status = ANY($from)` の件数が 0 なら「他の処理が先に進めた」として**何もせず**抜ける (冪等) | 再実行・並走・二重クリックで状態が巻き戻らない。`status: 'listed'` を書く箇所をここ 1 つに絞る (§17.13 の静的テストで保証) |
+| C-2 | **正しさは DB の CAS と UNIQUE で担保**し、graphile の `jobKey` は重複排除の**補助**にしか使わない | `jobKey` は実行が始まると解放される (paperback-draft-dispatcher.ts のコメント) ので、走行中の二重起動を防げない |
+| C-3 | **すべての `tdp.*` タスクは `runTdpTask()` で包む**: ① `payload.job_id` があればその `jobs` 行、無ければ (cron) 自分で作る ② `queued/failed → running` の CAS (`done` なら何もしない) ③ ハードタイムアウト 10 分 (描画は 8 分) と中断シグナルを `AbortSignal` で渡す ④ `TdpJobResult` を `result_json` に書き `status` を確定 ⑤ 例外は日本語の `error` を書いて再 throw (§17.11) | F-3DP-46 (cron 起点も行を作る) と台帳 17 行を**一箇所で**満たす |
+| C-4 | **時刻は UTC 保存、JST 変換は `jstMonthRange` / `jstYearMonth` と `Intl` (`Asia/Tokyo`) だけ**。`public.jobs` を生 `pg` で読まない (node-pg が JST と解釈し 9 時間前に見える罠)。生 SQL で月を切るなら `AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Tokyo'` の二重掛け | 既知の罠 2 件 (`cost-attribution.ts`、メモリ) |
+| C-5 | **判定に数値リテラルを書かない。** しきい値は `loadTdpSettings()` が返す型付きオブジェクトから読み、既定は `TDP_SETTINGS_DEFAULTS` の 1 箇所 | F-3DP-38 の受入 |
+| C-6 | **外部 I/O は注入可能にする** (`fetch` / 時計 / R2 / Meshy / LLM / Playwright)。`fetchImpl` と `now` を引数に取る (`packages/mesh/meshy.ts` と同じ作法) | API キー無しで失敗系までテストできる |
+| C-7 | **理由は `TdpReason = {code, message_ja, item?, detail?}`** で持つ。画面は `message_ja` を出し、`code` と `detail` は展開の奥 | UR-3 / §9.7 |
+| C-8 | **Server Action は `auth()` → zod 検証 → ドメイン関数 → `revalidatePath`** の順。ドメイン関数は `apps/3dp/lib/*-core.ts` の純関数 + `packages/db` 呼び出しに分け、純関数側をユニットテストする | 既存 (`settings.ts` / `settings-core.ts`) の作法 |
+| C-9 | **LLM 呼び出しは必ず `withTokenLogging({tool:'3dp', jobId})` 経由**。Meshy は `recordMeshyUsage()`。**この 2 つ以外の経路で外部の有料 API を呼ばない** (§17.13 の静的テスト: `createTextTo3d` / `createRemesh` の呼び出しは `meshy-submit.ts` にしか存在しない) | Hard Rule #5 / 二重課金防止 |
+| C-10 | **プロンプト本文は `prompts` テーブル** (`loadActivePrompt(role, null)`)。方針・所見・構成比・禁止語・価格下限は**実行時に user メッセージへ注入**し、本文を書き換えない | Hard Rule #4 / F-3DP-18 |
+
+### 17.3 商品の状態機械
+
+`transitionProduct` が参照する許可表 (`packages/contracts/src/tdp/status.ts` の `ALLOWED_TRANSITIONS`。**この表以外の遷移は拒否**)。
+`status_changed_at` と `status_reason_json` は**遷移のたびに必ず更新**する (滞留検出と「いま止まっている理由」の源)。
+
+| # | from → to | 起点 | ガード (満たさなければ遷移せず理由を `status_reason_json` に) | 副作用 |
+|---|---|---|---|---|
+| T-1 | (新規) → `planned` | `tdp.product.plan` / `registerTrialProduct` | 依拠性ガード #1 が `allowed` / 価格 ≥ `tdp_min_price_jpy` | `derivative_check_json` を保存 |
+| T-2 | (新規) → `rejected` | 同上 | ガード NG または価格下限割れ | 拒否も行を残す (監査)。`reason` = 拒否種別 |
+| T-2b | `planned` / `needs_fix` / `review` 差戻し後 → `rejected` | `tdp.asset.generate` の依拠性ガード #2 (生成プロンプト・title・concept の再判定) | 禁止語の追加などで、企画時は通った物が今は NG | 生成**前**に止める (credit は払っていない)。`derivative_rechecks_json` に追記 |
+| T-3 | `planned` → `generating` | `tdp.asset.generate` が最初の予約に成功 | 停止/撤退/縮退でない / Meshy キーあり / `tdp_meshy_model` あり / 月 credit 上限内 / 依拠性 #2 | 台帳に `reserved` を書く。満たさない場合は `planned` のまま `status_reason_json` に理由 (例 `meshy_key_missing`) |
+| T-4 | `generating` → `inspecting` | `tdp.meshy.poll` が成功し `tdp_assets` を書いた | — | `tdp.asset.inspect` を投入 |
+| T-5 | `inspecting` → `generating` | shape の検査が OK → refine を予約 / 最終検査 NG でなく次工程へ | — | refine は親の preview 台帳行を必須にする (§17.6) |
+| T-6 | `inspecting` → `needs_fix` | 検査 NG かつ補正で直らない | — | `inspect_json` の NG を残す。**同じトランザクションで** T-7 か T-8 を判定する |
+| T-7 | `needs_fix` → `generating` | 再生成の上限内 (系列 3 試行・企画 10 試行・credit 上限) | `tdp.asset.generate` の予約に成功 | NG コードを `feedback_json` に渡して `tdp.prompter` が直す |
+| T-8 | `needs_fix` / `generating` / `inspecting` → `failed` | 上限到達 / `credit_cap_per_product` 到達 / Meshy が恒久エラー | — | 打ち切り理由・消費 credit・回数を `status_reason_json` と `jobs` に残す (台帳 #7) |
+| T-9 | `inspecting` → `ready` | `tdp.asset.optimize` 完了 | **最適化後の再検査が NG 0 件** (F-3DP-15)。最適化版が NG なら**最適化前の合格版を配布版にする** (§17.5.5) | `tdp_assets.is_distribution` を CAS で付け替え |
+| T-10 | `ready` → `review` | `tdp.preview.render` か `tdp.listing.compose` の**遅い方**が呼ぶ `advanceToReview()` | 6 枚 (`scale_reference` 含む) が揃い自己検査が全部通過 かつ 現在の配布版から描いた / 原稿が全対象媒体で `passed` | `review_round` を +1 |
+| T-11 | `review` → `approved` | `approveProduct` | §17.4 `approveProduct` のデータ条件 5 つ | `approved_at` / `approved_by` / `approved_asset_version`、`TdpReviewEvent`、`tdp.package.build` を投入 |
+| T-12 | `review` → `generating` | `rejectReview(to='regenerate')` | 理由が空でない | `lineage_no` +1、理由を `feedback_json` へ。**企画の累計 10 に数える** |
+| T-13 | `review` → `ready` | `rejectReview(to='rewrite')` | 理由が空でない | `tdp.listing.compose` を理由つきで再投入 (配布版は不変) |
+| T-14 | `review` → `rejected` | `rejectReview(to='discard')` | 理由が空でない | — |
+| T-15 | `approved` → `listed` | `recordPublished` | 当該 `tdp_listings` が `working` / URL の形式 / URL が他の listing と重複しない | `published_recorded_at` / `expected_public=true`、`tdp_products.listed_at` と `booth_item_url` (互換) |
+| T-16 | `listed` → `withdrawn` | `recordWithdrawal` | **全 listing が `withdrawn`** になったとき (複数媒体なら 1 つ残る間は `listed`) | `expected_public=false` |
+
+- **terminal**: `failed` / `rejected` / `withdrawn`。ここからは動かない (手動の再生成・再出品の経路を作らない: §9.13-13)。
+- `listed` に進めるのは T-15 だけ。DB の CHECK (§7.4-d) が `approved_at` なしを拒否し、`transitionProduct` が `from` を `approved` に限る。
+- **停止・撤退は状態を変えない。** 停止中・撤退中に `approved` の商品が居ても `approved` のままで、**保留理由**が付く (§17.10.4)。
+
+### 17.4 API 仕様
+
+**形**: Next.js の **Server Action のみ** (D-13)。`apps/3dp/app/actions/*.ts`。Route Handler は新設しない (認証は既存の `/api/auth/[...nextauth]`)。
+理由: ① 外部から叩かれる webhook が無い ② **署名付き URL の発行は副作用がある** (ZIP の初回取得時刻と R-1 の枠予約) ので、プリフェッチされうる GET にしてはいけない。
+全 Action の先頭は `const session = await auth(); if (!session?.user) return fail('auth')`。戻り値は既存の `ActionResult<T>` に `code` を足した `{ok:true,data} | {ok:false,error,code}`。
+
+共通の zod 部品: `const Id = z.string().min(1).max(64)` / `const Reason = z.string().trim().min(5).max(2000)` (`reject_reason_min_chars` を設定から取って `refine`)。
+
+| Action | 入力 (zod) | 処理 | 主なエラー (`code`) | 増分 |
+|---|---|---|---|---|
+| `registerTrialProduct` | `z.object({kind: Kind, subject: z.string().trim().min(2).max(200), note: z.string().max(1000).optional(), price_jpy: z.number().int(), media: z.array(MediumId).min(1), prompt_en: z.string().max(800).optional()})` | **R-2 ガードを通す** (subject + note + prompt_en)。拒否なら `rejected` で保存し理由を返す。許可なら `planned` で保存し **credit の見積り** (§17.6.4) を返す。**生成はまだ始めない** | `derivative_rejected`(情報として ok:true の `data.rejected`) / `price_below_min` / `meshy_key_missing` / `meshy_model_unset` / `retire_mode` | Inc-2 |
+| `confirmTrialGeneration` | `{product_id}` | `planned` かつ `origin='trial'` のときだけ `jobs` 行 + `tdp.asset.generate` を投入。**二重クリックは `planned` の CAS で 1 回に** | `not_planned` / 上の保留理由 | Inc-2 |
+| `openReview` | `{product_id}` | `review` の商品で `review_opened_at` が null なら now を書く (冪等)。G-E の起点 | `not_in_review` | Inc-4 |
+| `approveProduct` | `{product_id}` | **データ条件を DB から再評価** (画面の状態を信用しない): ① 6 枚 (`scale_reference` 含む) が揃い `selfcheck_json.passed` が全部真で `asset_version` = 現在の配布版 ② 配布版の `inspect_ok` が真 ③ **依拠性ガードを今の禁止語で再実行**して `allowed` (title・concept・prompt・全媒体の原稿) ④ 全対象媒体で最新原稿が `passed` ⑤ 価格 ≥ 下限かつ媒体定義が欠けていない。通れば T-11 | `previews_incomplete` / `inspect_ng` / `derivative_rejected` / `manuscript_failed` / `price_below_min` / `media_incomplete` / `not_in_review` (理由は**全部まとめて**返す) | Inc-4 |
+| `rejectReview` | `{product_id, to: 'regenerate'\|'rewrite'\|'discard', reason: Reason}` | T-12/13/14。理由は空・空白のみ不可。`TdpReviewEvent` を書く | `reason_required` / `not_in_review` | Inc-4 |
+| `rerenderPreview` | `{product_id}` | `tdp.preview.render` を再投入 (credit 不要)。進行中なら拒否 | `render_in_progress` | Inc-4 |
+| `getViewerUrl` | `{product_id}` | **現在の配布版 GLB** の署名付き URL (TTL 15 分、副作用なし)。承認画面と、Inc-2 の G-A 判定のための S-3DP-03 が使う | `no_distribution` | Inc-2 |
+| `startPublishWork` | `{product_id, medium}` | **R-1 の枠を予約**し `tdp_listings(state='working', slot_reserved_at)` を作る (冪等)。保留理由があれば拒否。`getDownloadUrl` が内部で呼ぶ | `held` (理由配列) / `not_approved` | Inc-5 |
+| `getDownloadUrl` | `{product_id, medium}` | `startPublishWork` を内部実行 → `package_state='ready'` なら ZIP の署名付き URL (TTL 15 分、`Content-Disposition` で日本語名)。**初回だけ** `zip_first_downloaded_at` を書く | `held` / `package_not_ready`(理由つき) | Inc-5 |
+| `recordPublished` | `{product_id, medium, item_url: z.string().url().regex(BOOTH_ITEM_URL_RE)}` | T-15。**拒否しない方針の例外**: 停止中・上限超過でも**記録は受け付け** (現実を反映する) が `recorded_while_held=true` と保留理由を残し LINE で警告。URL 重複・形式不正は拒否 | `url_invalid` / `url_duplicate` / `not_approved` | Inc-5 |
+| `recordWithdrawal` | `{product_id, medium, reason: Reason}` | T-16: 当該 listing を `withdrawn` にし `expected_public=false` / `withdraw_reason` / `withdrawn_recorded_at` を保存 (同一トランザクション)。**BOOTH 上の商品は非公開にしない**(先にここで記録させるのは、公開状態確認が自分の操作を異常と取り違えないため)。**1 商品・1 媒体ずつ**。一括版を作らない | `not_listed` | Inc-5 |
+| `recordGateAJudgement` | `{product_id, verdict: 'sellable'\|'not_sellable', reason: Reason}` | 配布版を持つ商品のみ。追記のみ (最新が有効)。パネルを再算出 | `no_distribution` | Inc-2 |
+| `engageKillSwitch` | `{reason: z.string().max(500).optional()}` | `tdp_kill_switch_on=true` + `TdpRegulationEvent(source='operator')` を**同一トランザクション**。確認 1 回で済む | — | Inc-5 |
+| `releaseKillSwitch` | `{reason: z.string().trim().min(release_reason_min_chars)}` | 停止中のときだけ。解除 + イベント。**自動解除のコードを書かない** | `not_engaged` / `reason_too_short` | Inc-5 |
+| `setRetireMode` / `setDegradeMode` | `{on: boolean, reason: Reason}` | 設定列 + `TdpRegulationEvent`。撤退は**既存商品を取り下げない** | — | Inc-5 |
+| `recordU9U10` | `{u9?: {shares_pixiv_account: boolean, note?: string}, u10?: {booth_share_pct: z.number().min(0).max(100)}}` | `tdp_u9_json` / `tdp_u10_json` に回答日時つきで保存 | — | Inc-1 |
+| `updateMonthlyPublishLimit` | `{booth?: int, jinxxy?: int}` | **既存を拡張**: 天井は `TDP_MONTHLY_LIMIT_HARD_MAX` (12)。**各枠にも合計にも**同じ天井。**丸めずに拒否** (拒否した値と現在値を返す) | `limit_range` | Inc-1 |
+| `updateDerivativeDenylist` | `string` | 既存のまま | — | Inc-1 |
+| `updateTdpSettings` | `{group: 'plan_price'\|'generation'\|'gates'\|'media'\|'safety', patch: GroupPatch}` | グループ別の zod で検証し `app_settings` を更新。**値が変わった項目は `tdp_settings_confirmed_json` との差で自動的に「変更済 (未確認)」** | `validation` (拒否理由と現在値) | Inc-1 |
+| `confirmSettingsGroup` | `{group}` | その時点の値を `values` に写して `confirmed_at` を保存 | — | Inc-1 |
+| `testMeshyConnection` | なし | `resolveMeshyCredentials()` → `GET /openapi/v1/balance`。`200` / `401`・`403` / その他を日本語で返す。残高のフィールドが取れなければ成功のみ。`tdp_resource_snapshots` に記録 | `meshy_key_missing` | Inc-2 |
+| `setTaskFlag` | `{task: 'tdp.market.research'\|'tdp.product.plan'\|'tdp.sales.fetch', enabled}` | フラグ列を更新。**公開状態確認はこの Action で変更できない** (S-3DP-08)。再起動は不要 (cron は常時登録) | `not_toggleable` | Inc-2 |
+| `runTaskNow` | `{task: 'tdp.market.research'\|'tdp.sales.fetch'\|'tdp.listing.status.check'\|'tdp.gates.snapshot'}` | `jobs` 行 + `addJob` (`jobKey` に JST の分単位を含め連打を弾く)。**`tdp.product.plan` は手動実行不可** (credit に流れるため) | `not_runnable` | Inc-2 |
+| `upsertManualSales` | `{listing_id, year_month, units: int≥0, gross_jpy: int≥0, note?}` | `tdp_sales` を upsert (`source='manual'`)。**未入力は行が無い=欠測で、0 を入れない限り 0 にならない** | `listing_not_published` | Inc-5 |
+| `recordPayout` | `{medium, year_month, received_jpy, transfer_fee_jpy?, note?}` | `expected_net_jpy` をその月の計算値で保存し `diff_jpy` を算出 | — | Inc-5 |
+
+BOOTH 商品 URL の形式 `BOOTH_ITEM_URL_RE = /^https:\/\/(?:[a-z0-9-]+\.booth\.pm|booth\.pm)\/(?:(?:ja|en|ko|zh-cn|zh-tw)\/)?items\/\d+(?:[?#].*)?$/` 【推測: 公開 URL 2 形式は観測済み (`booth.pm/ja/items/6314083`)、ショップサブドメイン形式は一般知識】。
+
+### 17.5 ジョブ仕様 (graphile-worker タスク)
+
+書式は docs/11 §7 に合わせる (タスク名 / ペイロード / 処理概要 / 完了後の遷移)。**全タスクが `runTdpTask()` (C-3) で包まれ、`jobs` 行を作る** (cron 起点を含む)。
+
+#### 17.5.1 定期タスクの登録一覧 (UI が参照する定数)
+
+`packages/contracts/src/tdp/cron-registry.ts` が**唯一の定義**。worker の `CRON_ITEMS` はこれを展開し、S-3DP-08 とホームの「定期タスク」はこれを読んで**履歴を左結合**する (履歴 0 件でも全行が出る: §9.6.3)。
+
+```ts
+export interface TdpCronTask {
+  task: string;                 // graphile のタスク名 = jobs.kind
+  identifier: string;           // CRON_ITEMS の identifier。'tdp-' で始める
+  cron: string;                 // UTC。JST への換算を label に併記
+  label_ja: string;
+  schedule_ja: string;          // 画面表示用 (例: 「毎日 06:30 JST」)
+  flag: string | null;          // app_settings の列名。null = 常時
+  flag_default: boolean;        // 取得失敗・未設定のときの扱い (フラグ取得失敗は「既定の側」に倒す)
+  toggle_in_runs_screen: boolean; // false = S-3DP-08 から切替不可 (公開状態確認)
+  manual_run: boolean;          // 「今すぐ実行」を出すか
+  overdue_after_hours: number;  // 次回予定をこの時間過ぎても実行が無ければ「予定を過ぎています」
+}
+export const TDP_CRON_TASKS = [
+  { task: 'tdp.market.research',      identifier: 'tdp-market-research-weekly',     cron: '30 20 * * 0', label_ja: '週次リサーチ',     schedule_ja: '毎週月曜 05:30 JST',  flag: 'tdp_research_enabled',     flag_default: false, toggle_in_runs_screen: true,  manual_run: true,  overdue_after_hours: 36 },
+  { task: 'tdp.product.plan',         identifier: 'tdp-product-plan-daily',         cron: '30 21 * * *', label_ja: '企画の日次作成',   schedule_ja: '毎日 06:30 JST',      flag: 'tdp_planner_enabled',      flag_default: false, toggle_in_runs_screen: true,  manual_run: false, overdue_after_hours: 6 },
+  { task: 'tdp.sales.fetch',          identifier: 'tdp-sales-fetch-daily',          cron: '30 17 * * *', label_ja: '売上の日次取得',   schedule_ja: '毎日 02:30 JST',      flag: 'tdp_sales_fetch_enabled',  flag_default: false, toggle_in_runs_screen: true,  manual_run: true,  overdue_after_hours: 6 },
+  { task: 'tdp.listing.status.check', identifier: 'tdp-listing-status-check-daily', cron: '0 18 * * *',  label_ja: '公開状態の確認',   schedule_ja: '毎日 03:00 JST',      flag: 'tdp_status_check_enabled', flag_default: true,  toggle_in_runs_screen: false, manual_run: true,  overdue_after_hours: 6 },
+  { task: 'tdp.gates.snapshot',       identifier: 'tdp-gates-snapshot-daily',       cron: '15 19 * * *', label_ja: '判定ゲートの算出', schedule_ja: '毎日 04:15 JST',      flag: null,                       flag_default: true,  toggle_in_runs_screen: false, manual_run: true,  overdue_after_hours: 6 },
+] as const satisfies readonly TdpCronTask[];
+```
+
+- **§16.5.2 の時刻からの変更は 1 つだけ**: `tdp.product.plan` を `0 21` から **`30 21`** (JST 06:30) に。`0 21 * * *` は既に `promotion.growth.loop` と `note.sales.fetch.dispatch` が使っており、§16.5.2 自身の「A2P の既存 cron と 30 分ずらす」に反していたため。他の 4 本は既存と重ならないことを `crontab.ts` で確認した (`0 18 * * *` は土曜のみ `archive.db.backup` と同時刻だが、こちらは軽い fetch なので許容)。
+- **`CRON_ITEMS` への展開は `...TDP_CRON_TASKS.map(t => ({task: t.task, match: t.cron, identifier: t.identifier}))`**。`buildCronItemsWithSettings` には**載せない** (条件付き cron は worker 起動時にしか組まれず、フラグ変更が永久に効かない: 実害 2 件)。
+- **過去の事故の再発防止テスト**: 2026-10-09 に `LOCKS_SWEEP_CRON` が「定数として定義・テストされていたのに `CRON_ITEMS` に入っていなかった」。→ `TDP_CRON_TASKS` の全 `identifier` が `CRON_ITEMS` に**実在すること**と、全 `task` が `buildTaskList()` に登録されていることをテストで固定する (§17.13)。
+- 次回予定の算出は `nextCronRun(cron, from)` (`m h * * d` 形式に限定した純関数。外部 cron パーサ依存を足さない)。
+
+#### 17.5.2 キュー・再試行・タイムアウト・中断
+
+| キュー (`queueName`) | 載るタスク | 性質 |
+|---|---|---|
+| `tdp-meshy` | `tdp.meshy.submit` / `tdp.meshy.poll` | **ステップが 1 本ずつ直列**。ただしキューは「ステップの直列」しか保証しない — 複数の生成が交互に進まないことは**台帳の部分 UNIQUE** (§7.4-a) が保証する |
+| `tdp-render` | `tdp.preview.render` / `tdp.package.verify` | Chromium のメモリを A2P と取り合うため直列 |
+| (なし) | 上記以外 | CPU/LLM/DB のみ。worker 全体の `concurrency` (`WORKER_BOOK_CONCURRENCY`) の範囲で並列可 |
+
+**再試行 (`maxAttempts`) の方針** — graphile 既定の 25 は使わない。`addJob` は常に明示する:
+
+| 種類 | `maxAttempts` | 理由 |
+|---|---|---|
+| credit を払う POST (`tdp.meshy.submit`) | **1** | 再試行=再 POST=二重課金。失敗の扱いは台帳の状態で決める (§17.6)。クラッシュしても `attempts` が使い切られているので 4 時間後に勝手に再実行されない |
+| Meshy の GET のみ (`tdp.meshy.poll`) | 8 | 副作用なし。ただし「完了後の処理 (R2 書き込み + DB)」は CAS と `generation_id @unique` で冪等 |
+| LLM を呼ぶタスク | 2〜3 | LLM の再呼び出しは安価 (小額)。出力検証 (zod) 失敗は `AgentError` として同じ枠で再試行 |
+| CPU のみ (inspect / optimize) | 3 | 決定論的。同じ入力は同じ結果 |
+| 外部サイト取得 (status.check / sales / research の BOOTH 取得) | 2 | 失敗は個別に `unreachable` として記録して続行する。タスク自体の再試行は保険 |
+
+**ハードタイムアウト**: すべての `tdp.*` ステップは `runTdpTask` が **10 分 (描画系は 8 分) で `AbortSignal` を発火**し、超えたら `outcome='failed'` / `TdpTimeoutError` にする。
+目的は「15 分超ロックされた `tdp-*` ジョブ = 死んだ worker」を**事実にする**こと (U-25 の回収の安全条件)。**Meshy へ POST してから task_id を DB に書くまでの区間は中断不可** (`abortable=false` の臨界区間)。
+
+**Meshy の待ち (D-6)**: `tdp.meshy.poll` は 1 回の実行で `GET /openapi/v2/text-to-3d/{id}` を **1 回**呼ぶだけ。未完なら `helpers.addJob('tdp.meshy.poll', {generation_id, n: n+1}, {runAt: now + interval, queueName: 'tdp-meshy', maxAttempts: 8, jobKey: 'tdp-poll:{gen}:{n+1}'})` で**自分を再投入して終わる**。
+- 間隔: `tdp_tuning_json.meshy_poll_interval_sec` (U-13 の実測まで null → 暫定 15 秒、画面に「暫定」)。待ちの上限: `meshy_poll_max_minutes` (暫定 45 分、**設定の上限は 90 分** — `sweepStaleJobs` が 120 分超の `running/queued` を孤児扱いで `failed` にするため、世代の `jobs` 行 (kind=`tdp.meshy.poll`、解決まで `running`) が 120 分を超えない制約。`updateTdpSettings` が 91 以上を拒否する)。
+- 上限超過: 台帳を `failed` (`failure_code='poll_timeout'`) にし、**credit は課金済みとして数える**。同じタスクが後で完了しても拾わない (拾うと二重に成果物ができる)。ただし GLB を R2 に保存せず捨てる前に task_id を `jobs.result_json` に残す (運営者が Meshy の画面で確認できるように)。
+
+**グレースフルシャットダウンと起動時回収 (申し送り 13)**
+1. `installGracefulShutdown` (既存 `runner.ts`) を拡張し、`runner.stop()` の**前に** `tdpShutdown.abort()` を呼ぶ (`apps/worker/src/tasks/tdp/lib/shutdown.ts`)。`runner.stop()` は走行中ジョブの完走を待つが、Railway は 30 秒後に SIGKILL する【コメント記載の値。実機は U-30】。
+2. `tdp.*` のステップは短い (submit/poll/inspect は数秒〜数十秒)。**長いのは描画だけ** (最大 5 分)。描画は 1 枚描くごとに中断シグナルを見て、立っていれば**その時点で `outcome='interrupted'` を書き、自分を `runAt: now+5s` で再投入して成功終了**する (ロックを残さない。描画済みの枚数は R2/DB に残っているので続きから描く)。
+3. それでも SIGKILL された場合 (**ロックが最大 4 時間キューを塞ぐ**罠): worker 起動時 `recoverTdpOnBoot()` が (a) `tdp-*` キューを 15 分超ロックしている `graphile_worker` の行を解放 (**U-25: 内部表名は実 PG で確認**。保守側=15 分超のみ。U-30 の並走が否定できるまで短くしない) (b) 台帳 `submitting` が 10 分超なら `lost` (§17.6) (c) 台帳 `submitted` で pending な poll ジョブが無いものに poll を再投入 (d) `kind LIKE 'tdp.%'` の `running` で 15 分超のものを `failed` / `interrupted_by_restart` に (世代の `tdp.meshy.poll` 行は除外)。同じ関数を `tdp.gates.snapshot` の冒頭でも呼ぶ (日次の保険)。
+4. 回収の取りこぼしは F-3DP-14 の「24 時間 status 不変 = 滞留」表示が最終的な検知になる (§16.5.1 罠 1 の結論と同じ)。
+
+#### 17.5.3 `jobs` の結果の形 (台帳 17 行を満たす)
+
+`jobs.status` は既存の語彙 (`queued/running/done/failed/cancelled`) のまま**変えない** (共有テーブルで他ツールが `done` を見ている)。3DP 固有の区別は `result_json` に持つ:
+
+```ts
+export const TdpReasonSchema = z.object({
+  code: z.string(),                       // 'research_kind_failed' 等 (下表)
+  message_ja: z.string(),                 // 何が・なぜ・次に何が起きるか (1〜2 文)
+  item: z.string().optional(),            // 種別 / 商品 id / URL など「どの項目か」
+  detail: z.record(z.string(), z.unknown()).optional(), // 展開の奥 (コード・実測値)
+});
+export const TdpJobResultSchema = z.object({
+  outcome: z.enum(['ok', 'partial', 'skipped', 'failed', 'interrupted']),
+  summary: z.record(z.string(), z.union([z.string(), z.number(), z.boolean(), z.null()])),
+  reasons: z.array(TdpReasonSchema).max(100),    // 項目単位。件数だけにしない (UR-3)
+  progress: z.object({ percent: z.number().min(0).max(100), phase: z.string() }).optional(),
+  observed_at: z.string(),                       // ISO (UTC)。画面は JST で「取得時刻」を添える
+});
+```
+
+**画面の 5 値への写像** (S-3DP-08): `status=running` → 実行中 / `done` + `ok` → 成功 / `done` + `partial` → 一部失敗 / `done` + `skipped` → スキップ (フラグ OFF) / `done` + `interrupted` → 再開待ち / `failed` → 失敗 / 該当 kind の行が 0 件 → 一度も実行されていません。
+`error` 列は**常に日本語**の 1 文 (`TdpReason.message_ja` の先頭)。
+
+**§9.7 の台帳 17 行 → 理由の持ち場所と `code`**
+
+| # | 継続する処理 | 持つ場所 | 理由コード (`TdpReason.code`) |
+|---|---|---|---|
+| 1 | 週次リサーチの種別単位 catch | `tdp.market.research` の `result_json` (`summary={groups, updated, failed}`, `reasons[]` に失敗した種別) | `research_group_failed` (item=種別) |
+| 2 | BOOTH 公開ページ取得の失敗 | 同上 + `tdp_research_findings.booth_fetch_json` | `booth_fetch_failed` (item=URL) / `booth_fetch_disabled` (U-8 未了でフラグ OFF) |
+| 3 | Tavily キー無しの完走 | `summary.web_search=false` + `tdp_research_findings.web_search_used=false` | `web_search_unavailable` |
+| 4 | 企画の依拠性ガード拒否 | `tdp_products.derivative_check_json` / `plan` の `summary={rejected, by_kind}` | (商品側の `risks[].kind`) |
+| 5 | 在庫超過で企画を見送り | `tdp.product.plan` の `outcome='skipped'` | `stock_over_cap` (「見送り: 在庫 N 件 > 残枠の 2 倍 (M)」) / `kill_switch_on` / `retire_mode` / `flag_off` |
+| 6 | 検査 NG → 再生成 | `tdp_assets.inspect_json` + `summary.ng_codes` | `inspect_ng` (item=NG コード) |
+| 7 | 再生成の打ち切り | `tdp_products.status_reason_json` + `tdp.asset.generate` の `jobs` | `regen_limit_asset` / `regen_limit_product` / `credit_cap_product` / `credit_cap_month` |
+| 8 | プレビュー描画の自己検査失敗 | `tdp.preview.render` の `jobs` + `tdp_previews.selfcheck_json` | `render_webgl_unavailable` / `render_blank` / `render_white` / `render_context_lost` / `render_timeout` |
+| 9 | 出品の保留 | `deriveHoldReasons()` の結果 (保存しない。読むたびに算出) + `tdp_listings.hold_reasons_at_record` | `hold_monthly_limit` / `hold_kill_switch` / `hold_u9_u10` / `hold_retire_mode` / `hold_media_incomplete` / `hold_package_unavailable` |
+| 10 | 個別商品の公開状態取得失敗 | `tdp_public_observations` | `listing_unreachable` / `listing_abnormal` / `control_unreachable` |
+| 11 | 公開状態確認ジョブ自体の停止 | `tdp.listing.status.check` の最終 `done` 時刻 (`jobs` から算出) | `status_check_stale` (算出値。保存しない) |
+| 12 | 売上取得の失敗 | `tdp.sales.fetch` の `jobs` + `tdp_sales` に**行が無い月**=欠測 | `sales_fetch_failed` / `sales_manual_mode` / `booth_session_invalid` |
+| 13 | 日次ゲート算出の失敗 | `tdp_gate_snapshots` (`ok=false, error`) | `gates_compute_failed` |
+| 14 | cron のスキップ (フラグ OFF) | 該当タスクの `jobs` 行 (`done`+`skipped`) | `flag_off` |
+| 15 | Meshy キー未設定での degrade | 実行時の判定 (`resolveMeshyCredentials() === null`) | `meshy_key_missing` (「Meshy API キーが未設定です (ポータル → API 管理)」) |
+| 16 | 外部値の取得失敗 (Meshy 残高・R2 使用量) | `tdp_resource_snapshots` (`ok=false, error`) | `meshy_balance_unavailable` / `r2_usage_unavailable` |
+| 17 | 差戻し | `tdp_review_events.reason` | — |
+
+#### 17.5.4 タスク一覧
+
+**表 A — 何をして、次に何が起きるか**
+
+| タスク名 | ペイロード (zod の要点) | 処理概要 | 完了後の遷移 |
+|---|---|---|---|
+| `tdp.market.research` | `{job_id?, trigger: 'cron'\|'manual', only_group?}` | フラグ (`tdp_research_enabled`) が false なら `skipped`。3 区分 (`accessory` / `texture` / `prop_furniture`) を**順に・区分単位で try/catch**: ① 入力を集める: 過去 8 週の売上 (区分別) / 前週の所見 / Tavily 事前検索 (キー無しは省いて `web_search=false`) / `tdp_booth_public_fetch_enabled` が true のときだけ BOOTH 公開カテゴリページ (間隔 3 秒・最大 10 ページ・robots.txt 尊重・UA に連絡先: F-3DP-23) ② `tdp.research` を 1 回呼ぶ ③ zod 検証して `tdp_research_findings` に upsert (`week_key + kind_group` で冪等)。**`prompts` の本文は読むだけ**。全区分失敗でも throw せず `outcome='failed'` | 次タスクなし。所見は `tdp.product.plan` が実行時に読む |
+| `tdp.product.plan` | `{job_id?, trigger: 'cron'}` | ① `tdp_planner_enabled` false → `skipped`。② 停止中/撤退中 → `skipped`。③ **「ブロックされた `planned` の再投入」**: `planned` のまま `status_reason_json` が設定未了系の商品を `tdp.asset.generate` へ戻す。④ **在庫判定**: 在庫 = `planned`〜`approved` の非終端商品数。`在庫 > 残枠 × stock_cap_multiplier` なら `skipped` (`stock_over_cap`)。⑤ 区分ごとの目標数を `tdp_kind_weights_json` から按分 (1 回の実行で最大 2 件)。⑥ `tdp.planner` を呼ぶ (最新所見を実行時注入)。⑦ **各候補に R-2 ガード #1** と価格下限を適用し、`planned` / `rejected` で保存 (拒否も行を残す)。 | `planned` 1 件ごとに `jobs` 行 + `tdp.asset.generate` (`reason:'initial'`) を投入 |
+| `tdp.asset.generate` | `{job_id?, product_id, reason: 'initial'\|'unblocked'\|'regen_ng'\|'regen_rejected'\|'meshy_failed'\|'refine'\|'remesh', feedback?, parent_generation_id?}` | **生成の関所**。credit は払わない。商品行を `SELECT ... FOR UPDATE` して直列化し ① 停止/撤退/縮退/キー/モデル/月 credit 上限 を確認 ② 上限 (系列 3・企画 10・商品 credit 上限) ③ 依拠性ガード #2 (title・concept・生成プロンプト。NG なら商品を `rejected`) ④ `preview` のときは `tdp.prompter` を呼んでプロンプトを作る (`feedback` があれば NG コード/差戻し理由を渡す) ⑤ **台帳に `reserved` を 1 行**書く (`purpose_key` UNIQUE。既にあれば**それを返して終わる**) ⑥ 商品を `generating` に (T-3/T-7) ⑦ submit を投入 | `tdp.meshy.submit` (`queueName:'tdp-meshy'`, `maxAttempts:1`, `jobKey:'tdp-submit:{generation_id}'`) |
+| `tdp.meshy.submit` | `{job_id?, generation_id}` | §17.6.2 の手順。**CAS `reserved→submitting` に勝ったときだけ** POST。応答の `task_id` を**自分の SQL 文で即座に**永続化 (`submitted`)。直後に `recordMeshyUsage()`。世代の `jobs` 行 (kind=`tdp.meshy.poll`) を作る | `tdp.meshy.poll` (n=1, `runAt: now+interval`) |
+| `tdp.meshy.poll` | `{job_id?, generation_id, n}` | §17.5.2 の「1 回 1 GET」。`PENDING/IN_PROGRESS` は進捗を台帳と世代の `jobs.result_json.progress` に書いて自分を再投入。`SUCCEEDED` は **その場で** GLB (remesh は FBX) を取得し R2 `3dp/{id}/asset/v{ver}/{stage}.{ext}` へ → `tdp_assets` 行 + 台帳 `succeeded` を**同一トランザクション**で (`generation_id @unique` により再実行しても 2 行できない)。`FAILED/CANCELED` は台帳 `failed` | preview 成功 → `tdp.asset.inspect` (`shape`)。refine 成功 → `tdp.asset.inspect` (`final`)。remesh 成功 → `tdp.package.verify`。Meshy 側の失敗 → `tdp.asset.generate` (`reason:'meshy_failed'`。上限内のみ) |
+| `tdp.asset.inspect` | `{job_id?, asset_id, stage: 'shape'\|'final'}` | R2 から取得し `inspectGlb(bytes, thresholds(kind), {stage})`。`kind` が `accessory` → `ACCESSORY_THRESHOLDS`、`prop`/`furniture` → `PROP_THRESHOLDS`。結果を `inspect_json`/`inspect_ok`/`poly_count`/`byte_size` に。判定は純関数 `decideAfterInspect()` (§17.5.5) | `shape` OK → `tdp.asset.generate` (`reason:'refine'`) / `final` OK または補正可能のみ → `tdp.asset.optimize` / ブロッキング NG → 商品を `needs_fix`、上限内なら `tdp.asset.generate` (`reason:'regen_ng'`, `feedback` に NG)、上限超過なら `failed` (T-8) |
+| `tdp.asset.optimize` | `{job_id?, asset_id}` | 補正 (`normalize`: 等倍スケール・底面中央原点・テクスチャ縮小) → `optimizeGlb` → `inspectGlb` (配布版の再検査)。**NG 0 件**なら `stage='distribution'` の行を作り `is_distribution` を CAS で付け替え (旧配布版は false)。NG が残るとき: 最適化前の版が NG 0 ならそれを配布版にする (`applied=[]`・理由を記録)。それも NG なら商品を `needs_fix` → 再生成判定へ (最適化が壊したケースは `inspect_json.cause='optimize_regressed'` として歩留まりに別計上: F-3DP-47) | 配布版確定 → 商品 `ready` (T-9) + `tdp.preview.render` と `tdp.listing.compose` を**並列に**投入 |
+| `tdp.preview.render` | `{job_id?, product_id, asset_version, rerender?}` | §17.5.5 の描画。6 枚 (サムネ・正面・側面・背面・斜め・寸法参照) を R2 `3dp/{id}/preview/v{ver}/{name}.png` へ、`tdp_previews` に行 (`selfcheck_json` つき)。**1 枚でも自己検査に失敗したら `ready` のまま止め、理由を `status_reason_json` と `jobs` に** | `advanceToReview()` (原稿が `passed` なら T-10) |
+| `tdp.listing.compose` | `{job_id?, product_id, medium?, for_asset_version, feedback?}` | `target_media` ごとに `tdp.listing` で散文を作り、**数値・仕様・開示は決定論ブロックで差し込む** (§17.7.4)。`checkListing()` が ① 禁止語 ② 必須 6 項目 ③ 数値一致 ④ 開示が `targets` の全箇所 を判定。不合格は `feedback` に失敗項目を入れて**最大 3 回**再生成。3 回で通らなければ `passed=false` の版を残し商品は `ready` のまま (`manuscript_failed`) | `advanceToReview()` |
+| `tdp.package.build` | `{job_id?, product_id, step: 'start'\|'zip'}` | `start`: `package_state='building'`。Meshy 由来の種別は FBX が無ければ `tdp.asset.generate` (`reason:'remesh'`。親=その版の refine 台帳行、入力=配布版 GLB の署名付き URL)。`texture` 種別は FBX 不要で `zip` へ。`zip`: README (使い方・規約・AI 開示)・FBX・GLB・PNG (GLB から取り出し) を `jszip` で 3 フォルダ構成に → R2 `3dp/{id}/package/v{ver}/package.zip` → `package_state='ready'`、`package_json` に manifest と sha256。失敗は `package_state='failed'` + 理由 (保留理由 `hold_package_unavailable`) | remesh 成功 → `tdp.package.verify` → OK なら `tdp.package.build` (`zip`) |
+| `tdp.package.verify` | `{job_id?, product_id, asset_version}` | queue `tdp-render`。描画ページで `FBXLoader` により FBX を読み、**bbox と三角形数が元の GLB と ±1%** であることを検査 (単位違い 100 倍/0.01 倍を買い手に届く前に捕まえる: §16.3.2)。**最終判断は U-19 の Unity 実測**であることを理由文に含める | OK → `tdp.package.build` (`zip`)。NG → `package_state='failed'` (`fbx_scale_mismatch`) |
+| `tdp.sales.fetch` | `{job_id?, trigger}` | §17.5.6 | 次タスクなし (`tdp.gates.snapshot` が日次で読む) |
+| `tdp.listing.status.check` | `{job_id?, trigger}` | §17.10.3 の手順。観測を `tdp_public_observations` に、結果を `tdp_listings.last_*` に | `abnormal` が確定したら `engageKillSwitch` と同じ関数 (source=`auto`) + LINE |
+| `tdp.gates.snapshot` | `{job_id?, trigger}` | ① `recoverTdpOnBoot()` の軽量版 ② 保持方針の適用 (中間版の R2 削除。F-3DP-49: §17.9.3) ③ 資源の観測 (Meshy 残高・R2 `3dp/` 使用量)。失敗は `tdp_resource_snapshots` に `ok=false` で残し他を続行 ④ `computeGates()` (§17.10.1) → `tdp_gate_snapshots` | 次タスクなし |
+
+**表 B — キュー・再試行・時間**
+
+| タスク | 起点 | キュー | `maxAttempts` | 想定時間 | ハードタイムアウト | 増分 |
+|---|---|---|---|---|---|---|
+| `tdp.market.research` | cron / 手動 | — | 2 | 〜10 分 (§15.4.1) | 12 分 (**例外**: 3 区分を順に回すため) | Inc-3 |
+| `tdp.product.plan` | cron | — | 2 | 〜3 分 | 10 分 | Inc-3 |
+| `tdp.asset.generate` | イベント | — | 3 | 〜1 分 (プロンプト設計の LLM 1 回) | 10 分 | Inc-2 |
+| `tdp.meshy.submit` | イベント | `tdp-meshy` | **1** | 数秒 (HTTP タイムアウト 30 秒) | 10 分 | Inc-2 |
+| `tdp.meshy.poll` | 自己再投入 | `tdp-meshy` | 8 | 数秒/回 (全体は U-13 で実測) | 10 分 | Inc-2 |
+| `tdp.asset.inspect` | イベント | — | 3 | 10 秒以内 (§15.4.1) | 10 分 | Inc-2 |
+| `tdp.asset.optimize` | イベント | — | 3 | 1 分以内 | 10 分 | Inc-2 |
+| `tdp.preview.render` | イベント / 再描画 | `tdp-render` | 2 | **5 分以内** (A-9。U-15 で実測) | 8 分 | Inc-4 |
+| `tdp.listing.compose` | イベント / 差戻し | — | 3 | 〜2 分 | 10 分 | Inc-4 |
+| `tdp.package.build` | 承認 | — | 3 | 〜3 分 | 10 分 | Inc-5 |
+| `tdp.package.verify` | イベント | `tdp-render` | 2 | 〜3 分 | 8 分 | Inc-5 |
+| `tdp.sales.fetch` | cron / 手動 | — | 2 | 〜5 分 | 10 分 | Inc-5 |
+| `tdp.listing.status.check` | cron / 手動 | — | 2 | 〜10 分 (30 件 × 3 秒間隔 ≒ 2 分 + 再取得) | 10 分 | Inc-5 |
+| `tdp.gates.snapshot` | cron / 手動 | — | 3 | 〜2 分 | 10 分 | Inc-2 (G-A のみ) → Inc-5 |
+
+**`jobs` 行の作り方** (A2P/ANP と同じ作法): 生産者 (Server Action・親タスク) が `jobs` 行を `queued` で作って `payload.job_id` に渡し、`kind` = タスク名、`tdp_product_id` を必ず入れ、親があれば `parent_job_id`。cron 起点は `runTdpTask` が `payload_json={trigger:'cron'}` で自分で作る (`note-engage.ts` の作法。**行を作れなくても本体は止めない**)。
+
+#### 17.5.5 検査・補正・最適化・描画の仕様
+
+**(1) 検査の判定 `decideAfterInspect()`** (純関数。`@a2p/mesh` の `InspectIssue.code` を 3 種に分類する)
+
+| 分類 | コード | 扱い |
+|---|---|---|
+| **ブロッキング** (再生成でしか直らない) | `no_mesh` / `too_many_triangles` / `too_many_materials` / `too_many_textures` / `missing_uv` / `missing_normals` / `degenerate_bounds` | `needs_fix` → 上限内なら再生成。`feedback` に実測としきい値を渡す |
+| **補正可能** (credit を使わず直す) | `scale_too_small` / `scale_too_large` / `origin_not_grounded` / `origin_far_from_center` / `texture_too_large` / `file_too_large` (テクスチャ縮小後に再判定) | `tdp.asset.optimize` の前段 `normalize` が直す。補正した事実は `tdp_assets.normalized_json` に残し、歩留まりでは「補正」として別計上 |
+| **形だけ (shape) の段階で無視** | テクスチャ系 (`texture_*`) / `missing_uv` (U-29 が確定するまで) / 補正可能群 | shape の合否は `no_mesh` / `too_many_triangles` / `degenerate_bounds` だけ。**ここで落ちたら refine を 1 度も呼ばない** (F-3DP-13 の受入) |
+
+- 補正の根拠 (D-8): Meshy は寸法を保証しない。**等倍スケールと平行移動は形状を変えない**ので F-3DP-04 の「形を変える処理は既定で行わない」と矛盾しない。目標寸法は `plan_json.size_m` (企画が決める)。ここがずれると寸法参照画像 (買い手が見る大きさ) と実物がずれるので、**補正後の実寸を `inspect_json` と寸法参照の両方が同じ関数で読む**。
+- 懸念 (隠さない): `ACCESSORY_THRESHOLDS` の `maxTextureCount: 2` は、Meshy が PBR 一式 (base color / normal / metallic / roughness) を出すと**構造的に超える**恐れがある【推測 — U-2 / U-17 の実測対象】。refine に PBR を切る指定があれば `request_json` で指定する (§17.14 d-1 の `enablePbr`)。無ければ `too_many_textures` が常態化し、**歩留まり 0% = G-A 不合格**として現れる。これは検査が厳しいのか生成が悪いのかを F-3DP-47 の NG コード別件数で切り分ける材料になる。
+
+**(2) 最適化後の再検査と配布版の確定**: `is_distribution` の付け替えは**同一トランザクション内で 2 文**: ① `UPDATE tdp_assets SET is_distribution = false WHERE product_id = $p AND is_distribution` ② `UPDATE tdp_assets SET is_distribution = true WHERE id = $new`。順序が逆だと部分 UNIQUE (§7.4-b) に違反する (PG の一意索引は行ごとに即時検査され、1 文にまとめても順序が保証されない)。配布用に **WebP / KTX2 / Draco / meshopt を使わない** (§16.3.2): `@a2p/mesh` の検査に `unsupported_texture_format` / `unsupported_extension` を足し、ブロッキングに分類する。
+
+**(3) プレビュー描画の自己検査 (`selfcheck.ts`、純関数 + Playwright)**: 出発点は §16.2.3 のとおり。判定:
+
+| 失敗種別 (`code`) | 判定 | 運営者向け文言 (`message_ja` の例) |
+|---|---|---|
+| `render_webgl_unavailable` | WebGL2 コンテキストが取れない | 「この環境では 3D 描画ができなかったため、プレビューを作れませんでした。『再描画』で作り直せます (credit は消費しません)」 |
+| `render_blank` | 背景色以外の画素が `min_non_bg_ratio` 未満 | 「プレビューが空の画像だったため失敗にしました。…」 |
+| `render_white` | 標準偏差が `min_stddev` 未満 (単色) | 「プレビューが白画像だったため失敗にしました。GPU の無い環境では描画が白く返ることがあります。『再描画』で作り直せます (credit は消費しません)」 |
+| `render_context_lost` | `webglcontextlost` (1 回だけ再試行して再発) | 「描画中に描画エンジンが停止しました。…」 |
+| `render_timeout` | 8 分超 | 「描画が時間内に終わりませんでした。…」 |
+
+- `UNMASKED_RENDERER` を `selfcheck_json.renderer` に記録 (SwiftShader / llvmpipe 以外なら `renderer_unexpected` を警告として併記)。
+- **`scale_reference` が無い/失敗の商品は `review` に進めない** (T-10 のガード)。
+- 寸法参照の寸法は `@a2p/mesh` の `inspectDocument` の `metrics.sizeMeters` を使い、**二重定義しない**。
+
+#### 17.5.6 売上取得 `tdp.sales.fetch` (F-3DP-31、D-11)
+
+**A2P に BOOTH 売上の取得実装は無い**ことを確認した (`apps/worker/src/tasks` に BOOTH の売上タスクなし。BOOTH のコードは入稿 (`scripts/booth/*`) のみ)。BOOTH に公開 API は無い。したがって:
+
+| `sales_source` | 内容 | 既定 |
+|---|---|---|
+| **`manual`** | 運営者が S-3DP-07 で月別・商品別に `units` と `gross_jpy` を入力 (`upsertManualSales`)。cron の `tdp.sales.fetch` は `outcome='skipped'` / `sales_manual_mode` で終え、**「売上の最終入力 〈JST〉」を画面に出す** | **既定** |
+| `booth_manage_readonly` | `manage.booth.pm` の売上関連画面を**読み取り専用**で取得。共用セッション (`booth_session_state_enc`) を復号して `newContext({storageState})` に**メモリ上でのみ**渡す。`storageState()` の保存・ログインページの操作を**実装に含めない**。セッション失効は再ログインせず `booth_session_invalid` として記録し LINE で運営者に知らせる。**U-28 (画面に何があるか) と §16.6 の「Railway の IP から共用セッションを使うのは初めて」というリスクが解けるまで実装しない** | 後送り・既定 OFF |
+| `jinxxy_api` | U-5 (書き込み/売上スコープの有無) が解けてから | 後送り |
+
+- **グレインは (listing × JST 月)** (`tdp_sales`)。累計スナップショットにしない理由: 手入力では「月のどの時点の累計か」が不確かになり、月次損益と G-B (累計) の両方が壊れる。**再入力・再取得は同じ行を上書き** (冪等: F-3DP-31 ④)。
+- **欠測は行が無い**で表す。S-3DP-07 は「公開済みなのに行が無い月」を「未入力」と出し、**0 円にしない**。`units=0` を明示的に入れた月は 0 として扱う。
+- 手取りは `computeNet(media, units, gross)` を**読むときに**計算する (保存しない)。`fee_model_id` で当時の手数料モデルを引くので、手数料改定 (2025-10-28 のような) 後も過去月が変わらない。BOOTH: `fee = floor(price × 0.056) + 45` / 件、手取り = 売上 − fee (¥500 → ¥427: UI 例と一致)。**1 件単位で切り捨てるため `units` 件の売上は価格 × 件数ではなく件ごとに計算する** — 月合計の `gross_jpy` から件単価が一意に決まらない場合は、商品価格 (`price_jpy`) × `units` で検算し、不一致なら画面に「価格と合わない」と出す。
+
+#### 17.5.7 BOOTH 下書き作成 (`tdp.listing.submit`、D-12)
+
+- 実体は **ローカルスクリプト `scripts/booth/booth-3dp-submit.mjs <productId>`** (A2P の `booth-submit.mjs` と同じ作法: 運営者の PC・`DBURL`・`KDP_CRED_KEY` で共用セッションを復号)。**worker のタスクにしない** — §16.6 / §14.6.2 のとおり、Railway の IP から共用セッションで書き込み操作をするのは A2P も一度もやっておらず、BOOTH の再認証要求で **A2P の入稿動線を壊す**可能性を否定できない【推測】。
+- 入力はカテゴリ対応表 (アクセサリ → 3D装飾品 / テクスチャ → 3Dテクスチャ / 小物 → 3D小道具 / 家具・ワールド素材 → 3D環境・ワールド) を `packages/contracts` の定数として持ち、**単体テストで固定** (F-3DP-29 ③)。セレクタ手順は U-1' を `booth-cat-recon.mjs` で埋めてから。
+- **前提の検査はスクリプトに複製しない。**`tdp_listings` に `working` かつ `slot_reserved_at` ありの行が**無ければ**「先に商品詳細で ZIP を取得 (= 出品作業を開始) してください」と出して終了する。保留理由 (停止/上限/U-9・U-10/撤退) の判定は Web 側の `startPublishWork` 1 箇所に置く (二重実装は食い違う)。
+- 成功時: `tdp_listings.draft_url` / `draft_created_at` を更新し、`jobs` 行 (`kind='tdp.listing.submit'`、`tdp_product_id`) を書く (F-3DP-29 ⑤)。**作品ファイル UP と公開は運営者の手作業のまま** (§5.1)。商品画像は DataTransfer ドロップが登録されないため自動化しない (`booth-submit.mjs` の既知の制約)。
+
+### 17.6 二重課金を防ぐ設計 (Meshy は credit 課金)
+
+> **目的**: リトライ・再実行・worker 再起動・二重クリック・デプロイの並走のどれが起きても、**同じ意図の生成を 2 回走らせない**。
+> 防げないケース (POST の応答を失う) は**隠さず、最悪損失を 1 回分に抑える**。
+
+#### 17.6.1 防御の層
+
+| 層 | 仕組み | 防ぐもの |
+|---|---|---|
+| **L1 意図の一意化** | 台帳 `tdp_generations.purpose_key` (UNIQUE) = `{product_id}:{asset_version}:{stage}:{n}`。`tdp.asset.generate` が予約を作るとき、既にあればその行を返すだけ | 同じ意図の予約が 2 行できる (二重クリック・親タスクの再実行・`reenqueue-stuck-jobs.cjs` のような再投入) |
+| **L2 投入権の CAS** | `UPDATE ... SET state='submitting' WHERE id=$1 AND state='reserved'` の更新件数が 1 の者だけが POST できる | 同じ `tdp.meshy.submit` が 2 本走る (graphile の重複・旧新 worker の並走) |
+| **L3 飛行中は全体で 1 本** | 部分 UNIQUE `tdp_generations_single_inflight` (§7.4-a)。`submitting`/`submitted` が既にあると 2 本目の `UPDATE` が一意制約違反になり、submit は**自分を 60 秒後に再投入して譲る** | キュー名の直列が崩れた場合の保険 (F-3DP-48 を DB でも強制)。別商品の生成が交互に進む |
+| **L4 `maxAttempts=1`** | `tdp.meshy.submit` は graphile の自動再試行を持たない。クラッシュしても `attempts` が使い切られている | 失敗のたびに新しいタスクを POST する (既定 25 回) |
+| **L5 task_id の即時永続化** | POST の応答を受けたら**他の処理を挟まず専用の 1 文**で `meshy_task_id` と `state='submitted'` を書く。書込みだけは 3 回まで再試行 (100ms/500ms/2s。DB 書込みの再試行は課金しない)。それでも失敗したら task_id を構造化ログ (error) と `jobs.result_json` に出して throw | 「払ったのに task_id を失う」 |
+| **L6 親の必須化** | refine / remesh は `parent_generation_id` が NOT NULL (DB の CHECK §7.4-c)。refine の入力 `previewTaskId` は**親台帳行の `meshy_task_id` から読む** (引数や payload から受け取らない) | preview なしの refine / 違う preview への refine。クライアントの引数チェック (実装済) の DB 版 |
+| **L7 POST の結果不明は再投入しない** | ネットワーク断・タイムアウト・5xx で「作られたか分からない」とき、台帳を **`lost`** にして**同じ意図を再投入しない**。次の試行は**別の意図**として数える (系列/企画の上限を 1 消費)。`credit_confidence='unknown'` で原価には含める | 応答喪失の二重 POST |
+| **L8 上限の同一トランザクション判定** | `tdp.asset.generate` が商品行を `FOR UPDATE` で握ったまま「系列 3・企画 10・商品 credit 上限・月 credit 上限」を数え、同じトランザクションで `reserved` を挿入する | 並走する再生成がそれぞれ上限内に見えて合計で超える |
+| **L9 成果物の冪等** | `tdp_assets.generation_id @unique` と `(product_id, version, stage, name)` UNIQUE。`tdp.meshy.poll` の完了処理は再実行しても 2 行できない | 完了処理の再実行で二重に成果物・二重に次工程 |
+
+#### 17.6.2 `tdp.meshy.submit` の手順 (擬似コード。これが唯一の POST 箇所)
+
+```ts
+// apps/worker/src/tasks/tdp/meshy-submit.ts — createTextTo3d / createRemesh を呼んでよい唯一のファイル (静的テストで強制)
+export async function submitGeneration(id: string, d: Deps): Promise<TdpJobResult> {
+  const gen = await d.db.generation.get(id);
+  if (gen.state !== 'reserved') return skipped('already_claimed');         // L2 の事前チェック (安価な早期 return)
+
+  // ── 1. 認証情報とモデルの確認。ここで落ちても POST 前なので reserved のまま ──
+  const creds = await d.resolveMeshyCredentials();
+  if (!creds) return failedBeforePost('meshy_key_missing');                 // 台帳は reserved のまま、商品に理由
+  if (!d.settings.tdp_meshy_model) return failedBeforePost('meshy_model_unset');
+
+  // ── 2. 投入権の CAS (L2, L3)。ここから先は「POST したかもしれない」領域 ──
+  const won = await d.db.generation.cas(id, 'reserved', 'submitting', { submit_started_at: d.now() })
+    .catch((e) => { if (isUniqueViolation(e, 'tdp_generations_single_inflight')) return 'busy'; throw e; });
+  if (won === 'busy') return deferSelf(60_000, 'meshy_slot_busy');          // 譲る。attempts は消費しない
+  if (!won) return skipped('already_claimed');
+
+  // ── 3. POST (臨界区間: shutdown の AbortSignal を渡さない。タイムアウトは AbortSignal.timeout(30s) だけ) ──
+  let taskId: string;
+  try {
+    taskId = stage === 'remesh' ? await d.meshy.createRemesh(req) : await d.meshy.createTextTo3d(req);
+  } catch (e) {
+    if (e instanceof MeshyError && e.definitelyNotCreated) {                // 4xx = 作られていないと言える (402 残高不足・400・401・403)
+      if (e.status === 429) return revertAndDefer(id, 120_000, 'meshy_rate_limited');   // reserved に戻して 120 秒後 (最大 15 回)
+      await d.db.generation.cas(id, 'submitting', 'failed', { failure_code: `http_${e.status}`, task_error: e.message });
+      return failedWith(mapMeshyError(e));                                  // 日本語の理由。credit は 0
+    }
+    // ネットワーク断 / タイムアウト / 5xx = 作られたか不明 (L7)。再投入しない
+    await d.db.generation.cas(id, 'submitting', 'lost', { failure_code: 'post_outcome_unknown', credit_confidence: 'unknown' });
+    await d.line.push('Meshy への投入結果が不明です。二重課金を避けるため再投入していません (最大 1 回分の credit)。');
+    return failedWith(reason('post_outcome_unknown'));
+  }
+
+  // ── 4. task_id を即時永続化 (L5)。ほかの処理を挟まない ──
+  await retry3(() => d.db.generation.cas(id, 'submitting', 'submitted', { meshy_task_id: taskId, submitted_at: d.now() }))
+    .catch((e) => { d.log.error({ generationId: id, meshyTaskId: taskId }, 'task_id を永続化できなかった'); throw e; });
+
+  // ── 5. ここからは失敗しても課金は確定済み・task_id は保存済みなので安全 ──
+  await recordMeshyUsage(d, gen, taskId);                                   // token_usage に provider='meshy' で 1 行
+  const pollJob = await d.jobs.create({ kind: 'tdp.meshy.poll', tdp_product_id: gen.product_id, status: 'running' });
+  await d.db.generation.update(id, { job_id: pollJob.id });
+  await d.addJob('tdp.meshy.poll', { job_id: pollJob.id, generation_id: id, n: 1 },
+                 { runAt: afterInterval(), queueName: 'tdp-meshy', maxAttempts: 8, jobKey: `tdp-poll:${id}:1` });
+  return ok({ meshy_task_id: taskId });
+}
+```
+
+- `MeshyError.definitelyNotCreated` は `packages/mesh` の変更 (§17.14 d-1): **HTTP 応答を受け取った 4xx のみ true**。ネットワーク例外 (`fetchImpl` が reject) と 5xx と タイムアウトは false にし、**例外を `MeshyError` に包み直す**(現状は素の `TypeError` が漏れる)。
+- `deferSelf` / `revertAndDefer` は**新しい `addJob` で自分を再投入**して成功終了する (graphile の再試行を使わない。`maxAttempts=1` を保つ)。429 の延期は 15 回で打ち切り、`meshy_busy` として失敗にする (運営者が Meshy の Web UI でキュー枠を使っていると 429 になる: §16.4.1)。
+- **`tdp.meshy.poll` は POST しない。** GET と R2/DB 書込みだけなので `maxAttempts=8` で良い。
+
+#### 17.6.3 台帳の状態遷移
+
+```mermaid
+stateDiagram-v2
+    [*] --> reserved: tdp.asset.generate (L1 purpose_key UNIQUE)
+    reserved --> submitting: submit が CAS に勝つ (L2/L3)
+    reserved --> reserved: 429 / スロット使用中 → 自分を再投入して譲る
+    submitting --> submitted: POST 応答 + task_id を即時永続化 (L5)
+    submitting --> failed: 4xx (作られていないと言える)
+    submitting --> lost: ネットワーク断/タイムアウト/5xx/クラッシュ (L7) — 再投入しない
+    submitted --> succeeded: poll で SUCCEEDED → R2 + tdp_assets
+    submitted --> failed: FAILED / CANCELED / poll_timeout (credit は課金済み扱い)
+    succeeded --> [*]
+    failed --> [*]
+    lost --> [*]
+```
+
+- `lost` は `recoverTdpOnBoot` と submit の「スロット使用中」経路の両方で、`submitting` が 10 分超のものから作られる (クラッシュ時の後始末)。**`lost` の台帳は消さない** (原価・上限の計上に使う)。
+- U-24 が「一覧 API で直近タスクを特定できる」と分かったら、`lost` にする前に**一覧で照合して task_id を回収**する経路を足す (回収できれば `submitted` に復帰)。それまでは本設計の保守側 (回収しない) で運用する。
+
+#### 17.6.4 credit の見積りと予算ガード
+
+- 見積り `estimateCredits(kind, table)` (純関数): 1 発合格 = preview + refine (+ remesh)。最悪の系列 = preview × `tdp_regen_limit_asset` + refine + remesh。既定の表 (preview 20 / refine 10 / remesh 5) では **35 / 75 credits**。`registerTrialProduct` は「最大およそ 75 credits (1 発合格なら 35)。歩留まり次第で増えます」を円換算つきで出す。
+- 予約時の判定 (L8): 当月(JST)の台帳の credit 合計 (`credits_charged ?? credits_estimated`、`reserved` も含める) + 今回 > `meshy_monthly_credit_cap` → `credit_cap_month`。商品の合計 + 今回 > `credit_cap_per_product` → `credit_cap_product` (打ち切りは T-8)。商品合計が `credit_warn_per_product` 超なら警告を `status_reason_json` に。
+- Meshy 残高 (`GET /balance`) は**表示と照合のため**に使い、**生成の可否判断には使わない** (フィールド名が未確認で、取得失敗で生成が止まるのを避ける)。月次で「台帳の合計 vs 残高の減り方」が 10% 超ずれたら資源欄に警告 (台帳の見積りが外れている=二重課金の兆候でもある)。
+
+#### 17.6.5 事故シナリオ別の結果
+
+| # | 起きること | 結果 | 残るリスク |
+|---|---|---|---|
+| 1 | submit が失敗して graphile が再試行 | `maxAttempts=1` なので再試行されない (L4) | なし |
+| 2 | submit を 2 本同時に実行 (重複投入・旧新 worker 並走) | CAS で 1 本だけ POST (L2)。もう 1 本は `already_claimed` | なし |
+| 3 | POST 直後、task_id 保存前に worker が SIGKILL | 台帳は `submitting` のまま。起動時回収が 10 分後に `lost` にする。**再投入しない** (L7) | **最大 1 preview = 20 credits (約 ¥60) の損**。U-24 で縮められる |
+| 4 | POST の応答がタイムアウト | `lost` (L7)。LINE 通知 | 同上 (作られていれば 1 回分払って成果物を失う) |
+| 5 | task_id 保存の DB 書込みだけ失敗 | 3 回再試行。全滅時は task_id をログと `jobs` に出して throw。台帳は `submitting` → 10 分後 `lost` | 運営者がログの task_id で Meshy 側の成果物を確認できる (credit は払い済み) |
+| 6 | worker 再起動で poll の連鎖が切れた | 起動時回収と日次スナップショットが `submitted` で pending な poll の無い台帳に poll を再投入。poll は GET のみ | なし (GLB URL の有効期限が切れていたら `failed`/`poll_timeout`: U-13) |
+| 7 | 検査 NG が続いて再生成が止まらない | 系列 3・企画 10・商品 credit 上限・月 credit 上限のどれかで L8 が拒否 → `failed` | 最悪でも §16.10 の 215〜250 credits |
+| 8 | 運営者が「生成を開始」を連打 | `confirmTrialGeneration` が `planned` の CAS で 1 回だけ。2 回目は `not_planned` | なし |
+| 9 | `tdp.asset.generate` が再実行された | `purpose_key` で既存の予約を返すだけ (L1) | なし |
+| 10 | 同じ preview から refine が 2 回投入された | `{ver}:refine:1` の UNIQUE で 2 本目は予約できない。refine 失敗後の再試行だけ `:refine:2` を許す (最大 2) | refine 失敗の再試行は最大 +10 credits |
+| 11 | 別商品の生成が同時に始まろうとする | L3 で 2 本目は 60 秒後に譲る | なし |
+| 12 | 運営者が Meshy の Web UI を使っていてキュー枠が埋まる | 429 → 120 秒後に再投入 (最大 15 回)。台帳は `reserved` のまま | 待たされるだけで課金されない |
+| 13 | 縮退 (`tdp_degrade_mode`) や撤退中に生成 | 関所 (`tdp.asset.generate`) で拒否。`createTextTo3d` は他に呼び出し元が無い | なし |
+
+### 17.7 ランタイムエージェント仕様
+
+#### 17.7.0 共通
+
+| 項目 | 内容 |
+|---|---|
+| 置き場所 | I/O 契約 (zod) は `packages/contracts/src/agents/tdp.ts` (ANP の `agents/anp.ts` と同型)。呼び出し実装は `packages/agents/src/tdp/{research,planner,prompter,listing}.ts` |
+| プロンプトの取得 | `loadActivePrompt(role, null)` (`prompts` の `role` + `genre=NULL` + `status='active'`)。3DP は**ジャンルを持たない**ので常に `null`。無ければ `ConfigError` (日本語の `userMessage`) |
+| 実行時注入 | 所見・構成比・禁止語・価格下限・媒体定義・しきい値は **user メッセージ**に「【見出し】本文」の塊で入れる。**`prompts` の本文は書き換えない** (F-3DP-18 の受入: 実行前後でバイト一致をテスト)。運営者の指示がある場合は ANP の `operatorInstructionLines` 作法どおり**メッセージの最後**に置く (前に置くと後続の既定に負ける) |
+| ツール | **エージェント自身はツールを呼ばない。** データ取得 (Tavily 事前検索・BOOTH 公開データ・DB の売上) は**タスクが決定論的に行って入力に入れる** (Tavily 事前検索化で 3〜7 分 → 数十秒にした教訓。Hard Rule 上も `web_search` の無上限ループを避ける) |
+| 想定モデル | `model_assignments` に **role ごとに active を 1 件** (無いと停止する: メモリ「model-assignment-routing」)。seed の初期値は ANP の同型 role に合わせる: `tdp.research` = `claude-opus-5` (= `anp.research`) / `tdp.planner` = `claude-opus-5` (= `anp.theme`) / `tdp.prompter` = `claude-sonnet-5` / `tdp.listing` = `claude-sonnet-5` (= `anp.writer`)。**`claude-sonnet-5` には `temperature` を渡さない** (400 になる)。最終的な割当は運営者が `model_assignments` で変える |
+| 出力検証 | すべて zod で検証。失敗は `AgentError` (retryable) として**同じタスク内で最大 2 回**まで再呼び出し (エラー内容を user メッセージ末尾に追記)。それでも失敗なら `PipelineError` |
+| 記録 | `withTokenLogging({ tool: '3dp', jobId, role })`。`bookId` は渡さない (FK 混線を避ける: docs/11 §7 の方針) |
+| seed | `packages/db/seed-tdp.ts` (冪等): 4 role の `prompts` (version 1・`genre=NULL`・`placeholders_json`) + `model_assignments`。**本文はここで初期投入するが、実行時の唯一の真実源は DB** |
+
+#### 17.7.1 `tdp.research` — 週次リサーチ (F-3DP-18/23/24)
+
+責務: 区分 (`accessory` / `texture` / `prop_furniture`) ごとに「何が売れ、どこが空白か」を、**与えられたデータだけを根拠に**要約する。観点は区分ごとに変える。
+
+```ts
+export const KindGroupSchema = z.enum(['accessory', 'texture', 'prop_furniture']);
+export const TdpKindSchema = z.enum(['accessory', 'texture', 'prop', 'furniture']);
+export const MediumIdSchema = z.enum(['booth', 'jinxxy']);
+
+export const TdpResearchInputSchema = z.object({
+  week_key: z.string().regex(/^\d{4}-W\d{2}$/),
+  kind_group: KindGroupSchema,
+  media: z.array(MediumIdSchema).min(1),
+  sales_summary: z.object({                       // 自社の実績 (無ければ空)
+    units_8w: z.number().int().min(0),
+    by_product: z.array(z.object({
+      title: z.string(), kind: TdpKindSchema, units: z.number().int(), gross_jpy: z.number().int(), days_listed: z.number().int(),
+    })).max(50),
+  }),
+  previous_finding: z.lazy(() => TdpResearchOutputSchema).nullable(),
+  web_search_results: z.array(z.object({ title: z.string(), url: z.string(), snippet: z.string() })).max(30), // 空 = web_search=false
+  booth_public: z.object({                        // tdp_booth_public_fetch_enabled=true のときだけ
+    observed_at: z.string(),
+    pages: z.array(z.object({
+      url: z.string(), category: z.string(),
+      items: z.array(z.object({ title: z.string(), price_jpy: z.number().int().nullable(), rank: z.number().int() })).max(60),
+    })).max(10),
+  }).nullable(),
+  denylist_terms: z.array(z.string()).max(100),   // 参考。判定は決定論ガードが行う
+});
+
+export const TdpResearchOutputSchema = z.object({
+  viewpoint: z.string().min(1).max(400),
+  findings: z.array(z.string().max(300)).min(1).max(10),
+  target_themes: z.array(z.object({ theme: z.string().max(80), why: z.string().max(200) })).max(10),
+  avoid_themes: z.array(z.object({ theme: z.string().max(80), why: z.string().max(200) })).max(10),
+  observed_price_band: z.object({
+    min_jpy: z.number().int().nullable(), max_jpy: z.number().int().nullable(), median_jpy: z.number().int().nullable(),
+    basis: z.enum(['booth_public', 'web_search', 'sales', 'none']),
+    observed_at: z.string().nullable(),
+  }),
+  caveats: z.array(z.string().max(200)).max(5),   // 「根拠が弱い」等。推測と事実を分けて書かせる
+});
+```
+
+- **出所の偽装を弾く**: `validateResearchOutput(input, output)` (純関数) — `basis='booth_public'` なのに `input.booth_public === null`、`basis='web_search'` なのに `web_search_results` が空、は不合格 (LLM が観測していない価格帯を「観測した」と書く事故の防止。UI は「いつ・どこで観測した値か」を必ず出す: UR-9)。
+- 出力先: `tdp_research_findings` (`week_key + kind_group` で upsert)。
+
+#### 17.7.2 `tdp.planner` — 企画 (F-3DP-19/20/22)
+
+責務: 種別・題材・価格・想定寸法・プレビュー構図を決める。**実在の作品・作家・キャラクターに寄せない**ことをプロンプトで明示し、通るかどうかは決定論ガードが決める。
+
+```ts
+export const TdpPlannerInputSchema = z.object({
+  quotas: z.array(z.object({ kind_group: KindGroupSchema, count: z.number().int().min(0).max(3) })),
+  findings: z.array(z.object({ kind_group: KindGroupSchema, week_key: z.string(), output: TdpResearchOutputSchema })).max(3),
+  recent_titles: z.array(z.string()).max(200),            // 直近 90 日 (重複回避)
+  price_floor_jpy: z.number().int().min(0),
+  media: z.array(MediumIdSchema).min(1),
+  kind_limits: z.object({                                  // 作れない物を企画させない
+    ACCESSORY: z.object({ max_triangles: z.number(), max_size_m: z.number(), max_textures: z.number() }),
+    PROP: z.object({ max_triangles: z.number(), max_size_m: z.number(), max_textures: z.number() }),
+  }),
+  avoid_terms: z.array(z.string()).max(100),
+  instruction: z.string().max(1000).optional(),
+});
+
+export const TdpPlanCandidateSchema = z.object({
+  kind: TdpKindSchema,
+  title: z.string().min(2).max(60),               // BOOTH の商品名は 60 字で切っている (booth-submit.mjs)
+  concept: z.string().min(20).max(800),           // 何を・誰に・なぜ
+  price_jpy: z.number().int().min(0),
+  size_m: z.number().positive().max(5),           // 最大辺の想定実寸。補正 (normalize) の目標寸法
+  material: z.string().max(100),
+  subject_en: z.string().min(2).max(200),         // tdp.prompter への橋渡し (英語の名詞句)
+  preview_composition: z.string().max(300),
+  rationale: z.string().max(300),
+  source_theme_ref: z.string().max(80).nullable(), // 「狙う題材」のどれに基づくか (無ければ null)
+});
+export const TdpPlannerOutputSchema = z.object({ candidates: z.array(TdpPlanCandidateSchema).max(6) });
+export type TdpPlanDetail = Pick<z.infer<typeof TdpPlanCandidateSchema>,
+  'size_m' | 'material' | 'subject_en' | 'preview_composition' | 'rationale' | 'source_theme_ref'>; // = tdp_products.plan_json
+```
+
+- 出力の扱い: `kind` / `title` / `concept` / `price_jpy` は `tdp_products` の列へ、残りは `plan_json` へ。`quotas` を超えた件数は捨てる。**構成比は `quotas` で渡し、プロンプト本文に焼かない**。
+- 拒否率: 拒否された候補は `rejected` で残る。拒否率 > `tdp_derivative_reject_warn_pct` を S-3DP-05 と F-3DP-47 が警告する (規則が過剰な疑い)。
+
+#### 17.7.3 `tdp.prompter` — 3D 生成プロンプト設計 (F-3DP-21)
+
+責務: 企画から Meshy 向けの**英語プロンプト**を作る (形状・材質・スケールを明示)。再生成のときは前回の検査 NG と差戻し理由を読んで直す。
+
+```ts
+export const TdpPrompterInputSchema = z.object({
+  product: z.object({
+    id: z.string(), kind: TdpKindSchema, title: z.string(), concept: z.string(),
+    size_m: z.number().positive(), material: z.string(), subject_en: z.string(),
+  }),
+  thresholds_kind: z.enum(['PROP', 'ACCESSORY']),
+  max_triangles: z.number().int(),
+  feedback: z.array(z.object({ code: z.string(), actual: z.union([z.number(), z.string()]), expected: z.union([z.number(), z.string()]) })).max(13).optional(),
+  reject_reason: z.string().max(2000).optional(),
+  previous_prompt: z.string().max(800).optional(),
+  operator_prompt_en: z.string().max(800).optional(),   // 試作登録で運営者が書いたもの (あれば土台にする)
+});
+export const TdpPrompterOutputSchema = z.object({
+  prompt_en: z.string().min(20).max(600),
+  negative_prompt_extra: z.string().max(300).optional(),
+  target_polycount: z.number().int().min(100).max(300000),
+  approx_size_m: z.number().positive().max(5),
+  notes_ja: z.string().max(300),                        // なぜこの書き方にしたか (S-3DP-03 の版履歴に出す)
+});
+```
+
+- **最終的な `request_json` はコードが組む**: `prompt = out.prompt_en + ', ' + buildPropPromptSuffix({approxSizeMeters})` / `negative_prompt = PROP_NEGATIVE_PROMPT + (out.negative_prompt_extra ? ', ' + … : '')` / `target_polycount = min(out.target_polycount, max_triangles)` / `ai_model = settings.tdp_meshy_model` (**`latest` を送らない**) / `enable_pbr` はキー未確認のため U-2/U-17 の結果で決める。定型制約を LLM に任せない (台座・地面・裏面欠落・文字: 実装済みの定型)。
+- **依拠性ガード #2** は `prompt_en` と日本語の `title`/`concept` の両方に掛ける。現行ガードの規則は**日本語中心**で、英語の "in the style of ◯◯" / "inspired by" / "fan art" を捕まえない — §17.14 (d-2) で英語規則を足す。それまで英語プロンプトは**運営者の禁止語との照合だけ**が効く点に注意。
+
+#### 17.7.4 `tdp.listing` — 商品名・紹介文・タグ (F-3DP-26/27)
+
+責務: **散文だけ**を書く。仕様の数値・対応環境・ライセンス・AI 開示は**決定論ブロック**としてコードが差し込み、LLM に書かせない (盛れない構造)。
+
+```ts
+export const TdpListingInputSchema = z.object({
+  product: z.object({ id: z.string(), kind: TdpKindSchema, title: z.string(), concept: z.string(), price_jpy: z.number().int(), size_m: z.number() }),
+  medium: MediumIdSchema,
+  metrics: z.object({                                   // 参照用。散文に数値を書くならこの値だけ
+    triangles: z.number().int(), textures: z.number().int(), max_texture_size: z.number().int(), materials: z.number().int(),
+    size_m: z.object({ x: z.number(), y: z.number(), z: z.number() }),
+  }),
+  research_hint: z.object({ target_themes: z.array(z.string()), price_band: z.string().nullable() }).nullable(),
+  forbidden_words: z.array(z.string()),                 // 既定 8 語 + tdp_tuning_json.listing_extra_forbidden
+  feedback: z.array(z.string().max(300)).max(10).optional(),   // 前回の検査不合格の項目 / 差戻し理由
+});
+export const TdpListingOutputSchema = z.object({
+  title: z.string().min(2).max(60),
+  lead: z.string().min(20).max(300),
+  appeal_points: z.array(z.string().max(120)).min(2).max(6),
+  usage_notes: z.array(z.string().max(160)).max(6),
+  tags: z.array(z.string().max(20)).min(3).max(10),
+});
+```
+
+- **決定論ブロック** (`packages/contracts/src/tdp/listing-check.ts`): `spec_block` (三角形・テクスチャ解像度と枚数・マテリアル数 = `inspect_json` の実測) / `env_block` (対応環境: 配布形式と動作確認の範囲) / `license_block` (利用範囲・再配布条件) / `ai_disclosure_block` (使用したプロバイダ名を含む。媒体定義の `ai_disclosure.targets` の**全箇所**に入れる)。`license_block` と開示文の標準文面は**運営者の承認が要る**(§17.16-TBD-3)。
+- **`checkListing()` の 4 検査**: ① 禁止語 (`最高` `世界初` `完全` `必ず` `絶対` `激安` `No.1` `業界初` + 追加分。NFKC 正規化して比較) ② 必須 6 項目の存在 ③ **散文中の数値表現** (`\d+ (三角形|ポリゴン|枚|マテリアル|px)` 等) を `metrics` と照合し不一致なら不合格 ④ 開示文が `targets` の全箇所に入っている。結果は `tdp_manuscripts.checks_json`。
+
+### 17.8 パイプラインシーケンス
+
+#### 17.8.1 企画 → 生成 → 検査 → 最適化 → プレビュー → 承認
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant Cron as graphile cron
+    participant W as apps/worker
+    participant DB as PostgreSQL
+    participant AG as tdp.* agents (LLM)
+    participant M as Meshy API
+    participant R2 as Cloudflare R2
+    participant CH as Chromium + three
+    participant Web as apps/3dp
+    actor Op as 運営者
+
+    Cron->>W: tdp.product.plan (jobs 行を作る / フラグをタスク内で確認)
+    W->>DB: 設定・在庫・直近タイトル・最新所見
+    W->>AG: tdp.planner (所見を実行時注入)
+    AG-->>W: 候補 N 件
+    W->>W: 依拠性ガード #1 (決定論)
+    W->>DB: tdp_products (planned / rejected) + token_usage(tool=3dp)
+    W->>W: addJob tdp.asset.generate
+    W->>DB: 商品行 FOR UPDATE → 上限・credit 予算を数える (L8)
+    W->>AG: tdp.prompter (feedback があれば NG コードを渡す)
+    W->>W: 依拠性ガード #2 (プロンプト)
+    W->>DB: tdp_generations(reserved) [purpose_key UNIQUE]
+    W->>W: addJob tdp.meshy.submit (tdp-meshy, maxAttempts=1)
+    W->>DB: CAS reserved→submitting (部分 UNIQUE で全体 1 本)
+    W->>M: POST /openapi/v2/text-to-3d (preview)
+    M-->>W: task_id
+    W->>DB: meshy_task_id + state=submitted を即時 (L5) / token_usage(provider=meshy)
+    loop 自己再投入 (1 回 1 GET。worker を占有しない)
+        W->>M: GET /text-to-3d/{task_id}
+        M-->>W: PENDING / IN_PROGRESS (progress)
+        W->>DB: last_progress, poll_count
+    end
+    M-->>W: SUCCEEDED (model_urls.glb)
+    W->>R2: 3dp/{id}/asset/v{ver}/shape.glb
+    W->>DB: tdp_assets(shape) + generation=succeeded (同一 tx) → status=inspecting
+    W->>W: tdp.asset.inspect (shape)
+    alt shape が NG (no_mesh / 三角形超過 …)
+        W->>DB: needs_fix + inspect_json
+        W->>W: 上限内なら tdp.asset.generate (regen_ng) → 上へ戻る / 超えれば failed
+    else shape が OK
+        W->>W: tdp.asset.generate (refine。親の task_id は台帳から読む) → submit → poll …
+        W->>R2: …/textured.glb
+        W->>W: tdp.asset.inspect (final) → ブロッキング NG なら再生成へ
+        W->>W: tdp.asset.optimize (補正 → dedup/weld/prune → 再検査 NG 0)
+        W->>R2: …/distribution.glb
+        W->>DB: is_distribution を付け替え → status=ready
+        par 並列
+            W->>CH: tdp.preview.render (tdp-render)
+            CH-->>W: PNG 6 枚 + 自己検査
+            W->>R2: 3dp/{id}/preview/v{ver}/{name}.png
+            W->>DB: tdp_previews 6 行
+        and
+            W->>AG: tdp.listing (散文のみ)
+            W->>W: 決定論ブロック + checkListing (最大 3 回)
+            W->>DB: tdp_manuscripts (passed)
+        end
+        W->>DB: advanceToReview() — 遅い方が CAS で ready→review
+    end
+    Op->>Web: /review/[id] を開く (openReview → review_opened_at)
+    Web->>R2: 署名付き URL (プレビュー 6 枚 + GLB ビューア)
+    Op->>Web: 承認 (approveProduct) / 差戻し (rejectReview)
+    Web->>DB: データ条件を再評価 → approved_at / TdpReviewEvent
+    Web->>W: addJob tdp.package.build
+```
+
+#### 17.8.2 承認 → 配布物 → 出品 → 公開記録 → 売上取得
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant W as apps/worker
+    participant DB as PostgreSQL
+    participant M as Meshy API
+    participant CH as Chromium (FBXLoader)
+    participant R2 as Cloudflare R2
+    participant Web as apps/3dp
+    participant L as ローカル PC (booth-3dp-submit.mjs)
+    participant B as BOOTH
+    actor Op as 運営者
+
+    W->>DB: tdp.package.build(start) package_state=building
+    W->>W: tdp.asset.generate (remesh。親=その版の refine 台帳行)
+    W->>M: POST /openapi/v1/remesh (convert_format_only, fbx) ※台帳経由の唯一の POST 箇所
+    W->>M: poll … → FBX 取得
+    W->>R2: …/distribution.fbx
+    W->>CH: tdp.package.verify — bbox / 三角形数 ±1%
+    W->>W: tdp.package.build(zip) — jszip で 3 フォルダ
+    W->>R2: 3dp/{id}/package/v{ver}/package.zip
+    W->>DB: package_state=ready
+    Op->>Web: 「ZIP を取得」(getDownloadUrl)
+    Web->>DB: deriveHoldReasons() — 停止/上限/U-9・U-10/撤退/媒体定義
+    alt 保留あり
+        Web-->>Op: 保留理由 (ZIP は出さない)
+    else 保留なし
+        Web->>DB: tdp_listings(working) + slot_reserved_at (R-1 の枠を予約) / zip_first_downloaded_at (初回のみ)
+        Web-->>Op: 署名付き URL
+    end
+    opt 下書きの自動作成 (任意)
+        Op->>L: node booth-3dp-submit.mjs {productId}
+        L->>DB: working かつ枠予約済みを確認 / 共用セッションを復号
+        L->>B: 7 項目を入力して「下書きで保存」
+        L->>DB: draft_url, draft_created_at, jobs(tdp.listing.submit)
+    end
+    Op->>B: 作品ファイルを UP して公開 (手作業)
+    Op->>Web: 「公開を記録する」(recordPublished, BOOTH の URL)
+    Web->>DB: listing=published / expected_public=true / product approved→listed (CAS) / 枠を確定
+    Note over Op,DB: 以降は日次 cron
+    W->>B: tdp.listing.status.check — 素の fetch (対照 + 個別)
+    W->>DB: tdp_public_observations (3 値)
+    Op->>Web: 月別の売上を入力 (upsertManualSales)
+    W->>DB: tdp.gates.snapshot — G-A〜G-E を算出
+```
+
+#### 17.8.3 kill switch の発火経路
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant Cron as graphile cron
+    participant W as tdp.listing.status.check
+    participant B as BOOTH (未ログイン fetch)
+    participant DB as PostgreSQL
+    participant LINE as LINE
+    participant Web as apps/3dp
+    actor Op as 運営者
+
+    Cron->>W: 日次 (jobs 行を作る。tdp_status_check_enabled=false は skipped)
+    W->>B: 対照 (BOOTH の既知の公開ページ)
+    alt 対照が取れない
+        W->>DB: 全対象を unreachable (control_unreachable) — abnormal は出せない
+    else 対照 OK
+        loop 公開記録済み・expected_public=true の listing
+            W->>B: 商品ページ (間隔 3 秒以上 / UA に連絡先)
+            B-->>W: 404 など「公開と確認できない」
+            W->>B: 60 秒後に再取得 + 対照を再確認
+            alt 再取得でも異常
+                W->>DB: observation=abnormal
+                W->>DB: tdp_kill_switch_on=true + TdpRegulationEvent(kill_engage, source=auto) [同一 tx]
+                W->>LINE: 「新規出品を自動停止しました (商品 / 観測内容)」
+            else 回復 or 取得できず
+                W->>DB: confirmed_public / unreachable (consecutive_unreachable を加算)
+            end
+        end
+    end
+    Note over DB,Web: 停止中: getDownloadUrl / startPublishWork / booth-3dp-submit は保留理由 hold_kill_switch で拒否。売上取得と公開状態確認は止めない
+    Op->>Web: 設定 → 安全装置 → 畳まれた「停止を解除する…」
+    Web->>Web: releaseKillSwitch({reason ≥ 20 字}) + 確認ダイアログ
+    Web->>DB: tdp_kill_switch_on=false + TdpRegulationEvent(kill_release, operator, reason)
+    Note over DB: 自動解除のコードは存在しない (時間経過・再デプロイ・フラグでは戻らない)
+```
+
+### 17.9 ファイルストレージ規約 (Cloudflare R2)
+
+#### 17.9.1 キー設計
+
+既存バケットの **`3dp/` プレフィックス**に置く (新バケット・新資格情報を作らない: §16.7)。docs/05 §8 の規約を継承: **小文字・ハイフン・ASCII のみ**、ID は cuid。日本語の名前は R2 キーに入れず、ダウンロード時の `Content-Disposition` で付ける。
+
+| 用途 | キー | 関数 (`packages/storage/src/keys.ts`) |
+|---|---|---|
+| 形だけ (preview) の GLB | `3dp/{productId}/asset/v{ver}/shape.glb` | `tdpAsset(productId, ver, 'shape', 'glb')` |
+| テクスチャ付き (refine) の GLB | `3dp/{productId}/asset/v{ver}/textured.glb` | 同 `'textured'` |
+| **配布用 GLB (最適化後)** | `3dp/{productId}/asset/v{ver}/distribution.glb` | 同 `'distribution'` |
+| FBX (Meshy remesh) | `3dp/{productId}/asset/v{ver}/distribution.fbx` | 同 `'distribution', 'fbx'` |
+| テクスチャ種別の画像 | `3dp/{productId}/asset/v{ver}/texture-{name}.png` | `tdpAsset(..., 'texture', 'png', name)` (`name` = `albedo` 等) |
+| Meshy の応答の控え | `3dp/{productId}/asset/v{ver}/meshy-task.json` | 再現性 (リクエスト + 最終応答。URL は期限があるので落とす) |
+| プレビュー 6 枚 | `3dp/{productId}/preview/v{ver}/{thumbnail\|front\|side\|back\|iso\|scale}.png` | `tdpPreview(productId, ver, name)` |
+| 配布 ZIP | `3dp/{productId}/package/v{ver}/package.zip` | `tdpPackage(productId, ver)` |
+| 描画失敗のスクリーンショット | `3dp/{productId}/debug/render-{ts}.png` | `tdpDebug(productId, step, ts)` |
+
+- `{ver}` は `tdp_assets.version` (台帳の `asset_version`)。プレビューと ZIP は**どの配布版から作ったか**がキーで分かる。
+- `tdpAsset` の検証は既存の `assertId` / 英小文字ハイフンの `STEP_PATTERN` に準じる。`ver` は 1 以上の整数。
+- **ダウンロード名**: `getSignedDownloadUrl(key, 900, {}, downloadFilename)` の第 4 引数に `「{商品名}_v{ver}.zip」` を渡す (RFC 5987 で日本語可。既存の機能)。
+- **ZIP 内部のファイル名**は日本語 (`01_導入/README.txt` 等)。`jszip` が UTF-8 で書くが、Windows エクスプローラと macOS で文字化けしないかを 1 度確認する (§17.13 手動確認)。
+
+#### 17.9.2 署名付き URL
+
+| 用途 | 発行 | TTL | 副作用 |
+|---|---|---|---|
+| プレビュー画像 | RSC がページ描画時にサーバー側で発行 | 15 分 (既定) | なし |
+| GLB ビューア | `getViewerUrl` | 15 分 | なし。**配布版 (`is_distribution`) だけ**。中間版は出さない |
+| 配布 ZIP | `getDownloadUrl` | 15 分 | **あり** (枠の予約・初回取得時刻)。GET にしない |
+
+#### 17.9.3 保持と削除 (F-3DP-49)
+
+アプリ側の関数 `applyRetention()` が `tdp.gates.snapshot` の中で日次に実行する (**R2 のライフサイクルルールには任せない** — 「承認済みの配布版は消さない」を R2 は知らない: §16.7)。
+
+| 対象 | 規則 |
+|---|---|
+| **消さない** | `is_distribution=true` の行 / `approved_asset_version` と一致する版の全成果物 / 承認時点のプレビュー / 配布 ZIP / `meshy-task.json` |
+| 消す (物理削除) | 最新 `intermediate_keep_versions` (3) 版より古い版の `shape` / `textured` / 未承認の `distribution` / `fbx`。デバッグ画像は 30 日 |
+| 削除後 | `tdp_assets.r2_state='purged'` / `r2_purged_at`。**行は残す** (S-3DP-03 の版履歴に「中間版として削除済み」と出す) |
+
+物理削除は既存の「削除は論理削除(`_deleted/` へ移動)」規約の**例外**: 中間版は再出品の原資ではなく、`request_json` + `meshy-task.json` で再現できる。例外であることをコードのコメントに残す。
+
+#### 17.9.4 R2 の CORS (承認画面の `<model-viewer>` 用。U-31)
+
+署名付き URL で読むので、バケットに次の CORS を足す (既存の A2P/ANP の利用に影響しない読み取り許可のみ)。**運営作業** (ダッシュボードか API) で、コードではない:
+
+```json
+[{
+  "AllowedOrigins": ["https://3dp.m2p.tools", "http://localhost:3010"],
+  "AllowedMethods": ["GET", "HEAD"],
+  "AllowedHeaders": ["Range", "Content-Type"],
+  "ExposeHeaders": ["Content-Length", "Content-Range", "ETag"],
+  "MaxAgeSeconds": 3600
+}]
+```
+
+オリジンの値は `NEXT_PUBLIC_TOOL_3DP_URL` と一致させる (開発のポート番号は `apps/3dp` の実設定に合わせる【推測: 3010 は仮置き】)。
+
+### 17.10 判定ロジック (ゲート・保留・公開状態・枠)
+
+すべて `packages/contracts/src/tdp/` の**純関数**にして、設定値は引数で受ける (C-5)。`tdp.gates.snapshot` と画面 (ライブ算出が要る G-A の行・保留理由) が同じ関数を呼ぶ。
+
+#### 17.10.1 ゲート `computeGates()` — 暫定判定の規則つき
+
+```ts
+export interface TdpGateRow {
+  id: 'G-A' | 'G-B' | 'G-C' | 'G-D' | 'G-E' | 'R1-REVIEW';
+  state: 'ok' | 'warn' | 'fail' | 'unevaluated';
+  value: number | string | null;   // null = 「—」
+  line: number | string | null;
+  judge_date: string | null;       // 起点が無ければ null (UI は「初回出品の 90 日後」と起点つきで書く)
+  days_left: number | null;
+  provisional: boolean;            // 判定日前の暫定か (UI の注記スロット)
+  note_ja: string;                 // 一言の理由。unevaluated なら「評価が始まる条件」
+}
+```
+
+**暫定判定の一般則 (申し送り 3、D-3)**: 判定日**前**に出してよいのは `ok` / `warn` / `unevaluated` だけで **`fail` は出さない** (まだ観測窓の途中であり、撤退の根拠にしない: §14.5.1-1)。判定日**後**は `ok` / `fail`。
+例外は **「時間が経つほど悪化する量」**(累積が減らない) と **「常時」のゲート**: G-E (累積作業時間) と G-D (常時)。
+
+| ゲート | `unevaluated` の条件 | 今の値 / ライン | 判定日前 (暫定) | 判定日後 |
+|---|---|---|---|---|
+| **G-A 品質** | 配布版を持つ試作が 0 件、または運営者の判定が未入力 | `ok_products / trial_products` + 最新の判定 / 「検査通過 かつ 『売れる』」 | 判定日の概念が無い (P-0 = Inc-2 完了時)。**判定が入った瞬間に確定**: `sellable` → `ok`、`not_sellable` → `fail`。企画の打ち切り (10 回) で配布版が 1 つも無い → `fail` | 同左 |
+| **G-B 市場** | 初回 BOOTH 公開記録が無い / 売上が一度も取れていない (売上の行も入力も無い) | 「最初の 8 商品」(BOOTH の初回公開記録が早い順) の累計販売本数 / `tdp_gate_b_min_sales` | `value ≥ line × 経過日 ÷ 観測窓` → `ok`、未満 → `warn` (**fail は出さない**) | `value ≥ line` → `ok`、未満 → `fail` |
+| **G-C 採算** | 初回公開から最初の**確定月** (JST で月が終わった月) が無い / 売上が一度も取れていない | 直近の確定月の「手取り − 実コスト」/ 0 | `≥ 0` → `ok`、未満 → `warn` | `≥ 0` → `ok`、未満 → `fail` |
+| **G-D 規制** | 公開記録済み・`expected_public` の listing が 0 件 / 公開状態確認が一度も成功していない | 「観測 N 商品中の異常 K 件」/ 異常 0 | **常時**: 停止中 (`tdp_kill_switch_on`) または `abnormal` あり → `fail` / 最終成功が `status_check_stale_hours` 超、または `unreachable` が `status_check_unreachable_warn_days` 日連続 → `warn` / それ以外 `ok` | (常時) |
+| **G-E 稼働** | 完了した「承認〜公開記録」のペアが当月 0 件 | 当月の作業分 / `tdp_gate_e_monthly_minutes` | 累計 > ライン → `fail` (累計は減らない) / ≥ 80% → `warn` / 未満 `ok` | 月末に確定 |
+| **R1-REVIEW** | 公開記録済み商品が 100 未満のときは**行自体を出さない** | カタログ件数 / 100 | `warn` 固定 (「R-1 を見直す時期です」) | — |
+
+- **判定日**: P-1 = 初回 BOOTH 公開記録日 + `tdp_gate_b_window_days`、P-2 = + `tdp_gate_c_point_days`。G-B の起点は**黒字判定に算入する媒体**の初回公開 (Jinxxy は `counts_toward_gate=false` が既定: F-3DP-45)。
+- **G-E の測り方 (D-4)**: 1 商品の作業分 = `min(approved_at − review_opened_at, work_cap_review_min)` + `min(published_recorded_at − zip_first_downloaded_at, work_cap_publish_min)`。**壁時計の `approved_at → published_recorded_at` は作業時間ではない** (承認後すぐ出さない運用が普通にある) ので使わない — 参考値として S-3DP-03 に「承認から公開記録までの経過」を出すだけ。上限で頭打ちにした商品数も `note_ja` に出す (黙って切らない)。`review_opened_at` か `zip_first_downloaded_at` が null の商品は計測不能として**ペアに数えない**(未評価側に倒す)。
+- **実コスト** (G-C): `token_usage` の `tool='3dp'` を JST の月で合計 (LLM + 画像 + Meshy の credit 換算) + `tdp_meshy_plan_jpy_month` (Meshy Pro の固定費。U-27)。
+- **手取り**: 黒字判定に算入する listing の `tdp_sales` を `computeNet(media, units, gross)` で。Jinxxy は `counts_toward_gate=false` の間、別行「参考(判定対象外)」。
+- **ヒーロー指標 (D-15)**: 「当月純利益」= 当月の手取り − 当月の実コスト (当月に売上の行が無ければ `—` と理由。0 円にしない: UR-2)。「1 商品あたりの売上」= **累計の売上(gross) ÷ 公開記録済みの商品数** (算入対象の媒体のみ)。
+- **入力の保存**: `tdp_gate_snapshots.inputs_json` に、算出に使った**設定値と件数**を残す (後から「なぜその日 warn だったか」を再現できる)。算出に失敗したら `ok=false, error` の行を残し、画面は最終成功の行 + 「算出に失敗しています: 理由」を出す (台帳 #13)。
+
+#### 17.10.2 保留理由 `deriveHoldReasons()`
+
+「出品を始められない理由」を**保存せず読むたびに算出**する純関数 (保存すると古い理由が残る)。`startPublishWork` / `getDownloadUrl` / `booth-3dp-submit.mjs` (間接) / ホーム / 承認画面が同じ関数を使う。
+
+| コード | 条件 | `message_ja` の要点 |
+|---|---|---|
+| `hold_kill_switch` | `tdp_kill_switch_on` | 新規出品を停止中 (発火時刻・発火元) |
+| `hold_retire_mode` | `tdp_retire_mode` | 撤退モード (既存商品は公開のまま) |
+| `hold_monthly_limit` | 当月の使用枠 ≥ 上限 (媒体別) | 当月の上限に達した。来月まで出さない |
+| `hold_u9_u10` | 媒体が `booth` で U-9 / U-10 のどちらかが未回答 | 初回の出品の前に必須 (共用アカウントの前提) |
+| `hold_media_incomplete` | 媒体定義の 5 項目に欠け、または Jinxxy の枠が 0 | 欠けた項目名を列挙 |
+| `hold_package_unavailable` | `package_state ≠ 'ready'` | 配布 ZIP を作れていない (理由つき) |
+
+停止中の優先順位: `hold_kill_switch` が**他のすべてに優先**する (R-1 の残枠があっても出さない: F-3DP-30 ②)。保留理由は複数同時に返し、画面は理由別の件数を出す(台帳 #9)。
+
+#### 17.10.3 公開状態確認 `tdp.listing.status.check` (G-D・kill switch)
+
+| 手順 | 内容 |
+|---|---|
+| 0 | `tdp_status_check_enabled` が**明示的に false** のときだけ `skipped` (`flag_off`)。取得失敗は既定の側 = 実行する |
+| 1 | 対象 = `state='published'` かつ `expected_public=true` かつ `item_url` あり。`tdp_listings` が `status_check_full_below` (30) 以下なら全件、超えたら「公開記録が新しい 30 件 + 残りを `status_check_cycle_days` 日で一巡」 |
+| 2 | **対照を先に取る**: BOOTH の既知の公開ページ (トップ等) が HTTP 200 で取れるか。取れなければ全対象を `unreachable` / `control_unreachable` として記録して終了 (**対照が無いと `abnormal` を出せない**: BOOTH 側の障害・当方の IP の遮断を処分と取り違えない) |
+| 3 | 各対象を取得 (素の `fetch`、間隔 3 秒以上、UA に連絡先、`robots.txt` 尊重、タイムアウト 20 秒)。**セッションに触れない** |
+| 4 | 分類: ネットワーク断・タイムアウト・5xx・429・403 とチャレンジ画面 → **`unreachable`** / 404・410 → 異常候補 / 200 で `isPublicPage()` が偽 (商品名が本文/メタに無い、購入導線が無い、別ページへ転送) → 異常候補 / 200 で真 → **`confirmed_public`** |
+| 5 | 異常候補は **60 秒後に 1 回だけ再取得し、対照も再確認**。再取得でも異常なら **`abnormal`**。再取得で回復/取得失敗なら `confirmed_public` / `unreachable` |
+| 6 | 観測を `tdp_public_observations` に、`tdp_listings.last_*` と `consecutive_unreachable` を更新 (`confirmed_public` で 0 に戻す) |
+| 7 | **`abnormal` が 1 件でもあれば** `engageKillSwitch` と同じ関数 (`source='auto'`、同一トランザクションで設定列 + `TdpRegulationEvent`) + LINE。すでに停止中なら二重に発火しない |
+| 8 | `outcome`: 全件 `confirmed_public` → `ok` / `unreachable` を含む → `partial` (項目別の理由) / 例外 → `failed`。`summary` = `{observed, confirmed, abnormal, unreachable, control_ok}` |
+
+- **取得できず (`unreachable`) は kill switch を発火しない** (D-5、申し送り 7): 偽陽性のコストは「出品停止 + 運営者が解除する 1 操作」だが、`unreachable` の頻発で毎回止まると運営者が解除を**反射的に押す**ようになり、本物の `abnormal` を見逃す。`unreachable` が 2 日連続した listing は G-D を `warn` にして LINE で知らせる(止めない)。
+- **強制/自主/削除を区別しない** (§16.6)。運営者が BOOTH で先に非公開にした場合も異常になる — だから `recordWithdrawal` は**BOOTH で非公開にする前に**記録させる(S-3DP-03 の文言)。
+- `isPublicPage(html, product)` は純関数で、**判定条件 (購入導線のセレクタ等) は U-16 のクローズ条件①(運営者の 1 商品で「公開/自主非公開」を取得して比べる)で確定**する。それまでは観測済みの事実 (存在しない ID は HTTP 404) だけで `abnormal` の一部を成立させ、200 の中身の判定は `unreachable` に倒す(=発火しない)安全側の仮実装にする【推測】。
+- **「検知の仕組みが止まったこと」の検知** (F-3DP-39 ⑤): 最終成功時刻は `jobs` から算出 (`done` かつ `outcome ∈ {ok, partial}`)。`status_check_stale_hours` (48) 超でホームと G-D 行に警告し、`tdp.gates.snapshot` (別 cron) が LINE を日次で送る。**残るリスク**: worker プロセス全体が止まると両方の cron が止まり、3DP 内からは通知できない (2026-08-30〜09-01 の事故と同型)。画面を開いたときのナビの異常印が最後の砦 — **運営者が画面を開かない限り気付けない**ことを受容し、§17.16-TBD-5 に残す。
+
+| `reason_code` | 観測値 | 運営者向け文言の要点 |
+|---|---|---|
+| `public_ok` | confirmed_public | 公開と確認できました |
+| `http_404` / `http_410` | abnormal (再取得でも) | 商品ページが見つかりません。BOOTH 側で非公開/削除された可能性 |
+| `title_mismatch` / `no_purchase_cta` / `redirected_away` | abnormal (再取得でも) | 200 だが公開商品ページと確認できない |
+| `http_5xx` / `http_429` / `http_403_challenge` / `timeout` / `network_error` | unreachable | 取得できませんでした (BOOTH 側の一時的な問題の可能性)。異常とは判定していません |
+| `control_unreachable` | unreachable | 比較用の公開ページも取得できないため判定を保留しました |
+
+#### 17.10.4 R-1 の枠 `computeSlots()` (D-2)
+
+```ts
+export function computeSlots(a: {
+  limit: number;                    // app_settings の該当媒体の上限。min(limit, TDP_MONTHLY_LIMIT_HARD_MAX) で読む
+  publishedThisMonth: number;       // state='published' かつ published_recorded_at が JST 当月
+  activeReservations: number;       // state='working' かつ slot_reserved_at が expire_days 以内
+}): { limit: number; published: number; reserved: number; used: number; remaining: number; allowed: boolean };
+```
+
+- `used = published + reserved`、`remaining = max(0, limit − used)`、`allowed = remaining > 0`。`canListMore` (実装済) は `computeSlots` へ委譲する薄いラッパにし、既存テスト 20 件を壊さない。
+- **予約は `startPublishWork` / `getDownloadUrl` が `tdp_listings(working)` を作る時点**。同一トランザクションで `SELECT ... FOR UPDATE` により `app_settings` の行を握って数える (並走する 2 商品が同時に最後の 1 枠を取れない)。
+- 予約は `slot_reserve_expire_days` (14) 経過で数えなくなる (公開されないまま枠を塞がない)。**予約を手動で返す操作は作らない** — 「予約して返して」の繰り返しで枠の意味が薄れるのを避ける(失効を待つ)。
+- **公開記録は枠超過でも受け付ける** (現実を記録する)。超過で記録された listing は `recorded_while_held=true` + `hold_reasons_at_record` を残し、ホームの要対応に出す。月の帰属は `published_recorded_at` の JST 月。
+- 複数媒体: 媒体ごとに枠を持つ。`updateMonthlyPublishLimit` は **各枠 ≤ 12 かつ合計 ≤ 12** を要求する (媒体を増やして総量を増やす抜け道を作らない: F-3DP-34 ②)。同じ商品を 2 媒体に出すと枠は 1 件ずつ消費する。
+
+### 17.11 エラー処理方針
+
+既存の例外階層 (`@a2p/contracts/errors` の `A2PError` 派生) を使い、**3DP 固有に足すのは 2 つだけ** (`packages/contracts/src/tdp/errors.ts`): `TdpHoldError extends ForbiddenError` (保留理由の配列を `details.reasons` に持つ。**エラーではなく通常の分岐を Action に伝える入れ物**) と `TdpTimeoutError extends PipelineError` (`retryable: true`)。
+
+| 層 | 例外 → 扱い | ユーザー向け | 内部ログ |
+|---|---|---|---|
+| **Server Action** | `ValidationError` (zod) → `fail('validation', 拒否理由と現在値)` / `ConflictError` (CAS 負け) → 「他の処理が先に進みました。画面を更新してください」 / `TdpHoldError` → 保留理由の配列 / それ以外 → `fail('internal', 'エラーが発生しました')` | 日本語の `userMessage` のみ。スタック・SQL・外部 API の本文は出さない | Pino `error` に `err` と `{action, productId}`。`details` に資格情報を入れない |
+| **ドメイン関数** | 純関数は throw せず `{ok:false, reasons:[TdpReason]}` を返す (保留・検査・ガード)。DB の CAS 負けは件数 0 で表す | — | — |
+| **Worker (タスク)** | `runTdpTask` が全例外を捕捉し ① `jobs.error` に日本語 1 文 ② `result_json.reasons` に `TdpReason[]` ③ `status='failed'` を書いて**再 throw** (graphile の再試行判定に委ねる)。**`retryable=false` の例外は `UnrecoverableError` 相当で再試行を打ち切る** | `TdpReason.message_ja` (§17.5.3) | `err` 全体 + `{task, jobId, tdp:{productId, generationId}}` |
+| **最終失敗時** | `maxAttempts` を使い切ったとき `runTdpTask` の `onFinalFailure` が商品の `status_reason_json` に「◯◯の工程が失敗しました: 理由」を書く (商品が `generating` のまま**無言で止まらない**)。状態は変えない(滞留として見える)。T-8 の条件を満たすときだけ `failed` | 同上 | `error` + LINE (初回のみ) |
+| **Agent** | zod 検証失敗 → `AgentError` (retryable)・同一タスク内で最大 2 回再呼び出し、なお失敗なら `PipelineError`。プロンプト未登録・モデル未割当 → `ConfigError` (**失敗ではなく保留理由**として扱う) | 「◯◯のプロンプトが登録されていません (設定)」 | role・model・prompt version |
+| **Meshy** | `MeshyError`: 401/403 → 「Meshy API キーが無効です (ポータル → API 管理)」/ 402 → 「Meshy の credit が不足しています。追加購入が必要です」(リトライしない) / 429 → 延期 / 5xx・応答喪失 → `lost` (§17.6) / `FAILED` → タスクの `task_error` を日本語化せず**原文を `detail` に**、`message_ja` は「Meshy が生成に失敗しました (再生成の上限内で自動的にやり直します)」 | 左のとおり | `{status, task_id}`。**本文は 300 字まで** (`meshy.ts` の既存方針) |
+| **R2** | `StorageError` (retryable) → タスクの再試行。アップロード後に DB 書込みが失敗した場合、**キーは固定**なので再実行は同じキーを上書き(孤児が増えない) | 「ファイルの保存に失敗しました。自動で再試行します」 | `{key, bucket}` |
+| **描画** | §17.5.5 の 5 種を `TdpReason` に。Chromium は 1 タスクにつき 1 起動・**必ず close**・落ちたらタスク内で 1 回だけ再起動 | 人間可読の文 (コードは展開の奥) | レンダラ名・GL エラー |
+| **外部サイト取得** | 失敗は**個別に記録して続行**。タスク全体は `partial` | 項目単位の理由 | URL・HTTP ステータス |
+
+- **「理由はあるのに画面に出ない」を作らない** (UR-3): 新しい継続処理を足すときは §17.5.3 の台帳に行を足してから実装する(足さない限り PR は通さない)。
+- **共通の翻訳**: `toTdpReason(err): TdpReason` を 1 箇所に置き、`code` → `message_ja` の対応表をテストで固定する(文言の食い違いを防ぐ)。
+
+### 17.12 オブザーバビリティ
+
+**`token_usage` の記録フック** (Hard Rule #5。**追加した呼び出しはここに行を足してから実装する**)
+
+| 呼び出し箇所 | 経路 | `tool` / `role` / `provider` | 備考 |
+|---|---|---|---|
+| `tdp.market.research` → `tdp.research` | `withTokenLogging` | `3dp` / `tdp.research` / 実 provider | `jobId` = 当該 `jobs` 行 |
+| `tdp.product.plan` → `tdp.planner` | 同 | `3dp` / `tdp.planner` | |
+| `tdp.asset.generate` → `tdp.prompter` | 同 | `3dp` / `tdp.prompter` | 再生成のたびに 1 行 |
+| `tdp.listing.compose` → `tdp.listing` | 同 | `3dp` / `tdp.listing` | 最大 3 回 |
+| `tdp.meshy.submit` (preview / refine / remesh) | `recordMeshyUsage()` — task_id 永続化の**直後** | `3dp` / `tdp.meshy` / `meshy` | `unit_price_snapshot.credits` に credit。FAILED でも課金済みとして残す (U-26) |
+| テクスチャの画像生成 (Inc-3) | `withImageLogging` | `3dp` / `tdp.texture` | |
+
+- 商品ごとの原価 `tdp_products.cost_jpy_total` は、`jobs.tdp_product_id` で結んだ `token_usage` の合計を**各タスクの末尾**で更新する (`apps/worker/src/tasks/tdp/lib/cost.ts`。ANP の `applyNoteArticleCostFromJob` と同型。失敗は warn のみで本体を止めない)。**企画前**の LLM 呼び出し (planner) は商品が無いので商品原価に入らず、`tool='3dp'` の月次合計にだけ入る。
+
+**Pino のログ構造** (`createLogger('worker.tdp.<task>')`)
+
+```jsonc
+{ "level": "info", "task": "tdp.meshy.submit", "jobId": "…", "graphileJobId": "123",
+  "tdp": { "productId": "…", "generationId": "…", "stage": "preview", "state": "submitted" },
+  "meshyTaskId": "…", "credits": 20, "durationMs": 812, "outcome": "ok" }
+```
+- 必ず出すキー: `task` / `jobId` / `tdp.productId`。台帳の状態遷移ごとに 1 行 (`from` → `to`)。**資格情報・署名付き URL・Meshy の応答本文全体はログに出さない** (`logger.ts` の redact に `meshy_task_id` 以外の秘密を足さない。`apiKey` は既存の redact 対象)。
+- 異常の目印となるログ文言を固定する (検索用): `tdp.post.outcome_unknown` / `tdp.taskid.persist_failed` / `tdp.slot.busy` / `tdp.killswitch.engaged` / `tdp.render.selfcheck_failed`。
+
+**最低限のメトリクス** (Prometheus 等は入れない。DB から導けるものを画面とスナップショットで出す)
+
+| 指標 | 源 | 出す場所 |
+|---|---|---|
+| 検査通過率 (1 発合格 / 再生成後 / 打ち切り / 補正で通過) | `tdp_assets.inspect_ok` + `normalized_json` + `tdp_generations` | S-3DP-07 原価と歩留まり (F-3DP-47) |
+| NG コード別件数 | `tdp_assets.inspect_json` | 同 |
+| 1 商品あたり credit と円 | `tdp_generations` + `token_usage` | 同 / S-3DP-03 |
+| 依拠性拒否率 | `tdp_products.derivative_check_json` | S-3DP-05 |
+| 月 credit 消費 vs 上限 / Meshy 残高 | `tdp_generations`・`tdp_resource_snapshots` | ホーム「資源」 |
+| 機械工程のリードタイム (企画→`ready`) | `tdp_products.created_at` と `status_changed_at` | S-3DP-07 (A-8 の実測) |
+| 滞留商品 | `status_changed_at` と `stall_hours` | ホーム要対応 |
+| 定期タスクの最終実行・結果・最終成功 | `jobs` と `TDP_CRON_TASKS` | S-3DP-08 / ホーム |
+| 公開状態の観測履歴・最終成功 | `tdp_public_observations` | S-3DP-03 / G-D |
+| 運営者の稼働分 | §17.10.1 G-E | ホーム |
+
+**通知 (LINE。既存 `pushLine` / `isLineRelayConfigured`。未設定なら握りつぶさず `jobs` に理由を残す)**: kill switch 発火 / `lost` (応答喪失) / 月 credit 上限到達 / Meshy 残高 `meshy_balance_warn` 割れ / 公開状態確認の 48 時間超不発 / 保留中に公開が記録された。**通知は 1 イベント 1 回** (連投しない: `kdp_session_alert_at` のクールダウンと同じ考え方で、通知済みを `jobs.result_json` に残す)。
+
+### 17.13 テスト戦略
+
+**Vitest — 純ロジック (速く・大量に)**
+
+| 対象 | 主な観点 |
+|---|---|
+| `computeGates` | 4 値すべて。**判定日前に `fail` を返さない** (G-B/G-C)・G-E と G-D の例外。設定値を変えると結果が変わる (リテラルが無いことの機械判定)。Jinxxy の算入 ON/OFF。欠測は `unevaluated` で `ok` にならない |
+| `computeSlots` / `deriveHoldReasons` | 予約の失効・月境界 (JST の 2026-09-30 23:59 / 10-01 00:00)・停止中の優先・天井 12 の合算 |
+| `decideAfterInspect` / `normalize` | 分類 3 種・補正後の再検査・shape で refine を呼ばない |
+| `checkListing` | 禁止語 8 語・必須 6 項目・数値不一致 (盛った 8,000 三角形)・開示が `targets` の全箇所 |
+| `computeNet` | §13.3.1 の 6 行 (¥100/300/500/800/1,000/1,500) を期待値に固定。¥500 → ¥427 |
+| `isPublicPage` / 分類 | 観測した 404 と、合成した 200/403/5xx/チャレンジ |
+| 依拠性ガード | 既存 20 件の回帰 + F-3DP-22 の通る 12 / 弾く 6 + 英語規則 |
+| 描画の自己検査 | 単色(白/黒)画像を渡すと失敗、模様のある画像で通過 |
+| `ALLOWED_TRANSITIONS` | 表の全遷移と、表に無い遷移の拒否。CHECK の許可値リストと `PRODUCT_STATUSES` の一致 |
+| エージェント I/O | 各 zod の境界値、`validateResearchOutput` の出所偽装、**`prompts` 本文がリサーチ前後でバイト一致** |
+
+**Vitest — 注入した `fetch` / 時計 / R2 のタスクテスト**: `tdp.meshy.submit` の**失敗系を網羅** (下表)。`MeshyClient` は `fetchImpl` 注入でテスト済みのものを使い回す。
+
+| ケース | 期待 |
+|---|---|
+| 正常 | POST 1 回・task_id 永続化・`token_usage` 1 行・poll 投入 |
+| 同じ `generation_id` で submit を 2 回 | **POST は合計 1 回** (`fetch` の呼出回数を数える) |
+| 並走する 2 本 (`Promise.all`) | POST 1 回、片方は `already_claimed` |
+| POST が 402 / 400 | `failed`・credit 0・再投入されない |
+| POST が 429 | `reserved` に戻り 120 秒後に再投入・attempts を消費しない |
+| POST が reject (ネットワーク) / 500 | `lost`・再 POST しない・LINE 通知 |
+| POST 成功後に task_id 保存が 1 回失敗 | 再試行して保存・POST は 1 回 |
+| 別の生成が `submitted` の間に 2 本目 | 部分 UNIQUE 違反 → 60 秒後に自分を再投入 |
+| refine を親なしで | DB の CHECK で拒否 / クライアントでも拒否 |
+| shape の検査 NG | **refine の `fetch` が 0 回** (F-3DP-13) |
+
+**Vitest — 実 PG の統合テスト** (`@testcontainers/postgresql`。docs/03 のとおり。**直列性は PG の性質なのでモックで証明できない**)
+
+1. 同一 `queueName` (`tdp-meshy`) に 2 本投入し、**実行区間が重ならない** (F-3DP-48)。
+2. 部分 UNIQUE `tdp_generations_single_inflight`: 2 本目の `submitted` が一意制約違反になる。
+3. CHECK: `approved_at` なしの `listed` / 親なしの refine / task_id なしの `submitted` / 天井超過の `tdp_monthly_publish_limit` が書けない。
+4. `recoverTdpOnBoot`: 15 分超ロックされた `tdp-*` キューが解放され、5 分のものは触られない (U-25 の内部表名の確認を兼ねる)。
+5. `is_distribution` の付け替えが部分 UNIQUE に違反しない。
+
+**静的テスト (再発防止。ファイルを grep する単体テスト)**
+
+| テスト | 防ぐもの |
+|---|---|
+| `createTextTo3d` / `createRemesh` の呼び出しが `meshy-submit.ts` だけ | 台帳を経由しない課金 |
+| `status: 'listed'` / `'approved'` を書く箇所が `product-transition.ts` だけ | 承認を経由しない `listed` (F-3DP-28 ①)。`app_settings` に自動承認の列/フラグが**存在しない**ことも検査 |
+| `TDP_CRON_TASKS` の全 `identifier` が `CRON_ITEMS` に、全 `task` が `buildTaskList()` にある | 登録漏れ (2026-10-09 の `locks.sweep` の再発) |
+| 解除 (`kill_release`) を書くのが `releaseKillSwitch` だけ / 自動解除のコードが無い | F-3DP-40 |
+| `gates.ts` / `hold.ts` に判定用の数値リテラルが無い (許可リスト方式) | F-3DP-38 |
+| `TDP_SETTINGS_DEFAULTS` と migration の `DEFAULT` が一致 | 既定値の二重定義 |
+
+**Playwright (E2E。`tests/e2e/`)**: 承認 (S-3DP-04) を最優先。
+
+| シナリオ | 見ること |
+|---|---|
+| 承認不可 → 可 | 条件を満たさないときフッターに**理由の箇条書き**が出て承認できない。満たすと承認でき、`approved` になる |
+| 差戻し 3 種 | 理由が空だと送れない。`rejected` / `ready` / `generating` への遷移 |
+| 出品作業 | 保留中は手順が無効で理由が出る。`recordPublished` で `listed`、URL 形式不正・重複を拒否 |
+| 停止と解除 | 全画面に停止中バー。解除は畳まれていて理由 20 字未満は送信できない。解除後に帯が消える |
+| 設定の天井 | R-1 に 13 を入れると**サーバーが拒否**し「13 は保存されていません (最大 12)。現在の値: 8」が出る |
+| 空状態 | 商品 0 件のホーム (Stage 0) に `ok` が出ない・「0 円」が出ない。定期タスク表に 5 行が「一度も実行されていません」で出る |
+
+**フィクスチャの扱い**
+- **GLB**: `packages/mesh/__tests__` の合成 GLB ビルダーを再利用し、「椅子 40m」「原点が浮いている」「UV 無し」「テクスチャ 4K」を作る(実ファイルを置かない)。
+- **Meshy の応答**: 取得した実応答があれば JSON に落として `__fixtures__/meshy/` に置く(キーは含めない)。**実キー試行 (U-13/U-24/U-26/U-29) の前は合成**で、合成であることをファイル名と先頭コメントに書く。
+- **BOOTH の HTML**: 観測済みは**存在しない ID の 404 のみ**(§16.6)。それ以外(公開商品ページ・チャレンジ画面)は**合成**で、U-16 のクローズ後に実物から作り直す。実物の保存は運営者の 1 商品に限り、他人の商品ページを fixtures に置かない。
+- **時計と JST**: `now` を注入。月境界のテストは固定の UTC 時刻(JST で 9 時間ずれる時刻)を使う。
+- **DB**: 統合テストはテストごとにスキーマを作り直す。本番の DB に向けたテストは書かない。
+- **手動確認(自動化しない)**: ZIP の日本語ファイル名が Windows/macOS で文字化けしない / SwiftShader で 6 枚が商品として見える (U-15) / FBX が Unity で開ける (U-19) — 完了条件に含めるが E2E には入れない。
+
+### 17.14 既存実装に手を入れる箇所 (コードは今回触っていない)
+
+#### d-1 `packages/mesh` (実装済み。テストは更新が要る)
+
+| ファイル | 変更 | 理由 |
+|---|---|---|
+| `meshy.ts` | `MeshyError` に **`definitelyNotCreated: boolean`** を足す。**HTTP 応答を受け取った 4xx のみ true**。`fetchImpl` が reject (ネットワーク断・タイムアウト) した例外は **`MeshyError` に包み直し**(現状は素の `TypeError` が漏れて呼び出し側が「POST されたか」を判別できない)、5xx と合わせて false | §17.6 の L7 (結果不明を再投入しない) の前提 |
+| `meshy.ts` | POST に `AbortSignal.timeout(30_000)`。429 の本文から `NoMorePendingTasks` / `NoMoreConcurrentTasks` を区別して `MeshyError.rateLimitKind` に | 譲る/延期の判断 (§17.6.2) |
+| `meshy.ts` | `MeshyTextTo3dArgs` に **`aiModel`** (必須扱い。`latest` を送らない) / `enablePbr?` / `modelType?` (**`lowpoly` は型で禁止**) を追加 | U-17 / §16.4.1 |
+| `meshy.ts` | `getBalance()` (`GET /openapi/v1/balance`。フィールド名未確認なので**生の応答を返し、残高の取り出しは呼び出し側が防御的に**) | F-3DP-11 / 47 |
+| `meshy.ts` | `createRemesh({ modelUrl, targetFormats: ['fbx'], convertFormatOnly: true })` / `getRemesh(id)` / `downloadModel(task, 'glb'\|'fbx')` | §16.3.2 |
+| `meshy.ts` | `waitForTask` は**スクリプト・ローカル検証用に残す**。worker は呼ばない (poll ステップが 1 回 1 GET の `getTask` を使う)。コメントで明記 | §17.5.2 |
+| `inspect.ts` | `inspectGlb(glb, thresholds, { stage?: 'shape'\|'final' })`。`shape` ではテクスチャ系・`missing_uv` を判定対象から外す (U-29 が確定するまで)。`InspectResult` に `thresholds_kind` | §17.5.5 |
+| `inspect.ts` | 新コード **`unsupported_texture_format`** (PNG/JPEG 以外) / **`unsupported_extension`** (Draco / meshopt / KTX2 / WebP) | §16.3.2 / F-3DP-15 |
+| `normalize.ts` (新規) + `index.ts` | `normalizeGlb(glb, { targetMaxSizeMeters, grounded, maxTextureSize })`: 等倍スケール・底面中央原点・テクスチャ縮小 (`sharp`。`packages/mesh` の依存に追加)。戻り値に `{scale_factor, translate, textures_resized}` | D-8 |
+| `index.ts` | 上記のエクスポート追加。`PROP_THRESHOLDS` / `ACCESSORY_THRESHOLDS` に**出典 URL と確認日**のコメント (F-3DP-16 / U-4) | |
+| `__tests__/meshy.test.ts` | ネットワーク reject / 5xx の `definitelyNotCreated=false`、4xx の `true`、`lowpoly` を送れないこと | |
+
+#### d-2 `packages/contracts`
+
+| 箇所 | 変更 |
+|---|---|
+| `tdp/derivative-guard.ts` | ① **英語規則を足す** (`in the style of` / `inspired by` / `fan ?art` / `from the (anime|game)` / `like <固有名詞>` など): 現行は日本語中心で、英語プロンプトを素通りさせる。**Inc-2 の試作登録で英語プロンプトが入る前に必要** ② 許可規則 (F-3DP-22。Inc-3) ③ `canListMore` を `computeSlots` へ委譲 (既存 20 件を壊さない) ④ `TDP_MONTHLY_LIMIT_HARD_MAX = 12` を export |
+| `agents/llm-client.ts` | `AgentRole` に `'tdp.texture'` (Inc-3)。`'tdp.meshy'` は LLM でないので足さない (`token_usage.role` は文字列で、`defaultToolForRole` が `tdp.` 前方一致で `3dp` に帰属する — テストに `tdp.meshy` / `tdp.texture` を足す) |
+| `package.json` `exports` | 新規ファイルごとに `./tdp/xxx` と `./agents/tdp` を足す(列挙式) |
+
+#### d-3 `apps/3dp` (§9.10 の差分に加えて)
+
+| ファイル | 変更 |
+|---|---|
+| `lib/settings-core.ts` | `MONTHLY_LIMIT_MAX = 50` → `TDP_MONTHLY_LIMIT_HARD_MAX` (contracts) を参照。入力欄の `max`・`messages.settings.errors.limitRange` の「0〜50」も同じ定数から (**Inc-1 で即時**) |
+| `lib/home-core.ts` | `PRODUCT_STATUSES` に `approved` / `withdrawn` を足し、正準順を §9.5 の流れ (`… ready, review, approved, listed, withdrawn, failed, rejected`) に。`PRODUCT_STATUSES` と DB の CHECK の許可値が一致するテストを足す |
+| `app/(app)/page.tsx` | 当月の出品数を `tdp_products.listed_at` ではなく **`computeSlots()` (公開記録 + 有効な予約)** から。ヒーローを「当月純利益」「1 商品あたりの売上」に (UR-1) |
+| `app/actions/settings.ts` | `updateMonthlyPublishLimit` を媒体別の入力に拡張 (§17.4) |
+
+#### d-4 `apps/worker`
+
+| ファイル | 変更 |
+|---|---|
+| `src/runner.ts` | `buildTaskList()` に §17.5.4 のタスクを登録。`startRunner` が `run()` の**前に** `recoverTdpOnBoot()`。`installGracefulShutdown` が `runner.stop()` の前に `tdpShutdown.abort()` |
+| `src/crontab.ts` | `CRON_ITEMS` に `TDP_CRON_TASKS` を展開 (§17.5.1)。`buildCronItemsWithSettings` には載せない |
+| `src/tasks/locks-sweep.ts` | **変更しない。ただし制約**: `sweepStaleJobs` は 120 分超の `running/queued` を `failed` にするため、`tdp.*` の行はそれを超えない設計 (poll の待ち上限 ≤ 90 分: §17.5.2)。行が 120 分を超える設計に変えるなら、`kind LIKE 'tdp.%'` を除外する変更が要る |
+| `Dockerfile` | `deps` ステージに **`COPY packages/mesh/package.json packages/mesh/package.json`** を追加 (**worker が `@a2p/mesh` を import する前に必須**)。`pnpm install --frozen-lockfile` が解決できなくなる。`three` を使う描画の束は `pnpm` の依存として入るので COPY は不要 |
+| `package.json` | `@a2p/mesh: workspace:*` / `three` / (P1) `tar-stream` を追加。`pnpm-lock.yaml` の更新を同じ変更に含める |
+
+#### d-5 その他
+
+| 箇所 | 変更 |
+|---|---|
+| `packages/credentials/src/{spec,store,test}.ts` | `meshy` (§16.4.4 の表のとおり。`switch` が型エラーになる箇所を漏らさない) |
+| `packages/storage/src/keys.ts` | §17.9.1 の関数 + `TDP_PREFIX` |
+| `packages/db` | `schema.prisma` / 手書き migration (§7.4) / `seed-tdp.ts` |
+| `.env.example` | `MESHY_API_KEY=` |
+| ドキュメント | `docs/10 §10.4b` (対象サービスに Meshy)・`docs/03 §4/§5` (依存 `three` / `@google/model-viewer` / `tar-stream`、env `MESHY_API_KEY`) — **本変更では docs/12 しか触れていないので、実装と同じ変更で更新する** (CLAUDE.md Rule #7/#8) |
+
+### 17.15 増分への割当 (マイグレーションと実装タスクの素材)
+
+DB は**増分ごとに分けて適用**する(使わないテーブルを先に作らない)。以下は `pm` がタスクに分解するための素材。
+
+| 増分 | DB の変更 | 実装の中身 | この設計が要求する前倒し・追加 |
+|---|---|---|---|
+| **Inc-1 (残)** | `app_settings` の列 (安全装置・上限・判定値・`tdp_settings_confirmed_json`・`tdp_u9/u10_json`・`tdp_tuning_json`)。`tdp_products` に `origin` / `plan_json` / `status_changed_at` / `status_reason_json` / `target_media` / `lineage_no`。CHECK (a)(d)(f)。`jobs` の列と index | `settings-core` の天井 12。設定画面のタブ化・提案値バッジ・U-9/U-10 回答欄。`status.ts` / `settings.ts` / `hold.ts` (`computeSlots`) | **F-3DP-38 / 41 のほか、`PRODUCT_STATUSES` と CHECK の許可値に `approved` / `withdrawn` を入れておく** (後から足すと CHECK の作り直しになる) |
+| **Inc-2** | `tdp_generations` / `tdp_gate_a_judgements` / `tdp_resource_snapshots`。`tdp_assets` と `tdp_products` の生成系の列。CHECK (a)(b)(c)。Meshy 系の `app_settings` 列 | `@a2p/mesh` の変更 (d-1)・`@a2p/credentials` の `meshy`・`runTdpTask`・`tdp.asset.generate/inspect/optimize`・`tdp.meshy.submit/poll`・`recoverTdpOnBoot`・`seed-tdp.ts`・**Dockerfile の COPY**・`TDP_CRON_TASKS` (まず `tdp.gates.snapshot` だけ登録して G-A 行を出す)・S-3DP-03 (版履歴・検査)・試作登録 | ① **`tdp.prompter` (F-3DP-21) を Inc-3 から Inc-2 へ**: 試作の生成プロンプトがここで要る (§17.16-TBD-2) ② **S-3DP-03 のアセット節に `ModelViewer` を前倒し**: G-A の運営者判定は GLB を見ないとできないが、§9.8 は承認画面 (Inc-4) にしか置いていない (§17.16-TBD-4) ③ 英語の依拠性規則 (d-2) |
+| **Inc-3** | `tdp_research_findings`。`tdp_products.source_research_id` | `tdp.market.research` / `tdp.product.plan` / `tdp.research` / `tdp.planner`・構成比・価格下限・`media.ts` の手取り・F-3DP-22・`tdp.texture` と テクスチャ経路 (U-23 の試作後) | テクスチャ種別は **1 セットを試作してからタスク分解** |
+| **Inc-4** | `tdp_manuscripts` / `tdp_review_events`。`tdp_previews` の追加列。`tdp_products` の承認系の列。CHECK (d) の `approved` 経由 | 描画 (`render/`)・`tdp.preview.render` / `tdp.listing.compose`・`listing-check.ts`・承認画面・`approveProduct` / `rejectReview` / `openReview`・媒体定義 (F-3DP-50) | R2 の CORS (運営作業)・U-15 の実機計測 |
+| **Inc-5** | `tdp_listings` / `tdp_public_observations` / `tdp_sales` / `tdp_payouts` / `tdp_regulation_events` / `tdp_gate_snapshots`。`tdp_products` の package 系の列。CHECK (e)。Jinxxy 系 | `tdp.package.build/verify`・`startPublishWork` / `getDownloadUrl` / `recordPublished` / `recordWithdrawal`・`booth-3dp-submit.mjs`・`tdp.listing.status.check`・kill switch・`tdp.sales.fetch` (手入力から)・`computeGates` 全ゲート・撤退モード | **U-9 / U-10 の回答欄は Inc-1 から**入れる (出品の前に必須なので、画面は先に出る)。U-19 (Unity での FBX) が ZIP 第 1 段の前提 |
+
+### 17.16 TBD (PM が優先度を判断する)
+
+| # | 内容 | 推奨 | 影響 |
+|---|---|---|---|
+| TBD-1 | `docs/12` が 2,500 行を大きく超えている (約 4,500 行)。分割するか | **分割しない**(ANP が docs/11 に集約する前例)が、§9 (画面) と §17 (プログラム設計) が長い。分割するなら `docs/12a-3dp-screens.md` 等。**今回は 1 ファイルのまま** | 読みにくさのみ |
+| TBD-2 | `tdp.prompter` (F-3DP-21) の増分: 現行は Inc-3。Inc-2 の試作生成にプロンプトが要る | **Inc-2 へ前倒し**。代案: 試作登録で運営者が英語プロンプトを必ず書く(運営者の負担が増える) | §10 の増分表の書換え |
+| TBD-3 | **ライセンス・再配布条件の標準文面**と **AI 開示の標準文面**(使用プロバイダ名を含む)は運営者の承認が要る(法務的な文面) | 設計は `license_block` / `ai_disclosure_block` の差し込み口のみ。**文面案は「提案・未承認」で `media.ts` に置き**、承認前は出品を保留(`hold_media_incomplete` に含める) | Inc-4 のブロッカー |
+| TBD-4 | G-A の運営者判定のために **Inc-2 の S-3DP-03 に GLB ビューアが要る**(§9.8 は承認画面にだけ記載) | S-3DP-03 のアセット節に `ModelViewer` を置く(同じ部品の再利用)。`getViewerUrl` は Inc-2 から | ui-design の追記が要る |
+| TBD-5 | **worker プロセス全体の停止は 3DP 内から通知できない**(公開状態確認も日次スナップショットも同じ worker) | 受容 + 画面のナビの異常印。外形監視(Railway の通知・外部 uptime)は A2P/ANP 共通の課題で 3DP 単独では解かない | G-D の「検知の仕組みが止まった」の完全性 |
+| TBD-6 | **R-1 の数え方が UI 設計と変わった**: 「公開記録時」→「予約(出品作業の開始)+公開記録」(D-2)。ホームの「当月の出品 N 件」は「N 件 (うち作業中 K 件)」に | 推奨どおり。UI 文言の追記が要る | §9.8 S-3DP-01/03 |
+| TBD-7 | **D-8 (寸法・原点・テクスチャ解像度を補正で直す)** は F-3DP-14 の「NG → 再生成」の意味を変える(補正で通過した分は歩留まりに別計上) | 承認推奨。承認されない場合、Meshy の出力はスケールが保証されないため再生成が頻発し、G-A の credit が膨らむ | F-3DP-14 / 47 の受入文言 |
+| TBD-8 | `ACCESSORY_THRESHOLDS.maxTextureCount = 2` と Meshy の PBR 出力の整合(§17.5.5) | U-2 / U-17 の実測前に値を変えない。実測で超過が常態なら、`enablePbr:false` か しきい値の見直し(F-3DP-16 の手順で差分を §12 に記録) | 歩留まり・G-A |
+| TBD-9 | Jinxxy の自動化(U-5)と `jinxxy_api` の売上取得 | Inc-5 後半。まず手動 1 件 | F-3DP-33 |
+| TBD-10 | `Job.status` に `skipped` 等を足さず `result_json.outcome` で表した | 現状どおり(共有テーブルの語彙を壊さない) | 画面の写像のみ |
+| TBD-11 | AI 組織 (docs/06) の予算配分対象に 3DP を含めるか(§15.8-15) | 本設計の範囲外。**含める場合も自動停止は禁止**(§14.7) | docs/06 |
+
+### 17.17 後続エージェント (pm) への申し送り
+
+1. **増分の再編が 2 件**: ① `tdp.prompter` を Inc-2 へ (TBD-2) ② S-3DP-03 に `ModelViewer` を Inc-2 で (TBD-4)。`docs/04` / `docs/12 §9.8` / `§10` の追記が要る。
+2. **Inc-1 に前倒しで入れるもの**: 天井 12 (`settings-core` と CHECK)・`approved`/`withdrawn` を許可値に・`tdp_tuning_json` を含む `app_settings` 列・U-9/U-10 回答欄・`jobs.tdp_product_id`。これらは**後から足すと移行が要る**ものだけ。
+3. **Inc-2 の実装タスクを漏らさない**: `apps/worker/Dockerfile` の `COPY packages/mesh/package.json` / `apps/worker/package.json` への `@a2p/mesh` / `pnpm-lock.yaml` の更新 / `.env.example` の `MESHY_API_KEY` / `packages/contracts/package.json` の `exports` / `AgentRole` と `defaultToolForRole` のテスト。
+4. **Inc-2 の完了条件に「実測の記録」を含める**: U-13 (所要・レート)・U-14 (歩留まり)・U-17 (モデル)・U-24 (応答喪失の回収)・U-25 (キューのロック回収)・U-26 (失敗時の credit)・U-29 (shape の UV)。**実キーを入れる前に二重課金の静的テスト(§17.13)と統合テストが緑であること**をタスクの前提にする。
+5. **台帳 (`tdp_generations`) と `meshy-submit.ts` が最重要**。レビューの観点は §17.6.1 の L1〜L9 と §17.13 の失敗系 10 ケース。`createTextTo3d` / `createRemesh` を他の場所から呼ぶ変更は却下。
+6. **手書き SQL (§7.4) は Prisma が追跡しない**。マイグレーションのレビューで (a)〜(f) の有無を確認する。適用前の `SELECT` (既存値の確認) を手順に書く。
+7. **cron の時刻を変えた**(`tdp.product.plan` を `30 21` に)。§16.5.2 の表は更新が要る。
+8. **U-9 / U-10 は運営者への質問**で実装待ちではない。Inc-5 の初回出品の前に聞く。TBD-3 (標準文面の承認) は Inc-4 のブロッカー。
+9. **本設計で解かなかったもの**: BOOTH 売上の自動取得(U-28)・Jinxxy の API(U-5)・テクスチャ種別の生成経路(U-23)・`.unitypackage`(U-20)・描画の実機性能(U-15/U-18)・worker 全停止の外形監視(TBD-5)。いずれも仮置きの安全側で止めてあり、**実測が要るものは該当増分のタスクに「測る」を含める**。
+10. **Hard Rule #7/#8**: 実装と同じ変更で `docs/10 §10.4b` / `docs/03 §4・§5` を更新する(§17.14 d-5)。`docs/05` と `docs/09` は A2P のものなので触らない。
