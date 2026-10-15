@@ -2,10 +2,13 @@
 
 import { useState, useTransition } from 'react';
 
-import { forceReady, retryEditor, retryJudge } from '@/app/actions/review';
+import { forceReady, retryEditor, retryJudge, retryOutline } from '@/app/actions/review';
 import { messages } from '@/lib/messages';
 
-/** `status='needs_human_review'` の記事に表示する再審査導線 (docs/11 §7 申し送り6)。 */
+/**
+ * `status='needs_human_review'` の記事に表示する再審査導線 (docs/11 §7 申し送り6)。
+ * 横断して片付ける場合は `/articles` の「要確認」の節 (F-ANP-57) を使う。
+ */
 export function ArticleReviewActions({ articleId }: { articleId: string }) {
   const [error, setError] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
@@ -36,6 +39,15 @@ export function ArticleReviewActions({ articleId }: { articleId: string }) {
           className="rounded-card border border-border-warm bg-cream-light px-3 py-1.5 text-button-sm text-charcoal disabled:opacity-50"
         >
           {messages.accountDetail.reviewActions.retryEditor}
+        </button>
+        {/* 69 点以下は「構成・切り口の問題」として採点されるので、こちらが本筋 (2026-10-15)。 */}
+        <button
+          type="button"
+          disabled={isPending}
+          onClick={() => run(retryOutline)}
+          className="rounded-card border border-border-warm bg-cream-light px-3 py-1.5 text-button-sm text-charcoal disabled:opacity-50"
+        >
+          {messages.accountDetail.reviewActions.retryOutline}
         </button>
         <button
           type="button"

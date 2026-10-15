@@ -3,11 +3,18 @@
  * すべての note アカウントを横断し、運営者要望 (2026-09-21)「作成中、公開前、公開中の記事が全部
  * 一覧化」に合わせて **段階タブ (すべて / 作成中 / 公開前 / 公開中 / 失敗・非公開)** で切り替える。
  * 段階の定義は `lib/article-stage.ts`。アカウント・有料提案の絞り込みも併用できる。
+ *
+ * [F-ANP-57 / 2026-10-15] 先頭に「要確認」の節を置く。品質基準に届かず
+ * `needs_human_review` で止まった記事を横断表示し、落ちた理由を見てその場で承認/差し戻しできる
+ * (A2P の `/content-review` にある判定ゲートの節と同じ役割)。
  */
 import Link from 'next/link';
 
+import { NOTE_JUDGE_PUBLISH_FLOOR } from '@a2p/contracts/agents/anp';
 import { prisma } from '@a2p/db';
 
+import { ReviewQueue, type ReviewQueueRow } from './review-queue';
+import { loadJudgeFeedbackMany, toFeedbackItems } from '@/lib/judge-feedback';
 import {
   ARTICLE_STAGES,
   articleStageWhere,
@@ -81,6 +88,30 @@ export default async function ArticlesPage({
       _count: { _all: true },
     }),
   ]);
+  // [F-ANP-57] 要確認の節は絞り込みに関係なく「全アカウント・停止中の全件」を出す。
+  // 一覧の絞り込みに連動させると、タブを切り替えた運営者から滞留が見えなくなるため。
+  const reviewRaw = await prisma.noteArticle.findMany({
+    where: { status: 'needs_human_review' },
+    orderBy: { created_at: 'asc' },
+    select: {
+      id: true,
+      title: true,
+      quality_score: true,
+      created_at: true,
+      account: { select: { id: true, display_name: true } },
+    },
+  });
+  const judgeFeedback = await loadJudgeFeedbackMany(reviewRaw.map((a) => a.id));
+  const reviewRows: ReviewQueueRow[] = reviewRaw.map((a) => ({
+    id: a.id,
+    title: a.title,
+    accountId: a.account.id,
+    accountName: a.account.display_name,
+    score: a.quality_score,
+    reasons: toFeedbackItems(judgeFeedback.get(a.id) ?? null).filter((line) => !line.startsWith('品質スコア:')),
+    createdAt: a.created_at instanceof Date ? a.created_at.toISOString() : null,
+  }));
+
   const counts = countArticleStages(stageRows);
   const total = stageRows.length;
   const countByAccount = new Map(accountCounts.map((r) => [r.note_account_id, r._count._all]));
@@ -108,6 +139,8 @@ export default async function ArticlesPage({
         <h1 className="text-sub-heading font-medium text-charcoal">{m.pageTitle}</h1>
         <p className="mt-1 text-body text-muted">{m.pageDescription}</p>
       </header>
+
+      {reviewRows.length > 0 && <ReviewQueue rows={reviewRows} floor={NOTE_JUDGE_PUBLISH_FLOOR} />}
 
       {/* 段階タブ */}
       <nav aria-label={m.stageTabsLabel} className="mt-space-relaxed flex flex-wrap gap-2" data-testid="articles-stage-tabs">

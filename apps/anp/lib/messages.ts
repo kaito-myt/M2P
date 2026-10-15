@@ -281,6 +281,7 @@ export const messages = {
     reviewActions: {
       retryJudge: '再審査(品質判定をやり直す)',
       retryEditor: '校閲からやり直す',
+      retryOutline: '構成からやり直す',
       forceReady: 'そのまま公開可にする',
     },
     errors: {
@@ -292,6 +293,7 @@ export const messages = {
         'ドライラン設定が有効なため実公開はできません(/settings でドライランをOFFにしてください)',
       retryJudgeFailed: '再審査の起動に失敗しました',
       retryEditorFailed: '校閲やり直しの起動に失敗しました',
+      retryOutlineFailed: '構成やり直しの起動に失敗しました',
       forceReadyFailed: '公開可への変更に失敗しました',
     },
     publishDryRunModeNotice: 'ドライラン設定が有効なため「公開する」は無効化されています(/settings で変更できます)',
@@ -699,6 +701,28 @@ export const messages = {
     pageTitle: '記事一覧',
     pageDescription: 'すべてのアカウントの note 記事を、作成中・公開前・公開中の段階ごとに一覧します。',
     empty: '条件に一致する記事がありません。',
+    // F-ANP-57: 品質基準に届かず止まった記事の人間判断ゲート (A2P の F-099 と同じ役割)。
+    reviewQueue: {
+      title: '要確認 — 品質基準に届かず止まっている記事',
+      description: (floor: number) =>
+        `AI の採点が公開下限 (${floor}点) に届かなかった記事です。中身を見て良ければ承認すると公開まで進みます。直させたいときは構成または校閲からやり直せます。`,
+      summary: (n: number, oldestDays: number) =>
+        `${n}件 停止中（最も古いものは ${oldestDays}日前）`,
+      columnScore: 'スコア',
+      columnReason: '落ちた理由 (AI の採点コメント)',
+      reasonUnknown: '採点コメントが残っていません',
+      scoreShort: (score: number, floor: number) => `${score}点 / 下限${floor}点`,
+      selectAll: 'すべて選択',
+      clearSelection: '選択を外す',
+      selectedCount: (n: number) => `${n}件 選択中`,
+      approveSelected: '選択した記事を承認する',
+      approveAll: '表示中のすべてを承認する',
+      approved: (n: number) => `${n}件を承認しました（公開待ちに進みます）`,
+      confirmApprove: (n: number) =>
+        `${n}件を承認して公開待ちにします。AI の品質判定は無視されます。よろしいですか？`,
+      openArticle: '記事を開く',
+      recommendOutline: '※ 下限に届かない記事は「構成からやり直す」のほうが直りやすいです（切り口の問題として採点されています）。',
+    },
     stageTabsLabel: '段階で絞り込む',
     stageAll: 'すべて',
     stageLabel: {
