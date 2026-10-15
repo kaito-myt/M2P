@@ -264,6 +264,9 @@ LTS / latest stable を基本とし、Phase 0-1 では新規プロジェクト�
 | `@tailwindcss/typography` | `^0.5` | 章本文プレビューの Markdown レンダリング |
 | `class-variance-authority` | `^0.7` | shadcn 標準依存。バリアント定義 |
 | `clsx` / `tailwind-merge` | `^2` / `^2` | shadcn 標準依存。className 合成 |
+| `three` | `^0.x` (実装時に最新安定を固定) | 3DP のプレビュー描画 (`apps/worker`、Playwright Chromium 上)。詳細は `docs/12-3dp-design.md` §16.2 |
+| `@google/model-viewer` | `^4` (実装時に確認) | 3DP の承認画面の GLB 対話ビューア (`apps/3dp`)。`docs/12` §16.8 |
+| `tar-stream` | `^3` | 3DP の `.unitypackage` 生成 (P1、`apps/worker`)。`docs/12` §16.3.3 |
 
 ---
 
@@ -307,6 +310,7 @@ LTS / latest stable を基本とし、Phase 0-1 では新規プロジェクト�
 | `AMAZON_EMAIL` | `sales.fetch` セッション切れ時の自動再ログイン用 Amazon アカウントのメールアドレス（LINE 双方向認証リレーと併用） | 任意（未設定なら自動再ログインは行わず従来通り手動キャプチャにフォールバック） | `operator@example.com` |
 | `AMAZON_PASSWORD` | 同上のパスワード | 任意 | — |
 | `AMAZON_ADS_CLIENT_ID` / `_CLIENT_SECRET` / `_REFRESH_TOKEN` / `_PROFILE_ID` / `_REGION` | Amazon Advertising API (F-090)。2026-09-21 から M2P「API 管理」(`api_credentials.provider='amazon_ads'`) が優先、env はフォールバック | 任意 | `scripts/ads/amazon-ads-oauth.mjs` で取得 |
+| `MESHY_API_KEY` | 3DP の 3D 生成 (Meshy API)。M2P「API 管理」(`api_credentials.provider='meshy'`、`@a2p/credentials` に追加予定) が優先、env は**フォールバック** (Tavily と同じ規約)。`docs/12-3dp-design.md` §16.4.4 | 任意 (DB 未設定時は 3DP の生成のみ停止) | Meshy ダッシュボードで発行 (Pro 以上) |
 
 > **LINE_* も同様に M2P「API 管理」(`api_credentials.provider='line'`) が優先、env はフォールバック**（2026-09-21、docs/10 §10.4b-2）。
 
