@@ -3,7 +3,12 @@ import { z } from 'zod';
 import { createLogger, type Logger } from '@a2p/contracts/logger';
 import { decryptKdpCredentials, encryptKdpCredentials } from '@a2p/crypto';
 import { prisma as defaultPrisma } from '@a2p/db';
-import { parseKdpReportWorkbook, normalizeKdpRows } from '@a2p/kdp-report';
+import {
+  parseKdpReportWorkbook,
+  normalizeKdpRows,
+  deriveKenpRateFromRecords,
+  type KenpEffectiveRate,
+} from '@a2p/kdp-report';
 
 import { isLineRelayConfigured, pushLine, type LineAuthRelayPrisma } from './lib/line-auth-relay.js';
 import { kdpSessionAlertGate } from './lib/kdp-session-alert.js';
@@ -79,8 +84,17 @@ export interface SalesFetchPrisma {
   salesRecord: {
     findMany(args: {
       where: { book_id: { in: string[] }; year_month: string };
-      select: { book_id: true; source: true };
-    }): Promise<Array<{ book_id: string; source: string }>>;
+      select: { book_id: true; source: true; kenp_royalty_jpy: true };
+    }): Promise<Array<{ book_id: string; source: string; kenp_royalty_jpy?: number }>>;
+    /** KENP 実効レート導出用: 確定済み (推計でない) KENP 金額を持つ過去月の行。 */
+    findMany(args: {
+      where: {
+        year_month: { lt: string };
+        kenp_royalty_jpy: { gt: number };
+        kenp_royalty_estimated_jpy: number;
+      };
+      select: { year_month: true; kenp_read: true; kenp_royalty_jpy: true; source: true };
+    }): Promise<Array<{ year_month: string; kenp_read: number; kenp_royalty_jpy: number; source?: string }>>;
     upsert(args: {
       where: { book_id_year_month: { book_id: string; year_month: string } };
       create: {
@@ -89,12 +103,16 @@ export interface SalesFetchPrisma {
         royalty_jpy: number;
         units_sold: number;
         kenp_read: number;
+        kenp_royalty_jpy: number;
+        kenp_royalty_estimated_jpy: number;
         source: string;
       };
       update: {
         royalty_jpy: number;
         units_sold: number;
         kenp_read: number;
+        kenp_royalty_jpy: number;
+        kenp_royalty_estimated_jpy: number;
         source: string;
       };
     }): Promise<unknown>;
@@ -225,16 +243,31 @@ export async function runSalesFetch(deps: SalesFetchDeps): Promise<SalesFetchRes
   let normalized;
   try {
     const parsed = parseKdpReportWorkbook(dl.buffer);
+    // KENP ページ数が KDP ダッシュボードと食い違う調査用 (docs/09 §KENP 二重計上調査): 解析したシートと行数を残す。
+    const dupes = countDuplicateKeys(parsed.rows);
+    log.info(
+      {
+        runId,
+        sheetsParsed: parsed.sheetsParsed,
+        rowCount: parsed.rows.length,
+        months: parsed.months,
+        duplicateKeyCount: dupes.count,
+        maxDuplicate: dupes.max,
+      },
+      'sales.fetch parsed report',
+    );
     const fx = await getFxUsdJpy(db);
     normalized = normalizeKdpRows(parsed.rows, {
       targetMonth: payload.year_month,
       monthlySummaries: parsed.monthlySummaries,
       fxToJpy: { USD: fx },
+      kenpRate: await getKenpRate(db, payload.year_month),
     });
   } catch (err) {
     log.warn({ err, runId }, 'failed to parse KDP report');
     return fail(db, runId, now, 'parse_error', 'レポートの解析に失敗しました', log);
   }
+  log.info({ runId, totals: normalized.totals }, 'sales.fetch normalized totals');
 
   if (normalized.rows.length === 0) {
     // 当月にまだ実績が無いケース等。エラーではなく 0 件 done。
@@ -255,17 +288,24 @@ export async function runSalesFetch(deps: SalesFetchDeps): Promise<SalesFetchRes
   // 手動確定(manual_upload)は自動で上書きしない。
   const existing =
     bookIds.length > 0
-      ? await db.salesRecord.findMany({ where: { book_id: { in: bookIds }, year_month: payload.year_month }, select: { book_id: true, source: true } })
+      ? await db.salesRecord.findMany({ where: { book_id: { in: bookIds }, year_month: payload.year_month }, select: { book_id: true, source: true, kenp_royalty_jpy: true } })
       : [];
   const existingSource = new Map(existing.map((e) => [e.book_id, e.source]));
+  const existingKenpConfirmed = new Map(existing.map((e) => [e.book_id, (e.kenp_royalty_jpy ?? 0) > 0]));
 
   let upserted = 0;
   let skippedProtected = 0;
+  let skippedEstimate = 0;
   for (const r of normalized.rows) {
     const bookId = bookByAsin.get(r.asin);
     if (!bookId) continue;
     if (PROTECTED_SOURCES.has(existingSource.get(bookId) ?? '')) {
       skippedProtected++;
+      continue;
+    }
+    // 推計は確定済み KENP 金額を上書きしない (確定 > 推計)。確定値の取込は推計を 0 に戻す。
+    if (r.kenp_royalty_estimated_jpy > 0 && existingKenpConfirmed.get(bookId)) {
+      skippedEstimate++;
       continue;
     }
     try {
@@ -277,12 +317,16 @@ export async function runSalesFetch(deps: SalesFetchDeps): Promise<SalesFetchRes
           royalty_jpy: r.royalty_jpy,
           units_sold: r.units_sold,
           kenp_read: r.kenp_read,
+          kenp_royalty_jpy: r.kenp_royalty_jpy,
+          kenp_royalty_estimated_jpy: r.kenp_royalty_estimated_jpy,
           source: 'auto',
         },
         update: {
           royalty_jpy: r.royalty_jpy,
           units_sold: r.units_sold,
           kenp_read: r.kenp_read,
+          kenp_royalty_jpy: r.kenp_royalty_jpy,
+          kenp_royalty_estimated_jpy: r.kenp_royalty_estimated_jpy,
           source: 'auto',
         },
       });
@@ -298,11 +342,62 @@ export async function runSalesFetch(deps: SalesFetchDeps): Promise<SalesFetchRes
       status: 'done',
       records_upserted: upserted,
       finished_at: now(),
-      ...(skippedProtected > 0 ? { error_message: `手動確定 ${skippedProtected} 件は上書き回避` } : {}),
+      ...(skippedProtected > 0 || skippedEstimate > 0 || normalized.estimatedKenpRoyaltyJpy > 0
+        ? {
+            error_message: [
+              skippedProtected > 0 ? `手動確定 ${skippedProtected} 件は上書き回避` : null,
+              skippedEstimate > 0 ? `確定済み KENP ${skippedEstimate} 件は推計での上書き回避` : null,
+              normalized.estimatedKenpRoyaltyJpy > 0
+                ? `KENP 推計 ¥${normalized.estimatedKenpRoyaltyJpy} を計上 (根拠 ${normalized.kenpRateUsed?.month} レート)`
+                : null,
+            ]
+              .filter(Boolean)
+              .join(' / '),
+          }
+        : {}),
     },
   });
   log.info({ runId, recordsUpserted: upserted, skippedProtected }, 'sales.fetch done');
   return { ok: true, recordsUpserted: upserted, runId };
+}
+
+/**
+ * 対象月より前の確定月 (DB の KENP 確定金額 ÷ ページ数) から実効レートを導出する。
+ * 確定月が無ければ null = 推計しない。取得失敗も推計しない側に倒す (既定レートは置かない)。
+ */
+async function getKenpRate(db: SalesFetchPrisma, yearMonth: string): Promise<KenpEffectiveRate | null> {
+  try {
+    const confirmed = await db.salesRecord.findMany({
+      where: {
+        year_month: { lt: yearMonth },
+        kenp_royalty_jpy: { gt: 0 },
+        kenp_royalty_estimated_jpy: 0,
+      },
+      select: { year_month: true, kenp_read: true, kenp_royalty_jpy: true, source: true },
+    });
+    return deriveKenpRateFromRecords(confirmed, yearMonth);
+  } catch {
+    return null;
+  }
+}
+
+/** 同一 asin|marketplace|month|royalty_kind の行が複数あるか (二重計上調査用。docs/09 §10.4)。 */
+function countDuplicateKeys(rows: ReadonlyArray<{ asin: string; marketplace?: string | null; month?: string | null; royalty_kind?: string }>): {
+  count: number;
+  max: number;
+} {
+  const seen = new Map<string, number>();
+  for (const r of rows) {
+    const k = `${r.asin}|${r.marketplace ?? ''}|${r.month ?? ''}|${r.royalty_kind ?? 'paid'}`;
+    seen.set(k, (seen.get(k) ?? 0) + 1);
+  }
+  let count = 0;
+  let max = 1;
+  for (const n of seen.values()) {
+    if (n > 1) count++;
+    if (n > max) max = n;
+  }
+  return { count, max };
 }
 
 async function getFxUsdJpy(db: SalesFetchPrisma): Promise<number> {

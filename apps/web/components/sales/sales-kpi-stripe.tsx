@@ -25,7 +25,15 @@ export function SalesKpiStripe({ summary }: SalesKpiStripeProps) {
       testId="sales-kpi-stripe"
       columns={6}
       items={[
-        { label: m.totalRoyaltyLabel, value: formatJpy(summary.total_royalty_jpy), testId: 'kpi-total-royalty' },
+        {
+          label: m.totalRoyaltyLabel,
+          value: formatJpy(summary.total_royalty_jpy),
+          note:
+            summary.total_kenp_estimated_jpy > 0
+              ? m.kenpEstimateNote(formatJpy(summary.total_kenp_estimated_jpy))
+              : undefined,
+          testId: 'kpi-total-royalty',
+        },
         {
           label: m.totalBooksLabel,
           value: summary.total_books.toLocaleString('ja-JP'),

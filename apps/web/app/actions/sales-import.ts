@@ -21,7 +21,12 @@ import { prisma } from '@a2p/db';
 
 import { getSessionOrThrow } from '@/lib/auth-helpers';
 import { parseKdpReportWorkbook, type KdpReportKind } from '@/lib/kdp-sales/parse';
-import { normalizeKdpRows, type NormalizedSalesRow } from '@/lib/kdp-sales/normalize';
+import {
+  deriveKenpRateFromRecords,
+  normalizeKdpRows,
+  type KenpEffectiveRate,
+  type NormalizedSalesRow,
+} from '@/lib/kdp-sales/normalize';
 
 const YM_RE = /^\d{4}-\d{2}$/;
 const MAX_FILE_BYTES = 15 * 1024 * 1024; // 15MB
@@ -52,6 +57,10 @@ export interface SalesImportPreview {
   monthsInFile: string[];
   /** KENP ロイヤリティを概要合計から按分計上した総額 (見込みレポート時のみ >0) */
   allocatedKenpRoyaltyJpy: number;
+  /** KENP を確定月の実効レートで推計計上した総額 (royalty に含まれる。>0 なら推計を含む) */
+  estimatedKenpRoyaltyJpy: number;
+  /** 推計に使った実効レートの根拠月と 円/頁 (推計しなかった場合は null) */
+  kenpRateUsed: KenpEffectiveRate | null;
   sheetsSeen: string[];
   sheetsParsed: string[];
   detectedHeaders: string[];
@@ -59,6 +68,19 @@ export interface SalesImportPreview {
 }
 
 /** model_catalog から USD→JPY の代表レートを取得 (無ければ 150 fallback)。 */
+/** 対象月より前の確定月 (推計でない KENP 金額) から実効レートを導出する。無ければ null。 */
+async function getKenpRate(yearMonth: string): Promise<KenpEffectiveRate | null> {
+  const records = await prisma.salesRecord.findMany({
+    where: {
+      year_month: { lt: yearMonth },
+      kenp_royalty_jpy: { gt: 0 },
+      kenp_royalty_estimated_jpy: 0,
+    },
+    select: { year_month: true, kenp_read: true, kenp_royalty_jpy: true, source: true },
+  });
+  return deriveKenpRateFromRecords(records, yearMonth);
+}
+
 async function getFxUsdJpy(): Promise<number> {
   const row = await prisma.modelCatalog.findFirst({
     where: { is_current: true },
@@ -113,6 +135,7 @@ export async function previewSalesReport(
     fxToJpy: { USD: fxUsdJpy },
     targetMonth: yearMonth,
     monthlySummaries: parsed.monthlySummaries,
+    kenpRate: await getKenpRate(yearMonth),
   });
 
   // 選択した月がファイルに無い場合は、含まれる月を案内する。
@@ -152,6 +175,8 @@ export async function previewSalesReport(
     unconvertedCurrencies: norm.unconvertedCurrencies,
     monthsInFile: parsed.months,
     allocatedKenpRoyaltyJpy: norm.allocatedKenpRoyaltyJpy,
+    estimatedKenpRoyaltyJpy: norm.estimatedKenpRoyaltyJpy,
+    kenpRateUsed: norm.kenpRateUsed,
     sheetsSeen: parsed.sheetsSeen,
     sheetsParsed: parsed.sheetsParsed,
     detectedHeaders: parsed.detectedHeaders,
@@ -170,6 +195,8 @@ const CommitSchema = z.object({
         royalty_jpy: z.number().int(),
         units_sold: z.number().int(),
         kenp_read: z.number().int(),
+        kenp_royalty_jpy: z.number().int().default(0),
+        kenp_royalty_estimated_jpy: z.number().int().default(0),
       }),
     )
     .min(1)
@@ -199,7 +226,10 @@ export async function commitSalesReport(
     return fail('validation', '取込データが不正です', parsed.error.flatten());
   }
   const { account_id, year_month, report_kind, rows } = parsed.data;
-  const source = report_kind === 'estimate' ? SOURCE_ESTIMATE : SOURCE_CONFIRMED;
+  // 推計 KENP を含む取込は、レポート種別に関わらず「見込み」扱い (確定値の再取込で上書きできるように)。
+  const hasKenpEstimate = rows.some((r) => r.kenp_royalty_estimated_jpy > 0);
+  const isEstimateImport = report_kind === 'estimate' || hasKenpEstimate;
+  const source = isEstimateImport ? SOURCE_ESTIMATE : SOURCE_CONFIRMED;
 
   // 手動取込の実行履歴を作成 (running → done)。
   const run = await prisma.salesFetchRun.create({
@@ -217,9 +247,10 @@ export async function commitSalesReport(
   const bookIds = Array.from(bookByAsin.values());
   const existing = await prisma.salesRecord.findMany({
     where: { book_id: { in: bookIds }, year_month },
-    select: { book_id: true, source: true },
+    select: { book_id: true, source: true, kenp_royalty_jpy: true },
   });
   const existingSource = new Map(existing.map((e) => [e.book_id, e.source]));
+  const existingKenpConfirmed = new Map(existing.map((e) => [e.book_id, e.kenp_royalty_jpy > 0]));
 
   let upserted = 0;
   let skipped = 0;
@@ -232,8 +263,9 @@ export async function commitSalesReport(
     }
     // 見込み取込は、確定値が既にある月を上書きしない。
     if (
-      report_kind === 'estimate' &&
-      CONFIRMED_SOURCES.has(existingSource.get(bookId) ?? '')
+      isEstimateImport &&
+      (CONFIRMED_SOURCES.has(existingSource.get(bookId) ?? '') ||
+        (r.kenp_royalty_estimated_jpy > 0 && existingKenpConfirmed.get(bookId)))
     ) {
       skippedConfirmed++;
       continue;
@@ -247,12 +279,16 @@ export async function commitSalesReport(
           royalty_jpy: r.royalty_jpy,
           units_sold: r.units_sold,
           kenp_read: r.kenp_read,
+          kenp_royalty_jpy: r.kenp_royalty_jpy,
+          kenp_royalty_estimated_jpy: r.kenp_royalty_estimated_jpy,
           source,
         },
         update: {
           royalty_jpy: r.royalty_jpy,
           units_sold: r.units_sold,
           kenp_read: r.kenp_read,
+          kenp_royalty_jpy: r.kenp_royalty_jpy,
+          kenp_royalty_estimated_jpy: r.kenp_royalty_estimated_jpy,
           source,
         },
       });

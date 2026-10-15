@@ -91,6 +91,8 @@ export interface SalesRecordRepo {
       review_count: number;
       avg_stars?: number;
       bsr?: number;
+      kenp_royalty_jpy: number;
+      kenp_royalty_estimated_jpy: number;
       source: string;
     };
     update: {
@@ -98,6 +100,8 @@ export interface SalesRecordRepo {
       review_count: number;
       avg_stars?: number | null;
       bsr?: number | null;
+      kenp_royalty_jpy: number;
+      kenp_royalty_estimated_jpy: number;
       source: string;
     };
   }): Promise<SalesRecordRow>;
@@ -165,6 +169,8 @@ export async function upsertSalesCore(
         review_count: input.review_count,
         ...(input.avg_stars !== undefined ? { avg_stars: input.avg_stars } : {}),
         ...(input.bsr !== undefined ? { bsr: input.bsr } : {}),
+        kenp_royalty_jpy: 0,
+        kenp_royalty_estimated_jpy: 0,
         source: 'manual',
       },
       update: {
@@ -172,6 +178,9 @@ export async function upsertSalesCore(
         review_count: input.review_count,
         avg_stars: input.avg_stars ?? null,
         bsr: input.bsr ?? null,
+        // 手入力 = 運営者確定。推計/KENP 内訳は消す (docs/09 §10.3)
+        kenp_royalty_jpy: 0,
+        kenp_royalty_estimated_jpy: 0,
         source: 'manual',
       },
     });
@@ -339,6 +348,8 @@ export async function importSalesCsvCore(
           review_count,
           ...(avg_stars !== undefined ? { avg_stars } : {}),
           ...(bsr !== undefined ? { bsr } : {}),
+          kenp_royalty_jpy: 0,
+          kenp_royalty_estimated_jpy: 0,
           source: 'manual',
         },
         update: {
@@ -346,6 +357,8 @@ export async function importSalesCsvCore(
           review_count,
           avg_stars: avg_stars ?? null,
           bsr: bsr ?? null,
+          kenp_royalty_jpy: 0,
+          kenp_royalty_estimated_jpy: 0,
           source: 'manual',
         },
       });

@@ -551,3 +551,36 @@ describe('upsertSalesCore — optional fields', () => {
     expect('bsr' in call?.create).toBe(false);
   });
 });
+
+// ---------------------------------------------------------------------------
+// 手入力は推計内訳を消す (docs/09 §10.3)
+// ---------------------------------------------------------------------------
+
+describe('手入力は KENP 推計/確定内訳を 0 にする', () => {
+  it('upsertSalesCore: 推計行を手入力で上書きすると推計内数が 0 になる', async () => {
+    const { deps, salesRepo } = makeDeps({ existingKeys: new Set(['book_1/2026-10']) });
+    await upsertSalesCore(
+      { book_id: 'book_1', year_month: '2026-10', royalty_jpy: 3000, review_count: 0 },
+      deps,
+    );
+    const call = salesRepo.upsertSpy.mock.calls[0]?.[0];
+    expect(call?.update.kenp_royalty_estimated_jpy).toBe(0);
+    expect(call?.update.kenp_royalty_jpy).toBe(0);
+    expect(call?.create.kenp_royalty_estimated_jpy).toBe(0);
+  });
+
+  it('importSalesCsvCore: CSV 取込の update/create も推計内数を 0 にする', async () => {
+    const { deps, salesRepo } = makeDeps({ existingKeys: new Set(['book_1/2026-10']) });
+    const csv = [
+      'book_id,year_month,royalty_jpy,review_count,avg_stars,bsr',
+      'book_1,2026-10,3000,0,,',
+      'book_2,2026-10,100,0,,',
+    ].join('\n');
+    await importSalesCsvCore({ csv }, deps);
+    for (const c of salesRepo.upsertSpy.mock.calls) {
+      expect(c[0].update.kenp_royalty_estimated_jpy).toBe(0);
+      expect(c[0].update.kenp_royalty_jpy).toBe(0);
+      expect(c[0].create.kenp_royalty_estimated_jpy).toBe(0);
+    }
+  });
+});

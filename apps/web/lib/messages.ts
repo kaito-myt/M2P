@@ -1311,6 +1311,7 @@ export const messages = {
       revenue: '当月売上',
       revenueMom: (pct: number) => `前月比 ${pct >= 0 ? '+' : ''}${pct}%`,
       revenueMomNa: '前月実績なし',
+      revenueKenpEstimate: (amount: string) => `(うち KENP 推計 ${amount})`,
       cost: '当月コスト',
       costBudget: (budget: number) => `/ ¥${budget.toLocaleString('ja-JP')}`,
       published: '出版済み書籍',
@@ -3343,6 +3344,9 @@ export const messages = {
       avgStarsLabel: '平均レビュー星',
       costSalesRatioLabel: 'コスト / 売上比率',
       booksUnit: '冊',
+      // 当月 KENP は KDP が翌月15日頃まで確定しないため、確定月の実効レートで推計計上している
+      kenpEstimateNote: (amount: string) => `うち KENP 推計 ${amount}（翌月15日頃に確定）`,
+      kenpEstimateBadge: (amount: string) => `うち推計 ${amount}`,
     },
     filter: {
       periodLabel: '期間',

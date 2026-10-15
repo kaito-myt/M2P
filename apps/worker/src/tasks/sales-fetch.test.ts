@@ -45,6 +45,24 @@ function makePmrXlsx(): Buffer {
   return XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' }) as Buffer;
 }
 
+/** 当月の PMR: KENP ページ数はあるが KENP 金額が空 (KDP は翌月15日頃まで確定しない)。 */
+function makeCurrentMonthXlsx(): Buffer {
+  const wb = XLSX.utils.book_new();
+  const paid = [
+    ['販売期間', '10月 2026'],
+    ['タイトル', '著者', 'ASIN', 'マーケットプレイス', '注文数', '払い戻し数', '実質注文数', 'ロイヤリティの種類', 'コンテンツ区分', '通貨', '平均希望小売価格 (税別)', '平均販売価格 (税別)', '平均ファイルサイズ（MB）', '平均配信コスト', 'ロイヤリティ'],
+    ['最強競馬予想術', '宮田海斗', KNOWN_ASIN, 'Amazon.co.jp', 2, 0, 2, '70%', '標準', 'JPY', 400, 400, 0.22, 1, 558],
+  ];
+  const kenp = [
+    ['販売期間', '10月 2026'],
+    ['タイトル', '著者', 'ASIN', 'マーケットプレイス', '既読 KENP (Kindle Edition Normalized Pages)', null, null],
+    ['最強競馬予想術', '宮田海斗', KNOWN_ASIN, 'Amazon.co.jp', 1000, '', ''],
+  ];
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(paid), '電子書籍のロイヤリティ');
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(kenp), '既読 KENPC');
+  return XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' }) as Buffer;
+}
+
 function encSession(): string {
   return encryptKdpCredentials(JSON.stringify({ cookies: [], origins: [] }), encKey);
 }
@@ -57,6 +75,10 @@ function makeMockPrisma(overrides?: {
   sessionEnc?: string | null;
   asinMap?: Record<string, string>;
   existingSource?: Record<string, string>;
+  /** KENP 実効レート導出用の確定済み過去月の行 */
+  confirmedSamples?: Array<{ year_month: string; kenp_read: number; kenp_royalty_jpy: number }>;
+  /** 既存行の KENP 確定金額 (book_id → 円) */
+  existingKenpConfirmed?: Record<string, number>;
 }) {
   const runUpdates: Array<Parameters<SalesFetchPrisma['salesFetchRun']['update']>[0]> = [];
   const upserts: Array<Parameters<SalesFetchPrisma['salesRecord']['upsert']>[0]> = [];
@@ -87,8 +109,16 @@ function makeMockPrisma(overrides?: {
         Promise.resolve(where.asin.in.filter((a) => asinMap[a]).map((a) => ({ id: asinMap[a], asin: a })))),
     },
     salesRecord: {
-      findMany: vi.fn().mockImplementation(() =>
-        Promise.resolve(Object.entries(existingSource).map(([book_id, source]) => ({ book_id, source })))),
+      findMany: vi.fn().mockImplementation((args: { where: { year_month: unknown } }) => {
+        if (typeof args.where.year_month === 'object') return Promise.resolve(overrides?.confirmedSamples ?? []);
+        return Promise.resolve(
+          Object.entries(existingSource).map(([book_id, source]) => ({
+            book_id,
+            source,
+            kenp_royalty_jpy: overrides?.existingKenpConfirmed?.[book_id] ?? 0,
+          })),
+        );
+      }),
       upsert: vi.fn().mockImplementation((a) => { upserts.push(a); return Promise.resolve({}); }),
     },
     modelCatalog: { findFirst: vi.fn().mockResolvedValue({ fx_rate_usd_jpy: 150 }) },
@@ -133,6 +163,44 @@ describe('runSalesFetch (auto-fetch Phase2)', () => {
     expect(upserts[0]!.create.kenp_read).toBe(145);
     expect(upserts[0]!.create.units_sold).toBe(1);
     expect(runUpdates.find((u) => u.data.status === 'done')).toBeTruthy();
+  });
+
+  describe('当月 KENP 推計', () => {
+    const run = (db: SalesFetchPrisma) =>
+      runSalesFetch({
+        payload: { account_id: ACCOUNT_ID, year_month: '2026-10' },
+        browserPort: createFixtureBrowserPort(makeCurrentMonthXlsx()),
+        prisma: db,
+        logger: silentLogger,
+        now: () => new Date('2026-10-15T00:00:00Z'),
+      });
+
+    it('確定月 (DB) のレートで推計し、推計分を内訳に残す', async () => {
+      const { db, upserts } = makeMockPrisma({
+        confirmedSamples: [{ year_month: '2026-09', kenp_read: 10000, kenp_royalty_jpy: 5426 }],
+      });
+      await run(db);
+      expect(upserts[0]!.create.royalty_jpy).toBe(558 + 543); // 1000 頁 × 0.5426
+      expect(upserts[0]!.create.kenp_royalty_estimated_jpy).toBe(543);
+      expect(upserts[0]!.create.kenp_royalty_jpy).toBe(0);
+    });
+
+    it('確定月が無ければ推計しない (¥0 のまま・推計分 0)', async () => {
+      const { db, upserts } = makeMockPrisma();
+      await run(db);
+      expect(upserts[0]!.create.royalty_jpy).toBe(558);
+      expect(upserts[0]!.create.kenp_royalty_estimated_jpy).toBe(0);
+    });
+
+    it('確定済み KENP 金額のある既存行は推計で上書きしない', async () => {
+      const { db, upserts } = makeMockPrisma({
+        confirmedSamples: [{ year_month: '2026-09', kenp_read: 10000, kenp_royalty_jpy: 5426 }],
+        existingSource: { [KNOWN_BOOK_ID]: 'auto' },
+        existingKenpConfirmed: { [KNOWN_BOOK_ID]: 600 },
+      });
+      await run(db);
+      expect(upserts).toHaveLength(0);
+    });
   });
 
   it('セッション未設定 → reason=no_session, failed', async () => {

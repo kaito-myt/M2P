@@ -141,3 +141,19 @@ describe('importKdpRecordsCore', () => {
     if (res.ok) expect(res.data.updated).toBe(1);
   });
 });
+
+describe('importKdpRecordsCore: 手入力取込は KENP 推計内訳を消す', () => {
+  it('既存の推計行を上書きすると kenp_royalty_estimated_jpy / kenp_royalty_jpy が 0 になる', async () => {
+    const upsert = vi.fn((_a: { create: Record<string, unknown>; update: Record<string, unknown>; where: unknown }) =>
+      Promise.resolve({}),
+    );
+    const d: KdpImportDeps = {
+      bookRepo: { findFirst: vi.fn(async () => ({ id: 'book1', title: '最強競馬予想術' })) },
+      salesRecordRepo: { findUnique: vi.fn(async () => ({ id: 'x' })), upsert },
+    };
+    await importKdpRecordsCore(aggregateKdpRoyalties([row({})]), d);
+    const arg = upsert.mock.calls[0]![0];
+    expect(arg.update).toMatchObject({ kenp_royalty_estimated_jpy: 0, kenp_royalty_jpy: 0 });
+    expect(arg.create).toMatchObject({ kenp_royalty_estimated_jpy: 0, kenp_royalty_jpy: 0 });
+  });
+});

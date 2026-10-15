@@ -9,6 +9,8 @@
 import { useRef, useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
 
+import { messages } from '@/lib/messages';
+
 import {
   previewSalesReport,
   commitSalesReport,
@@ -79,6 +81,8 @@ export function SalesReportImport({ accounts }: { accounts: AccountOption[] }) {
         royalty_jpy: r.royalty_jpy,
         units_sold: r.units_sold,
         kenp_read: r.kenp_read,
+        kenp_royalty_jpy: r.kenp_royalty_jpy,
+        kenp_royalty_estimated_jpy: r.kenp_royalty_estimated_jpy,
       }));
     if (rows.length === 0) {
       setError('突合できた書籍がありません (ASIN が A2P の書籍と一致しません)');
@@ -236,6 +240,15 @@ export function SalesReportImport({ accounts }: { accounts: AccountOption[] }) {
                       うち KENP見込み ¥{preview.allocatedKenpRoyaltyJpy.toLocaleString('ja-JP')}（按分）
                     </span>
                   )}
+                  {preview.estimatedKenpRoyaltyJpy > 0 && (
+                    <span className="text-warning" data-testid="kenp-estimate-preview">
+                      {messages.salesKpi.kpi.kenpEstimateNote(
+                        '¥' + preview.estimatedKenpRoyaltyJpy.toLocaleString('ja-JP'),
+                      )}
+                      {preview.kenpRateUsed &&
+                        ` ・ ${preview.kenpRateUsed.month} 確定レート ${preview.kenpRateUsed.jpyPerPage.toFixed(4)}円/頁`}
+                    </span>
+                  )}
                   {Object.keys(preview.unconvertedCurrencies).length > 0 && (
                     <span className="text-warning">
                       未換算通貨: {Object.entries(preview.unconvertedCurrencies).map(([c, n]) => `${c}×${n}`).join(', ')}
@@ -247,7 +260,7 @@ export function SalesReportImport({ accounts }: { accounts: AccountOption[] }) {
                     このファイルには複数月が含まれます（{preview.monthsInFile.join(', ')}）。取り込むのは対象年月 {preview.yearMonth} 分のみです。
                   </p>
                 )}
-                {preview.reportKind === 'estimate' && preview.totals.kenp_read > 0 && preview.allocatedKenpRoyaltyJpy === 0 && (
+                {preview.reportKind === 'estimate' && preview.totals.kenp_read > 0 && preview.allocatedKenpRoyaltyJpy === 0 && preview.estimatedKenpRoyaltyJpy === 0 && (
                   <p className="text-caption text-warning">
                     当月の KENP ロイヤリティ単価は月中は未確定のため、KENP分は ¥0 と表示されます（翌月に確定値レポートで取り込み直してください）。
                   </p>

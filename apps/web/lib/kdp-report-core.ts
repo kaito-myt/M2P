@@ -147,8 +147,16 @@ export interface KdpImportDeps {
     }) => Promise<{ id: string } | null>;
     upsert: (args: {
       where: { book_id_year_month: { book_id: string; year_month: string } };
-      create: { book_id: string; year_month: string; royalty_jpy: number; review_count: number; source: string };
-      update: { royalty_jpy: number; source: string };
+      create: {
+        book_id: string;
+        year_month: string;
+        royalty_jpy: number;
+        review_count: number;
+        kenp_royalty_jpy: number;
+        kenp_royalty_estimated_jpy: number;
+        source: string;
+      };
+      update: { royalty_jpy: number; kenp_royalty_jpy: number; kenp_royalty_estimated_jpy: number; source: string };
     }) => Promise<unknown>;
   };
 }
@@ -210,8 +218,8 @@ export async function importKdpRecordsCore(
     });
     await deps.salesRecordRepo.upsert({
       where: { book_id_year_month: { book_id: book.id, year_month: rec.year_month } },
-      create: { book_id: book.id, year_month: rec.year_month, royalty_jpy: rec.royalty_jpy, review_count: 0, source: 'manual' },
-      update: { royalty_jpy: rec.royalty_jpy, source: 'manual' },
+      create: { book_id: book.id, year_month: rec.year_month, royalty_jpy: rec.royalty_jpy, review_count: 0, kenp_royalty_jpy: 0, kenp_royalty_estimated_jpy: 0, source: 'manual' },
+      update: { royalty_jpy: rec.royalty_jpy, kenp_royalty_jpy: 0, kenp_royalty_estimated_jpy: 0, source: 'manual' },
     });
     if (existing) updated += 1;
     else inserted += 1;

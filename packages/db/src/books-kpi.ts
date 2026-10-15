@@ -31,6 +31,10 @@ export interface BooksKpiRow {
   monthly_kenp_read: number;
   /** Cumulative KENP pages read across all time */
   cumulative_kenp_read: number;
+  /** Sum of estimated (not yet confirmed by KDP) KENP royalty included in monthly_royalty_jpy */
+  monthly_kenp_estimated_jpy: number;
+  /** Same, all time (included in cumulative_royalty_jpy) */
+  cumulative_kenp_estimated_jpy: number;
   /** Latest BSR within the filter period (null if no record) */
   latest_bsr: number | null;
   /** Weighted avg stars (sum(royalty*stars)/sum(royalty)), or simple avg if all royalty=0 */
@@ -56,6 +60,8 @@ export interface SalesKpiSummary {
   cost_sales_ratio: number | null;
   /** Cumulative KENP pages read across all books in filter */
   total_kenp_read: number;
+  /** total_royalty_jpy に含まれる KENP 推計分 (KDP 未確定・翌月15日頃に確定)。0 なら推計を含まない */
+  total_kenp_estimated_jpy: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -162,6 +168,7 @@ export async function getBooksKpiList(
         book_id,
         COALESCE(SUM(royalty_jpy), 0)::bigint       AS cum_royalty,
         COALESCE(SUM(kenp_read), 0)::bigint          AS cum_kenp,
+        COALESCE(SUM(kenp_royalty_estimated_jpy), 0)::bigint AS cum_kenp_est,
         COALESCE(SUM(review_count), 0)::bigint       AS cum_reviews,
         COALESCE(
           CASE
@@ -181,7 +188,8 @@ export async function getBooksKpiList(
       SELECT
         sr_p.book_id,
         COALESCE(SUM(sr_p.royalty_jpy), 0)::bigint  AS period_royalty,
-        COALESCE(SUM(sr_p.kenp_read), 0)::bigint    AS period_kenp
+        COALESCE(SUM(sr_p.kenp_read), 0)::bigint    AS period_kenp,
+        COALESCE(SUM(sr_p.kenp_royalty_estimated_jpy), 0)::bigint AS period_kenp_est
       FROM sales_records sr_p
       WHERE 1=1 ${periodCondStr}
       GROUP BY sr_p.book_id
@@ -223,6 +231,8 @@ export async function getBooksKpiList(
       COALESCE(sc.cum_royalty,    0)::bigint                        AS cumulative_royalty_jpy,
       COALESCE(sp.period_kenp,    0)::bigint                        AS monthly_kenp_read,
       COALESCE(sc.cum_kenp,       0)::bigint                        AS cumulative_kenp_read,
+      COALESCE(sp.period_kenp_est, 0)::bigint                       AS monthly_kenp_estimated_jpy,
+      COALESCE(sc.cum_kenp_est,   0)::bigint                        AS cumulative_kenp_estimated_jpy,
       sc.latest_bsr,
       sc.wavg_stars,
       el.score_total                                                AS quality_score,
@@ -263,6 +273,8 @@ export async function getBooksKpiList(
       cumulative_royalty_jpy: cumRoyalty,
       monthly_kenp_read: toNumber(r['monthly_kenp_read']),
       cumulative_kenp_read: toNumber(r['cumulative_kenp_read']),
+      monthly_kenp_estimated_jpy: toNumber(r['monthly_kenp_estimated_jpy']),
+      cumulative_kenp_estimated_jpy: toNumber(r['cumulative_kenp_estimated_jpy']),
       latest_bsr: toNumberOrNull(r['latest_bsr']),
       avg_stars: toNumberOrNull(r['wavg_stars']),
       quality_score: toNumberOrNull(r['quality_score']),
@@ -371,12 +383,14 @@ export async function getSalesKpiSummary(
       total_cost_jpy: 0,
       cost_sales_ratio: null,
       total_kenp_read: 0,
+      total_kenp_estimated_jpy: 0,
     };
   }
 
   const totalRoyalty = rows.reduce((acc, r) => acc + r.cumulative_royalty_jpy, 0);
   const totalCost = rows.reduce((acc, r) => acc + r.cost_jpy, 0);
   const totalKenp = rows.reduce((acc, r) => acc + r.cumulative_kenp_read, 0);
+  const totalKenpEstimated = rows.reduce((acc, r) => acc + r.cumulative_kenp_estimated_jpy, 0);
   const starsRows = rows.filter((r) => r.avg_stars != null);
   const avgStars =
     starsRows.length > 0
@@ -391,5 +405,6 @@ export async function getSalesKpiSummary(
     total_cost_jpy: totalCost,
     cost_sales_ratio: totalCost > 0 ? totalRoyalty / totalCost : null,
     total_kenp_read: totalKenp,
+    total_kenp_estimated_jpy: totalKenpEstimated,
   };
 }

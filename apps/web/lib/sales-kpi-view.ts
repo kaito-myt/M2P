@@ -42,6 +42,9 @@ export interface BookKpiRowSerialized {
   cumulative_royalty_jpy: number;
   monthly_kenp_read: number;
   cumulative_kenp_read: number;
+  /** monthly_royalty_jpy に含まれる KENP 推計分 (未確定)。0 なら確定のみ */
+  monthly_kenp_estimated_jpy: number;
+  cumulative_kenp_estimated_jpy: number;
   latest_bsr: number | null;
   avg_stars: number | null;
   quality_score: number | null;
@@ -93,6 +96,8 @@ export function serializeBookKpiRow(
     cumulative_royalty_jpy: row.cumulative_royalty_jpy,
     monthly_kenp_read: row.monthly_kenp_read,
     cumulative_kenp_read: row.cumulative_kenp_read,
+    monthly_kenp_estimated_jpy: row.monthly_kenp_estimated_jpy,
+    cumulative_kenp_estimated_jpy: row.cumulative_kenp_estimated_jpy,
     latest_bsr: row.latest_bsr,
     avg_stars: row.avg_stars,
     quality_score: row.quality_score,

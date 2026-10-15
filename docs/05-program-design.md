@@ -833,11 +833,16 @@ model SalesRecord {
   id            String   @id @default(cuid())
   book_id       String
   year_month    String   // "2026-05"
-  royalty_jpy   Int
+  royalty_jpy   Int      // 有料販売 + KENP (確定 + 推計) の合計
+  units_sold    Int      @default(0) // 有料販売部数 (KDP レポート由来)
+  kenp_read     Int      @default(0) // KENP 既読ページ数 (KDP レポート由来)
+  // 当月 KENP 推計 (docs/09 §10)。いずれも royalty_jpy の内数
+  kenp_royalty_jpy           Int @default(0) // KENP 確定分 (明細金額 or 概要サマリ按分)。実効レート導出の根拠
+  kenp_royalty_estimated_jpy Int @default(0) // KENP 推計分 (確定月レート×ページ数)。>0 = 推計を含む。確定値の取込で 0 に戻る
   review_count  Int      @default(0)
   avg_stars     Decimal? @db.Decimal(3, 2)
   bsr           Int?     // Amazon Best Seller Rank
-  source        String   // manual | auto
+  source        String   // manual | manual_upload | manual_estimate | auto
   fetched_at    DateTime @default(now())
   updated_at    DateTime @updatedAt
 

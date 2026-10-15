@@ -146,6 +146,8 @@ describe('serializeBookKpiRow', () => {
       cumulative_royalty_jpy: 12000,
       monthly_kenp_read: 500,
       cumulative_kenp_read: 2000,
+      monthly_kenp_estimated_jpy: 0,
+      cumulative_kenp_estimated_jpy: 0,
       latest_bsr: 5000,
       avg_stars: 4.3,
       quality_score: 82,

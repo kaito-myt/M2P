@@ -223,11 +223,21 @@ export function BooksKpiTable({ books }: BooksKpiTableProps) {
                 {/* Monthly royalty */}
                 <td className="whitespace-nowrap px-space-relaxed py-space-snug text-right tabular-nums text-charcoal">
                   {formatJpy(book.monthly_royalty_jpy)}
+                  {book.monthly_kenp_estimated_jpy > 0 && (
+                    <span className="ml-1 text-caption text-muted/70" data-testid="kenp-estimate-badge-monthly">
+                      ({messages.salesKpi.kpi.kenpEstimateBadge(formatJpy(book.monthly_kenp_estimated_jpy))})
+                    </span>
+                  )}
                 </td>
 
                 {/* Cumulative royalty */}
                 <td className="whitespace-nowrap px-space-relaxed py-space-snug text-right tabular-nums text-charcoal">
                   {formatJpy(book.cumulative_royalty_jpy)}
+                  {book.cumulative_kenp_estimated_jpy > 0 && (
+                    <span className="ml-1 text-caption text-muted/70" data-testid="kenp-estimate-badge">
+                      ({messages.salesKpi.kpi.kenpEstimateBadge(formatJpy(book.cumulative_kenp_estimated_jpy))})
+                    </span>
+                  )}
                 </td>
 
                 {/* KENP read (累計) — 月次があれば副表示 */}

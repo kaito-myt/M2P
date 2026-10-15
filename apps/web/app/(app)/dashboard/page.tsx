@@ -165,7 +165,7 @@ export default async function DashboardPage() {
     growthRows,
   ] = await Promise.all([
     getAvgQualityScore(),
-    prisma.salesRecord.aggregate({ _sum: { royalty_jpy: true, kenp_read: true }, where: { year_month: ymNow } }),
+    prisma.salesRecord.aggregate({ _sum: { royalty_jpy: true, kenp_read: true, kenp_royalty_estimated_jpy: true }, where: { year_month: ymNow } }),
     prisma.salesRecord.aggregate({ _sum: { royalty_jpy: true }, where: { year_month: ymPrev } }),
     // docs/05 §3.3 — A2P のホームなので A2P の活動分だけ (ANP の note 生成費は含めない)。
     getCostMeterData(prisma, { tool: 'a2p' }),
@@ -228,6 +228,8 @@ export default async function DashboardPage() {
   // ---- 集計 ----
   const revenueNowJpy = revenueNow._sum.royalty_jpy ?? 0;
   const revenuePrevJpy = revenuePrev._sum.royalty_jpy ?? 0;
+  // 当月 KENP は KDP が翌月15日頃まで確定しないため推計計上している分 (revenueNowJpy の内数)
+  const kenpEstimateNowJpy = revenueNow._sum.kenp_royalty_estimated_jpy ?? 0;
   const costNowJpy = cost.monthly_cost_jpy;
   const profit = revenueNowJpy - costNowJpy;
   const profitDir: 'positive' | 'negative' | 'neutral' = profit > 0 ? 'positive' : profit < 0 ? 'negative' : 'neutral';
@@ -330,6 +332,12 @@ export default async function DashboardPage() {
         </div>
         <p className="mt-4 text-caption text-muted">
           売上 <span className="tabular-nums text-charcoal-82">{jpy(revenueNowJpy)}</span>
+          {kenpEstimateNowJpy > 0 && (
+            <span className="tabular-nums text-charcoal-40" data-testid="home-kenp-estimate">
+              {' '}
+              {h.revenueKenpEstimate(jpy(kenpEstimateNowJpy))}
+            </span>
+          )}
           {momPct != null && (
             <span className="tabular-nums text-charcoal-40">
               {' '}
@@ -349,6 +357,7 @@ export default async function DashboardPage() {
           <Figure
             label={h.revenue}
             value={jpy(revenueNowJpy)}
+            sub={kenpEstimateNowJpy > 0 ? h.revenueKenpEstimate(jpy(kenpEstimateNowJpy)) : undefined}
             note={momPct != null ? h.revenueMom(momPct) : h.revenueMomNa}
             noteDir={momPct == null ? 'neutral' : momPct >= 0 ? 'positive' : 'negative'}
           />
