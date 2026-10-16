@@ -4604,3 +4604,25 @@ KDP の作成枠 (週次・フォーマット別) を使い切ると `app_settin
 変更: 停止中も `kdp.submit` は投入する。payload に `allow_create: false` を載せ、
 ポート側は下書きが無いときだけ `no_draft` で戻る (新規作成には進まない)。
 `paperback.draft` は作成そのものなので従来どおり止める。
+
+### 19.7 ペーパーバック: 「下書きが既にある」ときの URL (2026-10-16 実測)
+
+本棚から「ペーパーバックの作成」を押して STEP1 を保存したとき、**その本の下書きが
+既に KDP 上にある**と、KDP は先へ進まず次の URL に留まる:
+
+```
+/ja_JP/title-setup/paperback/new/details?existing=A3KKXK4F3KXFTN&existing=A3KKXK4F3KXF
+```
+
+`existing` は**採番済みの titleId**で、同じ id の短縮形が続けて付く
+(長い方が正しい id)。`extractTitleId` は `print-setup/paperback/<id>` しか見ていなかったため
+`no_title_id` で毎回落ち、その本は**永久に進まなくなっていた**。
+
+対応:
+- `extractTitleId` が `existing=` も見る (複数あれば最長を採る)
+- `existing=` 由来のときはまだ details ページに居るので、
+  `print-setup/paperback/<titleId>/content` へ自分で移ってから STEP2 に入る
+- 既存下書きの再開なので**作成枠を消費しない**
+
+`paperback.status.sync` が draft を検出して `pb_title_id` を埋めるより前に
+`paperback.draft` がこの状態に当たることがあるため、ここで拾えるようにしておく。

@@ -87,6 +87,8 @@ export interface KdpSheetDiagnostic {
 
 type ColumnKey =
   | 'asin'
+  /** ASIN とは別に ISBN 列がある場合 (ペーパーバックのロイヤリティ シート) */
+  | 'isbn'
   | 'title'
   | 'marketplace'
   | 'currency'
@@ -236,6 +238,10 @@ function mapCells(cells: unknown[]): Partial<Record<ColumnKey, number>> {
       map.asin = ci;
       asinExact = h === 'asin';
     }
+    // ISBN 列も別に覚える。「総収益」はペーパーバックを **ISBN** で載せ、専用シートは
+    // **ISBN と ASIN の両方**を持つ。両方持つシートから ISBN→ASIN の対応を作り、
+    // ISBN だけの行を ASIN に寄せる (寄せないと同じ 1 冊が 2 件に割れて二重計上になる)。
+    if (map.isbn === undefined && h === 'isbn') map.isbn = ci;
     if (isUnits(h) && (map.units_sold === undefined || isPreferredUnits(h))) map.units_sold = ci;
     if (map.kenp_read === undefined && isKenp(h)) map.kenp_read = ci;
     if (map.royalty === undefined && isRoyaltyAmount(h)) map.royalty = ci;
@@ -308,6 +314,8 @@ export function parseKdpReportWorkbook(buffer: Buffer | ArrayBuffer): ParseResul
   const sheetDiagnostics: KdpSheetDiagnostic[] = [];
   const sheetRows = new Map<string, KdpReportRow[]>();
   const unifiedNames = new Set<string>();
+  /** ISBN → ASIN。ISBN と ASIN が同じ行に並ぶシートから作る (docs/09 §10.9)。 */
+  const isbnToAsin = new Map<string, string>();
   const clip = (cells: unknown[]): string[] =>
     cells.slice(0, 16).map((c) => String(c ?? '').slice(0, 40));
   let detectedHeaders: string[] = [];
@@ -398,6 +406,11 @@ export function parseKdpReportWorkbook(buffer: Buffer | ArrayBuffer): ParseResul
         diag.rowsDropped = (diag.rowsDropped ?? 0) + 1; // フッタ/合計行、または ID 列の取り違え
         continue;
       }
+      // ISBN と ASIN が同じ行に並ぶシート (ペーパーバック) から対応表を作る。
+      if (map.isbn !== undefined && map.isbn !== map.asin) {
+        const isbn = String(cells[map.isbn] ?? '').trim().toUpperCase().replace(/-/g, '');
+        if (isbn && isbn !== asin && looksLikeBookId(isbn)) isbnToAsin.set(isbn, asin);
+      }
 
       if (unified) {
         // 統合シート: 同じ列が有料行では部数、KENP 行ではページ数。種類で解釈を切り替える。
@@ -475,6 +488,21 @@ export function parseKdpReportWorkbook(buffer: Buffer | ArrayBuffer): ParseResul
   // 以前はシートごと捨てていたため、統合シートに載っていない商材 — 具体的には
   // **ペーパーバック** — が一緒に消えていた (docs/09 §10.9)。重複計上を防ぐ目的は
   // 「統合シートに既にある ASIN を二度足さない」ことなので、その ASIN だけを外せば足りる。
+  // ISBN で載っている行を ASIN に寄せる。
+  //
+  // 実レポート (2026-09) では「総収益」がペーパーバックを **ISBN-13** で、
+  // 「ペーパーバックのロイヤリティ」が **ISBN と ASIN の両方**で載せていた。
+  // 寄せないと同じ 1 冊が 2 つの ID に割れ、ASIN 単位の重複排除をすり抜けて
+  // **ペーパーバックだけ二重計上**になる。
+  if (isbnToAsin.size > 0) {
+    for (const list of sheetRows.values()) {
+      for (const r of list) {
+        const mapped = isbnToAsin.get(r.asin);
+        if (mapped) r.asin = mapped;
+      }
+    }
+  }
+
   const layout: KdpReportLayout = Array.from(unifiedNames).some((n) => n !== '') ? 'unified' : 'legacy';
   const unifiedSheets = new Set(sheetDiagnostics.filter((d) => d.typeValues).map((d) => d.name));
   const unifiedIds = new Set<string>();

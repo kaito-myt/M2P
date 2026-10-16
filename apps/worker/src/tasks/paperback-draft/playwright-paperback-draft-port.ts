@@ -139,10 +139,25 @@ export function toPaperbackCategorySegments(categoryPaths: readonly string[]): s
     .filter((l) => l.length > 0);
 }
 
-/** URL から print-setup の titleId を取り出す。 */
+/**
+ * URL から paperback の titleId を取り出す。
+ *
+ * 通常は `print-setup/paperback/<titleId>/...` に遷移する。
+ * ただし **その本の下書きが既に KDP 上にある**と、KDP は STEP1 の保存で先へ進まず
+ * `title-setup/paperback/new/details?existing=<titleId>&existing=<短縮形>` に留まる
+ * (2026-10-16 本番実測)。この `existing` は採番済みの titleId なので、
+ * それを拾えば**作成枠を消費せずに下書きを再開できる**。
+ * 拾えないと `no_title_id` で毎回落ち、その本は永久に進まない。
+ */
 export function extractTitleId(url: string): string | null {
   const m = /print-setup\/paperback\/([A-Z0-9]+)/i.exec(url);
-  return m ? m[1]! : null;
+  if (m) return m[1]!;
+  // `existing=` は同じ id の短縮形が続けて付くことがあるので**最も長いもの**を採る。
+  const existing = [...url.matchAll(/[?&]existing=([A-Z0-9]+)/gi)].map((x) => x[1]!);
+  if (existing.length > 0) {
+    return existing.reduce((a, b) => (b.length > a.length ? b : a));
+  }
+  return null;
 }
 
 async function createDraft(args: PaperbackDraftArgs): Promise<PaperbackDraftResult> {
@@ -597,6 +612,25 @@ async function createDraft(args: PaperbackDraftArgs): Promise<PaperbackDraftResu
         await args.onTitleId(titleId).catch((err: unknown) => {
           log.warn({ bookId: args.bookId, titleId, err: errMsg(err) }, 'titleId の保存に失敗');
         });
+      }
+    }
+
+    // `existing=` から拾った場合はまだ details ページに居る。STEP2 は印刷設定ページで
+    // 動くので、自分で content ページへ移る (ここを飛ばすと ISBN もアップロードも空振りする)。
+    if (!/print-setup\/paperback\//i.test(page.url())) {
+      log.info({ bookId: args.bookId, titleId }, '既存の下書きへ移動して再開する');
+      await page
+        .goto(`${BASE}/print-setup/paperback/${titleId}/content`, { waitUntil: 'domcontentloaded' })
+        .catch(() => {});
+      await page.waitForTimeout(8000);
+      await passReauth('resume-existing');
+      if (!/print-setup\/paperback\//i.test(page.url())) {
+        await shot('resume-existing-failed');
+        return {
+          ok: false,
+          reason: 'no_title_id',
+          message: `既存下書き ${titleId} の印刷設定ページを開けません (url=${page.url().slice(0, 110)})`,
+        };
       }
     }
 

@@ -240,3 +240,51 @@ describe('ペーパーバックのロイヤリティ', () => {
     expect(n.totals.kenp_read).toBe(5042);
   });
 });
+
+/**
+ * 実レポート (2026-09) の形をそのまま再現する。
+ *  - 「総収益」はペーパーバックを **ISBN-13** で載せる
+ *  - 「ペーパーバックのロイヤリティ」は **ISBN と ASIN の両方**を持つ
+ * 寄せ直さないと同じ 1 冊が 2 つの ID に割れ、ASIN 単位の重複排除をすり抜けて
+ * ペーパーバックだけ二重計上になる。
+ */
+describe('ペーパーバックが総収益では ISBN で載る実レポート形', () => {
+  function realShape(): Buffer {
+    const b = XLSX.utils.book_new();
+    const meta = ['販売期間', '9月 2026'];
+    const ebook = [['t', 'a', asin(0), MP, 1, 0, 1, '70%', '標準', 'JPY', '', '', '', '', 1230]];
+    const kenpTotal = [['t', 'a', asin(0), MP, '該当なし', '該当なし', 5042, '該当なし', '既読 KENP', 'JPY', '', '', '', '', 1649]];
+    const pb = [
+      { isbn: '9798172980992', asin: 'B0HJB2DR9R', units: 1, royalty: 356 },
+      { isbn: '9798172978586', asin: 'B0HJCLHZY5', units: 2, royalty: 736 },
+      { isbn: '9798172971006', asin: 'B0HJ9NPKQ4', units: 1, royalty: 430 },
+      { isbn: '9798172973406', asin: 'B0HJB69Q1P', units: 1, royalty: 420 },
+    ];
+    // 専用シート: ISBN(2) と ASIN(12) の両方
+    const pbSheet = pb.map((p) => ['t', 'a', p.isbn, MP, p.units, 0, '60%', 1480, 1480, 500, p.royalty, 'JPY', p.asin]);
+    // 総収益: ISBN だけ
+    const pbTotal = pb.map((p) => ['t', 'a', p.isbn, MP, p.units, 0, p.units, '60%', '標準 - ペーパーバック', 'JPY', 1480, 1480, '該当なし', 500, p.royalty]);
+    const add = (name: string, aoa: unknown[][]) => XLSX.utils.book_append_sheet(b, XLSX.utils.aoa_to_sheet(aoa), name);
+    add('電子書籍のロイヤリティ', [meta, EBOOK_HEAD, ...ebook]);
+    add('既読 KENPC', [meta, KENPC_HEAD, ['t', 'a', asin(0), MP, 5042]]);
+    add('ペーパーバックのロイヤリティ', [meta, PB_HEAD, ...pbSheet]);
+    add('総収益', [meta, TOTAL_HEAD, ...ebook, ...kenpTotal, ...pbTotal]);
+    return XLSX.write(b, { type: 'buffer', bookType: 'xlsx' }) as Buffer;
+  }
+
+  it('ISBN 行を ASIN に寄せ、二重計上しない', () => {
+    const parsed = parseKdpReportWorkbook(realShape());
+    const n = normalizeKdpRows(parsed.rows, { targetMonth: '2026-09', noEstimate: true });
+    // KDP ダッシュボード: 1,230 + 1,942 + 1,649 = 4,821
+    expect(n.totals.royalty_jpy).toBe(4821);
+    expect(n.totals.units_sold).toBe(1 + 5);
+    // 専用シートの 4 行は総収益と同じ ASIN に寄るので全部 superseded になる
+    const d = parsed.sheetDiagnostics.find((x) => x.name === 'ペーパーバックのロイヤリティ')!;
+    expect(d.rowsSuperseded).toBe(4);
+    // ペーパーバックは ISBN ではなく ASIN で 1 件ずつ立つ
+    const pbRows = n.rows.filter((r) => r.asin.startsWith('B0HJ'));
+    expect(pbRows).toHaveLength(4);
+    expect(pbRows.reduce((t, r) => t + r.royalty_jpy, 0)).toBe(1942);
+    expect(n.rows.some((r) => /^\d{13}$/.test(r.asin))).toBe(false);
+  });
+});
