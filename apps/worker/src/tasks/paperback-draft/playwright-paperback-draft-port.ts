@@ -285,9 +285,7 @@ async function createDraft(args: PaperbackDraftArgs): Promise<PaperbackDraftResu
     if (viewSwitched) await page.waitForTimeout(7000);
     log.info({ bookId: args.bookId, viewSwitched }, 'paperback bookshelf view');
 
-    // 一覧を最大件数/ページにしてから、**ASIN でページを走査**する。
-    // 検索窓は「タイトルで検索」で、DB のタイトルと KDP 上の表記が違うと 0 件になるため
-    // 検索には頼らない (2026-09-29 実測)。
+    // 一覧を最大件数/ページにしておく (検索が効かず走査に落ちたときのため)。
     await page
       .evaluate(() => {
         const sel = [...document.querySelectorAll('select')].find((x) =>
@@ -381,13 +379,46 @@ async function createDraft(args: PaperbackDraftArgs): Promise<PaperbackDraftResu
       return moved;
     };
 
+    /**
+     * **まず ASIN で検索する**。
+     *
+     * ここは以前「検索窓はタイトル検索なので頼らない」としてページ送りだけで探していたが、
+     * それだと本棚の件数が増えたときに 12 ページでは届かず、
+     * `no_create_button: 本棚で ASIN の行を見つけられませんでした` で止まる
+     * (2026-10-16 時点で **74 冊中 42 冊**がこの状態だった)。
+     *
+     * 一方 `book-cull/playwright-bookshelf-port.ts` と `paperback.status.sync` は
+     * **ASIN で検索して 1 件に絞れている**(2026-09-24 実測)。検索は効く。
+     * そこで検索を先に試し、0 件のときだけ従来のページ走査に落とす。
+     */
+    const searchByAsin = async (): Promise<boolean> => {
+      const sb = await page
+        .$('input[type="search"], input[aria-label*="検索"], input[placeholder*="検索"]')
+        .catch(() => null);
+      if (!sb) return false;
+      await sb.fill(args.asin).catch(() => {});
+      await page.keyboard.press('Enter').catch(() => {});
+      await page.waitForTimeout(6000);
+      const hit = await page.evaluate((a: string) => document.body.innerText.includes(a), args.asin).catch(() => false);
+      log.info({ bookId: args.bookId, asin: args.asin, hit }, 'paperback bookshelf search by ASIN');
+      return hit;
+    };
+
     let found: 'clicked' | 'exists' | 'absent' = 'absent';
-    for (let pageNo = 1; pageNo <= 12; pageNo += 1) {
-      const stats = await pageStats();
-      log.info({ bookId: args.bookId, asin: args.asin, pageNo, ...stats }, 'paperback bookshelf scan');
+    if (await searchByAsin()) {
       found = await clickCreateForAsin();
-      if (found !== 'absent') break;
-      if (!(await goToPage(pageNo + 1))) break;
+    }
+    if (found === 'absent') {
+      // 検索で出なかった (または検索窓が無い) ときだけ、従来のページ走査に落とす。
+      await page.goto(`${BASE}/ja_JP/bookshelf`, { waitUntil: 'domcontentloaded' }).catch(() => {});
+      await page.waitForTimeout(6000);
+      for (let pageNo = 1; pageNo <= 12; pageNo += 1) {
+        const stats = await pageStats();
+        log.info({ bookId: args.bookId, asin: args.asin, pageNo, ...stats }, 'paperback bookshelf scan');
+        found = await clickCreateForAsin();
+        if (found !== 'absent') break;
+        if (!(await goToPage(pageNo + 1))) break;
+      }
     }
 
     if (found === 'exists') {
