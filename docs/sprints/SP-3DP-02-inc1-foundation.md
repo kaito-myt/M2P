@@ -75,6 +75,7 @@ F-3DP-38 (判定値を `app_settings` に), F-3DP-41 (R-1 天井), F-3DP-11 (設
   3. `apps/3dp` 配下に数値リテラル `50` が天井として残っていない (`grep -rn "MONTHLY_LIMIT_MAX\|0〜50" apps/3dp` が 0 件)。
   4. `grep -rn "TDP_MONTHLY_LIMIT_HARD_MAX *=" apps packages` が contracts の 1 件のみ。
   5. 既存の `settings-core.test.ts` を壊さず、天井関連のみ更新。`pnpm --filter @3dp/web test:unit` / `typecheck` 緑。
+- **E2E 持ち越し (T-3DP-02-11 へ)**: このタスクの E2E は**基盤が無く実行できなかった**ため T-3DP-02-11 に持ち越した。Vitest では取れない検証項目の詳細は T-3DP-02-11 の「持ち越し検証項目」を参照。掴む testid は `limit-form.tsx` に追加済み (`tdp-limit-error` / `tdp-limit-success`)。
 - **依存**: T-3DP-02-01
 - **参照**: F-3DP-41 / docs/12 §9.10.3-1, §9.8 S-3DP-06 (R-1 入力), §17.14 d-3
 
@@ -215,6 +216,10 @@ F-3DP-38 (判定値を `app_settings` に), F-3DP-41 (R-1 天井), F-3DP-11 (設
   2. 空状態のホーム (商品 0 件): 「立ち上げチェック」が見え、`0 円` が無く、`—` と理由があり、`Inc-` の文字列が無い。
   3. `/settings` が「安全装置」を開き、`?tab=generation` でタブが切り替わる。提案値の注意書きが全タブにある。
 - **受入基準**: `E2E_TARGET=3dp pnpm exec playwright test --project=3dp` が緑。`pnpm typecheck:e2e` 緑。`E2E_TARGET` 未指定の `pnpm exec playwright test --list` の出力が変更前と同一 (既存 E2E の列挙が変わらない)。
+- **現状 (未整備)**: `playwright.config.ts` は `apps/web` (port 3001) 固定で、`E2E_TARGET` 切替・`--project=3dp`・3DP 用 storageState・テスト用 DB 固定のいずれも**まだ無い**。上記受入基準のコマンド (および §7 完了判定の同コマンド) は、このタスク完了までは**実行できない**。`packages/db/src/testing/` / `TDP_TEST_DATABASE_URL` / `TDP_REQUIRE_PG` も T-3DP-02-04 未着手のため無い。
+- **持ち越し検証項目 (T-3DP-02-02 由来)**: `apps/3dp` にはコンポーネントテスト基盤 (testing-library) が無く、次の 2 点は現状どのテストでも覆われていない。E2E でしか取れない保証であり、`limit-form.tsx` に数値化 (`Number('')` 等) が戻っても検知できなくなるため、シナリオ 1 に必ず含める。
+  1. 入力欄を**空にして保存**したとき、`0` などの数値化された値がサーバーに送られず、DB の値が変わらないこと (空を 0 として受けない)。
+  2. 拒否時の文面 (「13 は保存されていません」「最大 12」「現在の値」) が画面に出ること。掴む先は `data-testid="tdp-limit-error"`。成功時は `tdp-limit-success`。値の確認は `tdp-limit-input` / `tdp-limit-save` / `tdp-limit-ceiling` / `tdp-limit-remaining`。
 - **依存**: T-3DP-02-08, T-3DP-02-10
 - **参照**: docs/12 §17.13 (Playwright シナリオ「設定の天井」「空状態」), §9.6
 
@@ -245,7 +250,7 @@ F-3DP-38 (判定値を `app_settings` に), F-3DP-41 (R-1 天井), F-3DP-11 (設
 
 ## 7. 完了判定
 
-- T-3DP-02-01〜12 が `/iterate` で APPROVED + PASS。`pnpm typecheck` / `pnpm test:unit` / `pnpm test:integration` (PG あり、CI で `TDP_REQUIRE_PG=1`) / `E2E_TARGET=3dp pnpm exec playwright test --project=3dp` 緑。
+- T-3DP-02-01〜12 が `/iterate` で APPROVED + PASS。`pnpm typecheck` / `pnpm test:unit` / `pnpm test:integration` (PG あり、CI で `TDP_REQUIRE_PG=1`) / `E2E_TARGET=3dp pnpm exec playwright test --project=3dp` 緑。(E2E コマンドは T-3DP-02-11 完了までは存在しない。持ち越し項目は T-3DP-02-11 参照。)
 - F-3DP-38 の受入「判定ロジック内に数値リテラルが残っていない」(`grep` で `apps/3dp/lib` と `packages/contracts/src/tdp` の判定コードを確認)。
 - 申し送り: `docs/12` §12 に Inc-1 の完了を記録。`TDP_SETTINGS_DEFAULTS` を SP-3DP-03 (Meshy 系 4 列) が拡張する。実 PG 基盤の使い方 (`withTestDb`) は SP-3DP-03 以降の前提。
 - migration は**本番未適用でもコード完了とする**が、OP-18 の適用が済むまで dev-plan の Inc-1 は「コード完了・本番未適用」と書く (適用済みと書かない)。

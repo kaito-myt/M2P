@@ -92,9 +92,13 @@ export function LimitForm({
         )}
       </p>
 
-      {saved && !error && <p className="text-caption text-muted">{messages.common.saved}</p>}
+      {saved && !error && (
+        <p className="text-caption text-muted" data-testid="tdp-limit-success">
+          {messages.common.saved}
+        </p>
+      )}
       {error && (
-        <p role="alert" className="text-caption text-destructive">
+        <p role="alert" className="text-caption text-destructive" data-testid="tdp-limit-error">
           {error}
         </p>
       )}
