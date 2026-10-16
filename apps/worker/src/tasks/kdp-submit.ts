@@ -246,9 +246,24 @@ export async function runKdpSubmit(deps: KdpSubmitDeps): Promise<KdpSubmitResult
   // 失敗系。creation_limit / no_draft は保留(翌日再試行/下書き用意待ち)、その他は要調査通知。
   log.warn({ book_id, reason: result.reason, message: result.message }, 'kdp.submit failed');
   if (result.reason === 'creation_limit' || result.reason === 'no_draft') {
-    // KDP は 1 日 5 冊の作成上限があり、30 分毎に CREATE を再試行すると枠を浪費し永久ループになる。
+    // KDP は作成上限があり、30 分毎に CREATE を再試行すると枠を浪費し永久ループになる。
     // ~20h のクールダウンを入れ、dispatcher が翌日まで同じ本を再試行しないようにする。
-    const cooldownUntil = new Date(Date.now() + 20 * 60 * 60 * 1000);
+    //
+    // ただし **こちらが作成を見送った結果の `no_draft`** (作成枠の停止中に
+    // `allow_create: false` で投げた場合) は本の問題ではない。20h も寝かせると
+    // **週次リセット直後に拾えない本**が出るので、停止が明ける時刻までにとどめる。
+    let cooldownUntil = new Date(Date.now() + 20 * 60 * 60 * 1000);
+    if (result.reason === 'no_draft' && deps.payload.allow_create === false) {
+      const s = await prisma.appSettings
+        .findUnique({ where: { id: 'singleton' }, select: { kdp_creation_paused_until: true } })
+        .catch(() => null);
+      const pausedUntil = s?.kdp_creation_paused_until ?? null;
+      if (pausedUntil && pausedUntil.getTime() > Date.now()) cooldownUntil = pausedUntil;
+      log.info(
+        { book_id, cooldownUntil: cooldownUntil.toISOString() },
+        '作成枠の停止中に新規作成を見送った — 停止が明けるまでのクールダウンにする',
+      );
+    }
     await prisma.book
       .update({ where: { id: book_id }, data: { kdp_submit_cooldown_until: cooldownUntil } })
       .catch((err) => log.warn({ err: errMsg(err) }, 'creation_limit クールダウン設定失敗(無視)'));
