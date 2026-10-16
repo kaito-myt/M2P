@@ -83,7 +83,14 @@ export const messages = {
       findingsTitle: '知見',
       patternsTitle: '効いている記事の型',
       artDirectionTitle: 'アイキャッチの画作り',
-      artDirectionNote: 'この指示はアイキャッチ生成でジャンル既定の画風を上書きします。',
+      // F-ANP-57: 実物のサムネを見て決めた回だけジャンル既定を上書きする。
+      // 見ていない回は「参考」扱いなので、文言を分けて挙動の違いが分かるようにする。
+      artDirectionGrounded: (n: number) =>
+        `note 上の実物のサムネ ${n} 枚を見て決めました。この指示はアイキャッチ生成でジャンル既定の画風を上書きします。`,
+      artDirectionUngrounded:
+        '実物のサムネは確認できませんでした (検索で note の記事ページに届かなかった回)。この指示は参考にとどめ、ジャンル既定の画風は上書きしません。',
+      rivalEyecatchTitle: (n: number) => `競合サムネ ${n} 枚を見て分かったこと`,
+      rivalEyecatchGap: '自分たちに足りない点',
       copyRulesTitle: 'コピーの作り方',
       pursueTitle: '次に狙う題材',
       avoidTitle: '避ける題材',

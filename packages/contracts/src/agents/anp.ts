@@ -1060,6 +1060,41 @@ export const NoteResearchFindingSchema = z.object({
 export type NoteResearchFinding = z.infer<typeof NoteResearchFindingSchema>;
 
 /**
+ * F-ANP-57 — 競合サムネ 1 枚の観察結果 (ビジョンモデルが**実物の画像を見て**書く)。
+ *
+ * なぜ要るか: F-ANP-56 のリサーチは Tavily のテキスト (title/url/snippet) しか見ていないのに
+ * `art_direction` (被写体・構図・色・質感＝完全に視覚の指示) を書かせていた。出典に画像の話は
+ * 1 件も無いので、画作りは**根拠のない創作**になる。2026-10-16 実測: 競馬アカウントの
+ * art_direction が「曇天の芝・低彩度」だったが、同じリサーチが見つけた note 競馬面の実物
+ * (`note.com/topic/keiba`) は黒地×金×煽りで**正反対**だった。
+ */
+export const NoteRivalEyecatchShotSchema = z.object({
+  /** 観察したサムネ画像の URL (og:image)。 */
+  image_url: z.string().max(1000),
+  /** その画像が載っていた記事の URL (出典)。 */
+  article_url: z.string().max(1000).default(''),
+  /** 何が描かれているか (被写体)。 */
+  subject: z.string().max(300).default(''),
+  /** 構図 (寄り/引き・配置・余白)。 */
+  composition: z.string().max(300).default(''),
+  /** 配色・質感 (実写かイラストか、彩度、地の色)。 */
+  colors: z.string().max(300).default(''),
+  /** 文字の扱い (字数・行数・書体・装飾・置き場所)。 */
+  text: z.string().max(300).default(''),
+});
+export type NoteRivalEyecatchShot = z.infer<typeof NoteRivalEyecatchShotSchema>;
+
+/** F-ANP-57 — 競合サムネをまとめて見た結果。 */
+export const NoteRivalEyecatchObservationSchema = z.object({
+  shots: z.array(NoteRivalEyecatchShotSchema).max(10).default([]),
+  /** 複数枚に共通して現れた作法。 */
+  common_patterns: z.array(z.string().max(300)).max(8).default([]),
+  /** 自分たちのサムネに足りていないもの (観察からの差分)。 */
+  our_gap: z.string().max(800).default(''),
+});
+export type NoteRivalEyecatchObservation = z.infer<typeof NoteRivalEyecatchObservationSchema>;
+
+/**
  * 週次リサーチの成果。`note_accounts.research_json` に保存し、
  * 各 ANP エージェントのユーザーメッセージへ注入する。
  */
@@ -1071,10 +1106,22 @@ export const NoteAccountResearchSchema = z.object({
   /** 今このアカウントで効いている記事の型 (タイトル・導入・構成)。 */
   winning_patterns: z.array(z.string().max(300)).max(8).default([]),
   /**
-   * アイキャッチの画作り指示。`anp.eyecatch` の `accountArtDirection` に入り、
-   * ジャンル既定の画風を**上書き**する。空なら既定のまま。
+   * アイキャッチの画作り指示。`anp.eyecatch` の `accountArtDirection` に入る。
+   * 空なら既定 (ジャンル別の画風) のまま。
+   *
+   * **`art_direction_evidence` が空のときは「最優先」として扱わない** (F-ANP-57)。
+   * 画像を 1 枚も見ずに書いた画作りが、運営者が実物 6 枚を見て決めたジャンル既定
+   * (`@a2p/contracts/note-genre` の `art`) を上書きしてしまう事故があったため。
    */
   art_direction: z.string().max(1200).default(''),
+  /**
+   * F-ANP-57 — `art_direction` の根拠として**実際に画像を見た**サムネの URL。
+   * 空配列 = 画像を見ていない = テキストからの推測。`anp.eyecatch` はこれが空なら
+   * `art_direction` をジャンル既定より上に置かない。
+   */
+  art_direction_evidence: z.array(z.string().max(1000)).max(12).default([]),
+  /** F-ANP-57 — 競合サムネの観察結果 (運営者が UI で根拠を辿れるように保存する)。 */
+  rival_eyecatches: NoteRivalEyecatchObservationSchema.nullable().default(null),
   /** アイキャッチのコピーの作り方 (語数・言い回し・数字の入れ方)。`anp.seo` に注入。 */
   copy_rules: z.array(z.string().max(300)).max(8).default([]),
   /** 次に狙うべき題材。`anp.theme` に注入。 */
@@ -1112,6 +1159,16 @@ export const NoteAccountResearchInputSchema = z.object({
         likes: z.number().int().min(0).optional(),
         sales_jpy: z.number().int().min(0).optional(),
         is_paid: z.boolean().optional(),
+        /**
+         * F-ANP-57 — その記事のアイキャッチに使った画風キー
+         * (`jobs.result_json.style_key`, `EyecatchStyle.key`)。
+         *
+         * これが無いと「どのサムネで閲覧が付いたか」をリサーチが知れず、画風の選択は
+         * 記事 id のハッシュによる**実績と無関係なくじ引き**のままになる。
+         * 2026-10-16 実測: 記録自体は 140 本中 121 本に入っていたのに、リサーチへ
+         * 渡していなかったので一度も使われていなかった。
+         */
+        eyecatch_style: z.string().max(64).optional(),
       }),
     )
     .max(30)

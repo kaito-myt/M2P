@@ -2276,7 +2276,7 @@ A2P 側の週次リサーチ (`promotion.playbook.refresh`, F-064) は
 
 | 注入先 | 使う項目 | 経路 |
 |---|---|---|
-| `anp.eyecatch` | `art_direction` | `accountArtDirection` (ジャンル既定の `genre.art` を**上書き**) |
+| `anp.eyecatch` | `art_direction` | `accountArtDirection`。**ジャンル既定 `genre.art` を上書きできるのは `art_direction_evidence` が非空のとき (= 実物のサムネを見た回) だけ** — F-ANP-57 |
 | `anp.seo` | `copy_rules` / `winning_patterns` | `accountResearchLines(account, ['copy','patterns'])` |
 | `anp.theme` | `topics_to_pursue` / `topics_to_avoid` / `winning_patterns` | `accountResearchLines(account, ['patterns','topics'])` |
 
@@ -2532,3 +2532,146 @@ A2P の `/content-review` にある「judge が基準点に届かず止まった
 > **教訓**: 「差し戻す」実装は、**差し戻し先のエージェントのプロンプトに理由が載るところまで**
 > 見て初めて完成する。payload に積んだだけでは伝わっていない。
 > `feedback` を足すときは、受け取る側のエージェント全部で注入を確認する。
+
+---
+
+## サムネの市場分析を「実物を見る」ものにする (F-ANP-57, 2026-10-16)
+
+運営者の問い:
+
+> note のサムネ作成ちゃんと市場分析をしたうえで作成してる？
+
+**答えは「半分」だった。** 調査で 3 つの穴が出た。1 つは「分析していない」より悪く、
+**分析した結果を推測が上書きしていた**。
+
+### 1. リサーチはテキストしか見ていないのに、画の指示を書いていた
+
+F-ANP-56 のリサーチが見るのは Tavily の `title` / `url` / `snippet` = **文字だけ**。
+それなのに `art_direction` (被写体・構図・配色・質感・避けるもの = 完全に視覚の指示) を
+書かせていた。まとめ段のプロンプトには
+「上の一次情報に書かれていないことを『調べた結果』として書かないこと」とまで書いてあるのに、
+出典に画像の話は 1 件も無い。**画作りだけが構造的に根拠のない創作**になっていた。
+
+2026-10-16 の本番実測 (`note_accounts.research_json`):
+
+| | 競馬アカウントの実際の値 |
+|---|---|
+| `art_direction` | 「実写風・曇天の芝コースを低い位置から・低彩度・芝の深緑 `#2F4F3A`・差し色 1 色」 |
+| 同じリサーチが取った出典 | `note.com/topic/keiba` = 「【秋華賞2026 サイン予想記事Part2】¥1,000」等が並ぶ note 競馬面 |
+| 出典に写っている実物 | **黒地 × 金 × 煽り** |
+
+**正反対。** しかも F-ANP-56 §5 で「アカウント指示を最優先に置く」と直したので、
+この推測が `genre.art` (= 運営者が 2026-10-13 に売れている実物 6 枚を見て決めた勝ち筋。
+競馬は「黒地・ゴールド・劇的な明暗」) を**丸ごと消していた**。
+
+> **教訓**: 「アカウント固有の指示を最優先にする」は、その指示に根拠があるときだけ正しい。
+> **根拠の有無をデータとして持たない注入は、いずれ推測が事実を上書きする。**
+
+### 2. 自分たちのサムネの実績が、画作りに一度も返っていなかった
+
+`fetchRecentArticles` がリサーチに渡していたのは タイトル / 有料 / 閲覧 / スキ / 売上 だけ。
+**どのサムネでその数字が出たかを渡していない。** 画風キーは
+`pipeline.note.eyecatch` の `jobs.result_json.style_key` に**記録済み**で、
+2026-10-16 時点で公開 140 本のうち 121 本に入っていた。使われていたのは 0 本。
+
+実際に集計すると差は見える (標本が小さく公開時期の偏りも混ざるので傾向まで):
+
+| アカウント | 平均閲覧が高い画風 | 低い画風 |
+|---|---|---|
+| 副業×AI活用 | `retro_poster` 9.8 (n=12) | `flat_editorial` 2.8 (n=9) / `kawaii_mascot` 0.0 (n=2) |
+| 競馬予想 | `minimal_object` 13.2 (n=6) / `retro_poster` 9.2 (n=10) | `flat_editorial` 0.6 (n=5) / `film_still_life` 0.7 (n=7) |
+
+### 3. 「直近と同じ画風を避ける」は実装以来一度も動いていなかった
+
+`defaultRecentStyleKeys` (F-ANP-14b) は
+
+```ts
+payload_json: { path: ['note_article_id'], in: articles.map((a) => a.id) }
+```
+
+と書いていた。**Prisma の Json フィルタに `in` は無い** (equals / path / string_contains /
+array_contains / 比較演算子のみ)。Prisma は未知の引数を実行時に
+`PrismaClientValidationError` で弾く。本番で実測:
+
+```
+IN filter REJECTED: PrismaClientValidationError
+OR/equals filter OK
+```
+
+呼び出し側が `.catch(() => [])` でこれを飲んでいたため、**常に空配列が返り、画風は
+記事 ID のハッシュだけで決まっていた**。型チェックも通っていた — 呼び出し側が prisma を
+`as unknown as` で緩い型に落としていたため。
+
+> **教訓**: `.catch(() => 既定値)` は**機能を無言で消す**。F-098 (ブラウザ起動不能で
+> 14 日間出版が止まった) と同じ構造。失敗を飲むなら必ず WARN を出す。
+
+### 4. 直した内容
+
+#### 4.1 実物のサムネを見る工程を挟む (`packages/agents/src/anp/eyecatch-market.ts`)
+
+| 段 | やること |
+|---|---|
+| 1 | Tavily の結果から note の**一覧**ページ (`/topic/*`, `/hashtag/*`, `/search`) を拾い、HTML から記事リンクを掘る。note 自身が並べた列なので、検索結果より標本として良い |
+| 2 | 検索結果に直接出ていた記事ページ (`/<creator>/n/<id>`) も候補に足す |
+| 3 | 各記事の `og:image` (= note のアイキャッチそのもの) を取得。極小 (<2KB) とコンテンツタイプが画像でないものは捨てる |
+| 4 | 最大 6 枚を**1 回のビジョン呼び出し**に渡し、1 枚ずつ 被写体 / 構図 / 配色 / 文字の扱い を記述させ、共通の作法と「自分たちに足りない点」を出させる |
+
+- 観点決定のプロンプトに「**観点のうち少なくとも 1 つは、このニッチの note 記事そのものが
+  並んでいる一覧に当たるクエリにする**」を追加した。ここに当たらないと掘る先が無い。
+- role は `anp.research` を使い回す (**新しい role を作らない**)。role を増やすと
+  `prompts` と `model_assignments` の本番投入が 2 件必要になり、片方が漏れると週次リサーチが
+  丸ごと落ちる。観察はリサーチの一部なのでコストも `anp.research` に帰属させるのが正しい。
+- **絶対に throw しない。** 1 枚も取れなくても、ビジョンが落ちても、リサーチは完走する。
+
+#### 4.2 根拠をデータとして持ち、無ければ上書きさせない
+
+| 追加 | 意味 |
+|---|---|
+| `NoteAccountResearch.art_direction_evidence: string[]` | `art_direction` の根拠として**実際に画像を取得できた**サムネの URL |
+| `NoteAccountResearch.rival_eyecatches` | 観察結果そのもの (UI で根拠を辿れるように保存) |
+| `GenerateNoteEyecatchInput.accountArtDirectionGrounded` | `art_direction_evidence` が非空か |
+
+- `evidence` は**まとめ段の LLM に書かせない**。`collectRivalEyecatches` が実際に落とせた
+  画像の URL で上書きする (angles を段 1 の計画で上書きするのと同じ理由)。
+  LLM に「見た」と言わせたら、この仕組みは最初の穴に戻る。
+- 画像が 0 枚の回は、まとめ段のプロンプトに
+  「**art_direction は空文字で返すこと**」と明記する。黙って省くと一般論で埋める。
+- `anp.eyecatch` の `buildPrompt`:
+  - `grounded` のときだけ「**これが最優先**」の節を既定より前に置く
+  - **`genre.art` は常に出す** (以前はアカウント指示があると出さなかった)
+  - `grounded` でない `art_direction` は既定の**後ろ**に
+    「参考: 実物のサムネは未確認なので、上の作法と矛盾する部分は無視してよい」として置く
+
+#### 4.3 自分のサムネ実績を戻す
+
+`apps/worker/src/tasks/lib/eyecatch-style-history.ts` を新設し、
+`buildArticleIdJsonFilter` (= `equals` の OR 展開) に Json フィルタの組み立てを閉じた。
+`note.account.research` と `pipeline.note.eyecatch` の両方がここを通る。
+リサーチには画風別の平均閲覧/スキを降順で渡す
+(「公開時期の偏りが混ざるので傾向としてだけ扱え」と明記する)。
+
+#### 4.4 UI
+
+アカウント詳細の `ResearchPanel` に、画作りが**実物何枚を見て決まったか**を出す。
+見ていない回は「参考にとどめ、ジャンル既定の画風は上書きしません」と表示する
+(以前は推測でも「上書きします」と書いてあった)。観察した共通の作法と
+「自分たちに足りない点」も出す。
+
+### 5. 変更したファイル
+
+| 種別 | 場所 |
+|---|---|
+| 新規 | `packages/agents/src/anp/eyecatch-market.ts` (収集 + ビジョン観察) |
+| 新規 | `apps/worker/src/tasks/lib/eyecatch-style-history.ts` (Json フィルタと画風履歴) |
+| 契約 | `packages/contracts/src/agents/anp.ts` — `NoteRivalEyecatchShotSchema` / `NoteRivalEyecatchObservationSchema` / `art_direction_evidence` / `rival_eyecatches` / `recentArticles[].eyecatch_style` |
+| エージェント | `research.ts` (観察の挟み込み・観点プロンプト・まとめプロンプト・`ourEyecatchSummary`) / `eyecatch.ts` (`accountArtDirectionGrounded`) |
+| タスク | `note-account-research.ts` (画風履歴の受け渡し・`rivalShots` ログ) / `pipeline-note-eyecatch.ts` (Json フィルタ修正・grounded の受け渡し・WARN 追加) |
+| UI | `apps/anp/app/(app)/accounts/[id]/research-panel.tsx` / `apps/anp/lib/messages.ts` |
+| テスト | `packages/agents/__tests__/anp/eyecatch-market.test.ts` (11) / `apps/worker/__tests__/eyecatch-style-history.test.ts` (7) / `anp/research.test.ts` + `anp-eyecatch-style.test.ts` に追加 |
+
+### 6. 週次 cron の初回発火はまだ
+
+`note-account-research-weekly` は `graphile_worker._private_known_crontabs` に登録済みだが
+`last_execution = null`。cron は `0 2 * * 1` (月曜 11:00 JST) で、実装が 2026-10-14 (水) なので
+**初回は 2026-10-19 (月)**。今ある `research_json` は 10-14 に手で回した分。
+「週次で鮮度を保つ」はまだ実証されていない。

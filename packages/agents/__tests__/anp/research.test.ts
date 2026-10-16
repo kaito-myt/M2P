@@ -104,6 +104,9 @@ function makeDeps(
       })) as unknown as ResearchNoteAccountDeps['loadActivePrompt'],
       createAgentClient: (async () => client) as unknown as ResearchNoteAccountDeps['createAgentClient'],
       resolveTavilyKey: async () => null,
+      // F-ANP-57: 既定では競合サムネの収集を止める (テストが外部 fetch を踏まないように)。
+      // この工程を検証するテストは個別に DI を差し替える。
+      skipRivalEyecatches: true,
       ...over,
     },
     calls,
@@ -165,6 +168,8 @@ describe('researchNoteAccount', () => {
           topics_to_avoid: [],
           editorial_policy_suggestion: '',
           summary: '前回の総括',
+          art_direction_evidence: [],
+          rival_eyecatches: null,
         },
       },
       deps,
@@ -291,5 +296,152 @@ describe('researchNoteAccount', () => {
     const { deps, calls } = makeDeps([PLAN, 'JSON ではない応答', REPORT], {}, [200, 120, 900]);
     await researchNoteAccount(INPUT, deps);
     expect(String(calls[2]!.messages.at(-1)!.content)).not.toContain('前回の出力は長すぎて途中で切れた');
+  });
+});
+
+/**
+ * F-ANP-57 — 画作りの根拠を「実物のサムネ」に縛る。
+ *
+ * 2026-10-16 運営者指摘「note のサムネ作成ちゃんと市場分析をしたうえで作成してる？」の調査で、
+ * リサーチは Tavily のテキストしか見ていないのに art_direction (被写体・構図・色・質感) を
+ * 書いていたことが判明した。本番の競馬アカウントは「曇天の芝・低彩度」になっていたが、
+ * 同じリサーチが見つけた note 競馬面の実物は黒地×金×煽りで正反対だった。
+ */
+describe('researchNoteAccount — 競合サムネの実物観察 (F-ANP-57)', () => {
+  const items: NoteAccountConsultResearchItem[] = [
+    { query: 'q', title: 'note 競馬トピック', url: 'https://note.com/topic/keiba' },
+  ];
+
+  function shot(i: number) {
+    return {
+      articleUrl: `https://note.com/u${i}/n/n${i}`,
+      title: `記事${i}`,
+      imageUrl: `https://img.example/${i}.jpg`,
+      image: Buffer.from(`img${i}`),
+      mimeType: 'image/jpeg',
+    };
+  }
+
+  const OBSERVATION = {
+    shots: [
+      {
+        image_url: 'https://img.example/1.jpg',
+        article_url: 'https://note.com/u1/n/n1',
+        subject: '黒地に金の装飾文字とレース名',
+        composition: '文字が画面の 7 割',
+        colors: '黒地・金・赤の差し色',
+        text: '12 字前後を 2 行、金の多重縁取り',
+      },
+    ],
+    common_patterns: ['黒地に金の太字', '開催日とレース名を必ず入れる'],
+    our_gap: '低彩度の実写に寄りすぎてタイムラインで埋もれている',
+  };
+
+  it('実物を見たら art_direction_evidence に URL が入り、観察がまとめ段に渡る', async () => {
+    const { deps, calls } = makeDeps([PLAN, REPORT], {
+      search: async () => items,
+      skipRivalEyecatches: false,
+      collectRivalEyecatches: (async () => [shot(1), shot(2)]) as never,
+      observeRivalEyecatches: (async () => OBSERVATION) as never,
+    });
+    const { research, rivalShots } = await researchNoteAccount(INPUT, deps);
+
+    expect(rivalShots).toBe(2);
+    // 「見た」と言わせるのではなく、実際に取得できた画像の URL を正とする
+    expect(research.art_direction_evidence).toEqual([
+      'https://img.example/1.jpg',
+      'https://img.example/2.jpg',
+    ]);
+    expect(research.rival_eyecatches?.common_patterns).toContain('黒地に金の太字');
+
+    const report = String(calls[1]!.messages[1]!.content);
+    expect(report).toContain('競合サムネの実物 1 枚を見た結果');
+    expect(report).toContain('黒地に金の装飾文字');
+    expect(report).toContain('観察に書かれている要素だけ');
+  });
+
+  it('1 枚も見られなかったら evidence は空で、まとめ段に art_direction を空にさせる', async () => {
+    const { deps, calls } = makeDeps([PLAN, REPORT], {
+      search: async () => items,
+      skipRivalEyecatches: false,
+      collectRivalEyecatches: (async () => []) as never,
+    });
+    const { research, rivalShots } = await researchNoteAccount(INPUT, deps);
+
+    expect(rivalShots).toBe(0);
+    expect(research.art_direction_evidence).toEqual([]);
+    expect(research.rival_eyecatches).toBeNull();
+
+    const report = String(calls[1]!.messages[1]!.content);
+    expect(report).toContain('競合サムネの実物: 見られなかった');
+    expect(report).toContain('art_direction は空文字で返すこと');
+  });
+
+  it('観察が落ちてもリサーチは完走する (ベストエフォート)', async () => {
+    const { deps } = makeDeps([PLAN, REPORT], {
+      search: async () => items,
+      skipRivalEyecatches: false,
+      collectRivalEyecatches: (async () => [shot(1)]) as never,
+      observeRivalEyecatches: (async () => {
+        throw new Error('vision down');
+      }) as never,
+    });
+    const { research, rivalShots } = await researchNoteAccount(INPUT, deps);
+    expect(rivalShots).toBe(0);
+    expect(research.art_direction_evidence).toEqual([]);
+    expect(research.findings.length).toBeGreaterThan(0);
+  });
+
+  it('収集が落ちてもリサーチは完走する', async () => {
+    const { deps } = makeDeps([PLAN, REPORT], {
+      search: async () => items,
+      skipRivalEyecatches: false,
+      collectRivalEyecatches: (async () => {
+        throw new Error('ECONNRESET');
+      }) as never,
+    });
+    const { research } = await researchNoteAccount(INPUT, deps);
+    expect(research.art_direction_evidence).toEqual([]);
+  });
+
+  it('観点決定のプロンプトが note の一覧ページに当たるクエリを要求する', async () => {
+    const { deps, calls } = makeDeps([PLAN, REPORT]);
+    await researchNoteAccount(INPUT, deps);
+    const plan = String(calls[0]!.messages[1]!.content);
+    expect(plan).toContain('note 記事そのものが並んでいる一覧');
+  });
+});
+
+/**
+ * F-ANP-57 — 自分たちのサムネの実績 (画風別) がリサーチに届くこと。
+ * 記録はしていたのに渡していなかったので、画風の選択は実績と無関係なくじ引きだった。
+ */
+describe('researchNoteAccount — 自分のサムネ実績', () => {
+  it('画風別の平均閲覧/スキがまとめ段に入る', async () => {
+    const { deps, calls } = makeDeps([PLAN, REPORT]);
+    await researchNoteAccount(
+      {
+        ...INPUT,
+        recentArticles: [
+          { title: 'A', views: 40, likes: 1, eyecatch_style: 'retro_poster' },
+          { title: 'B', views: 20, likes: 3, eyecatch_style: 'retro_poster' },
+          { title: 'C', views: 2, likes: 0, eyecatch_style: 'flat_editorial' },
+        ],
+      },
+      deps,
+    );
+    const report = String(calls[1]!.messages[1]!.content);
+    expect(report).toContain('自分たちのサムネの実績 (画風別)');
+    expect(report).toContain('retro_poster: 2 本 / 平均閲覧 30.0');
+    expect(report).toContain('flat_editorial: 1 本 / 平均閲覧 2.0');
+    // 平均閲覧の降順で並べる (勝っている画風が先)
+    expect(report.indexOf('retro_poster')).toBeLessThan(report.indexOf('flat_editorial'));
+  });
+
+  it('画風キーが 1 件も無ければブロックを出さない (空の表を見せない)', async () => {
+    const { deps, calls } = makeDeps([PLAN, REPORT]);
+    await researchNoteAccount(INPUT, deps);
+    const report = String(calls[1]!.messages[1]!.content);
+    expect(report).not.toContain('自分たちのサムネの実績');
   });
 });

@@ -16,6 +16,7 @@ import { createLogger, type Logger } from '@a2p/contracts/logger';
 import { prisma as defaultPrisma } from '@a2p/db';
 
 import { applyNoteArticleCostFromJob, type NoteArticleCostPrisma } from './lib/note-article-cost.js';
+import { buildArticleIdJsonFilter } from './lib/eyecatch-style-history.js';
 import {
   runNoteSeoStep as defaultRunNoteSeoStep,
   type NoteSeoStepPrisma,
@@ -46,6 +47,15 @@ export type PipelineNoteEyecatchPayload = z.infer<typeof PipelineNoteEyecatchPay
 /**
  * F-ANP-14b: 同一アカウントの直近アイキャッチ 3 件で使った画風キー。`jobs.result_json.style_key` に
  * 保存しているので、記事 → アカウントの join を避けて記事 id の集合で引く。
+ *
+ * 【2026-10-16 修正 (F-ANP-57)】元の実装は
+ * `payload_json: { path: ['note_article_id'], in: ids }` と書いていたが、**Prisma の
+ * Json フィルタに `in` は無い** (equals / path / string_contains / array_contains 等のみ)。
+ * Prisma は未知の引数を実行時に `PrismaClientValidationError` で弾くため、この関数は
+ * **常に throw し、呼び出し側の `.catch(() => [])` に飲まれて空配列を返していた** —
+ * つまり「直近と同じ画風を避ける」は実装以来一度も動いていなかった。
+ * (型チェックを通っていたのは prisma を `as unknown as` で緩い型に落としていたため。)
+ * 組み立ては `buildArticleIdJsonFilter` に閉じ、単体テストで形を固定している。
  */
 export async function defaultRecentStyleKeys(prisma: PipelineNoteEyecatchPrisma, noteAccountId: string): Promise<string[]> {
   const repo = (prisma as unknown as {
@@ -61,7 +71,11 @@ export async function defaultRecentStyleKeys(prisma: PipelineNoteEyecatchPrisma,
   });
   if (articles.length === 0) return [];
   const jobs = await repo.job.findMany({
-    where: { kind: PIPELINE_NOTE_EYECATCH_TASK_NAME, status: 'done', payload_json: { path: ['note_article_id'], in: articles.map((a) => a.id) } },
+    where: {
+      kind: PIPELINE_NOTE_EYECATCH_TASK_NAME,
+      status: 'done',
+      ...buildArticleIdJsonFilter(articles.map((a) => a.id)),
+    },
     orderBy: { created_at: 'desc' },
     take: 3,
     select: { result_json: true },
@@ -228,9 +242,19 @@ export async function runPipelineNoteEyecatch(
         : null;
 
       // F-ANP-14b: 直近 (同一アカウント) で使った画風を避ける → 連続する記事のサムネが揃わない。
+      // 失敗は飲むが**必ず WARN を出す** — ここを黙って飲んでいたせいで、Prisma が
+      // Json フィルタの `in` を弾いていたことに 2026-10-16 まで気づけなかった
+      // (機能が実装以来ずっと無効だったのに、ログにも画面にも何も出ていなかった)。
+      const onStyleKeysError = (err: unknown): string[] => {
+        log.warn(
+          { task: PIPELINE_NOTE_EYECATCH_TASK_NAME, jobId, noteArticleId, err },
+          '直近の画風を引けなかった — 画風の重複回避が効かない',
+        );
+        return [];
+      };
       const recent = deps.recentStyleKeys
-        ? await deps.recentStyleKeys(article.note_account_id).catch(() => [])
-        : await defaultRecentStyleKeys(prisma, article.note_account_id).catch(() => []);
+        ? await deps.recentStyleKeys(article.note_account_id).catch(onStyleKeysError)
+        : await defaultRecentStyleKeys(prisma, article.note_account_id).catch(onStyleKeysError);
 
       // F-ANP-56: 週次リサーチ (anp.research) の成果。アカウント固有の画作り指示と
       // コピー規則を注入する。役割プロンプト本文は全アカウント共有なので、
@@ -276,7 +300,15 @@ export async function runPipelineNoteEyecatch(
         ...(seo.eyecatchSub ? { eyecatchSub: seo.eyecatchSub } : {}),
         ...(account.editorial_policy ? { editorialPolicy: account.editorial_policy } : {}),
         // 指定時はジャンル既定の画風を上書きする (eyecatch.ts の accountArtDirection)。
-        ...(research?.art_direction ? { accountArtDirection: research.art_direction } : {}),
+        // **上書きできるのは実物のサムネを見て書かれたときだけ** (F-ANP-57)。
+        // `art_direction_evidence` が空 = 画像を 1 枚も見ていない = テキストからの推測なので、
+        // 運営者が実物を見て決めたジャンル既定を消させない。
+        ...(research?.art_direction
+          ? {
+              accountArtDirection: research.art_direction,
+              accountArtDirectionGrounded: (research.art_direction_evidence ?? []).length > 0,
+            }
+          : {}),
         // コピーの装飾規則 (袋文字・多重縁取りの可否) は画像プロンプト側に無いと効かない。
         ...(research?.copy_rules && research.copy_rules.length > 0
           ? { accountCopyRules: research.copy_rules }

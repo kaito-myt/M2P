@@ -41,8 +41,8 @@ const validEnv = (): NodeJS.ProcessEnv => ({
 });
 
 describe('ENV_KEYS', () => {
-  it('docs/03 §5 + T-02-13 + LINE 双方向認証リレー + Amazon 自動再ログイン + Amazon Ads(F-090) の正本である 39 項目を露出する', () => {
-    expect(ENV_KEYS).toHaveLength(39);
+  it('docs/03 §5 + T-02-13 + LINE 双方向認証リレー + Amazon 自動再ログイン + Amazon Ads(F-090) + ブラウザ直列化(F-098) の正本である 40 項目を露出する', () => {
+    expect(ENV_KEYS).toHaveLength(40);
   });
 
   it('スキーマと export の集合が一致する', () => {
@@ -71,6 +71,8 @@ describe('ENV_KEYS', () => {
       'SENTRY_DSN',
       'LOG_LEVEL',
       'WORKER_BOOK_CONCURRENCY',
+      // F-098: 同時起動を許す Chromium の本数 (既定 1 = 直列)
+      'WORKER_BROWSER_CONCURRENCY',
       'WORKER_CHAPTER_CONCURRENCY',
       'MODEL_CATALOG_FETCH_CRON',
       'FX_RATE_API_URL',

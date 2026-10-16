@@ -30,6 +30,7 @@ import {
   type NoteAccountConsultResearchItem,
   type NoteAccountResearch,
   type NoteAccountResearchInput,
+  type NoteRivalEyecatchObservation,
 } from '@a2p/contracts/agents/anp';
 import { createLogger } from '@a2p/contracts/logger';
 
@@ -45,6 +46,11 @@ import type { LoggingContext, WithTokenLoggingDeps } from '../lib/with-token-log
 import type { LoadModelAssignmentDeps } from '../lib/load-model-assignment.js';
 import { TavilyWebSearch } from '../tools/web-search.js';
 import { editorialPolicyLines } from './account-context.js';
+import {
+  collectRivalEyecatches as defaultCollectRivalEyecatches,
+  observeRivalEyecatches as defaultObserveRivalEyecatches,
+  type RivalEyecatchShot,
+} from './eyecatch-market.js';
 
 const log = createLogger('agents.anp.research');
 
@@ -115,12 +121,20 @@ export interface ResearchNoteAccountDeps {
   resolveTavilyKey?: () => Promise<string | null>;
   /** DI: 検索実行を差し替える (テスト用)。既定は TavilyWebSearch。 */
   search?: (query: string) => Promise<NoteAccountConsultResearchItem[]>;
+  /** F-ANP-57 DI: 競合サムネの収集 (既定は note の記事/一覧ページから og:image を取る)。 */
+  collectRivalEyecatches?: typeof defaultCollectRivalEyecatches;
+  /** F-ANP-57 DI: 競合サムネのビジョン観察。 */
+  observeRivalEyecatches?: typeof defaultObserveRivalEyecatches;
+  /** F-ANP-57: 競合サムネを見る工程を飛ばす (コストを抑えたいとき / テスト)。 */
+  skipRivalEyecatches?: boolean;
 }
 
 export interface ResearchNoteAccountResult {
   research: NoteAccountResearch;
   /** 参照した検索結果 (監査・UI 表示用)。Tavily キーが無ければ空。 */
   items: NoteAccountConsultResearchItem[];
+  /** F-ANP-57: 実際に画像を見た競合サムネの枚数。0 なら画作りはテキストからの推測。 */
+  rivalShots: number;
 }
 
 /** 段階 1 の出力: 観点とクエリ。 */
@@ -177,8 +191,14 @@ export async function researchNoteAccount(
   // --- 検索 ---
   const items = await runSearch(plan, deps);
 
+  // --- F-ANP-57: 競合サムネを実物で見る ---
+  // ここが無いと art_direction (被写体・構図・色) が**テキストからの創作**になる。
+  // ベストエフォート: 1 枚も取れなくてもリサーチは続行し、evidence が空のままになる
+  // (その空が `anp.eyecatch` 側で「ジャンル既定を上書きしない」判断に効く)。
+  const rival = await observeRivals({ client, systemPrompt, input, items, deps });
+
   // --- 段階 2: まとめ ---
-  const baseUserMessage = buildReportUserMessage(input, plan, items);
+  const baseUserMessage = buildReportUserMessage(input, plan, items, rival.observation);
   let lastError: AgentError | undefined;
   /** 直前の試行が出力上限で切れたか。切れていたら次は要求を小さくして投げ直す。 */
   let truncatedBefore = false;
@@ -230,6 +250,9 @@ export async function researchNoteAccount(
       continue;
     }
     // 観点は段階 1 の計画を正とする (まとめ段で言い換えられると何を見たか追えなくなる)。
+    // 同じ理由で **サムネの根拠は実際に取得できた画像の URL を正とする** — まとめ段の
+    // LLM に「見た」と言わせてはいけない (見ていないのに evidence が埋まると、
+    // `anp.eyecatch` が推測をジャンル既定より上に置いてしまう)。
     const research: NoteAccountResearch = {
       ...validated.data,
       angles: plan.angles.map((a) => ({
@@ -237,8 +260,10 @@ export async function researchNoteAccount(
         ...(a.why ? { why: a.why } : {}),
         queries: a.queries,
       })),
+      art_direction_evidence: rival.shots.map((sh) => sh.imageUrl),
+      rival_eyecatches: rival.observation,
     };
-    return { research, items };
+    return { research, items, rivalShots: rival.shots.length };
   }
 
   throw lastError ?? new AgentError('anp.research.invalid_output: unknown failure');
@@ -315,6 +340,107 @@ function fallbackAngles(input: NoteAccountResearchInput): ResearchPlan['angles']
       queries: [`${niche} note 人気記事`, `${niche} note 有料記事`, `${niche} 2026 トレンド`],
     },
   ];
+}
+
+/**
+ * F-ANP-57 — 競合サムネを集めて実物を見る。
+ *
+ * **絶対に throw しない。** 画像が取れないこと・ビジョン呼び出しが失敗することを理由に
+ * 週次リサーチ全体を落とすと、テキストのリサーチまで一緒に失われる。
+ * 失敗時は shots=[] / observation=null で返り、`art_direction_evidence` が空になる。
+ */
+async function observeRivals(args: {
+  client: LLMClient;
+  systemPrompt: string;
+  input: NoteAccountResearchInput;
+  items: readonly NoteAccountConsultResearchItem[];
+  deps: ResearchNoteAccountDeps;
+}): Promise<{ shots: RivalEyecatchShot[]; observation: NoteRivalEyecatchObservation | null }> {
+  const { deps } = args;
+  if (deps.skipRivalEyecatches === true) return { shots: [], observation: null };
+  if (args.items.length === 0) return { shots: [], observation: null };
+
+  const collect = deps.collectRivalEyecatches ?? defaultCollectRivalEyecatches;
+  let shots: RivalEyecatchShot[] = [];
+  try {
+    shots = await collect(args.items);
+  } catch (err) {
+    log.warn(
+      { err: err instanceof Error ? err.message : String(err) },
+      '競合サムネの収集に失敗 — 画像なしで続行する',
+    );
+    return { shots: [], observation: null };
+  }
+  if (shots.length === 0) {
+    log.warn(
+      { items: args.items.length },
+      '競合サムネを 1 枚も取得できなかった — art_direction はテキストからの推測になる',
+    );
+    return { shots: [], observation: null };
+  }
+
+  const observe = deps.observeRivalEyecatches ?? defaultObserveRivalEyecatches;
+  try {
+    const observation = await observe({
+      client: args.client,
+      systemPrompt: args.systemPrompt,
+      shots,
+      niche: args.input.account.niche,
+      ourStyleSummary: ourEyecatchSummary(args.input),
+      ...(args.input.jobId !== undefined ? { jobId: args.input.jobId } : {}),
+    });
+    log.info(
+      {
+        shots: shots.length,
+        patterns: observation.common_patterns.length,
+        urls: shots.map((sh) => sh.articleUrl),
+      },
+      '競合サムネを実物で観察した',
+    );
+    return { shots, observation };
+  } catch (err) {
+    log.warn(
+      { err: err instanceof Error ? err.message : String(err), shots: shots.length },
+      '競合サムネの観察に失敗 — 画像なしで続行する',
+    );
+    return { shots: [], observation: null };
+  }
+}
+
+/**
+ * F-ANP-57 — 自分たちのサムネの現状を 1 ブロックにまとめる。
+ *
+ * 画風キー (`jobs.result_json.style_key`) ごとに閲覧/スキを平均する。
+ * これを渡していなかったので、リサーチは「どのサムネで数字が出たか」を一度も知らず、
+ * 画風の選択は記事 id のハッシュ (= 実績と無関係なくじ引き) のままだった。
+ */
+export function ourEyecatchSummary(input: NoteAccountResearchInput): string {
+  const byStyle = new Map<string, { n: number; views: number; likes: number }>();
+  let withStyle = 0;
+  for (const a of input.recentArticles) {
+    const key = (a.eyecatch_style ?? '').trim();
+    if (key.length === 0) continue;
+    withStyle += 1;
+    const cur = byStyle.get(key) ?? { n: 0, views: 0, likes: 0 };
+    cur.n += 1;
+    cur.views += a.views ?? 0;
+    cur.likes += a.likes ?? 0;
+    byStyle.set(key, cur);
+  }
+  if (withStyle === 0) return '';
+  const rows = [...byStyle.entries()]
+    .map(([key, v]) => ({ key, n: v.n, views: v.views / v.n, likes: v.likes / v.n }))
+    .sort((x, y) => y.views - x.views)
+    .map(
+      (r) =>
+        `- ${r.key}: ${r.n} 本 / 平均閲覧 ${r.views.toFixed(1)} / 平均スキ ${r.likes.toFixed(2)}`,
+    );
+  return [
+    `直近 ${withStyle} 本のアイキャッチを画風別に集計した実績:`,
+    ...rows,
+    '(画風は記事 ID のハッシュで機械的に振っているので、公開時期の偏りが混ざる。',
+    ' 1 本あたりの差を断定せず、傾向としてだけ扱うこと。)',
+  ].join('\n');
 }
 
 async function runSearch(
@@ -428,6 +554,13 @@ function buildPlanUserMessage(input: NoteAccountResearchInput): string {
     '具体的に突く観点にすること。各観点に日本語の検索クエリを 1〜3 個付けます。',
     '検索は note / X / ブログ等の実例が拾えるクエリにし、年号や季節性を含めてよい。',
     '',
+    // F-ANP-57: 後段で**実物のサムネを見る**ため、note 自身がそのジャンルの記事を並べている面
+    // (note.com/topic/*, note.com/hashtag/*) に当たるクエリが 1 つは必要。
+    // ここに当たらないと og:image を掘る先が無く、画作りがテキストからの推測に戻る。
+    '観点のうち**少なくとも 1 つ**は「このニッチの note 記事そのものが並んでいる一覧」に',
+    '当たるクエリを含めてください (例: 「note 競馬 トピック 人気記事」「note ハッシュタグ AI副業 記事」)。',
+    'その一覧から実際のアイキャッチ画像を取得して見るので、記事ページに辿り着けるクエリにすること。',
+    '',
     '出力は次の JSON のみ (前後に何も付けない):',
     '{',
     '  "angles": [',
@@ -438,10 +571,52 @@ function buildPlanUserMessage(input: NoteAccountResearchInput): string {
   ].join('\n');
 }
 
+/**
+ * F-ANP-57 — 実物のサムネを見た結果をまとめ段に渡すブロック。
+ *
+ * 画像が 1 枚も取れなかったときは**その事実を明記する**。黙って省くと、まとめ段の LLM が
+ * 一般論で art_direction を埋めてしまう (それが元の不具合だった)。
+ */
+function rivalEyecatchBlock(observation: NoteRivalEyecatchObservation | null): string[] {
+  if (observation === null || observation.shots.length === 0) {
+    return [
+      '',
+      '【競合サムネの実物: 見られなかった】',
+      '今回はこのニッチの note 記事のアイキャッチ画像を 1 枚も取得できなかった。',
+      'したがって **art_direction は空文字で返すこと**。画像を見ていないのに被写体・構図・配色を',
+      '指示すると、運営者が実物を見て決めたジャンル既定の画風を根拠なく上書きしてしまう。',
+      '画作り以外 (findings / winning_patterns / copy_rules / topics) はテキストの一次情報から書いてよい。',
+    ];
+  }
+  const lines = ['', `【競合サムネの実物 ${observation.shots.length} 枚を見た結果 (ここが画作りの唯一の根拠)】`];
+  for (const [i, sh] of observation.shots.entries()) {
+    lines.push(
+      `${i + 1}. ${sh.article_url || sh.image_url}`,
+      `   被写体: ${sh.subject}`,
+      `   構図: ${sh.composition}`,
+      `   配色: ${sh.colors}`,
+      `   文字: ${sh.text}`,
+    );
+  }
+  if (observation.common_patterns.length > 0) {
+    lines.push('共通して現れた作法:', ...observation.common_patterns.map((pt) => `- ${pt}`));
+  }
+  if (observation.our_gap.trim().length > 0) {
+    lines.push(`自分たちのサムネに足りていない点: ${observation.our_gap.trim()}`);
+  }
+  lines.push(
+    '',
+    'art_direction は **上の観察に書かれている要素だけ**で組み立てること。',
+    '観察に出てこない被写体・配色・質感を足さない。観察と自分の好みが食い違ったら観察に従う。',
+  );
+  return lines;
+}
+
 function buildReportUserMessage(
   input: NoteAccountResearchInput,
   plan: ResearchPlan,
   items: NoteAccountConsultResearchItem[],
+  rivalObservation: NoteRivalEyecatchObservation | null = null,
 ): string {
   const lines: string[] = [
     '# タスク: 週次リサーチのまとめと、来週の作り方への反映',
@@ -476,6 +651,17 @@ function buildReportUserMessage(
     );
   }
 
+  // F-ANP-57: 画作りの根拠は**実物のサムネを見た結果だけ**。テキストの一次情報の後、
+  // 出力指定の直前に置く (画像モデルと同じく LLM も後ろの指示を強く守るため)。
+  lines.push(...rivalEyecatchBlock(rivalObservation));
+
+  // F-ANP-57: 自分たちのサムネの実績 (画風別の閲覧/スキ)。これを渡していなかったので
+  // 「どの画風で数字が出たか」が一度もリサーチに届いていなかった。
+  const ourStyles = ourEyecatchSummary(input);
+  if (ourStyles.length > 0) {
+    lines.push('', '【自分たちのサムネの実績 (画風別)】', ourStyles);
+  }
+
   lines.push(
     '',
     '出力は次の JSON のみ (前後に何も付けない)。日本語で書く。',
@@ -483,8 +669,9 @@ function buildReportUserMessage(
     '  "findings": [ { "angle": "観点名", "finding": "知見", "implication": "記事づくりへの示唆", "sources": ["URL", ...] }, ... ],',
     '  "winning_patterns": ["今このアカウントで効く記事の型 (タイトル/導入/構成)", ...],',
     '  "art_direction": "アイキャッチの画作り指示。被写体・構図・色・質感・避けるもの。',
-    '                    このニッチの読者がタイムラインで反応する絵を、具体的に 200〜600 字で。',
-    '                    汎用的な美辞麗句ではなく、画像モデルがそのまま使える指示にする。",',
+    '                    **上の「競合サムネの実物」に書かれている要素だけ**で 200〜600 字。',
+    '                    画像モデルがそのまま使える指示にする (汎用的な美辞麗句は書かない)。',
+    '                    実物を見られなかった回は必ず空文字にする。",',
     '  "copy_rules": ["アイキャッチのコピーの作り方 (字数・言い回し・数字の入れ方・NG 表現)", ...],',
     '  "topics_to_pursue": ["次に狙う題材", ...],',
     '  "topics_to_avoid": ["避ける題材 (飽和・規約リスク・読者が離れる)", ...],',

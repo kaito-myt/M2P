@@ -33,6 +33,8 @@ const research: NoteAccountResearch = {
   topics_to_avoid: ['必勝を謳う記事'],
   editorial_policy_suggestion: '根拠を先に出す',
   summary: '総括',
+  art_direction_evidence: [],
+  rival_eyecatches: null,
 };
 
 describe('accountResearchLines', () => {

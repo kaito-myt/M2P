@@ -33,6 +33,11 @@ import {
 import { createLogger, type Logger } from '@a2p/contracts/logger';
 import { prisma as defaultPrisma } from '@a2p/db';
 
+import {
+  fetchEyecatchStyleByArticle,
+  type EyecatchStyleHistoryPrisma,
+} from './lib/eyecatch-style-history.js';
+
 export const NOTE_ACCOUNT_RESEARCH_TASK_NAME = 'note.account.research';
 
 export const NoteAccountResearchPayloadSchema = z.object({
@@ -154,7 +159,7 @@ export async function runNoteAccountResearch(
   const errors: NoteAccountResearchFailure[] = [];
   for (const account of accounts) {
     try {
-      const recentArticles = await fetchRecentArticles(prisma, account.id);
+      const recentArticles = await fetchRecentArticles(prisma, account.id, log);
       const input: NoteAccountResearchInput = {
         noteAccountId: account.id,
         ...(jobId ? { jobId } : {}),
@@ -168,7 +173,7 @@ export async function runNoteAccountResearch(
         previous: parseNoteAccountResearch(account.research_json),
       };
 
-      const { research: result, items } = await research(input);
+      const { research: result, items, rivalShots } = await research(input);
       // 保存前に再検証 (エージェント側で検証済みだが、DB に入る値は必ず契約通りにする)。
       const validated: NoteAccountResearch = NoteAccountResearchSchema.parse(result);
 
@@ -188,6 +193,9 @@ export async function runNoteAccountResearch(
           angles: validated.angles.length,
           findings: validated.findings.length,
           sources: items.length,
+          // F-ANP-57: 画作りの根拠として**実際に見た**競合サムネの枚数。
+          // 0 なら art_direction は空のはず (空でないなら推測が混ざっている)。
+          rivalShots,
           artDirection: validated.art_direction.length > 0,
           policySuggestion: validated.editorial_policy_suggestion.length > 0,
         },
@@ -277,26 +285,39 @@ async function finishJob(
 async function fetchRecentArticles(
   prisma: typeof defaultPrisma,
   noteAccountId: string,
+  log: Logger,
 ): Promise<NoteAccountResearchInput['recentArticles']> {
   const rows = await prisma.noteArticle.findMany({
     where: { note_account_id: noteAccountId, publish_status: 'published' },
     orderBy: { published_at: 'desc' },
     take: RECENT_ARTICLES,
     select: {
+      id: true,
       title: true,
       paid: true,
       sales: { select: { views: true, likes: true, revenue_jpy: true } },
     },
   });
+  // F-ANP-57: 記事ごとの画風キー。記録 (`jobs.result_json.style_key`) はしていたのに
+  // リサーチへ渡していなかったので、「どのサムネで閲覧が付いたか」が一度も学習に
+  // 入らず、画風の選択は記事 ID のハッシュによる実績と無関係なくじ引きのままだった
+  // (2026-10-16 実測: 公開 140 本のうち 121 本に style_key が記録済み / 使用 0 本)。
+  const styles = await fetchEyecatchStyleByArticle(
+    prisma as unknown as EyecatchStyleHistoryPrisma,
+    rows.map((r) => r.id),
+    log,
+  );
   return rows.map((r) => {
     const views = r.sales.reduce((a, s) => a + s.views, 0);
     const likes = r.sales.reduce((a, s) => a + s.likes, 0);
     const revenue = r.sales.reduce((a, s) => a + s.revenue_jpy, 0);
+    const style = styles.get(r.id);
     return {
       title: r.title.slice(0, 300),
       ...(r.sales.length > 0 ? { views, likes } : {}),
       ...(revenue > 0 ? { sales_jpy: revenue } : {}),
       is_paid: r.paid,
+      ...(style ? { eyecatch_style: style } : {}),
     };
   });
 }

@@ -128,15 +128,46 @@ describe('buildPrompt (F-ANP-14b)', () => {
       expect(gamble).not.toBe(money);
     });
 
-    it('アカウント固有の画作り指示はジャンル既定を上書きする', () => {
+    it('実物のサムネを見たアカウント指示は最優先で入る (F-ANP-57)', () => {
       const custom = '**モノクロの報道写真**にする。装飾は一切入れない。';
       const prompt = buildPrompt(
-        { ...input, niche: '競馬予想', eyecatchCopy: 'テスト', accountArtDirection: custom },
+        {
+          ...input,
+          niche: '競馬予想',
+          eyecatchCopy: 'テスト',
+          accountArtDirection: custom,
+          accountArtDirectionGrounded: true,
+        },
         EYECATCH_STYLES[0]!,
         layout,
       );
       expect(prompt).toContain(custom);
-      expect(prompt).not.toContain(classifyNicheGenre('競馬予想').art);
+      expect(prompt).toContain('**これが最優先**');
+      // F-ANP-57: ジャンル既定 (運営者が実物 6 枚を見て決めた勝ち筋) は**消さない**。
+      // 以前はアカウント指示が既定を丸ごと置き換えていたため、画像を 1 枚も見ていない
+      // 推測が、人が実物を見て決めた事実を上書きしていた。
+      expect(prompt).toContain(classifyNicheGenre('競馬予想').art);
+    });
+
+    it('実物を見ていないアカウント指示は最優先にせず参考扱いにする (F-ANP-57)', () => {
+      const guess = '実写風。曇天の芝コースを低い位置から。低彩度。';
+      const prompt = buildPrompt(
+        {
+          ...input,
+          niche: '競馬予想',
+          eyecatchCopy: 'テスト',
+          accountArtDirection: guess,
+          // accountArtDirectionGrounded は渡さない = 画像を見ていない
+        },
+        EYECATCH_STYLES[0]!,
+        layout,
+      );
+      expect(prompt).toContain('実物のサムネは未確認');
+      expect(prompt).not.toContain('**これが最優先**');
+      // 既定が主で、推測はその後ろ
+      const genreArt = classifyNicheGenre('競馬予想').art;
+      expect(prompt).toContain(genreArt);
+      expect(prompt.indexOf(genreArt)).toBeLessThan(prompt.indexOf(guess));
     });
 
     it('配色は文字と帯の色として渡る (アカウントで統一するため)', () => {
@@ -176,7 +207,11 @@ describe('buildPrompt — アカウント指定が既定より優先されるこ
 
   it('アカウント指定があるとき、既定の色と画風は「指定が無い項目だけ」に格下げされる', () => {
     const art = '実写風。曇天の芝コースを低い位置から。色は芝の深緑 #2F4F3A を基調に低彩度。';
-    const withArt = buildPromptForTest({ ...base, accountArtDirection: art });
+    const withArt = buildPromptForTest({
+      ...base,
+      accountArtDirection: art,
+      accountArtDirectionGrounded: true,
+    });
 
     // アカウント指定が最優先として出る
     expect(withArt).toContain('**これが最優先**');

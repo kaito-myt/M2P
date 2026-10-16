@@ -102,6 +102,20 @@ export interface GenerateNoteEyecatchInput {
    * この経路が無く金色の多重縁取りが生成されていた。
    */
   accountCopyRules?: readonly string[];
+  /**
+   * F-ANP-57: `accountArtDirection` が**実物のサムネを見た上で**書かれたか
+   * (`NoteAccountResearch.art_direction_evidence` が非空か)。
+   *
+   * false のとき `accountArtDirection` は「最優先」として扱わず、ジャンル既定
+   * (運営者が実物 6 枚を見て 2026-10-13 に決めた勝ち筋) の**後ろに補足として**置く。
+   *
+   * なぜ要るか: F-ANP-56 のリサーチは Tavily のテキストしか見ていないのに
+   * 被写体・構図・配色を書いていた。それが「最優先」でジャンル既定を丸ごと置き換え、
+   * 2026-10-16 実測では競馬アカウントが「曇天の芝・低彩度」になっていた
+   * — 同じリサーチが見つけた note 競馬面の実物 (黒地×金×煽り) と正反対。
+   * **画像を見ていない推測が、人が実物を見て決めた事実を上書きしてはいけない。**
+   */
+  accountArtDirectionGrounded?: boolean;
 }
 
 export interface GenerateNoteEyecatchResult {
@@ -168,8 +182,12 @@ export function buildPrompt(
   const sub = (input.eyecatchSub ?? '').trim();
   const hasText = copy.length > 0;
   // F-ANP-56: アカウント固有の指示 (週次リサーチ) があればジャンル既定を置き換える。
-  const accountArt = (input.accountArtDirection ?? '').trim();
-  const art = accountArt || genre.art;
+  const accountArtRaw = (input.accountArtDirection ?? '').trim();
+  // F-ANP-57: 実物のサムネを見た上での指示だけを「最優先」に昇格させる。
+  // 見ていない指示 (= テキストからの推測) はジャンル既定を置き換えず、補足として添える。
+  const grounded = input.accountArtDirectionGrounded === true;
+  const accountArt = grounded ? accountArtRaw : '';
+  const accountArtHint = grounded ? '' : accountArtRaw;
   const copyRules = (input.accountCopyRules ?? []).map((r) => r.trim()).filter((r) => r.length > 0);
 
   // 2026-10-14 実測の教訓: アカウント指示を「ジャンルの作法」の位置に置くだけでは効かない。
@@ -229,14 +247,29 @@ export function buildPrompt(
           '',
         ]),
     // ---- 2. 画作り ----
-    // アカウント指定があるときは「最優先」と明示し、以降の既定より上に置く。
+    // 実物を見た指示がある場合だけ「最優先」として既定より上に置く (F-ANP-57)。
     ...(accountArt
       ? [
-          '【このアカウントの画作り (週次リサーチ。**これが最優先**。以降の既定と矛盾したらこちらに従う)】',
+          '【このアカウントの画作り (週次リサーチが**実物のサムネを見て**決めた。'
+            + '**これが最優先**。以降の既定と矛盾したらこちらに従う)】',
           accountArt,
           '',
         ]
-      : [`【${genre.label}の作法 (絵と文字の両方に効かせる)】`, art, '']),
+      : []),
+    // ジャンルの作法は**必ず出す**。運営者が実物を見て決めた勝ち筋なので、
+    // リサーチの推測で消してはいけない (消していたのが F-ANP-57 で直した不具合)。
+    `【${genre.label}の作法 (絵と文字の両方に効かせる)】`,
+    genre.art,
+    '',
+    // 実物を見ていないリサーチの画作りは、既定の下に「参考」として置く。
+    ...(accountArtHint
+      ? [
+          '【参考: 週次リサーチの画作りメモ (実物のサムネは未確認なので、'
+            + '上の作法と矛盾する部分は無視してよい)】',
+          accountArtHint,
+          '',
+        ]
+      : []),
     // ---- 3. 版面 ----
     '【版面 (絵と文字の配置)】',
     `- ${layout.textPlacement}`,

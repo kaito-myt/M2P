@@ -146,7 +146,54 @@ export function ResearchPanel({
               <p className="mt-1 whitespace-pre-wrap text-caption text-muted">
                 {research.art_direction}
               </p>
-              <p className="mt-0.5 text-caption text-muted">{m.artDirectionNote}</p>
+              {/*
+                F-ANP-57: この画作りが**実物のサムネを見て決まったのか**を必ず出す。
+                見ていない回はジャンル既定を上書きしないので、運営者に挙動の違いが伝わる
+                ようにしておく (以前は推測でも「上書きします」と書いてあった)。
+              */}
+              <p className="mt-0.5 text-caption text-muted">
+                {research.art_direction_evidence.length > 0
+                  ? m.artDirectionGrounded(research.art_direction_evidence.length)
+                  : m.artDirectionUngrounded}
+              </p>
+              {research.art_direction_evidence.length > 0 && (
+                <p className="mt-0.5 text-caption text-muted">
+                  {research.art_direction_evidence.slice(0, 6).map((u, i) => (
+                    <a
+                      key={i}
+                      href={u}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="mr-2 text-muted underline"
+                    >
+                      サムネ{i + 1}
+                    </a>
+                  ))}
+                </p>
+              )}
+            </div>
+          )}
+
+          {/* F-ANP-57: 実物を見て読み取った「共通の作法」と「自分たちに足りない点」。 */}
+          {research.rival_eyecatches && research.rival_eyecatches.shots.length > 0 && (
+            <div className="rounded-card border border-border-warm bg-cream-light p-3">
+              <h3 className="text-caption font-medium text-charcoal">
+                {m.rivalEyecatchTitle(research.rival_eyecatches.shots.length)}
+              </h3>
+              {research.rival_eyecatches.common_patterns.length > 0 && (
+                <ul className="mt-1 flex flex-col gap-1">
+                  {research.rival_eyecatches.common_patterns.map((pt, i) => (
+                    <li key={i} className="text-caption text-muted">
+                      ・{pt}
+                    </li>
+                  ))}
+                </ul>
+              )}
+              {research.rival_eyecatches.our_gap && (
+                <p className="mt-1 text-caption text-charcoal">
+                  {m.rivalEyecatchGap}: {research.rival_eyecatches.our_gap}
+                </p>
+              )}
             </div>
           )}
 
