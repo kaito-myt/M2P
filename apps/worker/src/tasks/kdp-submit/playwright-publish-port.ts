@@ -68,6 +68,12 @@ export interface KdpPublishArgs {
   amazonEmail?: string;
   amazonPassword?: string;
   dryRun?: boolean;
+  /**
+   * 新規タイトルの作成を許すか (既定 true)。`false` のときは既存下書きの resume だけを行い、
+   * 下書きが無ければ `no_draft` で戻る。KDP の週次作成枠を使い切って全体停止している間に、
+   * **枠を消費しない resume まで巻き添えで止めない**ために使う。
+   */
+  allowCreate?: boolean;
   /** スクショ保存先ディレクトリ。 */
   stageDir: string;
 }
@@ -218,6 +224,16 @@ async function publishOne(args: KdpPublishArgs): Promise<KdpPublishResult> {
       detailsUrl = draftIds.length > 0 ? EDIT_BASE + draftIds[0] + '/details' : CREATE_URL;
       mode = draftIds.length > 0 ? 'resume' : 'create';
       log.info({ drafts: draftIds.length, mode }, 'collected draft slots');
+      // 作成枠を使い切って全体停止中のときは**新規作成だけ**を見送る。
+      // resume は枠を消費しないので止める理由が無い (止めると、下書きが既にある本まで
+      // 6 時間ごとに丸ごと待たされる)。
+      if (mode === 'create' && args.allowCreate === false) {
+        return {
+          ok: false,
+          reason: 'no_draft',
+          message: 'KDP の作成枠が停止中のため新規作成は見送った (再開できる下書きが無い)',
+        };
+      }
     }
 
     // 3. STEP1 詳細ページを開く

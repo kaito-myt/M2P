@@ -77,3 +77,37 @@ describe('runKdpSubmitDispatcher', () => {
     ).rejects.toThrow('addJob must be provided');
   });
 });
+
+describe('作成枠の停止中は resume だけ試す', () => {
+  /** `kdp_creation_paused_until` を持つ prisma モック。 */
+  function prismaPaused(pausedUntil: Date | null): KdpSubmitDispatcherPrisma {
+    return {
+      appSettings: {
+        findUnique: vi.fn().mockResolvedValue({
+          kdp_auto_submit_enabled: true,
+          kdp_submit_dry_run: false,
+          kdp_creation_paused_until: pausedUntil,
+        }),
+      },
+      book: { findMany: vi.fn().mockResolvedValue([{ id: 'book-1' }]) },
+    } as unknown as KdpSubmitDispatcherPrisma;
+  }
+
+  it('停止中でも enqueue し、allow_create:false を載せる (resume は枠を消費しない)', async () => {
+    const addJob = vi.fn();
+    const r = await runKdpSubmitDispatcher({
+      prisma: prismaPaused(new Date(Date.now() + 60 * 60 * 1000)),
+      addJob,
+      hasCreds: true,
+    });
+    expect(r.enqueued).toBe(1);
+    expect(addJob).toHaveBeenCalledTimes(1);
+    expect(addJob.mock.calls[0]![1]).toMatchObject({ book_id: 'book-1', allow_create: false });
+  });
+
+  it('停止していなければ allow_create を載せない (既定 = 作成可)', async () => {
+    const addJob = vi.fn();
+    await runKdpSubmitDispatcher({ prisma: prismaPaused(null), addJob, hasCreds: true });
+    expect(addJob.mock.calls[0]![1]).not.toHaveProperty('allow_create');
+  });
+});

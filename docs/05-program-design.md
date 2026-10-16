@@ -4591,3 +4591,16 @@ enqueue 側 16 箇所に `queueName` を付けて回ると 1 箇所の漏れで�
 SELECT task_identifier, COUNT(*), MAX(created_at)
 FROM graphile_worker.jobs WHERE attempts >= max_attempts GROUP BY 1;
 ```
+
+### 19.6 作成枠の全体停止は「新規作成」だけを止める (2026-10-16)
+
+KDP の作成枠 (週次・フォーマット別) を使い切ると `app_settings.kdp_creation_paused_until` が
+立ち、`kdp.submit.dispatch` / `paperback.draft.dispatch` が投入を止める。
+
+ただし **`kdp.submit` の基本経路は既存下書きの resume で、これは枠を消費しない**
+(§5.3.15)。それまでは停止中に dispatch ごと止めていたため、
+**下書きが既にある本まで 6 時間ごとに丸ごと待たされていた**。
+
+変更: 停止中も `kdp.submit` は投入する。payload に `allow_create: false` を載せ、
+ポート側は下書きが無いときだけ `no_draft` で戻る (新規作成には進まない)。
+`paperback.draft` は作成そのものなので従来どおり止める。

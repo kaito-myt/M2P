@@ -36,6 +36,11 @@ export const KdpSubmitPayload = z.object({
    * book_id の内容で上書き入稿する(二重出版の解消・作成枠非消費)。詳細は docs/05 §5.3.15。
    */
   target_title_id: z.string().optional(),
+  /**
+   * 新規タイトル作成を許すか (既定 true)。作成枠で全体停止中に dispatcher が false で投げる。
+   * false のときは既存下書きの resume だけ行い、下書きが無ければ no_draft で戻る。
+   */
+  allow_create: z.boolean().optional(),
 });
 export type KdpSubmitPayload = z.infer<typeof KdpSubmitPayload>;
 
@@ -199,6 +204,7 @@ export async function runKdpSubmit(deps: KdpSubmitDeps): Promise<KdpSubmitResult
       amazonEmail: email,
       amazonPassword: password,
       dryRun: dry_run,
+      allowCreate: deps.payload.allow_create ?? true,
       stageDir,
     });
   } catch (err) {

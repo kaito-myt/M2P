@@ -75,13 +75,18 @@ export async function runKdpSubmitDispatcher(
   if (!settings?.kdp_auto_submit_enabled) {
     return { enabled: false, enqueued: 0, bookId: null };
   }
-  // 日次作成上限に到達して全体停止中なら、翌 JST 0 時まで何も投入しない（枠の浪費防止）。
-  if (settings.kdp_creation_paused_until && settings.kdp_creation_paused_until.getTime() > Date.now()) {
+  // 作成枠を使い切って全体停止中でも、**止めるのは新規作成だけ**にする。
+  // 既存下書きの resume は枠を消費しない (docs/05 §5.3.15) のに、以前はここで
+  // dispatch ごと止めていたため、下書きが用意できている本まで 6 時間ごとに
+  // 丸ごと待たされていた。投入は続け、`allow_create: false` を payload に載せる。
+  const paused = Boolean(
+    settings.kdp_creation_paused_until && settings.kdp_creation_paused_until.getTime() > Date.now(),
+  );
+  if (paused) {
     log.info(
-      { pausedUntil: settings.kdp_creation_paused_until.toISOString() },
-      'KDP日次作成上限で全体停止中 — dispatch skip',
+      { pausedUntil: settings.kdp_creation_paused_until?.toISOString() },
+      'KDP作成枠が停止中 — 新規作成はせず既存下書きの resume のみ試す',
     );
-    return { enabled: true, enqueued: 0, bookId: null };
   }
 
   // 同時 1 冊: キュー先頭の 1 冊のみ enqueue する。次の tick で次の 1 冊。
@@ -109,10 +114,13 @@ export async function runKdpSubmitDispatcher(
   const bookId = books[0]!.id;
   await addJob(
     'kdp.submit',
-    { book_id: bookId, dry_run: settings.kdp_submit_dry_run },
+    { book_id: bookId, dry_run: settings.kdp_submit_dry_run, ...(paused ? { allow_create: false } : {}) },
     { jobKey: `kdp-submit-${bookId}`, jobKeyMode: 'preserve_run_at' },
   );
-  log.info({ bookId, dry_run: settings.kdp_submit_dry_run }, 'kdp.submit.dispatch enqueued 1 book');
+  log.info(
+    { bookId, dry_run: settings.kdp_submit_dry_run, allowCreate: !paused },
+    'kdp.submit.dispatch enqueued 1 book',
+  );
   return { enabled: true, enqueued: 1, bookId };
 }
 
