@@ -5,7 +5,7 @@ import { checkDerivativeRisk } from '@a2p/contracts/tdp/derivative-guard';
 import {
   DENYLIST_MAX_TERMS,
   DENYLIST_MAX_TERM_LENGTH,
-  MONTHLY_LIMIT_MAX,
+  TDP_MONTHLY_LIMIT_HARD_MAX,
   formatDenylist,
   parseDenylist,
   validateMonthlyLimit,
@@ -49,16 +49,24 @@ describe('validateMonthlyLimit', () => {
     expect(validateMonthlyLimit(0)).toEqual({ ok: true, value: 0 });
   });
 
-  it('上限を超える値は丸めずに失敗させる (黙って増やすのは R-1 の逆)', () => {
-    expect(validateMonthlyLimit(MONTHLY_LIMIT_MAX + 1)).toEqual({ ok: false });
+  it('天井は 12 (50 ではない)', () => {
+    expect(TDP_MONTHLY_LIMIT_HARD_MAX).toBe(12);
+    expect(validateMonthlyLimit(12)).toEqual({ ok: true, value: 12 });
   });
 
-  it('負値・小数・非数は失敗', () => {
-    expect(validateMonthlyLimit(-1)).toEqual({ ok: false });
-    expect(validateMonthlyLimit(1.5)).toEqual({ ok: false });
-    expect(validateMonthlyLimit('abc')).toEqual({ ok: false });
-    expect(validateMonthlyLimit(null)).toEqual({ ok: false });
-    expect(validateMonthlyLimit(undefined)).toEqual({ ok: false });
+  it('天井を超える値は丸めずに拒否し、拒否値を返す (13 を 12 にしない)', () => {
+    expect(validateMonthlyLimit(13)).toEqual({ ok: false, refused: 13 });
+    expect(validateMonthlyLimit(50)).toEqual({ ok: false, refused: 50 });
+    expect(validateMonthlyLimit('30')).toEqual({ ok: false, refused: 30 });
+  });
+
+  it('負値・小数・非数・空は拒否 (空や null を 0 として受けない)', () => {
+    expect(validateMonthlyLimit(-1)).toEqual({ ok: false, refused: -1 });
+    expect(validateMonthlyLimit(1.5)).toEqual({ ok: false, refused: 1.5 });
+    expect(validateMonthlyLimit('abc')).toEqual({ ok: false, refused: null });
+    expect(validateMonthlyLimit('')).toEqual({ ok: false, refused: null });
+    expect(validateMonthlyLimit(null)).toEqual({ ok: false, refused: null });
+    expect(validateMonthlyLimit(undefined)).toEqual({ ok: false, refused: null });
   });
 
   it('数値文字列は受け付ける (input[type=number] の値は文字列で来る)', () => {

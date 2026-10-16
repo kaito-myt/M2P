@@ -11,7 +11,7 @@ import { useState, useTransition } from 'react';
 
 import { updateMonthlyPublishLimit } from '@/app/actions/settings';
 import { messages } from '@/lib/messages';
-import { MONTHLY_LIMIT_MAX, MONTHLY_LIMIT_MIN } from '@/lib/settings-core';
+import { MONTHLY_LIMIT_MIN, TDP_MONTHLY_LIMIT_HARD_MAX } from '@/lib/settings-core';
 
 const m = messages.settings;
 
@@ -36,9 +36,8 @@ export function LimitForm({
   const save = () => {
     setError(null);
     setSaved(false);
-    const next = Number(limit);
     startTransition(async () => {
-      const result = await updateMonthlyPublishLimit(next);
+      const result = await updateMonthlyPublishLimit(limit);
       if (!result.ok) {
         setError(result.error);
         return;
@@ -57,7 +56,7 @@ export function LimitForm({
           <input
             type="number"
             min={MONTHLY_LIMIT_MIN}
-            max={MONTHLY_LIMIT_MAX}
+            max={TDP_MONTHLY_LIMIT_HARD_MAX}
             value={limit}
             disabled={isPending}
             onChange={(e) => setLimit(e.target.value)}
@@ -75,6 +74,10 @@ export function LimitForm({
           {isPending ? '保存中…' : messages.common.save}
         </button>
       </div>
+
+      <p className="text-caption text-muted" data-testid="tdp-limit-ceiling">
+        {m.limitCeilingNote(TDP_MONTHLY_LIMIT_HARD_MAX)}
+      </p>
 
       <p className="text-caption text-muted" data-testid="tdp-limit-remaining">
         {m.limitListedPrefix} {listedThisMonth} / {savedLimit}

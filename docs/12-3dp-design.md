@@ -1509,7 +1509,7 @@ A2P/ANP と共通のもの (ピル絞り込み・ヘアライン一覧・確認�
 
 | # | 現状 | 変更 | 理由 | 増分 |
 |---|---|---|---|---|
-| 1 | **月間上限の許容範囲が 0〜50** (`MONTHLY_LIMIT_MAX = 50`、入力の `max`、`messages.settings.errors.limitRange` の「0〜50」) | **天井を 12 に変更**。値は `contracts` 側の定数 `TDP_MONTHLY_LIMIT_HARD_MAX` を参照し、設定画面・Server Action・メッセージで同じ定数を使う。入力の横に「最大 12 (変更不可)」、拒否時は拒否された値と現在値を出す | F-3DP-41。**現行の 50 は R-1 の既定 8 の 6 倍強で、「今月だけ 30 商品」ができてしまう** | **Inc-1** (本変更は即時) |
+| 1 | 月間上限の許容範囲は **0〜12 (実装済)**。`TDP_MONTHLY_LIMIT_HARD_MAX` を contracts から参照 (旧: `MONTHLY_LIMIT_MAX = 50`) | **天井を 12 に変更 (実装済)**。値は `contracts` 側の定数 `TDP_MONTHLY_LIMIT_HARD_MAX` を参照し、設定画面・Server Action・メッセージで同じ定数を使う。入力欄の直下に「最大 12 (変更不可)」、拒否時は拒否された値と現在値を出す | F-3DP-41。**現行の 50 は R-1 の既定 8 の 6 倍強で、「今月だけ 30 商品」ができてしまう** | **Inc-1** (本変更は即時) |
 | 2 | 1 本の縦長ページ (3 節) | **タブ化** (安全装置が既定、既存 URL を維持) | 節が 6 グループに増えるため | Inc-1 |
 | 3 | 提案値の注記なし | ページ先頭の注意書きと項目ごとの `ProposedValueBadge` | F-3DP-38 | Inc-1 |
 | 4 | 判定値・価格下限・再生成上限などの設定が無い | 判定値タブ / 企画と価格タブ / 生成タブ。**値は `app_settings` に保存し、判定ロジックに数値リテラルを残さない** | F-3DP-38 | Inc-1 (保存) |
@@ -2511,7 +2511,7 @@ A2P/ANP は「1 単位の失敗 → 1 単位の損失」なので、量を出し
 |---|---|---|---|---|---|
 | F-3DP-09 | `apps/3dp` スケルトン + `packages/auth` による共有ログイン (SSO) | 全画面 | P0 | Inc-1 | **実装済** (fec85db) |
 | F-3DP-10 | ポータルタイル (**`NEXT_PUBLIC_TOOL_3DP_URL`** 設定時のみ点灯。実装に合わせて env 名を訂正) | ポータル | P0 | Inc-1 | **実装済** (fec85db) |
-| F-3DP-11 | 設定画面 (月間上限・価格下限・種別構成比・禁止語・生成プロバイダ) ※API キーはポータルの API 管理に集約し 3DP には置かない (docs/10 §10.4b) | S-3DP-06 | P0 | Inc-1 | **一部** — 月間上限と禁止語のみ実装。**上限の最大値が 50 のままで F-3DP-41 の天井 12 と不整合 (要修正)** |
+| F-3DP-11 | 設定画面 (月間上限・価格下限・種別構成比・禁止語・生成プロバイダ) ※API キーはポータルの API 管理に集約し 3DP には置かない (docs/10 §10.4b) | S-3DP-06 | P0 | Inc-1 | **一部** — 月間上限と禁止語のみ実装。上限の最大値は 12 に修正済 (アプリ側。`TDP_MONTHLY_LIMIT_HARD_MAX` は contracts 移設待ち = T-3DP-02-01) |
 | F-3DP-12 | 商品一覧 / 詳細 (status 別、`needs_fix` の検査 NG 理由を一覧表示) | S-3DP-02 / S-3DP-03 | P0 | Inc-1 | **一部** — 一覧の status 絞り込みのみ。理由列と詳細画面 (S-3DP-03) は Inc-2 |
 
 #### Inc-2 — 生成と検査
@@ -2571,7 +2571,7 @@ A2P/ANP は「1 単位の失敗 → 1 単位の損失」なので、量を出し
 | F-3DP-38 | **判定しきい値・上限値を `app_settings` に置く** (コード定数で判定しない) | S-3DP-06 | **P0** | Inc-1 | 未 |
 | F-3DP-39 | **出品済み商品の公開状態の定期確認** — 強制非公開・警告の検知 (= G-D) | S-3DP-01 / S-3DP-02 | **P0** | Inc-5 | 未 |
 | F-3DP-40 | **新規出品の全媒体一括停止 (kill switch) と明示解除** | S-3DP-01 / S-3DP-06 | **P0** | Inc-5 | 未 |
-| F-3DP-41 | **R-1 の「設定可能な最大値」そのものにコード側の天井を置く** | S-3DP-06 | **P0** | Inc-1 | 未 |
+| F-3DP-41 | **R-1 の「設定可能な最大値」そのものにコード側の天井を置く** | S-3DP-06 | **P0** | Inc-1 | 一部 (アプリ側の天井は実装済。contracts 定数は `tdp/settings.ts` に作成済で全体は T-3DP-02-01、DB CHECK は T-3DP-02-03) |
 | F-3DP-42 | **BOOTH アカウント共用の明示と初回出品の事前条件** (U-9 / U-10 が未回答なら出品しない) | S-3DP-04 / S-3DP-06 | **P0** | Inc-5 | 未 |
 | F-3DP-43 | **運営者稼働時間の実測** — 承認時刻・公開記録時刻・1 商品あたり所要 (= G-E の分母) | S-3DP-01 / S-3DP-04 | P0 | Inc-4 | 未 |
 | F-3DP-44 | **撤退モード (新規出品の停止) と 既存商品の取り下げ を別操作にする** | S-3DP-02 / S-3DP-06 | P1 | Inc-5 | 未 |
@@ -4408,7 +4408,7 @@ export function computeSlots(a: {
 
 | ファイル | 変更 |
 |---|---|
-| `lib/settings-core.ts` | `MONTHLY_LIMIT_MAX = 50` → `TDP_MONTHLY_LIMIT_HARD_MAX` (contracts) を参照。入力欄の `max`・`messages.settings.errors.limitRange` の「0〜50」も同じ定数から (**Inc-1 で即時**) |
+| `lib/settings-core.ts` | **実装済**: `TDP_MONTHLY_LIMIT_HARD_MAX` (contracts) を参照 (旧 `MONTHLY_LIMIT_MAX = 50` は廃止)。入力欄の `max`・`messages.settings.errors.limitRange` の「0〜50」も同じ定数から (**Inc-1 で即時**) |
 | `lib/home-core.ts` | `PRODUCT_STATUSES` に `approved` / `withdrawn` を足し、正準順を §9.5 の流れ (`… ready, review, approved, listed, withdrawn, failed, rejected`) に。`PRODUCT_STATUSES` と DB の CHECK の許可値が一致するテストを足す |
 | `app/(app)/page.tsx` | 当月の出品数を `tdp_products.listed_at` ではなく **`computeSlots()` (公開記録 + 有効な予約)** から。ヒーローを「当月純利益」「1 商品あたりの売上」に (UR-1) |
 | `app/actions/settings.ts` | `updateMonthlyPublishLimit` を媒体別の入力に拡張 (§17.4) |

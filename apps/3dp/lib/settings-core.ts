@@ -3,9 +3,12 @@
  * 入力正規化・検証。Server Action と UI の両方から使うのでここに置く。
  */
 
-/** 月間出品上限の上下限。上限 50 は「これ以上はツールの自主制限として意味を成さない」線。 */
+import { TDP_MONTHLY_LIMIT_HARD_MAX } from '@a2p/contracts/tdp/settings';
+
+// 天井の定義は contracts の 1 箇所だけ (DB の CHECK と同値にするため)。ここは再エクスポートのみ。
+export { TDP_MONTHLY_LIMIT_HARD_MAX };
+
 export const MONTHLY_LIMIT_MIN = 0;
-export const MONTHLY_LIMIT_MAX = 50;
 
 /** 禁止語の最大件数。1 語あたりの最大長も持つ (貼り付け事故で文章 1 本が 1 語になるのを防ぐ)。 */
 export const DENYLIST_MAX_TERMS = 500;
@@ -47,10 +50,12 @@ function normalizeTerm(s: string): string {
 }
 
 /**
- * 月間出品上限の検証。範囲外は**丸めずに失敗させる** — 黙って 50 に丸めると
- * 「8 のつもりが 50 件出ていた」が起きうる。R-1 で守りたいのは正反対の事故。
+ * 月間出品上限の検証。範囲外は**丸めずに失敗させる** — 黙って天井に丸めると
+ * 「8 のつもりが 12 件出ていた」が起きうる。R-1 で守りたいのは正反対の事故。
  */
-export function validateMonthlyLimit(raw: unknown): { ok: true; value: number } | { ok: false } {
+export function validateMonthlyLimit(
+  raw: unknown,
+): { ok: true; value: number } | { ok: false; refused: number | null } {
   // `Number(null)` / `Number('')` / `Number([])` は 0 になる。0 は「出品停止」という
   // 意味のある設定なので、**空や null を 0 として受けてはいけない** (意図しない出品停止になる)。
   // 受け付けるのは数値そのものか、中身のある数値文字列だけ。
@@ -60,9 +65,11 @@ export function validateMonthlyLimit(raw: unknown): { ok: true; value: number } 
   } else if (typeof raw === 'string' && raw.trim().length > 0) {
     n = Number(raw);
   } else {
-    return { ok: false };
+    return { ok: false, refused: null };
   }
-  if (!Number.isFinite(n) || !Number.isInteger(n)) return { ok: false };
-  if (n < MONTHLY_LIMIT_MIN || n > MONTHLY_LIMIT_MAX) return { ok: false };
+  // refused は拒否文面に「何を拒否したか」を出すための値。数として読めないものは null。
+  if (!Number.isFinite(n)) return { ok: false, refused: null };
+  if (!Number.isInteger(n)) return { ok: false, refused: n };
+  if (n < MONTHLY_LIMIT_MIN || n > TDP_MONTHLY_LIMIT_HARD_MAX) return { ok: false, refused: n };
   return { ok: true, value: n };
 }

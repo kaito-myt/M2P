@@ -28,7 +28,7 @@ F-3DP-38 (判定値を `app_settings` に), F-3DP-41 (R-1 天井), F-3DP-11 (設
 | ID | 状態 | タスク | 概要 | 対応機能 | 工数 |
 |---|---|---|---|---|---|
 | T-3DP-02-01 | ⬜ | contracts: 設定の既定値・状態機械 | `settings.ts` / `status.ts` と exports | F-3DP-38, 41 | M |
-| T-3DP-02-02 | ⬜ | **R-1 の天井を 12 に (アプリ側)** | 50 → 12、拒否時に拒否値と現在値、丸めない | F-3DP-41 | S |
+| T-3DP-02-02 | ✅ (一部) | **R-1 の天井を 12 に (アプリ側)** | 50 → 12、拒否時に拒否値と現在値、丸めない | F-3DP-41 | S |
 | T-3DP-02-03 | ⬜ | DB migration (Inc-1) + 一致テスト | `app_settings` 列・`tdp_products` 列・`jobs` 列・CHECK (d)(f) | F-3DP-38, 41 | L |
 | T-3DP-02-04 | ⬜ | 実 PG テスト基盤 | 統合テストの harness・CI の Postgres・`TDP_REQUIRE_PG` | (全体の前提) | L |
 | T-3DP-02-05 | ⬜ | DB 制約の統合テスト | CHECK / FK を実 PG で固定 | F-3DP-28 ①, 41 | S |
@@ -53,6 +53,7 @@ F-3DP-38 (判定値を `app_settings` に), F-3DP-41 (R-1 天井), F-3DP-11 (設
 - **やること**:
   - `settings.ts`: `TDP_MONTHLY_LIMIT_HARD_MAX = 12`。`TDP_SETTINGS_DEFAULTS` — §7.3 の列のうち **Meshy 系 4 列 (`tdp_meshy_model` / `_usd_per_credit` / `_plan_jpy_month` / `_credit_table_json`) を除く全部** (Meshy 系は SP-3DP-03 の migration)。`TdpTuningSchema` (§7.3 の全キーと既定、`meshy_poll_interval_sec` / `meshy_poll_max_minutes` は nullable、**`meshy_poll_max_minutes` は 90 以下**、`render_selfcheck` / `booth_fetch` は入れ子。**`booth_fetch` には設計 §7.3 に無い `contact: string | null` (既定 null) を足す** — F-3DP-23 / F-3DP-39 の「UA に連絡先を明示」を満たすための運営者の連絡先。未設定のまま BOOTH を取得するタスクは実行しない。docs/12 §7.3 への追記は SP-3DP-11 T-3DP-11-12)。`parseTuning(json)` は**欠けたキーを既定で補い**、型違いのキーは既定に戻す (保存時の検証は別: T-3DP-02-07)。`kindGroup(kind)` — accessory→accessory / texture→texture / prop・furniture→prop_furniture (D-16)。
   - `status.ts`: `PRODUCT_STATUSES` を §9.5 の流れの順 (`planned, generating, inspecting, needs_fix, ready, review, approved, listed, withdrawn, failed, rejected`)、`TERMINAL_STATUSES` (`failed, rejected, withdrawn`)、`ALLOWED_TRANSITIONS` (§17.3 の T-1〜T-16 を from→to の辺として)、`canTransition(from, to)`。
+  - T-3DP-02-02 で定数だけ先に `settings.ts` へ作成済で、`apps/3dp/lib/settings-core.ts` は re-export している (定義は contracts の 1 箇所)。ここではこのファイルを拡張する。
   - **判断の記録**: `TDP_MONTHLY_LIMIT_HARD_MAX` の定義は `settings.ts` の 1 箇所とする (§17.14 d-2 ④ は `derivative-guard.ts` からの export と書くが、定義が 2 箇所になるのを避ける。`derivative-guard.ts` は必要ならここから import)。
 - **受入基準 (機械判定)**:
   1. `TDP_MONTHLY_LIMIT_HARD_MAX === 12`。`TDP_SETTINGS_DEFAULTS` のキー集合が §7.3 の表 (Meshy 系を除く) と**完全一致** (テストに期待キー一覧を持つ)。
@@ -70,9 +71,10 @@ F-3DP-38 (判定値を `app_settings` に), F-3DP-41 (R-1 天井), F-3DP-11 (設
 - **やること**: `MONTHLY_LIMIT_MAX = 50` を廃し `TDP_MONTHLY_LIMIT_HARD_MAX` (T-3DP-02-01) を参照。`validateMonthlyLimit` は**丸めずに失敗**を維持しつつ、失敗結果に `{refused:number|null}` を持たせる。Action は拒否時に「**13 は保存されていません。サーバー側で拒否しました (最大 12)。現在の値: 8**」の形の文面 (`messages` に関数として)。入力欄の `max` と注記「設定できる最大は 12 です (コード側の固定値。この画面からは変更できません)」を常時表示。
 - **受入基準**:
   1. `validateMonthlyLimit`: 12 → ok / 13・50・-1・1.5・`''`・`null`・`'abc'` → `ok:false` (**空や null を 0 として受けない**既存挙動を維持)。
-  2. Action のテスト: 13 を渡すと DB 更新関数が**呼ばれず**、返却文面が「13」「最大 12」「現在の値」を含む。未認証は `code:'auth'`。
+  2. Action のテスト: 13 を渡すと DB 更新関数が**呼ばれず**、返却文面が「13」「最大 12」「現在の値」を含む。未認証は拒否され DB を読み書きしない (`code:'auth'` は `ActionResult` の拡張を伴うため T-3DP-02-07 の受入基準 4 で実装。T-3DP-02-02 では見送り)。
   3. `apps/3dp` 配下に数値リテラル `50` が天井として残っていない (`grep -rn "MONTHLY_LIMIT_MAX\|0〜50" apps/3dp` が 0 件)。
-  4. 既存の `settings-core.test.ts` を壊さず、天井関連のみ更新。`pnpm --filter @3dp/web test:unit` / `typecheck` 緑。
+  4. `grep -rn "TDP_MONTHLY_LIMIT_HARD_MAX *=" apps packages` が contracts の 1 件のみ。
+  5. 既存の `settings-core.test.ts` を壊さず、天井関連のみ更新。`pnpm --filter @3dp/web test:unit` / `typecheck` 緑。
 - **依存**: T-3DP-02-01
 - **参照**: F-3DP-41 / docs/12 §9.10.3-1, §9.8 S-3DP-06 (R-1 入力), §17.14 d-3
 

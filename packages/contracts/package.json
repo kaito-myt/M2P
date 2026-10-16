@@ -16,6 +16,7 @@
     "./cost-attribution": "./src/cost-attribution.ts",
     "./note-genre": "./src/note-genre.ts",
     "./title-similarity": "./src/title-similarity.ts",
+    "./tdp/settings": "./src/tdp/settings.ts",
     "./tdp/derivative-guard": "./src/tdp/derivative-guard.ts",
     "./agents": "./src/agents/index.ts",
     "./agents/marketer": "./src/agents/marketer.ts",

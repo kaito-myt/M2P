@@ -91,6 +91,8 @@ export const messages = {
     limitDescription:
       'BOOTH は「大量・連続的な出品」を監視対象にしており、違反はショップ強制非公開・アカウント停止に至ります。閾値は非開示のため、分からない以上は少なく出す方に倒します。0 にすると出品を完全に止められます。',
     limitLabel: '1 か月に出品する上限件数',
+    limitCeilingNote: (max: number) =>
+      `設定できる最大は ${max} です (コード側の固定値。この画面からは変更できません)`,
     limitRemainingPrefix: '当月はあと',
     limitRemainingSuffix: '件出せます',
     limitExhausted: '当月の出品枠は残っていません。',
@@ -110,7 +112,8 @@ export const messages = {
       '以下は禁止語リストとは独立に、決定論的に弾きます (LLM には判定させません。同じ企画は毎回同じ結果になる必要があるため)。',
     errors: {
       saveFailed: '保存に失敗しました',
-      limitRange: '月間出品上限は 0〜50 の範囲で指定してください',
+      limitRange: (refused: number | null, current: number | null, max: number) =>
+        `${refused === null ? '入力された値' : String(refused)} は保存されていません。サーバー側で拒否しました (0〜${max} の整数のみ。最大 ${max})。現在の値: ${current === null ? '不明' : String(current)}`,
       denylistTooMany: '禁止語は 500 語までです',
     },
   },

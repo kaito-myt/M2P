@@ -13,7 +13,12 @@ import { prisma } from '@a2p/db';
 
 import { auth } from '@/auth';
 import { messages } from '@/lib/messages';
-import { DENYLIST_MAX_TERMS, parseDenylist, validateMonthlyLimit } from '@/lib/settings-core';
+import {
+  DENYLIST_MAX_TERMS,
+  TDP_MONTHLY_LIMIT_HARD_MAX,
+  parseDenylist,
+  validateMonthlyLimit,
+} from '@/lib/settings-core';
 
 export type ActionResult<T> = { ok: true; data: T } | { ok: false; error: string };
 
@@ -28,7 +33,20 @@ export async function updateMonthlyPublishLimit(raw: unknown): Promise<ActionRes
   if (!session?.user) return { ok: false, error: messages.common.unauthorized };
 
   const parsed = validateMonthlyLimit(raw);
-  if (!parsed.ok) return { ok: false, error: messages.settings.errors.limitRange };
+  if (!parsed.ok) {
+    // 拒否文面に現在値を出すため。読めなくても拒否自体は返す (null = 不明)。
+    const row = await prisma.appSettings
+      .findUnique({ where: { id: 'singleton' }, select: { tdp_monthly_publish_limit: true } })
+      .catch(() => null);
+    return {
+      ok: false,
+      error: messages.settings.errors.limitRange(
+        parsed.refused,
+        row?.tdp_monthly_publish_limit ?? null,
+        TDP_MONTHLY_LIMIT_HARD_MAX,
+      ),
+    };
+  }
 
   try {
     await prisma.appSettings.update({
