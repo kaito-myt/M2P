@@ -18,6 +18,7 @@
     "./title-similarity": "./src/title-similarity.ts",
     "./tdp/settings": "./src/tdp/settings.ts",
     "./tdp/status": "./src/tdp/status.ts",
+    "./tdp/hold": "./src/tdp/hold.ts",
     "./tdp/derivative-guard": "./src/tdp/derivative-guard.ts",
     "./agents": "./src/agents/index.ts",
     "./agents/marketer": "./src/agents/marketer.ts",

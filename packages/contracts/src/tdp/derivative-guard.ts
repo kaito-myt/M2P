@@ -18,6 +18,7 @@
  *    そもそも特定作品に依拠する必要が無い。弾いて失うのは企画 1 件、通して失うのはアカウント。
  */
 import { z } from 'zod';
+import { computeSlots } from './hold';
 
 /** 判定理由の種別。UI の文言と運用判断に使う。 */
 export type DerivativeRiskKind =
@@ -248,13 +249,20 @@ export function canListMore(args: {
   /** 月間上限 (app_settings)。 */
   monthlyLimit: number;
 }): { allowed: boolean; remaining: number; reason?: string } {
-  const remaining = Math.max(0, args.monthlyLimit - args.listedThisMonth);
-  if (remaining > 0) return { allowed: true, remaining };
+  const { allowed, remaining, limit } = computeSlots({
+    limit: args.monthlyLimit,
+    publishedThisMonth: args.listedThisMonth,
+    activeReservations: 0,
+  });
+  if (allowed) return { allowed: true, remaining };
   return {
     allowed: false,
     remaining: 0,
     reason:
-      `当月の出品上限 ${args.monthlyLimit} 件に達しました。BOOTH は「大量・連続的な出品」を` +
-      '監視対象にしており (2025-07-18 発表)、閾値は非開示です。来月まで出品しません。',
+      `当月の出品上限 ${limit} 件に達しました。BOOTH は「大量・連続的な出品」を` +
+      '監視対象にしており (2025-07-18 発表)、閾値は非開示です。来月まで出品しません。' +
+      (args.monthlyLimit > limit
+        ? `設定値 ${args.monthlyLimit} 件はコード側の上限 ${limit} 件で読み替えています (設定 → 月間出品上限)。`
+        : ''),
   };
 }

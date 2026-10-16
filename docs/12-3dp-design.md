@@ -4266,6 +4266,7 @@ export function computeSlots(a: {
 
 - `used = published + reserved`、`remaining = max(0, limit − used)`、`allowed = remaining > 0`。`canListMore` (実装済) は `computeSlots` へ委譲する薄いラッパにし、既存テスト 20 件を壊さない。
 - **予約は `startPublishWork` / `getDownloadUrl` が `tdp_listings(working)` を作る時点**。同一トランザクションで `SELECT ... FOR UPDATE` により `app_settings` の行を握って数える (並走する 2 商品が同時に最後の 1 枠を取れない)。
+- `canListMore` の拒否文は**適用後の上限**を出し、設定値がクランプされた場合は設定値とコード側天井の両方を示す (§7.4 (f) の「黙って丸めない」と F-3DP-41 に合わせる)。画面の上限表示は T-3DP-02-10 で `computeSlots` に寄せる。
 - 予約は `slot_reserve_expire_days` (14) 経過で数えなくなる (公開されないまま枠を塞がない)。**予約を手動で返す操作は作らない** — 「予約して返して」の繰り返しで枠の意味が薄れるのを避ける(失効を待つ)。
 - **公開記録は枠超過でも受け付ける** (現実を記録する)。超過で記録された listing は `recorded_while_held=true` + `hold_reasons_at_record` を残し、ホームの要対応に出す。月の帰属は `published_recorded_at` の JST 月。
 - 複数媒体: 媒体ごとに枠を持つ。`updateMonthlyPublishLimit` は **各枠 ≤ 12 かつ合計 ≤ 12** を要求する (媒体を増やして総量を増やす抜け道を作らない: F-3DP-34 ②)。同じ商品を 2 媒体に出すと枠は 1 件ずつ消費する。
@@ -4483,6 +4484,7 @@ DB は**増分ごとに分けて適用**する(使わないテーブルを先に
 | TBD-9 | Jinxxy の自動化(U-5)と `jinxxy_api` の売上取得 | Inc-5 後半。まず手動 1 件 | F-3DP-33 |
 | TBD-10 | `Job.status` に `skipped` 等を足さず `result_json.outcome` で表した | 現状どおり(共有テーブルの語彙を壊さない) | 画面の写像のみ |
 | TBD-11 | AI 組織 (docs/06) の予算配分対象に 3DP を含めるか(§15.8-15) | 本設計の範囲外。**含める場合も自動停止は禁止**(§14.7) | docs/06 |
+| TBD-12 | **`inspecting` で依拠性ガード #2 が NG のときの遷移先が §17.3 に無い** (2026-10-16、T-3DP-02-01 のレビューで発覚)。T-2b は `planned` / `needs_fix` / `generating` の 3 本だけで、refine / remesh 経路 (`inspecting`) から `rejected` へ抜ける辺が無い。そのため `inspecting` で再判定が NG になると商品が `inspecting` のまま行き場を失う (手動復帰経路は §9.13-13 で作らない方針なので滞留 24h 行き) | **`inspecting → rejected` を勝手に足していない**。ガード #2 を refine / remesh の前にも走らせるのか、そもそも走らせないのか (生成済みアセットの再判定に意味があるか) が設計判断。実装で踏むのは **SP-3DP-04** (`tdp.asset.inspect` / `optimize`) なので、それまでに決める | §17.3 の遷移表・`transitionProduct`・滞留検知 |
 
 ### 17.17 後続エージェント (pm) への申し送り
 
