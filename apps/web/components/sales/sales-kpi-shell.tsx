@@ -21,6 +21,8 @@ interface AccountOption {
 interface SalesKpiShellProps {
   accounts: AccountOption[];
   currentPeriod: string;
+  currentMonth: string;
+  monthOptions: string[];
   currentAccountId: string;
   currentGenre: string;
   children: ReactNode;
@@ -29,6 +31,8 @@ interface SalesKpiShellProps {
 export function SalesKpiShell({
   accounts,
   currentPeriod,
+  currentMonth,
+  monthOptions,
   currentAccountId,
   currentGenre,
   children,
@@ -38,6 +42,8 @@ export function SalesKpiShell({
       <SalesFilterBar
         accounts={accounts}
         currentPeriod={currentPeriod}
+        currentMonth={currentMonth}
+        monthOptions={monthOptions}
         currentAccountId={currentAccountId}
         currentGenre={currentGenre}
       />

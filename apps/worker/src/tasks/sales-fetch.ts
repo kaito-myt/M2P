@@ -78,9 +78,9 @@ export interface SalesFetchPrisma {
   };
   book: {
     findMany(args: {
-      where: { asin: { in: string[] } };
-      select: { id: true; asin: true };
-    }): Promise<Array<{ id: string; asin: string | null }>>;
+      where: { OR: Array<Record<string, { in: string[] }>> };
+      select: { id: true; asin: true; pb_asin: true };
+    }): Promise<Array<{ id: string; asin: string | null; pb_asin: string | null }>>;
   };
   salesRecord: {
     findMany(args: {
@@ -106,6 +106,8 @@ export interface SalesFetchPrisma {
         kenp_read: number;
         kenp_royalty_jpy: number;
         kenp_royalty_estimated_jpy: number;
+        paperback_royalty_jpy: number;
+        paperback_units_sold: number;
         source: string;
       };
       update: {
@@ -114,6 +116,8 @@ export interface SalesFetchPrisma {
         kenp_read: number;
         kenp_royalty_jpy: number;
         kenp_royalty_estimated_jpy: number;
+        paperback_royalty_jpy: number;
+        paperback_units_sold: number;
         source: string;
       };
     }): Promise<unknown>;
@@ -296,10 +300,69 @@ export async function runSalesFetch(deps: SalesFetchDeps): Promise<SalesFetchRes
   }
 
   // 4. ASIN → book_id
+  //
+  // **ペーパーバックは電子書籍と別 ASIN** (`books.pb_asin`)。`books.asin` だけで突合していた間、
+  // ペーパーバックのロイヤリティは突合できず **黙って捨てられていた** (2026-09: ¥1,942 = 当月売上の 40%)。
+  // 1 冊に対して電子書籍行とペーパーバック行の 2 行が当たりうるので、upsert 前に book_id 単位で合算する
+  // (単純に順に upsert すると後勝ちで片方が消える)。docs/09 §10.9。
   const asins = normalized.rows.map((r) => r.asin);
-  const books = await db.book.findMany({ where: { asin: { in: asins } }, select: { id: true, asin: true } });
-  const bookByAsin = new Map(books.filter((b) => b.asin).map((b) => [b.asin as string, b.id]));
-  const bookIds = Array.from(bookByAsin.values());
+  const books = await db.book.findMany({
+    where: { OR: [{ asin: { in: asins } }, { pb_asin: { in: asins } }] },
+    select: { id: true, asin: true, pb_asin: true },
+  });
+  const bookByAsin = new Map<string, { id: string; paperback: boolean }>();
+  for (const b of books) {
+    if (b.asin) bookByAsin.set(b.asin, { id: b.id, paperback: false });
+    if (b.pb_asin && b.pb_asin !== b.asin) bookByAsin.set(b.pb_asin, { id: b.id, paperback: true });
+  }
+
+  interface MergedRow {
+    royalty_jpy: number;
+    units_sold: number;
+    kenp_read: number;
+    kenp_royalty_jpy: number;
+    kenp_royalty_estimated_jpy: number;
+    paperback_royalty_jpy: number;
+    paperback_units_sold: number;
+  }
+  const byBook = new Map<string, MergedRow>();
+  const unmatchedAsins: string[] = [];
+  let unmatchedRoyaltyJpy = 0;
+  let unmatchedPages = 0;
+  for (const r of normalized.rows) {
+    const hit = bookByAsin.get(r.asin);
+    if (!hit) {
+      if (unmatchedAsins.length < 20) unmatchedAsins.push(r.asin);
+      unmatchedRoyaltyJpy += r.royalty_jpy;
+      unmatchedPages += r.kenp_read;
+      continue;
+    }
+    let m = byBook.get(hit.id);
+    if (!m) {
+      m = {
+        royalty_jpy: 0, units_sold: 0, kenp_read: 0,
+        kenp_royalty_jpy: 0, kenp_royalty_estimated_jpy: 0,
+        paperback_royalty_jpy: 0, paperback_units_sold: 0,
+      };
+      byBook.set(hit.id, m);
+    }
+    m.royalty_jpy += r.royalty_jpy;
+    m.units_sold += r.units_sold;
+    m.kenp_read += r.kenp_read;
+    m.kenp_royalty_jpy += r.kenp_royalty_jpy;
+    m.kenp_royalty_estimated_jpy += r.kenp_royalty_estimated_jpy;
+    if (hit.paperback) {
+      m.paperback_royalty_jpy += r.royalty_jpy;
+      m.paperback_units_sold += r.units_sold;
+    }
+  }
+  if (unmatchedAsins.length > 0 || unmatchedRoyaltyJpy > 0) {
+    log.warn(
+      { runId, unmatchedAsins, unmatchedRoyaltyJpy, unmatchedPages },
+      'books に無い ASIN の行があり集計から落ちている (書籍の ASIN/pb_asin 未登録の可能性)',
+    );
+  }
+  const bookIds = Array.from(byBook.keys());
 
   // 手動確定(manual_upload)は自動で上書きしない。
   const existing =
@@ -312,9 +375,7 @@ export async function runSalesFetch(deps: SalesFetchDeps): Promise<SalesFetchRes
   let upserted = 0;
   let skippedProtected = 0;
   let skippedEstimate = 0;
-  for (const r of normalized.rows) {
-    const bookId = bookByAsin.get(r.asin);
-    if (!bookId) continue;
+  for (const [bookId, r] of byBook) {
     if (PROTECTED_SOURCES.has(existingSource.get(bookId) ?? '')) {
       skippedProtected++;
       continue;
@@ -324,31 +385,25 @@ export async function runSalesFetch(deps: SalesFetchDeps): Promise<SalesFetchRes
       skippedEstimate++;
       continue;
     }
+    const data = {
+      royalty_jpy: r.royalty_jpy,
+      units_sold: r.units_sold,
+      kenp_read: r.kenp_read,
+      kenp_royalty_jpy: r.kenp_royalty_jpy,
+      kenp_royalty_estimated_jpy: r.kenp_royalty_estimated_jpy,
+      paperback_royalty_jpy: r.paperback_royalty_jpy,
+      paperback_units_sold: r.paperback_units_sold,
+      source: 'auto',
+    };
     try {
       await db.salesRecord.upsert({
         where: { book_id_year_month: { book_id: bookId, year_month: payload.year_month } },
-        create: {
-          book_id: bookId,
-          year_month: payload.year_month,
-          royalty_jpy: r.royalty_jpy,
-          units_sold: r.units_sold,
-          kenp_read: r.kenp_read,
-          kenp_royalty_jpy: r.kenp_royalty_jpy,
-          kenp_royalty_estimated_jpy: r.kenp_royalty_estimated_jpy,
-          source: 'auto',
-        },
-        update: {
-          royalty_jpy: r.royalty_jpy,
-          units_sold: r.units_sold,
-          kenp_read: r.kenp_read,
-          kenp_royalty_jpy: r.kenp_royalty_jpy,
-          kenp_royalty_estimated_jpy: r.kenp_royalty_estimated_jpy,
-          source: 'auto',
-        },
+        create: { book_id: bookId, year_month: payload.year_month, ...data },
+        update: data,
       });
       upserted++;
     } catch (err) {
-      log.warn({ err, runId, asin: r.asin }, 'salesRecord.upsert failed; skipping');
+      log.warn({ err, runId, bookId }, 'salesRecord.upsert failed; skipping');
     }
   }
 

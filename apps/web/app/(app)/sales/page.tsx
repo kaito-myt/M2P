@@ -25,6 +25,8 @@ import {
   buildMonthRange,
   monthRangeBounds,
   parsePeriodParam,
+  parseMonthParam,
+  buildMonthOptions,
   buildTrendChartFromAggregates,
   buildHeatmapFromAggregates,
   buildSalesInsights,
@@ -72,8 +74,10 @@ export default async function SalesKpiPage({ searchParams }: PageProps) {
   const accountId = sp(params, 'accountId');
   const genre = sp(params, 'genre');
 
+  // 月を直接選べる (`?month=2026-09`)。指定があれば期間プリセットより優先する。
+  const selectedMonth = parseMonthParam(sp(params, 'month'));
   const periodMonths = parsePeriodParam(periodRaw);
-  const months = buildMonthRange(periodMonths);
+  const months = selectedMonth ? [selectedMonth] : buildMonthRange(periodMonths);
   const bounds = monthRangeBounds(months);
 
   const filter = {
@@ -147,6 +151,8 @@ export default async function SalesKpiPage({ searchParams }: PageProps) {
       <SalesKpiShell
         accounts={accounts}
         currentPeriod={periodRaw}
+        currentMonth={selectedMonth ?? ''}
+        monthOptions={buildMonthOptions()}
         currentAccountId={accountId ?? 'all'}
         currentGenre={genre ?? 'all'}
       >

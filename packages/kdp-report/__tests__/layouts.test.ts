@@ -168,3 +168,75 @@ describe('統合シート: 実測の種類値「該当なし」と部数内訳�
     expect(norm.totals).toMatchObject({ units_sold: 5, kenp_read: 459, royalty_jpy: 1300 });
   });
 });
+
+/**
+ * ペーパーバックのロイヤリティが丸ごと欠落していた回帰テスト (docs/09 §10.9)。
+ *
+ * 2026-09 実績: KDP ダッシュボード上は
+ *   電子書籍 ¥1,230 / ペーパーバック ¥1,942 / ハードカバー ¥0 / KENP ¥1,649 = 合計 ¥4,821
+ * なのに、我々の取込は ¥1,230 + KENP だけでペーパーバックが ¥0 だった。
+ *
+ * 原因は 2 つとも「ペーパーバックのロイヤリティ」シートの ID 列にあった:
+ *   1. このシートは ISBN(左) と ASIN(右) の **両方**を持つのに、先に出る ISBN を採っていた
+ *   2. ISBN は 13 桁なので `looksLikeBookId` の 10 桁判定に落ち、**全行がフッタ扱いで捨てられた**
+ * さらに統合シート (総収益) があると**シートごと**除外していたため、仮に 1・2 を直しても消えた。
+ */
+const PB_HEAD = [
+  'タイトル', '著者', 'ISBN', 'マーケットプレイス', '注文数', '払い戻し数', 'ロイヤリティの種類',
+  '平均希望小売価格 (税別)', '平均販売価格 (税別)', '平均製造コスト', 'ロイヤリティ', '通貨', 'ASIN',
+];
+const pbIsbn = (i: number) => `979${String(i).padStart(10, '0')}`;
+const pbAsin = (i: number) => `B0P${String(i).padStart(7, '0')}`;
+
+describe('ペーパーバックのロイヤリティ', () => {
+  function withPaperback(month: string, pb: Array<{ units: number; royalty: number }>): Buffer {
+    const b = XLSX.utils.book_new();
+    const meta = ['販売期間', month];
+    const paidRows = [['t', 'a', asin(0), MP, 3, 0, 3, '70%', '標準', 'JPY', '', '', '', '', 1230]];
+    const kenpRows = [['t', 'a', asin(0), MP, 0, 0, 5042, 'Kindle Unlimited', 'KENP', 'JPY', '', '', '', '', 1649]];
+    const pbRows = pb.map((p, i) => [
+      't', 'a', pbIsbn(i), MP, p.units, 0, '60%', 1480, 1480, 500, p.royalty, 'JPY', pbAsin(i),
+    ]);
+    const add = (name: string, aoa: unknown[][]) =>
+      XLSX.utils.book_append_sheet(b, XLSX.utils.aoa_to_sheet(aoa), name);
+    add('電子書籍のロイヤリティ', [meta, EBOOK_HEAD, ...paidRows]);
+    add('既読 KENPC', [meta, KENPC_HEAD, ['t', 'a', asin(0), MP, 5042]]);
+    add('ペーパーバックのロイヤリティ', [meta, PB_HEAD, ...pbRows]);
+    add('総収益', [meta, TOTAL_HEAD, ...paidRows, ...kenpRows]);
+    return XLSX.write(b, { type: 'buffer', bookType: 'xlsx' }) as Buffer;
+  }
+
+  const pb = [
+    { units: 2, royalty: 800 },
+    { units: 2, royalty: 742 },
+    { units: 1, royalty: 400 },
+  ]; // 合計 5 部 / ¥1,942
+
+  it('ISBN ではなく ASIN 列を ID に採り、全行を取り込む', () => {
+    const parsed = parseKdpReportWorkbook(withPaperback('9月 2026', pb));
+    const d = parsed.sheetDiagnostics.find((x) => x.name === 'ペーパーバックのロイヤリティ')!;
+    expect(d.columns.asin).toBe(12); // ISBN(2) ではなく ASIN(12)
+    expect(d.rowsEmitted).toBe(3);
+    expect(d.sums.royalty).toBe(1942);
+  });
+
+  it('統合シートがあってもペーパーバック行は残る (シートごと捨てない)', () => {
+    const parsed = parseKdpReportWorkbook(withPaperback('9月 2026', pb));
+    expect(parsed.layout).toBe('unified');
+    const d = parsed.sheetDiagnostics.find((x) => x.name === 'ペーパーバックのロイヤリティ')!;
+    expect(d.superseded).not.toBe(true);
+    const pbRows = parsed.rows.filter((r) => r.asin.startsWith('B0P'));
+    expect(pbRows).toHaveLength(3);
+    // 電子書籍/KENPC シートは総収益と同じ ASIN なので従来どおり除外される
+    const ebookDiag = parsed.sheetDiagnostics.find((x) => x.name === '電子書籍のロイヤリティ')!;
+    expect(ebookDiag.superseded).toBe(true);
+  });
+
+  it('合計が KDP ダッシュボードの ¥4,821 と一致する', () => {
+    const parsed = parseKdpReportWorkbook(withPaperback('9月 2026', pb));
+    const n = normalizeKdpRows(parsed.rows, { targetMonth: '2026-09', noEstimate: true });
+    expect(n.totals.royalty_jpy).toBe(1230 + 1649 + 1942);
+    expect(n.totals.units_sold).toBe(3 + 5);
+    expect(n.totals.kenp_read).toBe(5042);
+  });
+});

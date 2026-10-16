@@ -24,6 +24,10 @@ interface AccountOption {
 interface SalesFilterBarProps {
   accounts: AccountOption[];
   currentPeriod: string;
+  /** 単月表示中なら YYYY-MM、期間表示中なら空文字。 */
+  currentMonth: string;
+  /** 選べる月 (新しい順)。 */
+  monthOptions: string[];
   currentAccountId: string;
   currentGenre: string;
 }
@@ -33,6 +37,8 @@ const m = messages.salesKpi.filter;
 export function SalesFilterBar({
   accounts,
   currentPeriod,
+  currentMonth,
+  monthOptions,
   currentAccountId,
   currentGenre,
 }: SalesFilterBarProps) {
@@ -65,13 +71,33 @@ export function SalesFilterBar({
     >
       {/* Filter selects */}
       <div className="flex flex-wrap items-center gap-space-snug">
-        {/* Period */}
+        {/* Month — 単月を直接選ぶ。選ぶと期間プリセットより優先される。 */}
+        <label className="flex items-center gap-1.5">
+          <span className="text-button-sm text-muted whitespace-nowrap">{m.monthLabel}</span>
+          <select
+            className="cursor-pointer rounded-card border border-border-warm bg-white px-2 py-1 text-body text-charcoal focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
+            value={currentMonth}
+            disabled={isPending}
+            onChange={(e) => updateParam('month', e.target.value)}
+            aria-label={m.monthLabel}
+            data-testid="sales-month-filter"
+          >
+            <option value="">{m.monthAny}</option>
+            {monthOptions.map((ym) => (
+              <option key={ym} value={ym}>
+                {m.monthOptionLabel(ym)}
+              </option>
+            ))}
+          </select>
+        </label>
+
+        {/* Period — 月を選んでいる間は効かないので無効化する */}
         <label className="flex items-center gap-1.5">
           <span className="text-button-sm text-muted whitespace-nowrap">{m.periodLabel}</span>
           <select
-            className="cursor-pointer rounded-card border border-border-warm bg-white px-2 py-1 text-body text-charcoal focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
+            className="cursor-pointer rounded-card border border-border-warm bg-white px-2 py-1 text-body text-charcoal focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent disabled:cursor-not-allowed disabled:opacity-50"
             value={currentPeriod}
-            disabled={isPending}
+            disabled={isPending || currentMonth !== ''}
             onChange={(e) => updateParam('period', e.target.value)}
             aria-label={m.periodLabel}
           >

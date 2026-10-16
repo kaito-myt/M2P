@@ -950,6 +950,8 @@ model SalesRecord {
   kenp_read    Int      @default(0) // KU/KOLL 既読ページ数 (KENP)。KDP レポート由来
   kenp_royalty_jpy Int @default(0) // royalty_jpy の内数: KENP 確定分 (明細金額 or 概要サマリ按分)。実効レート導出の根拠
   kenp_royalty_estimated_jpy Int @default(0) // royalty_jpy の内数: KENP 推計分 (確定月レート×ページ数)。>0 = 推計を含む。確定値で上書きされると 0
+  paperback_royalty_jpy Int @default(0) // royalty_jpy の内数: ペーパーバック分 (books.pb_asin 側の行)。電子書籍と別 ASIN なので突合も別
+  paperback_units_sold Int @default(0) // units_sold の内数: ペーパーバックの部数
   review_count Int      @default(0) // 商品ページ由来 (別取得、当面 0)
   avg_stars    Decimal? @db.Decimal(3, 2) // 商品ページ由来 (別取得)
   bsr          Int? // Amazon Best Seller Rank (商品ページ由来、別取得)

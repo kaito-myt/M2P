@@ -287,6 +287,36 @@ export function parsePeriodParam(raw: string | undefined): number {
   return 1;
 }
 
+/**
+ * `month` パラメータ (YYYY-MM) を検証する。
+ *
+ * 単月を直接見たい (「9 月はいくらだった？」) のに期間プリセットしか無く、
+ * 過去の 1 ヶ月を開く手段が画面に無かったため追加した。
+ * 未来や桁違いは弾き、`null` を返して期間指定にフォールバックする。
+ */
+export function parseMonthParam(raw: string | undefined, now: Date = new Date()): string | null {
+  if (!raw) return null;
+  const m = /^(\d{4})-(\d{2})$/.exec(raw.trim());
+  if (!m) return null;
+  const year = Number(m[1]);
+  const month = Number(m[2]);
+  if (month < 1 || month > 12) return null;
+  const current = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+  const ym = `${String(year).padStart(4, '0')}-${String(month).padStart(2, '0')}`;
+  if (ym > current) return null; // 未来月は選ばせない
+  return ym;
+}
+
+/** 月選択の候補 (当月から過去 `count` ヶ月、新しい順)。 */
+export function buildMonthOptions(count = 24, now: Date = new Date()): string[] {
+  const out: string[] = [];
+  for (let i = 0; i < count; i++) {
+    const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+    out.push(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`);
+  }
+  return out;
+}
+
 // ---------------------------------------------------------------------------
 // ジャンル表示色パレット (チャート/ヒートマップ共通)。色のみに依存しない (凡例ラベル併記)。
 // ---------------------------------------------------------------------------

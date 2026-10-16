@@ -3356,6 +3356,12 @@ export const messages = {
       // 当月 KENP は KDP が翌月15日頃まで確定しないため、確定月の実効レートで推計計上している
       kenpEstimateNote: (amount: string) => `うち KENP 推計 ${amount}（翌月15日頃に確定）`,
       kenpEstimateBadge: (amount: string) => `うち推計 ${amount}`,
+      // 期間フィルタ (月選択含む) の売上。累計と並べて出す
+      periodRoyaltyLabel: '選択期間の売上',
+      periodBreakdownPrefix: 'うち',
+      kenpEstimatePart: (amount: string) => `KENP 推計 ${amount}`,
+      paperbackPart: (amount: string) => `ペーパーバック ${amount}`,
+      periodKenpLabel: 'KENP読了(期間)',
     },
     filter: {
       periodLabel: '期間',
@@ -3365,6 +3371,13 @@ export const messages = {
         { value: '6', label: '6 ヶ月' },
         { value: '12', label: '12 ヶ月' },
       ] as ReadonlyArray<{ value: string; label: string }>,
+      // 「先月いくらだった？」を期間指定で探させない。月を直接選べるようにする。
+      monthLabel: '月',
+      monthAny: '期間で見る',
+      monthOptionLabel: (ym: string) => {
+        const [y, m] = ym.split('-');
+        return `${y}年${String(Number(m))}月`;
+      },
       accountLabel: 'アカウント',
       accountAll: 'すべて',
       genreLabel: 'ジャンル',

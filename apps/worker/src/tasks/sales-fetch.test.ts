@@ -74,6 +74,8 @@ function encSession(): string {
 function makeMockPrisma(overrides?: {
   sessionEnc?: string | null;
   asinMap?: Record<string, string>;
+  /** ペーパーバック ASIN → book_id (電子書籍とは別 ASIN で売れるため) */
+  pbAsinMap?: Record<string, string>;
   existingSource?: Record<string, string>;
   /** KENP 実効レート導出用の確定済み過去月の行 */
   confirmedSamples?: Array<{ year_month: string; kenp_read: number; kenp_royalty_jpy: number }>;
@@ -107,8 +109,27 @@ function makeMockPrisma(overrides?: {
       update: vi.fn().mockImplementation((a) => { runUpdates.push(a); return Promise.resolve({}); }),
     },
     book: {
-      findMany: vi.fn().mockImplementation(({ where }: { where: { asin: { in: string[] } } }) =>
-        Promise.resolve(where.asin.in.filter((a) => asinMap[a]).map((a) => ({ id: asinMap[a], asin: a })))),
+      // 突合は `asin` (電子書籍) と `pb_asin` (ペーパーバック) の OR。pbAsinMap があれば
+      // 同じ book に 2 つ目の ASIN をぶら下げる。
+      findMany: vi.fn().mockImplementation(({ where }: { where: { OR: Array<Record<string, { in: string[] }>> } }) => {
+        const asins = new Set(where.OR.flatMap((c) => Object.values(c).flatMap((v) => v.in)));
+        const byId = new Map<string, { id: string; asin: string | null; pb_asin: string | null }>();
+        for (const a of asins) {
+          const id = asinMap[a];
+          if (id) {
+            const cur = byId.get(id) ?? { id, asin: null, pb_asin: null };
+            cur.asin = a;
+            byId.set(id, cur);
+          }
+          const pbId = (overrides?.pbAsinMap ?? {})[a];
+          if (pbId) {
+            const cur = byId.get(pbId) ?? { id: pbId, asin: null, pb_asin: null };
+            cur.pb_asin = a;
+            byId.set(pbId, cur);
+          }
+        }
+        return Promise.resolve(Array.from(byId.values()));
+      }),
     },
     salesRecord: {
       findMany: vi.fn().mockImplementation((args: { where: { year_month: unknown } }) => {
@@ -389,5 +410,76 @@ describe('runSalesFetch (auto-fetch Phase2)', () => {
       expect(kdpLoginRefresh.refreshKdpSession).not.toHaveBeenCalled();
       expect(runUpdates.find((u) => u.data.status === 'failed')).toBeTruthy();
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ペーパーバック (別 ASIN) の取り込み — docs/09 §10.9
+// ---------------------------------------------------------------------------
+
+const PB_ASIN = 'B0PBACK001';
+
+/** 電子書籍 + ペーパーバックの 2 ASIN を持つ PMR (ペーパーバックシートは ISBN と ASIN の両方を持つ)。 */
+function makePmrWithPaperbackXlsx(): Buffer {
+  const wb = XLSX.utils.book_new();
+  const paid = [
+    ['販売期間', '6月 2026'],
+    ['タイトル', '著者', 'ASIN', 'マーケットプレイス', '注文数', '払い戻し数', '実質注文数', 'ロイヤリティの種類', 'コンテンツ区分', '通貨', '平均希望小売価格 (税別)', '平均販売価格 (税別)', '平均ファイルサイズ（MB）', '平均配信コスト', 'ロイヤリティ'],
+    ['最強競馬予想術', '宮田海斗', KNOWN_ASIN, 'Amazon.co.jp', 1, 0, 1, '70%', '標準', 'JPY', 400, 400, 0.22, 1, 279],
+  ];
+  const kenp = [
+    ['販売期間', '6月 2026'],
+    ['タイトル', '著者', 'ASIN', 'マーケットプレイス', '既読 KENP (Kindle Edition Normalized Pages)', 'ロイヤリティ', '通貨'],
+    ['最強競馬予想術', '宮田海斗', KNOWN_ASIN, 'Amazon.co.jp', 145, 54.01, 'JPY'],
+  ];
+  const pb = [
+    ['販売期間', '6月 2026'],
+    ['タイトル', '著者', 'ISBN', 'マーケットプレイス', '注文数', '払い戻し数', 'ロイヤリティの種類', '平均希望小売価格 (税別)', '平均販売価格 (税別)', '平均製造コスト', 'ロイヤリティ', '通貨', 'ASIN'],
+    ['最強競馬予想術', '宮田海斗', '9798000000001', 'Amazon.co.jp', 2, 0, '60%', 1480, 1480, 500, 776, 'JPY', PB_ASIN],
+  ];
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(paid), '電子書籍のロイヤリティ');
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(kenp), '既読 KENPC');
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(pb), 'ペーパーバックのロイヤリティ');
+  return XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' }) as Buffer;
+}
+
+describe('ペーパーバックの売上', () => {
+  beforeEach(() => { process.env.KDP_CRED_KEY = encKey.toString('hex'); });
+
+  it('books.pb_asin で突合し、同じ本の 1 行に合算する (後勝ちで消さない)', async () => {
+    const { db, upserts } = makeMockPrisma({
+      asinMap: { [KNOWN_ASIN]: KNOWN_BOOK_ID },
+      pbAsinMap: { [PB_ASIN]: KNOWN_BOOK_ID },
+    });
+    const res = await runSalesFetch({
+      payload: { account_id: ACCOUNT_ID, year_month: YEAR_MONTH },
+      browserPort: createFixtureBrowserPort(makePmrWithPaperbackXlsx()),
+      prisma: db,
+      logger: silentLogger,
+      now: () => new Date('2026-07-01T00:00:00Z'),
+    });
+    expect(res.ok).toBe(true);
+    // 電子書籍と PB が別 ASIN でも **1 冊 = 1 行**。
+    expect(upserts).toHaveLength(1);
+    const c = upserts[0]!.create;
+    expect(c.royalty_jpy).toBe(279 + 54 + 776);
+    expect(c.units_sold).toBe(1 + 2);
+    expect(c.paperback_royalty_jpy).toBe(776);
+    expect(c.paperback_units_sold).toBe(2);
+    expect(c.kenp_read).toBe(145);
+  });
+
+  it('pb_asin が未登録なら集計に入らない (= 取りこぼしが数字に出る)', async () => {
+    const { db, upserts } = makeMockPrisma({ asinMap: { [KNOWN_ASIN]: KNOWN_BOOK_ID } });
+    await runSalesFetch({
+      payload: { account_id: ACCOUNT_ID, year_month: YEAR_MONTH },
+      browserPort: createFixtureBrowserPort(makePmrWithPaperbackXlsx()),
+      prisma: db,
+      logger: silentLogger,
+      now: () => new Date('2026-07-01T00:00:00Z'),
+    });
+    expect(upserts).toHaveLength(1);
+    expect(upserts[0]!.create.paperback_royalty_jpy).toBe(0);
+    expect(upserts[0]!.create.royalty_jpy).toBe(279 + 54);
   });
 });

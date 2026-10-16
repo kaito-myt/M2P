@@ -20,11 +20,29 @@ interface SalesKpiStripeProps {
 const m = messages.salesKpi.kpi;
 
 export function SalesKpiStripe({ summary }: SalesKpiStripeProps) {
+  // 期間 (= 月選択を含む) の内訳。推計とペーパーバックは「本当にそれだけ売れたのか」を
+  // 確かめる手掛かりなので、金額が立っているときだけ注記として出す。
+  const parts: string[] = [];
+  if (summary.period_kenp_estimated_jpy > 0) {
+    parts.push(m.kenpEstimatePart(formatJpy(summary.period_kenp_estimated_jpy)));
+  }
+  if (summary.period_paperback_royalty_jpy > 0) {
+    parts.push(m.paperbackPart(formatJpy(summary.period_paperback_royalty_jpy)));
+  }
+
   return (
     <StatRow
       testId="sales-kpi-stripe"
       columns={6}
       items={[
+        {
+          // 先頭は「いま選んでいる期間/月」の売上。累計は隣に置く (月を選んでも数字が
+          // 動かないと、月選択が効いていないように見えるため)。
+          label: m.periodRoyaltyLabel,
+          value: formatJpy(summary.period_royalty_jpy),
+          note: parts.length > 0 ? `${m.periodBreakdownPrefix} ${parts.join(' / ')}` : undefined,
+          testId: 'kpi-period-royalty',
+        },
         {
           label: m.totalRoyaltyLabel,
           value: formatJpy(summary.total_royalty_jpy),
@@ -40,8 +58,7 @@ export function SalesKpiStripe({ summary }: SalesKpiStripeProps) {
           suffix: m.booksUnit,
           testId: 'kpi-total-books',
         },
-        { label: m.avgRoyaltyLabel, value: formatJpy(summary.avg_royalty_per_book_jpy), testId: 'kpi-avg-royalty' },
-        { label: 'KENP読了(累計)', value: formatKenp(summary.total_kenp_read), testId: 'kpi-total-kenp' },
+        { label: m.periodKenpLabel, value: formatKenp(summary.period_kenp_read), testId: 'kpi-period-kenp' },
         { label: m.avgStarsLabel, value: formatStars(summary.avg_stars), testId: 'kpi-avg-stars' },
         { label: m.costSalesRatioLabel, value: formatCostSalesRatio(summary.cost_sales_ratio), testId: 'kpi-cost-sales-ratio' },
       ]}

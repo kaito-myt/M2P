@@ -67,7 +67,11 @@ export interface KdpSheetDiagnostic {
   columns: Record<string, number>;
   month: string | null;
   rowsEmitted: number;
-  /** 統合シート (総収益) があるため集計から除外したシート */
+  /** ID 列が書籍 ID に見えず捨てた行数 (フッタ/合計行のほか、列の取り違えもここに出る) */
+  rowsDropped?: number;
+  /** 統合シートに同じ ASIN があるため集計から外した行数 (重複計上の防止)。 */
+  rowsSuperseded?: number;
+  /** 統合シート (総収益) があるため集計から除外したシート (全行が重複だった場合) */
   superseded?: boolean;
   /** 統合シートの「ロイヤリティの種類」値の出現数 (有料/KENP 行の判別根拠の確認用) */
   typeValues?: Record<string, number>;
@@ -166,10 +170,17 @@ function parseNumber(v: unknown): number {
   return Number.isFinite(n) ? n : 0;
 }
 
-/** ASIN らしさ (10 桁英数)。緩め。 */
-function looksLikeAsin(v: unknown): boolean {
-  const s = String(v ?? '').trim().toUpperCase();
-  return /^[A-Z0-9]{10}$/.test(s);
+/**
+ * 書籍 ID らしさ。ASIN (10 桁英数) に加えて **ISBN-13 / ISBN-10 も受ける**。
+ *
+ * 「総収益」シートの ID 列は `ASIN/ISBN` で、ペーパーバック行には ISBN が入ることがある。
+ * 10 桁英数だけを通していたため、ペーパーバックの行が「フッタ/合計行」と同じ扱いで
+ * 捨てられ、売上が丸ごと欠落していた (2026-09: ¥1,942)。
+ */
+function looksLikeBookId(v: unknown): boolean {
+  const s = String(v ?? '').trim().toUpperCase().replace(/-/g, '');
+  if (/^[A-Z0-9]{10}$/.test(s)) return true; // ASIN / ISBN-10
+  return /^\d{13}$/.test(s); // ISBN-13
 }
 
 const EN_MONTHS: Record<string, number> = {
@@ -212,10 +223,19 @@ interface HeaderMap {
 /** 1 行 (cells) を列マップに変換する。 */
 function mapCells(cells: unknown[]): Partial<Record<ColumnKey, number>> {
   const map: Partial<Record<ColumnKey, number>> = {};
+  // 「ペーパーバックのロイヤリティ」シートは **ISBN(左) と ASIN(右) の両方**を持つ。
+  // 先に現れた ISBN を採ると 13 桁の値になり、books.pb_asin と突合できないうえ
+  // `looksLikeBookId` の桁数判定にも引っかかって **全行が落ちる** (2026-09 の
+  // ペーパーバック ロイヤリティ ¥1,942 がまるごと欠落していた実害)。
+  // そこで「ASIN」という厳密一致の列が後から出てきたら、そちらで上書きする。
+  let asinExact = false;
   cells.forEach((cell, ci) => {
     const h = normHeader(cell);
     if (!h) return;
-    if (map.asin === undefined && isAsin(h)) map.asin = ci;
+    if (isAsin(h) && (map.asin === undefined || (!asinExact && h === 'asin'))) {
+      map.asin = ci;
+      asinExact = h === 'asin';
+    }
     if (isUnits(h) && (map.units_sold === undefined || isPreferredUnits(h))) map.units_sold = ci;
     if (map.kenp_read === undefined && isKenp(h)) map.kenp_read = ci;
     if (map.royalty === undefined && isRoyaltyAmount(h)) map.royalty = ci;
@@ -374,7 +394,10 @@ export function parseKdpReportWorkbook(buffer: Buffer | ArrayBuffer): ParseResul
       }
 
       const asin = String(map.asin !== undefined ? cells[map.asin] ?? '' : '').trim().toUpperCase();
-      if (!looksLikeAsin(asin)) continue; // フッタ/合計行など
+      if (!looksLikeBookId(asin)) {
+        diag.rowsDropped = (diag.rowsDropped ?? 0) + 1; // フッタ/合計行、または ID 列の取り違え
+        continue;
+      }
 
       if (unified) {
         // 統合シート: 同じ列が有料行では部数、KENP 行ではページ数。種類で解釈を切り替える。
@@ -447,13 +470,29 @@ export function parseKdpReportWorkbook(buffer: Buffer | ArrayBuffer): ParseResul
     }
   }
 
-  // 統合シートがあれば、それだけを正とする (他の ASIN 別シートは同じ数字の重複。docs/09 §10.4)。
+  // 統合シート (総収益) があればそれを正とする。ただし **シート単位ではなく ASIN 単位**で外す。
+  //
+  // 以前はシートごと捨てていたため、統合シートに載っていない商材 — 具体的には
+  // **ペーパーバック** — が一緒に消えていた (docs/09 §10.9)。重複計上を防ぐ目的は
+  // 「統合シートに既にある ASIN を二度足さない」ことなので、その ASIN だけを外せば足りる。
   const layout: KdpReportLayout = Array.from(unifiedNames).some((n) => n !== '') ? 'unified' : 'legacy';
   const unifiedSheets = new Set(sheetDiagnostics.filter((d) => d.typeValues).map((d) => d.name));
+  const unifiedIds = new Set<string>();
+  if (layout === 'unified') {
+    for (const [name, list] of sheetRows) {
+      if (!unifiedSheets.has(name)) continue;
+      for (const r of list) unifiedIds.add(`${r.asin}|${r.month ?? ''}`);
+    }
+  }
   for (const [name, list] of sheetRows) {
+    const d = sheetDiagnostics.find((x) => x.name === name);
     if (layout === 'unified' && !unifiedSheets.has(name)) {
-      const d = sheetDiagnostics.find((x) => x.name === name);
-      if (d) d.superseded = true;
+      const kept = list.filter((r) => !unifiedIds.has(`${r.asin}|${r.month ?? ''}`));
+      if (d) {
+        d.rowsSuperseded = list.length - kept.length;
+        d.superseded = kept.length === 0;
+      }
+      rows.push(...kept);
       continue;
     }
     rows.push(...list);
