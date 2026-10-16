@@ -4631,3 +4631,19 @@ KDP の作成枠 (週次・フォーマット別) を使い切ると `app_settin
 
 `paperback.status.sync` が draft を検出して `pb_title_id` を埋めるより前に
 `paperback.draft` がこの状態に当たることがあるため、ここで拾えるようにしておく。
+
+### 19.8 E2E の DB クリーンアップに本番ガードを入れた (2026-10-16)
+
+`tests/e2e/fixtures/db.ts` の `cleanupTransientData` は
+`token_usage` / `job` / `book` / `theme_candidate` / `publishing_plan` / `account` を
+**条件なしで全削除**する。書いた当時 (SP-02) のコメントは
+「Book / Account は seed されていない = 常に空なので実質 no-op」だが、
+**その前提はとうに失効している** (本番に書籍 151 冊・売上・コスト履歴がある。
+`books` を消すと cascade で表紙・成果物・`sales_records` まで消える)。
+
+`playwright.config.ts` は `.env.local` を dotenv で読んで `process.env` に流し込むので、
+`DATABASE_URL` が本番を向いていれば **`pnpm exec playwright test` 一発で事業データが消える**。
+
+対策: 接続先が `localhost` / `127.0.0.1` / `::1` / `host.docker.internal` でなければ
+クリーンアップを実行せず throw する。使い捨て DB を使う CI だけ
+`E2E_ALLOW_REMOTE_DB=1` で明示的に外す。`DATABASE_URL` 未設定や解析不能も拒否側に倒す。

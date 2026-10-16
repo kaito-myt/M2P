@@ -10,6 +10,33 @@
 import { prisma } from '@a2p/db';
 
 /**
+ * 接続先がローカルの開発用 DB かどうか。
+ *
+ * **なぜ要るか** — 下の `cleanupTransientData` は `book` / `account` /
+ * `job` / `token_usage` を**条件なしで全削除**する。書いた当時 (SP-02) は
+ * 「Book / Account は seed されていない = 常に空」だったが、今は本番に
+ * 書籍 151 冊・売上・コスト履歴が入っており、`books` を消すと cascade で
+ * 表紙・成果物・`sales_records` まで連れて行く。
+ *
+ * `playwright.config.ts` は `.env.local` を dotenv で読み込んで
+ * `process.env` に流し込むので、**`DATABASE_URL` が本番を指していれば
+ * `pnpm exec playwright test` 一発で事業データが消える**。
+ * 明示的に許可しない限りリモート DB では実行させない。
+ */
+function isLocalDatabase(url: string | undefined): boolean {
+  if (!url) return false;
+  try {
+    const host = new URL(url).hostname;
+    return host === 'localhost' || host === '127.0.0.1' || host === '::1' || host === 'host.docker.internal';
+  } catch {
+    return false;
+  }
+}
+
+/** ガードを外す明示オプトイン (CI の使い捨て DB 用)。 */
+const ALLOW_REMOTE = process.env.E2E_ALLOW_REMOTE_DB === '1';
+
+/**
  * E2E 開始前の DB クリーンアップ。
  *
  * 「テストが消してよい」具体表に絞る (User / AppSettings / Prompt /
@@ -18,11 +45,25 @@ import { prisma } from '@a2p/db';
  * 各テーブルは onDelete: Cascade が schema 側で定義されているため、
  * 親テーブル (Account / Book) を消せば子も自動削除される。
  *
- * SP-02 時点では Book / Account は seed されていない (= 常に空) ので、
- * 実質 no-op に近いが、SP-03 以降で UI から作られたデータをクリアする
- * 拡張点として用意しておく。
+ * **接続先がローカルでなければ実行せずに throw する** (上の `isLocalDatabase` 参照)。
+ * 使い捨て DB を使う CI では `E2E_ALLOW_REMOTE_DB=1` で明示的に外す。
  */
 export async function cleanupTransientData(): Promise<void> {
+  const url = process.env.DATABASE_URL;
+  if (!isLocalDatabase(url) && !ALLOW_REMOTE) {
+    let where = '(DATABASE_URL 未設定)';
+    try {
+      if (url) where = new URL(url).hostname;
+    } catch {
+      where = '(解析できない DATABASE_URL)';
+    }
+    throw new Error(
+      `E2E の DB クリーンアップを中止しました。接続先が ${where} でローカルではありません。` +
+        'このクリーンアップは book / account / job / token_usage を全削除し、cascade で ' +
+        '表紙・成果物・売上まで消します。使い捨ての DB で実行する場合のみ ' +
+        'E2E_ALLOW_REMOTE_DB=1 を明示してください。',
+    );
+  }
   // 順序: 子モデル → 親モデル (cascade 設定漏れの保険)
   // 参照しない場合は no-op で OK
   await prisma.$transaction([
@@ -34,6 +75,9 @@ export async function cleanupTransientData(): Promise<void> {
     prisma.account.deleteMany({}),
   ]);
 }
+
+/** テスト用。ガード判定だけを取り出す。 */
+export const __isLocalDatabase = isLocalDatabase;
 
 /**
  * ログイン用シードユーザーが居なければ作る。既に居れば password_hash を
