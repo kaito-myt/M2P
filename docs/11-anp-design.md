@@ -2669,7 +2669,21 @@ OR/equals filter OK
 | UI | `apps/anp/app/(app)/accounts/[id]/research-panel.tsx` / `apps/anp/lib/messages.ts` |
 | テスト | `packages/agents/__tests__/anp/eyecatch-market.test.ts` (11) / `apps/worker/__tests__/eyecatch-style-history.test.ts` (7) / `anp/research.test.ts` + `anp-eyecatch-style.test.ts` に追加 |
 
-### 6. 週次 cron の初回発火はまだ
+### 6. 直していない穴 — 画風の選択は今も「くじ引き」
+
+`pickEyecatchStyle` は**記事 ID のハッシュ**で画風を選ぶ。F-ANP-57 で画風別の実績を
+リサーチに渡すようにしたが、**選択そのものを実績で重み付けはしていない**。
+
+これは意図的な判断。現在の標本は 1 画風あたり n=2〜12 で閲覧 0〜51、しかも公開時期の偏りが
+混ざっている (新しい記事ほど閲覧が少ない)。**このノイズで重み付けすると、初期の偶然を
+固定してしまい、くじ引きより悪くなる。** 市場の信号は
+「実物を見た `art_direction`」が運ぶ (grounded なら画風レシピより優先される) ので、
+そちらを先に効かせる。
+
+重み付けに進む条件: 1 画風あたり n≥20 かつ平均閲覧が 3 桁に乗ること。
+そのときは公開からの経過日数で正規化してから比べる。
+
+### 7. 週次 cron の初回発火はまだ
 
 `note-account-research-weekly` は `graphile_worker._private_known_crontabs` に登録済みだが
 `last_execution = null`。cron は `0 2 * * 1` (月曜 11:00 JST) で、実装が 2026-10-14 (水) なので
