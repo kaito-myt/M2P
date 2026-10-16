@@ -730,7 +730,9 @@ model Job {
   started_at      DateTime?
   finished_at     DateTime?
   created_at      DateTime  @default(now())
+  tdp_product_id  String?
 
+  tdp_product TdpProduct?  @relation(fields: [tdp_product_id], references: [id], onDelete: SetNull)
   book        Book?        @relation(fields: [book_id], references: [id], onDelete: SetNull)
   parent      Job?         @relation("JobParent", fields: [parent_job_id], references: [id], onDelete: SetNull)
   children    Job[]        @relation("JobParent")
@@ -738,6 +740,8 @@ model Job {
 
   @@index([status, kind, created_at(sort: Desc)], map: "jobs_status_kind_idx")
   @@index([book_id, kind], map: "jobs_book_kind_idx")
+  @@index([tdp_product_id, kind], map: "jobs_tdp_product_kind_idx")
+  @@index([kind, created_at(sort: Desc)], map: "jobs_kind_time_idx")
   @@map("jobs")
 }
 
@@ -1386,6 +1390,33 @@ model AppSettings {
   // [3DP R-2] 運営者が登録する禁止語 (作品名・ブランド名・キャラクター名)。string[]。
   // 固有名詞は網羅不能なので既定では入れず、運営者が設定画面で足していく。
   tdp_derivative_denylist         String[]  @default([])
+  // [3DP Inc-1] docs/12 §7.3。既定値は packages/contracts/src/tdp/settings.ts の TDP_SETTINGS_DEFAULTS と一致テストで結ぶ。
+  tdp_research_enabled            Boolean   @default(false)
+  tdp_planner_enabled             Boolean   @default(false)
+  tdp_sales_fetch_enabled         Boolean   @default(false)
+  tdp_status_check_enabled        Boolean   @default(true)
+  tdp_booth_public_fetch_enabled  Boolean   @default(false)
+  tdp_kill_switch_on              Boolean   @default(false)
+  tdp_kill_switch_since           DateTime?
+  tdp_retire_mode                 Boolean   @default(false)
+  tdp_degrade_mode                Boolean   @default(false)
+  tdp_jinxxy_monthly_limit        Int       @default(0)
+  tdp_jinxxy_counts_toward_gate   Boolean   @default(false)
+  tdp_jinxxy_gate_switched_at     DateTime?
+  tdp_u9_json                     Json?
+  tdp_u10_json                    Json?
+  tdp_settings_confirmed_json     Json?
+  tdp_min_price_jpy               Int       @default(500)
+  tdp_regen_limit_asset           Int       @default(3)
+  tdp_regen_limit_product         Int       @default(10)
+  tdp_gate_b_min_sales            Int       @default(5)
+  tdp_gate_b_window_days          Int       @default(90)
+  tdp_gate_c_point_days           Int       @default(180)
+  tdp_gate_e_monthly_minutes      Int       @default(240)
+  tdp_yield_warn_pct              Int       @default(50)
+  tdp_derivative_reject_warn_pct  Int       @default(50)
+  tdp_kind_weights_json           Json?
+  tdp_tuning_json                 Json?
   // note.theme.auto の既定 cron。A2P の pipeline_theme_cron (07:00 JST) と衝突しないよう
   // 1 時間ずらした 08:00 JST (`0 23 * * *` UTC) を既定とする。
   anp_theme_cron                  String    @default("0 23 * * *")
@@ -1819,11 +1850,25 @@ model TdpProduct {
   created_at DateTime @default(now())
   updated_at DateTime @updatedAt
 
+  /// planner (企画の自動作成) | trial (試作登録)
+  origin             String   @default("planner")
+  plan_json          Json?
+  target_media       String[] @default(["booth"])
+  /// 滞留 (F-3DP-14) はここから測る (updated_at は cost 加算でも動く)
+  status_changed_at  DateTime @default(now())
+  status_reason_json Json?
+  lineage_no         Int      @default(1)
+  /// CHECK tdp_products_approval_required が参照 (承認系の他の列は Inc-4)
+  approved_at        DateTime?
+
   assets   TdpAsset[]
   previews TdpPreview[]
+  jobs     Job[]
 
   @@index([status, created_at(sort: Desc)], map: "tdp_products_status_time_idx")
   @@index([listed_at(sort: Desc)], map: "tdp_products_listed_idx")
+  @@index([status, status_changed_at], map: "tdp_products_stall_idx")
+  @@index([origin, created_at(sort: Desc)], map: "tdp_products_origin_idx")
   @@map("tdp_products")
 }
 
