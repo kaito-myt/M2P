@@ -13,6 +13,8 @@
  *
  * HARD RULE: playwright の import はこのファイルに閉じる。evaluate 内は DOM 参照可。
  */
+import { launchBrowser } from '../../browser/launch.js';
+
 import path from 'node:path';
 
 import { chromium, type BrowserContextOptions, type Page } from 'playwright';
@@ -193,7 +195,7 @@ async function submitOne(args: BwSubmitArgs): Promise<BwSubmitResult> {
     return { ok: false, reason: 'error', message: 'sessionState JSON parse failed' };
   }
 
-  const browser = await chromium.launch({ headless: true, args: LAUNCH_ARGS });
+  const browser = await launchBrowser({ label: 'bw.submit' }, { launch: (o) => chromium.launch(o as never) });
   const ctx = await browser.newContext({
     storageState: storageStateJson as BrowserContextOptions['storageState'],
     userAgent: UA,
@@ -447,7 +449,7 @@ const SHELF_URL = 'https://author.bookwalker.jp/library/bookshelf';
 
 async function openCtx(sessionState: string) {
   const storageStateJson = JSON.parse(sessionState) as BrowserContextOptions['storageState'];
-  const browser = await chromium.launch({ headless: true, args: LAUNCH_ARGS });
+  const browser = await launchBrowser({ label: 'bw.submit' }, { launch: (o) => chromium.launch(o as never) });
   const ctx = await browser.newContext({
     storageState: storageStateJson,
     userAgent: UA,

@@ -17,6 +17,8 @@
  *
  * HARD RULE: playwright の import はこのファイルに閉じる。
  */
+import { launchBrowser } from '../../browser/launch.js';
+
 import { createLogger } from '@a2p/contracts/logger';
 
 import { checkReuploadConfirms } from '../kdp-submit/playwright-publish-port.js';
@@ -178,7 +180,7 @@ async function publishDraft(args: PaperbackPublishArgs): Promise<PaperbackPublis
     return { ok: false, reason: 'error', message: `playwright unavailable: ${errMsg(err)}` };
   }
 
-  const browser = await chromium.launch({ headless: true, args: LAUNCH_ARGS });
+  const browser = await launchBrowser({ label: 'paperback.submit' }, { launch: (o) => chromium.launch(o as never) });
   try {
     const context = await browser.newContext({
       storageState: storageStateObj as Awaited<ReturnType<import('playwright').BrowserContext['storageState']>>,

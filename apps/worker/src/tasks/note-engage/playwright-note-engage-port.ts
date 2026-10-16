@@ -10,6 +10,8 @@
  * ログイン誘導(セッション切れ)やレート制限文言を検知したら即中断(blocked)して
  * 呼出側が停止&通知する。トークン/セッションはログに出さない。
  */
+import { launchBrowser } from '../../browser/launch.js';
+
 import { createLogger } from '@a2p/contracts/logger';
 
 import type {
@@ -57,11 +59,10 @@ async function engageAll(args: NoteEngageArgs): Promise<NoteEngagePortResult> {
     return { outcomes, blocked: `playwright_unavailable:${errMsg(err)}` };
   }
 
-  const browser = await chromium.launch({
-    headless: true,
-    args: LAUNCH_ARGS,
-    ...(args.proxy ? { proxy: args.proxy } : {}),
-  });
+  const browser = await launchBrowser(
+    { label: 'note.engage', ...(args.proxy ? { proxy: args.proxy } : {}) },
+    { launch: (o) => chromium.launch(o as never) },
+  );
   if (args.proxy) log.info({ server: args.proxy.server }, 'note engage via home proxy');
 
   let blocked: string | undefined;

@@ -9,6 +9,8 @@
  *
  * HARD RULE: playwright の import はこのファイル (と playwright-browser-port.ts) に閉じる。
  */
+import { launchBrowser } from '../../browser/launch.js';
+
 import { createLogger } from '@a2p/contracts/logger';
 
 import { requestOtpViaLine, pushLine, type LineAuthRelayPrisma } from '../lib/line-auth-relay.js';
@@ -167,11 +169,10 @@ export async function refreshKdpSession(deps: KdpLoginRefreshDeps): Promise<KdpL
     return { ok: false, reason: 'unknown', message: `playwright unavailable: ${errMsg(err)}` };
   }
 
-  const browser = await chromium.launch({
-    headless: true,
-    args: LAUNCH_ARGS,
-    ...(deps.proxy ? { proxy: deps.proxy } : {}),
-  });
+  const browser = await launchBrowser(
+    { label: 'kdp.login.refresh', ...(deps.proxy ? { proxy: deps.proxy } : {}) },
+    { launch: (o) => chromium.launch(o as never) },
+  );
   if (deps.proxy) log.info({ server: deps.proxy.server }, 'refreshKdpSession via home proxy');
   try {
     const context = await browser.newContext({

@@ -8,6 +8,8 @@
  * 安全策: 検索結果が 1 件でなければ ambiguous で中断。各操作は確認ダイアログまで踏む。
  * デバッグ証跡(スクショ)を R2 に保存する。
  */
+import { launchBrowser } from '../../browser/launch.js';
+
 import { createLogger } from '@a2p/contracts/logger';
 
 import type {
@@ -61,7 +63,7 @@ async function takedownBook(args: TakedownBookArgs): Promise<TakedownBookResult>
     return { ok: false, reason: 'unknown', message: `playwright unavailable: ${errMsg(err)}` };
   }
 
-  const browser = await chromium.launch({ headless: true, args: LAUNCH_ARGS });
+  const browser = await launchBrowser({ label: 'book-cull' }, { launch: (o) => chromium.launch(o as never) });
   const steps: TakedownStep[] = [];
   try {
     const context = await browser.newContext({
@@ -192,7 +194,7 @@ async function readBookStatus(args: ReadBookStatusArgs): Promise<ReadBookStatusR
     return { ok: false, reason: 'unknown', message: `playwright unavailable: ${errMsg(err)}` };
   }
 
-  const browser = await chromium.launch({ headless: true, args: LAUNCH_ARGS });
+  const browser = await launchBrowser({ label: 'book-cull' }, { launch: (o) => chromium.launch(o as never) });
   try {
     const context = await browser.newContext({
       storageState: storageState as Awaited<ReturnType<import('playwright').BrowserContext['storageState']>>,
@@ -277,7 +279,7 @@ async function readPaperbackStatus(args: ReadPaperbackStatusArgs): Promise<ReadP
     return { ok: false, reason: 'unknown', message: `playwright unavailable: ${errMsg(err)}` };
   }
 
-  const browser = await chromium.launch({ headless: true, args: LAUNCH_ARGS });
+  const browser = await launchBrowser({ label: 'book-cull' }, { launch: (o) => chromium.launch(o as never) });
   try {
     const context = await browser.newContext({
       storageState: storageState as Awaited<ReturnType<import('playwright').BrowserContext['storageState']>>,

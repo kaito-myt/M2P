@@ -37,6 +37,8 @@
  *
  * HARD RULE: playwright の import はこのファイルに閉じる。evaluate 内は DOM 参照可。
  */
+import { launchBrowser } from '../../browser/launch.js';
+
 import path from 'node:path';
 
 import { createLogger } from '@a2p/contracts/logger';
@@ -292,7 +294,7 @@ async function publishOne(args: NotePublishArgs): Promise<NotePublishResult> {
     return { ok: false, reason: 'error', message: `playwright unavailable: ${errMsg(err)}` };
   }
 
-  const browser = await chromium.launch({ headless: true, args: LAUNCH_ARGS });
+  const browser = await launchBrowser({ label: 'note.publish' }, { launch: (o) => chromium.launch(o as never) });
   try {
     const context = await browser.newContext({
       storageState: storageStateObj as Awaited<ReturnType<import('playwright').BrowserContext['storageState']>>,
@@ -574,7 +576,7 @@ async function monetizeOne(args: NoteMonetizeArgs): Promise<NoteMonetizeResult> 
     return { ok: false, reason: 'error', message: `playwright unavailable: ${errMsg(err)}` };
   }
 
-  const browser = await chromium.launch({ headless: true, args: LAUNCH_ARGS });
+  const browser = await launchBrowser({ label: 'note.publish' }, { launch: (o) => chromium.launch(o as never) });
   try {
     const context = await browser.newContext({
       storageState: storageStateObj as Awaited<ReturnType<import('playwright').BrowserContext['storageState']>>,
@@ -808,7 +810,7 @@ async function checkPublished(args: NoteCheckPublishedArgs): Promise<NoteCheckPu
   } catch (err) {
     return { ok: false, reason: 'error', message: `playwright unavailable: ${errMsg(err)}` };
   }
-  const browser = await chromium.launch({ headless: true, args: LAUNCH_ARGS });
+  const browser = await launchBrowser({ label: 'note.publish' }, { launch: (o) => chromium.launch(o as never) });
   try {
     const context = await browser.newContext({
       storageState: storageStateObj as Awaited<ReturnType<import('playwright').BrowserContext['storageState']>>,
@@ -1495,7 +1497,7 @@ async function fixTablesOne(args: NoteFixTablesArgs): Promise<NoteFixTablesResul
     return { ok: false, reason: 'error', message: `playwright unavailable: ${errMsg(err)}` };
   }
 
-  const browser = await chromium.launch({ headless: true, args: LAUNCH_ARGS });
+  const browser = await launchBrowser({ label: 'note.publish' }, { launch: (o) => chromium.launch(o as never) });
   try {
     const context = await browser.newContext({
       storageState: storageStateObj as Awaited<ReturnType<import('playwright').BrowserContext['storageState']>>,

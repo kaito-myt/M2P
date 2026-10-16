@@ -8,6 +8,8 @@
  * アクションブロック(IG「後でもう一度実行してください」/ TikTok の一時制限)や
  * ログイン誘導を検知したら即中断(blocked)して呼出側が停止&通知する。
  */
+import { launchBrowser } from '../../browser/launch.js';
+
 import { createLogger } from '@a2p/contracts/logger';
 
 import type {
@@ -51,11 +53,10 @@ async function followAll(args: SnsEngageArgs): Promise<SnsEngagePortResult> {
     return { outcomes, blocked: `playwright_unavailable:${errMsg(err)}` };
   }
 
-  const browser = await chromium.launch({
-    headless: true,
-    args: LAUNCH_ARGS,
-    ...(args.proxy ? { proxy: args.proxy } : {}),
-  });
+  const browser = await launchBrowser(
+    { label: 'promotion.sns.engage', ...(args.proxy ? { proxy: args.proxy } : {}) },
+    { launch: (o) => chromium.launch(o as never) },
+  );
   if (args.proxy) log.info({ server: args.proxy.server, channel: args.channel }, 'sns engage via home proxy');
 
   let blocked: string | undefined;

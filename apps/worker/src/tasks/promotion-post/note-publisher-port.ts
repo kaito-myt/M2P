@@ -13,6 +13,8 @@
  *
  * HARD RULE: playwright の import はこのファイルに閉じる(evaluate はブラウザ側実行)。
  */
+import { launchBrowser } from '../../browser/launch.js';
+
 import { createLogger } from '@a2p/contracts/logger';
 
 import type { PublishInput, PublishResult, PublisherPort } from './publisher-port.js';
@@ -60,10 +62,10 @@ export function createNotePublisherPort(deps: NotePublisherDeps = {}): Publisher
       } catch (err) {
         return { ok: false, reason: 'unknown', message: `playwright unavailable: ${errMsg(err)}` };
       }
-      const browser = await chromium.launch({
-        headless,
-        args: ['--no-sandbox', '--disable-blink-features=AutomationControlled'],
-      });
+      const browser = await launchBrowser(
+        { label: 'promotion.post', headless, args: ['--no-sandbox', '--disable-blink-features=AutomationControlled'] },
+        { launch: (o) => chromium.launch(o as never) },
+      );
       try {
         // セッション再利用: 住宅IPで取得した note セッションを config から復号して読み込む。
         // worker のデータセンターIP は note ログインで reCAPTCHA を出されるため、ログイン自体を回避する。

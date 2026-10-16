@@ -23,6 +23,8 @@
  *
  * HARD RULE: playwright の import はこのファイルに閉じる。
  */
+import { launchBrowser } from '../../browser/launch.js';
+
 import { createLogger } from '@a2p/contracts/logger';
 
 import { UA, LAUNCH_ARGS } from '../sales-fetch/playwright-browser-port.js';
@@ -79,7 +81,7 @@ async function fetchStats(args: NoteSalesFetchArgs): Promise<NoteSalesFetchResul
     return { ok: false, reason: 'error', message: `playwright unavailable: ${errMsg(err)}` };
   }
 
-  const browser = await chromium.launch({ headless: true, args: LAUNCH_ARGS });
+  const browser = await launchBrowser({ label: 'note.sales' }, { launch: (o) => chromium.launch(o as never) });
   try {
     const context = await browser.newContext({
       storageState: storageStateObj as Awaited<ReturnType<import('playwright').BrowserContext['storageState']>>,

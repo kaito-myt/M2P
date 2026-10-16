@@ -4524,3 +4524,70 @@ writer が正しく だ・である調 で書いても、**校閲工程で実用
 
 **残っている判断**: 既に出来てしまった競馬本 6 冊 (いずれも `done` + 資材あり + キュー未投入)
 をどう扱うかは**運営者の判断**。6 冊同時に出すと互いに食い合う。
+
+---
+
+## 19. ブラウザ起動の直列化 (2026-10-16) — サーバー自動出版が 2 週間止まっていた件
+
+### 19.1 事象
+
+2026-10-02 以降、**サーバー側の出版が全部止まっていた**。
+`graphile_worker.jobs` に `paperback.draft` × 8 / `paperback.submit` × 2 / `kdp.submit` × 1 が
+**`attempts = 25 / max_attempts = 25`、`last_error = null`** のまま残り、以後 1 件も進んでいない。
+
+`last_error` が null なのは、graphile-worker が **attempts をジョブ取得時に加算する**ため。
+タスクが例外を投げれば `last_error` が入るが、**取得直後に起動が失敗して落ちる**系では
+何も残らない。`public.jobs` にも痕跡が無いので、画面にもログにも「失敗」として現れなかった。
+
+### 19.2 原因
+
+worker の Railway ログ:
+
+```
+browserType.launch: Failed to launch: Error: spawn
+  /ms-playwright/.../chrome-headless-shell EAGAIN
+[pid=...] pthread_create: Resource temporarily unavailable (11)
+```
+
+**コンテナが新しいプロセス/スレッドを作れない**状態。graphile の並列度は
+`WORKER_BOOK_CONCURRENCY = 5` で、ブラウザを使うタスクは 12 ファイル 18 箇所が
+**それぞれ独立に `chromium.launch()` していた**。同時に複数本の Chromium が立つと
+コンテナが耐えられず、**起動そのもの**が失敗する。
+
+同じ理由で ANP の `pipeline.note.publish` も落ちていた (こちらは例外を catch して
+WARN を出すだけなので、記事が公開されないまま静かに積み上がっていた)。
+
+### 19.3 対策 — `apps/worker/src/browser/launch.ts`
+
+ブラウザ起動の**唯一の入口**を作り、18 箇所すべてをそこへ通す。
+
+| 性質 | 実装 |
+|---|---|
+| 同時起動数を絞る | プロセス内セマフォ。`WORKER_BROWSER_CONCURRENCY` (既定 **1**) |
+| スロットの返却 | `browser.close()` をラップして返す。二重 close でも 1 回だけ |
+| close 漏れの保険 | `SLOT_MAX_MS` (45 分) で強制返却 (永久デッドロック防止) |
+| 待ちすぎたら | `SLOT_WAIT_MAX_MS` (20 分) で `BrowserSlotTimeoutError` → graphile に戻す |
+| 一過性の資源不足 | `EAGAIN` / `pthread_create` / `ENOMEM` は 3 回まで指数バックオフで再試行 |
+
+`UA` / `LAUNCH_ARGS` の実体もここへ移した (`sales-fetch/playwright-browser-port.ts` は
+既存の import 元を壊さないよう再輸出するだけ)。
+
+**なぜ graphile の `queueName` ではなくプロセス内セマフォか**: 対象タスクは
+cron 直起動・dispatcher 経由・タスク内ループと**投入経路が 3 通り**あり、
+enqueue 側 16 箇所に `queueName` を付けて回ると 1 箇所の漏れで防御が崩れる。
+起動関数を 1 本に絞れば、**新しいタスクを足しても自動で守られる**。
+
+### 19.4 併せて直したこと
+
+- 突合できなかった ASIN と金額を `sales.fetch` が WARN で残す (黙って落とさない)。
+- `sales_records` に `paperback_royalty_jpy` / `paperback_units_sold` を追加 (docs/09 §10.9)。
+
+### 19.5 再発の見張り方
+
+`graphile_worker.jobs` に `attempts = max_attempts` の行が残っていたら、それは
+**「失敗として記録されないまま死んだジョブ」**。`last_error` が null ならブラウザ起動系を疑う。
+
+```sql
+SELECT task_identifier, COUNT(*), MAX(created_at)
+FROM graphile_worker.jobs WHERE attempts >= max_attempts GROUP BY 1;
+```

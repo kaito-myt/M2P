@@ -9,6 +9,8 @@
  * HARD RULE: playwright の import はこのファイルに閉じる。DOM 操作の evaluate は
  * ブラウザ側実行のため document/window を参照してよい。
  */
+import { launchBrowser } from '../../browser/launch.js';
+
 import path from 'node:path';
 
 import { createLogger } from '@a2p/contracts/logger';
@@ -168,11 +170,10 @@ async function publishOne(args: KdpPublishArgs): Promise<KdpPublishResult> {
     return { ok: false, reason: 'error', message: `playwright unavailable: ${errMsg(err)}` };
   }
 
-  const browser = await chromium.launch({
-    headless: true,
-    args: LAUNCH_ARGS,
-    ...(args.proxy ? { proxy: args.proxy } : {}),
-  });
+  const browser = await launchBrowser(
+    { label: 'kdp.submit', ...(args.proxy ? { proxy: args.proxy } : {}) },
+    { launch: (o) => chromium.launch(o as never) },
+  );
   if (args.proxy) log.info({ server: args.proxy.server }, 'kdp.submit via home proxy');
   try {
     const context = await browser.newContext({

@@ -84,6 +84,8 @@ export const EnvSchema = z.object({
 
   // --- 23-24. ワーカー並列度 ----------------------------------------------
   WORKER_BOOK_CONCURRENCY: PositiveInt.default(5),
+  /** 同時起動を許す Chromium の本数 (F-098)。既定 1 = 直列。 */
+  WORKER_BROWSER_CONCURRENCY: PositiveInt.default(1),
   WORKER_CHAPTER_CONCURRENCY: PositiveInt.default(4),
 
   // --- 25. 単価カタログ取得 cron ------------------------------------------

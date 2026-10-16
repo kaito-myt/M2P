@@ -10,11 +10,17 @@
  */
 import { createLogger } from '@a2p/contracts/logger';
 
+import { launchBrowser, UA, LAUNCH_ARGS } from '../../browser/launch.js';
+
 import type {
   BrowserPort,
   DownloadReportArgs,
   DownloadReportResult,
 } from './browser-port.js';
+
+// UA / LAUNCH_ARGS の実体は browser/launch.ts にある (= ブラウザ起動の唯一の入口と同じ場所)。
+// 既存の import 元 (kdp-submit / note-publish / paperback-* …) を変えずに済むよう再輸出する。
+export { UA, LAUNCH_ARGS };
 
 const log = createLogger('worker.sales-fetch.playwright');
 
@@ -22,12 +28,6 @@ const DEFAULT_TIMEOUT_MS = 60_000;
 const REPORTS_HOST = process.env.KDP_REPORTS_HOST ?? 'https://kdpreports.amazon.co.jp';
 /** {ym} を YYYY-MM に置換して使う PMR ダウンロードエンドポイント。 */
 const PMR_DOWNLOAD_PATH = '/download/report/pmr/ja_JP/pmrReport.xslx?selectedMonth={ym}&reportType=KDP_PMR';
-export const UA =
-  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36';
-
-/** コンテナ (Railway) 上の Chromium 起動引数。kdp-login-refresh.ts と共有。 */
-export const LAUNCH_ARGS = ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--disable-gpu'];
-
 export function createPlaywrightBrowserPort(): BrowserPort {
   return { downloadReport };
 }
@@ -49,11 +49,10 @@ async function downloadReport(args: DownloadReportArgs): Promise<DownloadReportR
     return { ok: false, reason: 'unknown', message: `playwright unavailable: ${errMsg(err)}` };
   }
 
-  const browser = await chromium.launch({
-    headless: true,
-    args: LAUNCH_ARGS,
-    ...(args.proxy ? { proxy: args.proxy } : {}),
-  });
+  const browser = await launchBrowser(
+    { label: 'sales.fetch', ...(args.proxy ? { proxy: args.proxy } : {}) },
+    { launch: (o) => chromium.launch(o as never) },
+  );
   if (args.proxy) log.info({ server: args.proxy.server }, 'downloadReport via home proxy');
   try {
     const context = await browser.newContext({
