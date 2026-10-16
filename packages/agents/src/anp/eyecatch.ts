@@ -116,6 +116,18 @@ export interface GenerateNoteEyecatchInput {
    * **画像を見ていない推測が、人が実物を見て決めた事実を上書きしてはいけない。**
    */
   accountArtDirectionGrounded?: boolean;
+  /**
+   * F-ANP-57b: 週次リサーチが「使ってよい」と判定した画風キー
+   * (`NoteAccountResearch.preferred_style_keys`)。`pickEyecatchStyle` の候補をここに絞る。
+   *
+   * なぜ要るか: リサーチが実物と自分の実績から「`ink_sketch` / `riso_print` /
+   * `film_still_life` / `kawaii_mascot` は線が細くトーンが沈み主役が小さいので負ける」と
+   * 判定しても、画風の選択はハッシュのくじ引きだった。負けと判定された画風が引かれると、
+   * その具体的なレシピ (medium/composition/palette) がプロンプトに出て、
+   * 文章のアカウント指示に勝ってしまう (F-ANP-56 §5 と同じ構図)。
+   * ローテーション自体は残す — 1 つに固定すると「サムネが全部一緒」に戻る。
+   */
+  accountPreferredStyleKeys?: readonly string[];
 }
 
 export interface GenerateNoteEyecatchResult {
@@ -350,7 +362,12 @@ export async function generateNoteEyecatch(
 
   // F-ANP-54: ニッチからジャンルを判定し、画風・版面・画作りの方向をまとめて切り替える。
   const genre = classifyNicheGenre(input.niche);
-  const style = pickEyecatchStyle(input.noteArticleId, input.recentStyleKeys ?? [], input.niche);
+  const style = pickEyecatchStyle(
+    input.noteArticleId,
+    input.recentStyleKeys ?? [],
+    input.niche,
+    input.accountPreferredStyleKeys ?? [],
+  );
   const layout = pickNoteEyecatchLayout(input.noteArticleId, input.niche);
   const scheme = schemeForNiche(input.niche);
   const promptUsed = buildPrompt(input, style, layout, genre, scheme);

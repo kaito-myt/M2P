@@ -2668,22 +2668,71 @@ OR/equals filter OK
 | タスク | `note-account-research.ts` (画風履歴の受け渡し・`rivalShots` ログ) / `pipeline-note-eyecatch.ts` (Json フィルタ修正・grounded の受け渡し・WARN 追加) |
 | UI | `apps/anp/app/(app)/accounts/[id]/research-panel.tsx` / `apps/anp/lib/messages.ts` |
 | テスト | `packages/agents/__tests__/anp/eyecatch-market.test.ts` (11) / `apps/worker/__tests__/eyecatch-style-history.test.ts` (7) / `anp/research.test.ts` + `anp-eyecatch-style.test.ts` に追加 |
+| F-ANP-57b | `eyecatch-style.ts` (`styleKeysForNiche` / `pickEyecatchStyle` の `allowedKeys`) / 契約 `preferred_style_keys` / `research.ts` (選べる札を見せる) / `eyecatch.ts` + `pipeline-note-eyecatch.ts` (注入) |
 
-### 6. 直していない穴 — 画風の選択は今も「くじ引き」
+### 6. 実走で分かったこと — 文章の指示だけでは画風の選択に勝てない (F-ANP-57b)
 
-`pickEyecatchStyle` は**記事 ID のハッシュ**で画風を選ぶ。F-ANP-57 で画風別の実績を
-リサーチに渡すようにしたが、**選択そのものを実績で重み付けはしていない**。
+本番で 1 回回した結果 (2026-10-16 16:18〜16:25 JST、両アカウント成功)。
 
-これは意図的な判断。現在の標本は 1 画風あたり n=2〜12 で閲覧 0〜51、しかも公開時期の偏りが
-混ざっている (新しい記事ほど閲覧が少ない)。**このノイズで重み付けすると、初期の偶然を
-固定してしまい、くじ引きより悪くなる。** 市場の信号は
-「実物を見た `art_direction`」が運ぶ (grounded なら画風レシピより優先される) ので、
-そちらを先に効かせる。
+| アカウント | 見た実物 | 共通の作法 | 結果 |
+|---|---:|---:|---|
+| あや＠AI副業 | **4 枚** | 8 件 | 「4 枚すべてがタイトル文字を画像の主役にしている」「明るい地＋極太ゴシック＋白フチ／濃色帯」 |
+| 手堅く勝つ馬券術 | **6 枚** | 7 件 | 「レース名を画面の 1/3〜1/2 を占める極太文字で」「絵と文字を左右で住み分け」「筆者ブランドを毎回同じ形で入れる」 |
 
-重み付けに進む条件: 1 画風あたり n≥20 かつ平均閲覧が 3 桁に乗ること。
+**リサーチが自分で原因に辿り着いた** (`our_gap`、副業アカウント):
+
+> 最大の差は「文字が主役かどうか」。(略) 当方の画風分類はいずれも絵柄名で、**文字設計のルールが
+> 存在しない**。閲覧 0 本が集中する `ink_sketch`・`riso_print`・`film_still_life`・`kawaii_mascot` は、
+> 線が細い・トーンが沈む・主役が小さいという点で、今回の 4 枚に共通する作法とは逆方向。
+> 比較的数字の出ている `paper_collage` / `flat_editorial` を軸に (略)
+
+これは §4.3 で渡した**画風別の実績**と §4.1 の**実物の観察**を突き合わせた結論で、
+どちらか片方だけでは出ない。`copy_rules` も自分で「現行の 18 字以内では観察した 4 枚の中で
+情報量が足りない」と言って 24〜28 字に変えた。
+
+#### ところがこの結論が効かない — 選択はくじ引きのままだった
+
+`art_direction` に「`paper_collage` または `flat_editorial` を使い」と書かれても、
+**画風を決めるのは `pickEyecatchStyle` の記事 ID ハッシュ**。負けと判定された画風が引かれると、
+その具体的なレシピ (`medium` / `composition` / `palette`) が【絵の画風】節に出る。
+`grounded` なら既定は「指定が無い項目だけ」に格下げされるが、
+**後ろに並ぶ具体値が文章の指示に勝つ**のは F-ANP-56 §5 で踏んだのと同じ構図。
+
+競馬は特にひどい。`GENRE_STYLES.gamble` は 4 つ (`night_track_photo` / `gold_emblem` /
+`anime_hype` / `metal_poster`) しかなく、リサーチが名指しで避けた
+「金のグラデーション・金縁の装飾書体・アニメ調の人物キャラクター・CG/AI 調」が
+**`gold_emblem` と `anime_hype` そのもの** = 引く確率 1/2。
+
+#### 対策: 選択そのものを絞れる形で持つ
+
+| 追加 | 意味 |
+|---|---|
+| `NoteAccountResearch.preferred_style_keys: string[]` | このアカウントで使ってよい画風キー (最大 8) |
+| `styleKeysForNiche(niche)` | ジャンルの候補キー一覧。**まとめ段のプロンプトに「選べる札」として見せる** |
+| `pickEyecatchStyle(seed, recent, niche, allowedKeys)` | 候補を `allowedKeys` に絞る |
+| `GenerateNoteEyecatchInput.accountPreferredStyleKeys` | 注入点 |
+
+- **ローテーションは残す。** 2 つ以上選ばせる (1 つに固定すると「サムネが全部一緒」
+  = F-ANP-14b の元の苦情に戻る)。
+- **絞った結果が空なら無視して全候補から選ぶ。** リサーチが知らないキーを書いても
+  アイキャッチ生成は止めない。
+- 文章 (`art_direction`) と構造 (`preferred_style_keys`) の**両方**を持つのが要点。
+  文章だけでは選択に効かず、構造だけでは「どう描くか」が伝わらない。
+
+### 7. 直していない穴 — 実績そのものでの重み付けはしない
+
+`preferred_style_keys` は**リサーチ (実物の観察 + 実績) が選ぶ**。
+閲覧数で機械的に重み付けはしていない。
+
+これは意図的。現在の標本は 1 画風あたり n=2〜12 で閲覧 0〜51、しかも公開時期の偏りが
+混ざっている (新しい記事ほど閲覧が少ない)。**このノイズで直接重み付けすると、初期の偶然を
+固定してしまい、くじ引きより悪くなる。** 数字は「リサーチが実物の観察と突き合わせて解釈する
+材料」として渡すに留める。
+
+機械的な重み付けに進む条件: 1 画風あたり n≥20 かつ平均閲覧が 3 桁に乗ること。
 そのときは公開からの経過日数で正規化してから比べる。
 
-### 7. 週次 cron の初回発火はまだ
+### 8. 週次 cron の初回発火はまだ
 
 `note-account-research-weekly` は `graphile_worker._private_known_crontabs` に登録済みだが
 `last_execution = null`。cron は `0 2 * * 1` (月曜 11:00 JST) で、実装が 2026-10-14 (水) なので

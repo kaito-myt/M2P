@@ -26,6 +26,7 @@ function research(over: Partial<NoteAccountResearch> = {}): NoteAccountResearch 
     summary: '総括',
     art_direction_evidence: [],
     rival_eyecatches: null,
+    preferred_style_keys: [],
     ...over,
   };
 }

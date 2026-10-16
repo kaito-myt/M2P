@@ -47,7 +47,7 @@ describe('buildArticleIdJsonFilter', () => {
 
 describe('fetchEyecatchStyleByArticle', () => {
   it('記事 ID → 画風キーを返し、where には OR/equals を渡す', async () => {
-    const findMany = vi.fn(async () => [
+    const findMany = vi.fn(async (_args?: unknown) => [
       { payload_json: { note_article_id: 'a1' }, result_json: { style_key: 'retro_poster' } },
       { payload_json: { note_article_id: 'a2' }, result_json: { style_key: 'ink_sketch' } },
     ]);
@@ -59,7 +59,7 @@ describe('fetchEyecatchStyleByArticle', () => {
     expect(map.get('a1')).toBe('retro_poster');
     expect(map.get('a2')).toBe('ink_sketch');
 
-    const args = findMany.mock.calls[0]![0] as { where: Record<string, unknown> };
+    const args = findMany.mock.calls[0]![0] as unknown as { where: Record<string, unknown> };
     expect(args.where).toMatchObject({ kind: 'pipeline.note.eyecatch', status: 'done' });
     expect(args.where.OR).toHaveLength(2);
     expect(args.where).not.toHaveProperty('payload_json');

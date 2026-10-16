@@ -35,6 +35,7 @@ const research: NoteAccountResearch = {
   summary: '総括',
   art_direction_evidence: [],
   rival_eyecatches: null,
+  preferred_style_keys: [],
 };
 
 describe('accountResearchLines', () => {

@@ -313,6 +313,11 @@ export async function runPipelineNoteEyecatch(
         ...(research?.copy_rules && research.copy_rules.length > 0
           ? { accountCopyRules: research.copy_rules }
           : {}),
+        // F-ANP-57b: リサーチが「使ってよい」と判定した画風だけに候補を絞る。
+        // 文章の art_direction だけでは、くじ引きで引かれた負け画風の具体レシピに負ける。
+        ...(research?.preferred_style_keys && research.preferred_style_keys.length > 0
+          ? { accountPreferredStyleKeys: research.preferred_style_keys }
+          : {}),
       });
       r2Key = result.r2Key;
       styleKey = result.styleKey;

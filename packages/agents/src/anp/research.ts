@@ -51,6 +51,7 @@ import {
   observeRivalEyecatches as defaultObserveRivalEyecatches,
   type RivalEyecatchShot,
 } from './eyecatch-market.js';
+import { styleKeysForNiche } from './eyecatch-style.js';
 
 const log = createLogger('agents.anp.research');
 
@@ -93,7 +94,7 @@ const TIGHTEN_OUTPUT_INSTRUCTION = [
   'JSON が完結しなかった。今回は量を削り、必ず閉じ括弧まで出し切ること。',
   '- findings は最も重要な 3 件まで',
   '- art_direction は 300 字以内',
-  '- copy_rules / topics_to_pursue / topics_to_avoid は各 3 件まで',
+  '- copy_rules / topics_to_pursue / topics_to_avoid / preferred_style_keys は各 3 件まで',
   '- editorial_policy_suggestion は 200 字以内 (不要なら空文字)',
   '- summary は 1 文',
 ].join('\n');
@@ -662,6 +663,17 @@ function buildReportUserMessage(
     lines.push('', '【自分たちのサムネの実績 (画風別)】', ourStyles);
   }
 
+  // F-ANP-57b: 「選べる札」を見せて preferred_style_keys で絞らせる。
+  // 文章で「paper_collage を軸に」と書いても、画風の選択はハッシュのくじ引きなので効かない。
+  lines.push(
+    '',
+    '【このアカウントで選べる画風キー】',
+    styleKeysForNiche(input.account.niche).join(' / '),
+    '上の実物の観察と画風別の実績から、**使ってよい画風だけ**を 2 つ以上選んで',
+    'preferred_style_keys に入れてください (記事ごとのローテーションは残すので 1 つに絞らない)。',
+    '根拠が無ければ空配列にする (全候補から選ばれます)。一覧に無いキーは無視されます。',
+  );
+
   lines.push(
     '',
     '出力は次の JSON のみ (前後に何も付けない)。日本語で書く。',
@@ -672,6 +684,7 @@ function buildReportUserMessage(
     '                    **上の「競合サムネの実物」に書かれている要素だけ**で 200〜600 字。',
     '                    画像モデルがそのまま使える指示にする (汎用的な美辞麗句は書かない)。',
     '                    実物を見られなかった回は必ず空文字にする。",',
+    '  "preferred_style_keys": ["使ってよい画風キー (上の一覧から 2 つ以上。根拠が無ければ空配列)", ...],',
     '  "copy_rules": ["アイキャッチのコピーの作り方 (字数・言い回し・数字の入れ方・NG 表現)", ...],',
     '  "topics_to_pursue": ["次に狙う題材", ...],',
     '  "topics_to_avoid": ["避ける題材 (飽和・規約リスク・読者が離れる)", ...],',

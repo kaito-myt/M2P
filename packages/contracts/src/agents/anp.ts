@@ -1122,6 +1122,17 @@ export const NoteAccountResearchSchema = z.object({
   art_direction_evidence: z.array(z.string().max(1000)).max(12).default([]),
   /** F-ANP-57 — 競合サムネの観察結果 (運営者が UI で根拠を辿れるように保存する)。 */
   rival_eyecatches: NoteRivalEyecatchObservationSchema.nullable().default(null),
+  /**
+   * F-ANP-57b — このアカウントで使ってよい画風キー (`EyecatchStyle.key`)。
+   * `pickEyecatchStyle` の候補をここに絞る。空なら従来どおり全候補から選ぶ。
+   *
+   * なぜ別フィールドか: `art_direction` の文章で「paper_collage を軸に」と書いても、
+   * 画風の選択自体はハッシュのくじ引きなので**負けと判定された画風が引かれ続け、
+   * その具体的なレシピがプロンプトに出てしまう**。文章の指示は後ろに並ぶ具体値に負ける
+   * (F-ANP-56 §5 と同じ構図) ので、**選択そのものを絞れる形**で持つ。
+   * 知らないキーが入っていても `pickEyecatchStyle` が落とすので安全。
+   */
+  preferred_style_keys: z.array(z.string().max(64)).max(8).default([]),
   /** アイキャッチのコピーの作り方 (語数・言い回し・数字の入れ方)。`anp.seo` に注入。 */
   copy_rules: z.array(z.string().max(300)).max(8).default([]),
   /** 次に狙うべき題材。`anp.theme` に注入。 */

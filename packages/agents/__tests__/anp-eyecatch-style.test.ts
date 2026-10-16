@@ -4,7 +4,12 @@ import { classifyNicheGenre } from '@a2p/contracts/note-genre';
 import { NOTE_EYECATCH_LAYOUTS, pickNoteEyecatchLayout, schemeForNiche } from '@a2p/output-image';
 
 import { buildPrompt } from '../src/anp/eyecatch.js';
-import { EYECATCH_BANNED_MOTIFS, EYECATCH_STYLES, pickEyecatchStyle } from '../src/anp/eyecatch-style.js';
+import {
+  EYECATCH_BANNED_MOTIFS,
+  EYECATCH_STYLES,
+  pickEyecatchStyle,
+  styleKeysForNiche,
+} from '../src/anp/eyecatch-style.js';
 
 describe('pickEyecatchStyle (F-ANP-14b)', () => {
   it('同じ記事 id なら常に同じ画風 (再生成しても揺れない)', () => {
@@ -29,6 +34,54 @@ describe('pickEyecatchStyle (F-ANP-14b)', () => {
   it('全部の画風を避けた場合でも必ず 1 つ返す', () => {
     const all = EYECATCH_STYLES.map((s) => s.key);
     expect(all).toContain(pickEyecatchStyle('art-1', all).key);
+  });
+});
+
+/**
+ * F-ANP-57b — 週次リサーチが「使ってよい」と判定した画風だけに候補を絞れること。
+ *
+ * これが無いと、リサーチが実物と実績から「anime_hype / gold_emblem は避ける」と
+ * 判定しても、くじ引きで引かれた負け画風の具体レシピ (medium/composition/palette) が
+ * プロンプトに出て、文章のアカウント指示に勝ってしまう。
+ */
+describe('pickEyecatchStyle — 候補の絞り込み (F-ANP-57b)', () => {
+  const GAMBLE_KEYS = styleKeysForNiche('競馬予想');
+
+  it('競馬ジャンルの候補キーを列挙できる (リサーチに「選べる札」を見せるため)', () => {
+    expect(GAMBLE_KEYS).toContain('night_track_photo');
+    expect(GAMBLE_KEYS).toContain('anime_hype');
+    // 明るい系は競馬の候補に入らない
+    expect(GAMBLE_KEYS).not.toContain('kawaii_mascot');
+  });
+
+  it('許可キーに絞ると、それ以外は 1 度も選ばれない', () => {
+    const allowed = ['night_track_photo', 'metal_poster'];
+    const picked = new Set(
+      Array.from({ length: 40 }, (_, i) =>
+        pickEyecatchStyle(`art-${i}`, [], '競馬予想', allowed).key),
+    );
+    expect([...picked].every((k) => allowed.includes(k))).toBe(true);
+    // ローテーションは残る (1 つに固定すると「サムネが全部一緒」に戻る)
+    expect(picked.size).toBeGreaterThan(1);
+  });
+
+  it('許可キーが候補に 1 つも無ければ無視して全候補から選ぶ (生成を止めない)', () => {
+    const style = pickEyecatchStyle('art-1', [], '競馬予想', ['存在しないキー']);
+    expect(GAMBLE_KEYS).toContain(style.key);
+  });
+
+  it('空配列は従来どおり全候補', () => {
+    expect(pickEyecatchStyle('art-9', [], '競馬予想', []).key).toBe(
+      pickEyecatchStyle('art-9', [], '競馬予想').key,
+    );
+  });
+
+  it('絞り込みと直近回避を同時に効かせる', () => {
+    const allowed = ['night_track_photo', 'metal_poster'];
+    const first = pickEyecatchStyle('art-55', [], '競馬予想', allowed);
+    const second = pickEyecatchStyle('art-55', [first.key], '競馬予想', allowed);
+    expect(second.key).not.toBe(first.key);
+    expect(allowed).toContain(second.key);
   });
 });
 

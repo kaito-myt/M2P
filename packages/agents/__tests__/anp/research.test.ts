@@ -170,6 +170,7 @@ describe('researchNoteAccount', () => {
           summary: '前回の総括',
           art_direction_evidence: [],
           rival_eyecatches: null,
+          preferred_style_keys: [],
         },
       },
       deps,
@@ -436,6 +437,17 @@ describe('researchNoteAccount — 自分のサムネ実績', () => {
     expect(report).toContain('flat_editorial: 1 本 / 平均閲覧 2.0');
     // 平均閲覧の降順で並べる (勝っている画風が先)
     expect(report.indexOf('retro_poster')).toBeLessThan(report.indexOf('flat_editorial'));
+  });
+
+  it('選べる画風キーを見せて preferred_style_keys で絞らせる (F-ANP-57b)', async () => {
+    const { deps, calls } = makeDeps([PLAN, REPORT]);
+    await researchNoteAccount(INPUT, deps);
+    const report = String(calls[1]!.messages[1]!.content);
+    expect(report).toContain('このアカウントで選べる画風キー');
+    // 競馬ジャンルの札だけが出る (明るい系は出さない)
+    expect(report).toContain('night_track_photo');
+    expect(report).not.toContain('kawaii_mascot');
+    expect(report).toContain('preferred_style_keys');
   });
 
   it('画風キーが 1 件も無ければブロックを出さない (空の表を見せない)', async () => {

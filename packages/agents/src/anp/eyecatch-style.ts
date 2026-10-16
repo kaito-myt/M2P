@@ -140,17 +140,39 @@ export function hashString(value: string): number {
   return h >>> 0;
 }
 
+/** あるジャンルで選べる画風キーの一覧 (リサーチに「選べる札」を見せるため)。 */
+export function styleKeysForNiche(niche?: string | null): string[] {
+  return GENRE_STYLES[classifyNicheGenre(niche).key].map((st) => st.key);
+}
+
 /**
  * 記事 id から画風を決定的に選ぶ。`recentStyleKeys` を渡すと、直近で使った画風を
  * 避けて次の候補にずらす (連続する記事の見た目が揃うのを防ぐ)。
  * `niche` を渡すとそのジャンルの画風セットから選ぶ。
+ *
+ * 【F-ANP-57b (2026-10-16)】`allowedKeys` で**候補そのものを絞れる**ようにした。
+ *
+ * なぜ必要か: 週次リサーチが実物のサムネと自分の画風別実績を突き合わせて
+ * 「`paper_collage` / `flat_editorial` を軸に。閲覧 0 本が集中する `ink_sketch` /
+ * `riso_print` / `film_still_life` / `kawaii_mascot` は線が細くトーンが沈み主役が小さい」と
+ * 結論したのに、画風の選択はハッシュのくじ引きだったので**負けと判定された画風が
+ * 引かれ続け、その具体的なレシピ (medium/composition/palette) がプロンプトに出ていた**。
+ * アカウント指示を「最優先」と書いても、後ろに矛盾する具体値が並べば負ける
+ * — F-ANP-56 §5 で踏んだのと同じ構図。
+ *
+ * ローテーション自体は残す (全部を 1 つの画風に固定すると「サムネが全部一緒」に戻る)。
+ * **絞った結果が空なら無視して全候補から選ぶ** — リサーチが知らないキーを書いても
+ * アイキャッチ生成は止めない。
  */
 export function pickEyecatchStyle(
   seed: string,
   recentStyleKeys: readonly string[] = [],
   niche?: string | null,
+  allowedKeys: readonly string[] = [],
 ): EyecatchStyle {
-  const styles = GENRE_STYLES[classifyNicheGenre(niche).key];
+  const all = GENRE_STYLES[classifyNicheGenre(niche).key];
+  const allowed = allowedKeys.length > 0 ? all.filter((st) => allowedKeys.includes(st.key)) : all;
+  const styles = allowed.length > 0 ? allowed : all;
   const total = styles.length;
   const start = hashString(seed) % total;
   for (let i = 0; i < total; i++) {
