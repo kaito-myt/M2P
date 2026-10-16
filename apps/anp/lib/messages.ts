@@ -90,6 +90,8 @@ export const messages = {
       artDirectionUngrounded:
         '実物のサムネは確認できませんでした (検索で note の記事ページに届かなかった回)。この指示は参考にとどめ、ジャンル既定の画風は上書きしません。',
       rivalEyecatchTitle: (n: number) => `競合サムネ ${n} 枚を見て分かったこと`,
+      // F-ANP-57b: 空なら全候補からのくじ引きのままなので、出ていないこと自体が情報。
+      preferredStylesTitle: '使ってよい画風 (アイキャッチの候補をこれに絞る)',
       rivalEyecatchGap: '自分たちに足りない点',
       copyRulesTitle: 'コピーの作り方',
       pursueTitle: '次に狙う題材',

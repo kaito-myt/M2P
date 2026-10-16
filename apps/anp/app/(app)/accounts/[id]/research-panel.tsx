@@ -197,6 +197,8 @@ export function ResearchPanel({
             </div>
           )}
 
+          {/* F-ANP-57b: 使ってよいと判定された画風。ここが空なら全候補からくじ引き。 */}
+          <List title={m.preferredStylesTitle} items={research.preferred_style_keys} />
           <List title={m.copyRulesTitle} items={research.copy_rules} />
           <List title={m.pursueTitle} items={research.topics_to_pursue} />
           <List title={m.avoidTitle} items={research.topics_to_avoid} />
