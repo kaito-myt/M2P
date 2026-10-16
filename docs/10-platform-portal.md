@@ -205,7 +205,7 @@ ANP `/settings` の「AI モデル設定」で各ツールが扱う。ハブ画�
 | タイル名 | 3DP |
 | 説明 | 3Dモデル商材を企画・生成・BOOTH で販売 |
 | ロゴ | `apps/portal/public/tools/3dp.png` |
-| 遷移先 | `NEXT_PUBLIC_3DP_URL` (未設定ならタイルを出さない。A2P→ポータル戻り導線と同じ規約) |
+| 遷移先 | `NEXT_PUBLIC_TOOL_3DP_URL` (未設定ならタイルを出さない。A2P→ポータル戻り導線と同じ規約) |
 | 本番サブドメイン案 | `3dp.m2p.tools` |
 
 **環境変数が無いときはタイルを出さない**規約は ANP と同じ。

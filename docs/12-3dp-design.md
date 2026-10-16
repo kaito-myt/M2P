@@ -17,6 +17,30 @@
 
 ---
 
+## 目次
+
+- §1 なぜこの市場か (実測値)
+- §2 絶対制約 — BOOTH の AI 生成物規制 (2025-07-18 公式発表)
+- §3 作るもの / 作らないもの
+- §4 技術的可否 (2026-10 時点の実測)
+- §5 出品経路 — 主力 BOOTH (半自動) + 併売 Jinxxy
+- §6 パイプライン
+- §7 DB スキーマ (確定 — 2026-10-15 program-design)
+- §8 役割 (runtime agents)
+- §9 画面 (apps/3dp)
+- §10 増分計画
+- §11 未確定事項 (実測が必要)
+- §12 実装状況
+- §13 出品先の比較と選定 (リサーチ 2026-10-15)
+- §14 業務要件
+- §15 機能要件 (F-3DP-NN)
+- §16 技術選定 (tech-selection、2026-10-15)
+- §17 プログラム設計 (program-design、2026-10-15)
+
+> ファイルは分割しない (理由は `docs/dev-plan.md` §11.11)。代わりにこの目次で探す。節番号は変えない。
+
+---
+
 ## 1. なぜこの市場か (実測値)
 
 > **2026-10-15 改訂 (出典の切り分け)。** 初版はこの表の全行を「取引白書2026」出典としていたが、
@@ -1251,7 +1275,7 @@ UR-3 の実体。**「継続した」処理ごとに、理由を持つ場所と�
 |---|---|---|---|---|
 | 1 | **いま止まっている理由 / 次にやること** | 状態から決まる 1 つのメッセージ (§9.7 の理由文)。進行中なら「処理中: 〈工程〉(開始 〈JST〉)」。滞留なら「N 時間動いていません」+ 実行状況へのリンク | 14, 46 | Inc-2 |
 | 2 | **企画** | 種別 / 題材 / 概念 (何を・誰に・なぜ) / 想定価格 / 依拠性判定 (許可・拒否種別・該当語・判定時刻・禁止語リストの件数)。企画元のリサーチ所見へのリンク | 01, 19, 20, 22 | Inc-2 / Inc-3 |
-| 3 | **生成アセットと版履歴** | 版ごとの行: 版 / 生成元 (provider・モデル) / プロンプト (折りたたみ) / 三角形 / 検査結果 / 作成時刻 / **R2 保持状態** (保持・中間版として削除済み — 行は残る) / 配布版の印。再生成 n/3 (アセット)・n/10 (企画)。**消費 credit と円** | 05, 13〜15, 17, 47, 49 | Inc-2 |
+| 3 | **生成アセットと版履歴** | **配布版 GLB を `ModelViewer` (§9.9) で見られる** (G-A の運営者判定用。署名付き URL は `getViewerUrl`、Inc-2 から。承認画面 S-3DP-04 と同じ部品の再利用)。版ごとの行: 版 / 生成元 (provider・モデル) / プロンプト (折りたたみ) / 三角形 / 検査結果 / 作成時刻 / **R2 保持状態** (保持・中間版として削除済み — 行は残る) / 配布版の印。再生成 n/3 (アセット)・n/10 (企画)。**消費 credit と円** | 05, 13〜15, 17, 47, 49 | Inc-2 |
 | 4 | **検査結果** | 最新版の全項目: 項目 / 実測 / しきい値 / OK・NG (NG は全部まとめて)。最適化**後**の再検査結果。変換 (FBX) の健全性検査 (bbox・三角形数が ±1%)。しきい値種別 (`PROP` / `ACCESSORY`) の表示 | 03, 04, 15, 16 | Inc-2 |
 | 5 | **プレビュー** | 6 枚 (サムネ 1 + 多角度 4 + 寸法参照 1)。**自己検査の結果**: 通過 / 失敗 (理由を人間可読で)。`scale_reference` が無いと「寸法参照が無いため承認待ちに進めません」。**「再描画」ボタン (credit 不要)** | 25 | Inc-4 |
 | 6 | **商品ページ原稿** | 媒体ごとのタブ (BOOTH / Jinxxy): 商品名 / 紹介文 / タグ / 価格。**検査表**: 禁止語 0 件か / 必須 6 項目 (三角形・テクスチャ・マテリアル・対応環境・ライセンス・AI 開示) の有無 / 数値が `inspect_json` と一致か / AI 開示が媒体定義の `targets` 全箇所にあるか。不合格は差し戻し理由を表示 | 26, 27 | Inc-4 |
@@ -1464,7 +1488,7 @@ A2P/ANP と共通のもの (ピル絞り込み・ヘアライン一覧・確認�
 | `ResourceRow` | 01, 07 | 名称・値・取得時刻・警告ライン | 取得失敗は「取得できません: 〈理由〉」。`0` や空欄にしない |
 | `CronRow` | 01, 08 | タスク定義 + 履歴の最終行 | 「一度も実行されていません」「予定を過ぎています」を表示 |
 | `PreviewGrid` | 03, 04 | `tdp_previews` 6 件 + 自己検査結果 | 欠けた枚・失敗した枚に理由。拡大表示 |
-| `ModelViewer` | 04 | 署名付き URL | `@google/model-viewer` のクライアントコンポーネント。読み込み / 失敗の状態を持つ。R2 の CORS が前提 |
+| `ModelViewer` | 03, 04 | 署名付き URL | `@google/model-viewer` のクライアントコンポーネント。読み込み / 失敗の状態を持つ。R2 の CORS が前提 |
 | `InspectTable` | 03, 04 | `inspect_json` | 項目 / 実測 / しきい値 / OK・NG。NG は全部まとめて |
 | `InspectSummary` | 02 | `inspect_json` | NG を日本語ラベル + 実測 + しきい値で**最大 3 件** + 「他 N 件」 |
 | `DerivativeVerdict` | 03, 04, 05 | `derivative_check_json` | 許可 / 拒否・種別・該当語・理由・判定時刻 |
@@ -1630,8 +1654,8 @@ A2P/ANP と共通のもの (ピル絞り込み・ヘアライン一覧・確認�
 | 増分 | 内容 | 完了条件 |
 |---|---|---|
 | **Inc-1** | 基盤: `apps/3dp` スケルトン + DB 3 テーブル + ポータルタイル + 依拠性ガード (R-2) + 設定画面 | ガードの単体テストが通り、ポータルから 3DP に入れる |
-| **Inc-2** | 生成と検査: Meshy クライアント + `tdp.asset.generate` + `tdp.asset.inspect` + `tdp.asset.optimize` | **アクセサリ 1 点 (ピアスか角) を生成し、`ACCESSORY_THRESHOLDS` の検査を通し、配布用 GLB を R2 に置ける** ← 2026-10-15 に「椅子 1 個」から変更 (下の改訂ノート) |
-| **Inc-3** | 企画とリサーチ: `tdp.research` / `tdp.planner` / `tdp.prompter` | 企画が自動で立ち、依拠性ガードを通って生成に流れる |
+| **Inc-2** | 生成と検査: Meshy クライアント + `tdp.asset.generate` + `tdp.asset.inspect` + `tdp.asset.optimize` + **`tdp.prompter` (F-3DP-21、Inc-3 から前倒し: 試作の生成プロンプトが要る。§17.16 TBD-2)** + **S-3DP-03 の「生成アセットと版履歴」節の `ModelViewer` (G-A の運営者判定に GLB を見る必要がある。§17.16 TBD-4)** | **アクセサリ 1 点 (ピアスか角) を生成し、`ACCESSORY_THRESHOLDS` の検査を通し、配布用 GLB を R2 に置ける** ← 2026-10-15 に「椅子 1 個」から変更 (下の改訂ノート) |
+| **Inc-3** | 企画とリサーチ: `tdp.research` / `tdp.planner` (`tdp.prompter` は Inc-2 へ移動) | 企画が自動で立ち、依拠性ガードを通って生成に流れる |
 | **Inc-4** | プレビューと商品ページ: `tdp.preview.render` + `tdp.listing.compose` + 承認画面 | 承認画面で可否を押せる |
 | **Inc-5** | 出品: BOOTH 半自動 (カテゴリ差し替え) + 月間上限 (R-1) + 売上取得 + **Jinxxy 併売** | **1 商品を実際に BOOTH に出品し、売上が取れる** / Jinxxy に手動で 1 件出品できる |
 
@@ -1768,7 +1792,6 @@ Inc-2 の完了条件を「椅子 1 個」にしているのは、**3D 生成の
 | Meshy クライアント | **完了 (キー未設定)** | 同パッケージ `meshy.ts`。テスト 19 件 (fetch 注入で失敗系まで) |
 | `apps/3dp` スケルトン | **完了・コミット済 (fec85db)** | `apps/3dp` (`@3dp/web`)。ログイン / ホーム / 商品一覧 / 設定。設定は月間上限と禁止語が実動作 |
 | ポータルタイル + ロゴ/ファビコン | **完了・コミット済 (fec85db)** | `apps/portal/lib/tools.ts` + `public/tools/3dp.png` / `apps/3dp/app/icon.png`。`NEXT_PUBLIC_TOOL_3DP_URL` 設定時のみ点灯 |
-| ポータルタイル | **未着手** | `NEXT_PUBLIC_3DP_URL` 設定時のみ点灯 (docs/10) |
 
 #### 依拠性ガードの判定仕様 (実装済み)
 
@@ -2531,7 +2554,7 @@ A2P/ANP は「1 単位の失敗 → 1 単位の損失」なので、量を出し
 | F-3DP-18 | 週次リサーチ `tdp.research` (種別ごとに観点を変える) | S-3DP-05 / `tdp.research` | P0 | Inc-3 | 未 |
 | F-3DP-19 | 企画 `tdp.planner` + **種別構成比の重み設定** (既定: 装飾品 50% / テクスチャ 30% / プロップ 20%) | S-3DP-06 / `tdp.planner` | P0 | Inc-3 | 未 |
 | F-3DP-20 | **価格下限ガードと媒体別手数料モデル** (BOOTH 下限 ¥500) | S-3DP-03 / S-3DP-06 | P0 | Inc-3 | 未 |
-| F-3DP-21 | 生成プロンプト設計 `tdp.prompter` (定型制約は `packages/mesh`、企画依存は DB プロンプト) | `tdp.prompter` | P0 | Inc-3 | 未 |
+| F-3DP-21 | 生成プロンプト設計 `tdp.prompter` (定型制約は `packages/mesh`、企画依存は DB プロンプト) | `tdp.prompter` | P0 | Inc-2 | 未 |
 | F-3DP-22 | **依拠性ガードの許可規則追加** — 「全アバター」「N体/Nアバター対応」「ツール名対応」を通す | S-3DP-03 | **P0** | Inc-3 | 未 |
 | F-3DP-23 | **BOOTH 公開商品データの直接取得** (常識的範囲、低頻度・低負荷) をリサーチの入力にする | `tdp.research` | P1 | Inc-3 | 未 |
 | F-3DP-24 | リサーチ画面 (観点・知見・狙う/避ける題材・観測した価格帯) | S-3DP-05 | P1 | Inc-3 | 未 |
@@ -2600,7 +2623,7 @@ A2P/ANP は「1 単位の失敗 → 1 単位の損失」なので、量を出し
 | F-3DP-07 | 全 LLM / 画像 / Meshy 呼び出し | `token_usage` 行 (`tool='3dp'`) | `tdp.*` ロールは自動で `3dp` に帰属。ツール別純利益が算出できる。**実装済** |
 | F-3DP-08 | 運営者の設定操作 | `app_settings` の 2 列 | 既定は上限 8 / 禁止語 空。**実装済・本番適用済** |
 | F-3DP-09 | ポータルのセッション | `apps/3dp` の全画面 | ポータルからログインなしで 3DP に入れる。`instrumentation.ts` は **if-block 内の dynamic import** にする (既知の罠) |
-| F-3DP-10 | `NEXT_PUBLIC_3DP_URL` | ポータルのタイル | 未設定時はタイルを**出さない** (docs/10 の規約)。ロゴ `apps/portal/public/tools/3dp.png` |
+| F-3DP-10 | `NEXT_PUBLIC_TOOL_3DP_URL` | ポータルのタイル | 未設定時はタイルを**出さない** (docs/10 の規約)。ロゴ `apps/portal/public/tools/3dp.png` |
 | F-3DP-11 | 運営者の入力 | `app_settings` 更新 + `ApiCredential` | API キーは `@a2p/credentials` 経由で **DB 優先 / env フォールバック**。**接続テストの合否が機械的に決まること**: Meshy に**credit を消費しない読み取り系エンドポイント**を 1 本叩き、`200` = 成功 / `401`・`403` = キーが違う / それ以外 = 原因不明 を**日本語で**画面に出す (「テストできる」では合否が決まらないので具体化した)。キーは常にマスク表示。F-3DP-38 / F-3DP-41 の判定値もこの画面で扱う |
 | F-3DP-12 | `tdp_products` | 一覧 / 詳細 | `needs_fix` の商品は**検査 NG の理由が一覧の行で読める** (詳細を開かずに何を直すか分かる)。具体化: NG コードを**日本語ラベル + 実測値 + しきい値**の形 (例「三角形が多い 31,402 / 上限 7,500」) で**最大 3 件まで**行内に出し、残りは「他 N 件」。`status` 別の件数が絞り込みピルで出る (ANP の UI 規約に合わせる) |
 | F-3DP-13 | 企画 1 件 (種別・題材・プロンプト) | `tdp_assets` 行 + R2 の GLB | **形だけ生成 → 検査 → 合格後にテクスチャ**の順を守る (形で落ちる物にテクスチャ代を払わない)。失敗時は `tdp_products.status` と `jobs` 行に**日本語で理由が残る** (F-3DP-46)。具体化: **`preview` の検査が NG のとき `refine` を 1 度も呼ばないことを、注入した fetch の呼出回数でテストする** (「順を守る」を実行可能な判定にした) |
@@ -3083,7 +3106,7 @@ docs/03 §1 の優先順位 (確定事項との整合 > 運用負荷 > コスト
 | タスク | 周期 | cron (UTC) = JST | 対応機能 | フラグ |
 |---|---|---|---|---|
 | `tdp.market.research` | 週次 | `30 20 * * 0` = 月 05:30 | F-3DP-18 / 23 | `tdp_research_enabled` |
-| `tdp.product.plan` | 日次 | `0 21 * * *` = 06:00 | F-3DP-19 | `tdp_planner_enabled` (在庫上限 F-3DP-19 ② もここで判定) |
+| `tdp.product.plan` | 日次 | `30 21 * * *` = 06:30 | F-3DP-19 | `tdp_planner_enabled` (在庫上限 F-3DP-19 ② もここで判定) |
 | `tdp.sales.fetch` | 日次 | `30 17 * * *` = 02:30 (A2P の売上取得 02:00 と衝突させない) | F-3DP-31 | `tdp_sales_fetch_enabled` |
 | `tdp.listing.status.check` | 日次 | `0 18 * * *` = 03:00 | F-3DP-39 | **既定 ON のキルスイッチ** (G-D の検知なので止めにくくする) |
 | `tdp.gates.snapshot` | 日次 | `15 19 * * *` = 04:15 | F-3DP-36 | 常時 (読むだけ) |
@@ -4135,13 +4158,13 @@ sequenceDiagram
 
 物理削除は既存の「削除は論理削除(`_deleted/` へ移動)」規約の**例外**: 中間版は再出品の原資ではなく、`request_json` + `meshy-task.json` で再現できる。例外であることをコードのコメントに残す。
 
-#### 17.9.4 R2 の CORS (承認画面の `<model-viewer>` 用。U-31)
+#### 17.9.4 R2 の CORS (S-3DP-03 と承認画面 S-3DP-04 の `<model-viewer>` 用。U-31。**CORS は Inc-2 から必要**)
 
 署名付き URL で読むので、バケットに次の CORS を足す (既存の A2P/ANP の利用に影響しない読み取り許可のみ)。**運営作業** (ダッシュボードか API) で、コードではない:
 
 ```json
 [{
-  "AllowedOrigins": ["https://3dp.m2p.tools", "http://localhost:3010"],
+  "AllowedOrigins": ["https://3dp.m2p.tools", "http://localhost:3004"],
   "AllowedMethods": ["GET", "HEAD"],
   "AllowedHeaders": ["Range", "Content-Type"],
   "ExposeHeaders": ["Content-Length", "Content-Range", "ETag"],
@@ -4149,7 +4172,7 @@ sequenceDiagram
 }]
 ```
 
-オリジンの値は `NEXT_PUBLIC_TOOL_3DP_URL` と一致させる (開発のポート番号は `apps/3dp` の実設定に合わせる【推測: 3010 は仮置き】)。
+オリジンの値は `NEXT_PUBLIC_TOOL_3DP_URL` と一致させる (開発のポートは `apps/3dp/package.json` の `dev` = `next dev -p 3004`。確認済み)。
 
 ### 17.10 判定ロジック (ゲート・保留・公開状態・枠)
 
@@ -4439,10 +4462,10 @@ DB は**増分ごとに分けて適用**する(使わないテーブルを先に
 
 | 増分 | DB の変更 | 実装の中身 | この設計が要求する前倒し・追加 |
 |---|---|---|---|
-| **Inc-1 (残)** | `app_settings` の列 (安全装置・上限・判定値・`tdp_settings_confirmed_json`・`tdp_u9/u10_json`・`tdp_tuning_json`)。`tdp_products` に `origin` / `plan_json` / `status_changed_at` / `status_reason_json` / `target_media` / `lineage_no`。CHECK (a)(d)(f)。`jobs` の列と index | `settings-core` の天井 12。設定画面のタブ化・提案値バッジ・U-9/U-10 回答欄。`status.ts` / `settings.ts` / `hold.ts` (`computeSlots`) | **F-3DP-38 / 41 のほか、`PRODUCT_STATUSES` と CHECK の許可値に `approved` / `withdrawn` を入れておく** (後から足すと CHECK の作り直しになる) |
-| **Inc-2** | `tdp_generations` / `tdp_gate_a_judgements` / `tdp_resource_snapshots`。`tdp_assets` と `tdp_products` の生成系の列。CHECK (a)(b)(c)。Meshy 系の `app_settings` 列 | `@a2p/mesh` の変更 (d-1)・`@a2p/credentials` の `meshy`・`runTdpTask`・`tdp.asset.generate/inspect/optimize`・`tdp.meshy.submit/poll`・`recoverTdpOnBoot`・`seed-tdp.ts`・**Dockerfile の COPY**・`TDP_CRON_TASKS` (まず `tdp.gates.snapshot` だけ登録して G-A 行を出す)・S-3DP-03 (版履歴・検査)・試作登録 | ① **`tdp.prompter` (F-3DP-21) を Inc-3 から Inc-2 へ**: 試作の生成プロンプトがここで要る (§17.16-TBD-2) ② **S-3DP-03 のアセット節に `ModelViewer` を前倒し**: G-A の運営者判定は GLB を見ないとできないが、§9.8 は承認画面 (Inc-4) にしか置いていない (§17.16-TBD-4) ③ 英語の依拠性規則 (d-2) |
+| **Inc-1 (残)** | `app_settings` の列 (安全装置・上限・判定値・`tdp_settings_confirmed_json`・`tdp_u9/u10_json`・`tdp_tuning_json`)。`tdp_products` に `origin` / `plan_json` / `status_changed_at` / `status_reason_json` / `target_media` / `lineage_no`。CHECK (d)(f)。`tdp_products.approved_at` (CHECK (d) `tdp_products_approval_required` が参照するため Inc-4 から前倒し。T-3DP-02-03 の判断。旧記載の「(a)」は Inc-2 の CHECK (a)(b)(c) と重複していた訂正)。`jobs` の列と index | `settings-core` の天井 12。設定画面のタブ化・提案値バッジ・U-9/U-10 回答欄。`status.ts` / `settings.ts` / `hold.ts` (`computeSlots`) | **F-3DP-38 / 41 のほか、`PRODUCT_STATUSES` と CHECK の許可値に `approved` / `withdrawn` を入れておく** (後から足すと CHECK の作り直しになる) |
+| **Inc-2** | `tdp_generations` / `tdp_gate_a_judgements` / `tdp_resource_snapshots`。`tdp_assets` と `tdp_products` の生成系の列。CHECK (a)(b)(c)。Meshy 系の `app_settings` 列 | `@a2p/mesh` の変更 (d-1)・`@a2p/credentials` の `meshy`・`runTdpTask`・`tdp.asset.generate/inspect/optimize`・`tdp.meshy.submit/poll`・`recoverTdpOnBoot`・`seed-tdp.ts`・**Dockerfile の COPY**・`TDP_CRON_TASKS` (まず `tdp.gates.snapshot` だけ登録して G-A 行を出す)・S-3DP-03 (版履歴・検査)・試作登録 | ① **`tdp.prompter` (F-3DP-21) を Inc-3 から Inc-2 へ**: 試作の生成プロンプトがここで要る (§17.16-TBD-2) ② **S-3DP-03 のアセット節に `ModelViewer` を前倒し**: G-A の運営者判定は GLB を見ないとできないが、§9.8 は承認画面 (Inc-4) にしか置いていない (§17.16-TBD-4) ③ 英語の依拠性規則 (d-2) ④ **R2 の CORS (運営作業) を Inc-4 から Inc-2 へ**: ModelViewer が Inc-2 から要るため、未設定だと G-A の目視ができない (許可オリジンに 3004。§17.9.4 / dev-plan OP-05) |
 | **Inc-3** | `tdp_research_findings`。`tdp_products.source_research_id` | `tdp.market.research` / `tdp.product.plan` / `tdp.research` / `tdp.planner`・構成比・価格下限・`media.ts` の手取り・F-3DP-22・`tdp.texture` と テクスチャ経路 (U-23 の試作後) | テクスチャ種別は **1 セットを試作してからタスク分解** |
-| **Inc-4** | `tdp_manuscripts` / `tdp_review_events`。`tdp_previews` の追加列。`tdp_products` の承認系の列。CHECK (d) の `approved` 経由 | 描画 (`render/`)・`tdp.preview.render` / `tdp.listing.compose`・`listing-check.ts`・承認画面・`approveProduct` / `rejectReview` / `openReview`・媒体定義 (F-3DP-50) | R2 の CORS (運営作業)・U-15 の実機計測 |
+| **Inc-4** | `tdp_manuscripts` / `tdp_review_events`。`tdp_previews` の追加列。`tdp_products` の承認系の列 (`approved_at` は Inc-1 へ前倒し済み)。CHECK (d) の `approved` 経由 | 描画 (`render/`)・`tdp.preview.render` / `tdp.listing.compose`・`listing-check.ts`・承認画面・`approveProduct` / `rejectReview` / `openReview`・媒体定義 (F-3DP-50) | U-15 の実機計測 |
 | **Inc-5** | `tdp_listings` / `tdp_public_observations` / `tdp_sales` / `tdp_payouts` / `tdp_regulation_events` / `tdp_gate_snapshots`。`tdp_products` の package 系の列。CHECK (e)。Jinxxy 系 | `tdp.package.build/verify`・`startPublishWork` / `getDownloadUrl` / `recordPublished` / `recordWithdrawal`・`booth-3dp-submit.mjs`・`tdp.listing.status.check`・kill switch・`tdp.sales.fetch` (手入力から)・`computeGates` 全ゲート・撤退モード | **U-9 / U-10 の回答欄は Inc-1 から**入れる (出品の前に必須なので、画面は先に出る)。U-19 (Unity での FBX) が ZIP 第 1 段の前提 |
 
 ### 17.16 TBD (PM が優先度を判断する)
@@ -4469,7 +4492,7 @@ DB は**増分ごとに分けて適用**する(使わないテーブルを先に
 4. **Inc-2 の完了条件に「実測の記録」を含める**: U-13 (所要・レート)・U-14 (歩留まり)・U-17 (モデル)・U-24 (応答喪失の回収)・U-25 (キューのロック回収)・U-26 (失敗時の credit)・U-29 (shape の UV)。**実キーを入れる前に二重課金の静的テスト(§17.13)と統合テストが緑であること**をタスクの前提にする。
 5. **台帳 (`tdp_generations`) と `meshy-submit.ts` が最重要**。レビューの観点は §17.6.1 の L1〜L9 と §17.13 の失敗系 10 ケース。`createTextTo3d` / `createRemesh` を他の場所から呼ぶ変更は却下。
 6. **手書き SQL (§7.4) は Prisma が追跡しない**。マイグレーションのレビューで (a)〜(f) の有無を確認する。適用前の `SELECT` (既存値の確認) を手順に書く。
-7. **cron の時刻を変えた**(`tdp.product.plan` を `30 21` に)。§16.5.2 の表は更新が要る。
+7. **cron の時刻を変えた**(`tdp.product.plan` を `30 21` に)。§16.5.2 の表は更新済み (T-3DP-02-12)。
 8. **U-9 / U-10 は運営者への質問**で実装待ちではない。Inc-5 の初回出品の前に聞く。TBD-3 (標準文面の承認) は Inc-4 のブロッカー。
 9. **本設計で解かなかったもの**: BOOTH 売上の自動取得(U-28)・Jinxxy の API(U-5)・テクスチャ種別の生成経路(U-23)・`.unitypackage`(U-20)・描画の実機性能(U-15/U-18)・worker 全停止の外形監視(TBD-5)。いずれも仮置きの安全側で止めてあり、**実測が要るものは該当増分のタスクに「測る」を含める**。
 10. **Hard Rule #7/#8**: 実装と同じ変更で `docs/10 §10.4b` / `docs/03 §4・§5` を更新する(§17.14 d-5)。`docs/05` と `docs/09` は A2P のものなので触らない。
