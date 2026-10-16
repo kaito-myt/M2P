@@ -3422,7 +3422,7 @@ worker は A2P/ANP と**同一プロセス**を共用し、3DP は**キュー名
 |---|---|---|---|---|
 | T-1 | (新規) → `planned` | `tdp.product.plan` / `registerTrialProduct` | 依拠性ガード #1 が `allowed` / 価格 ≥ `tdp_min_price_jpy` | `derivative_check_json` を保存 |
 | T-2 | (新規) → `rejected` | 同上 | ガード NG または価格下限割れ | 拒否も行を残す (監査)。`reason` = 拒否種別 |
-| T-2b | `planned` / `needs_fix` / `review` 差戻し後 → `rejected` | `tdp.asset.generate` の依拠性ガード #2 (生成プロンプト・title・concept の再判定) | 禁止語の追加などで、企画時は通った物が今は NG | 生成**前**に止める (credit は払っていない)。`derivative_rechecks_json` に追記 |
+| T-2b | `planned` / `needs_fix` / `generating` (review 差戻し後) → `rejected` | `tdp.asset.generate` の依拠性ガード #2 (生成プロンプト・title・concept の再判定) | 禁止語の追加などで、企画時は通った物が今は NG | 生成**前**に止める (credit は払っていない)。ガード #2 は status を `generating` に進める (T-3/T-7) **前**に走るが、差戻し再生成は T-12 で先に `generating` になっているため、その場合の from は `generating` (§9.10 差戻し①、§17.5 ③→⑥ の順)。`derivative_rechecks_json` に追記 |
 | T-3 | `planned` → `generating` | `tdp.asset.generate` が最初の予約に成功 | 停止/撤退/縮退でない / Meshy キーあり / `tdp_meshy_model` あり / 月 credit 上限内 / 依拠性 #2 | 台帳に `reserved` を書く。満たさない場合は `planned` のまま `status_reason_json` に理由 (例 `meshy_key_missing`) |
 | T-4 | `generating` → `inspecting` | `tdp.meshy.poll` が成功し `tdp_assets` を書いた | — | `tdp.asset.inspect` を投入 |
 | T-5 | `inspecting` → `generating` | shape の検査が OK → refine を予約 / 最終検査 NG でなく次工程へ | — | refine は親の preview 台帳行を必須にする (§17.6) |
@@ -4423,7 +4423,7 @@ export function computeSlots(a: {
 
 | 箇所 | 変更 |
 |---|---|
-| `tdp/derivative-guard.ts` | ① **英語規則を足す** (`in the style of` / `inspired by` / `fan ?art` / `from the (anime|game)` / `like <固有名詞>` など): 現行は日本語中心で、英語プロンプトを素通りさせる。**Inc-2 の試作登録で英語プロンプトが入る前に必要** ② 許可規則 (F-3DP-22。Inc-3) ③ `canListMore` を `computeSlots` へ委譲 (既存 20 件を壊さない) ④ `TDP_MONTHLY_LIMIT_HARD_MAX = 12` を export |
+| `tdp/derivative-guard.ts` | ① **英語規則を足す** (`in the style of` / `inspired by` / `fan ?art` / `from the (anime|game)` / `like <固有名詞>` など): 現行は日本語中心で、英語プロンプトを素通りさせる。**Inc-2 の試作登録で英語プロンプトが入る前に必要** ② 許可規則 (F-3DP-22。Inc-3) ③ `canListMore` を `computeSlots` へ委譲 (既存 20 件を壊さない) ④ `TDP_MONTHLY_LIMIT_HARD_MAX = 12` の定義は `tdp/settings.ts` の 1 箇所のみ (`derivative-guard.ts` は必要なら import し、export しない: 定義の二重化防止) |
 | `agents/llm-client.ts` | `AgentRole` に `'tdp.texture'` (Inc-3)。`'tdp.meshy'` は LLM でないので足さない (`token_usage.role` は文字列で、`defaultToolForRole` が `tdp.` 前方一致で `3dp` に帰属する — テストに `tdp.meshy` / `tdp.texture` を足す) |
 | `package.json` `exports` | 新規ファイルごとに `./tdp/xxx` と `./agents/tdp` を足す(列挙式) |
 
