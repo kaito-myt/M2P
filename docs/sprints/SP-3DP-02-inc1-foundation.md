@@ -165,6 +165,7 @@ F-3DP-38 (判定値を `app_settings` に), F-3DP-41 (R-1 天井), F-3DP-11 (設
 - **目的**: S-3DP-06 を 1 本の縦長ページから**タブ + 提案値の明示**に (§9.10.3-2/3/4)。
 - **対象ファイル**: `apps/3dp/app/(app)/settings/page.tsx` / 新規 `apps/3dp/app/(app)/settings/_tabs/*.tsx` (タブごと) / `apps/3dp/components/proposed-value-badge.tsx` / `apps/3dp/lib/messages.ts`
 - **やること**: タブ (ピル型、UR-10): **安全装置 (既定。`/settings` はここを開く)** / 企画と価格 / 生成 / 判定値。`?tab=` で指定。
+  > **4 タブである理由** (2026-10-16 追記): §9.8 S-3DP-06 のタブは **6 つ**だが、**媒体 = Inc-4 / 運用 = Inc-5** なので Inc-1 で作るのは 4 つ。`settings-groups-core.ts` の group は 5 つ (`safety` / `plan_price` / `generation` / `gates` / `media`) で、**`media` にタブが無いのは正常**。「運用」タブの `tdp_retire_mode` / `tdp_degrade_mode` は専用 Action が担当するので group を持たない。詳細は §7.3a。
   - 安全装置: R-1 (媒体別 BOOTH・Jinxxy + 合計。バー無し。「最大 12 (変更不可)」常時) / 禁止語 (現行維持) / 常時有効な判定の説明 (現行 6 種) / **共用アカウント注記を常時** (U-9/U-10 の欄は T-3DP-02-09)。
   - 企画と価格: 種別構成比 / 価格下限 / `ready` 在庫上限の倍率 / 手取りの早見表は SP-3DP-05 (値の保存と確認のみ)。生成: 再生成上限 (アセット・企画) / 歩留まり警告 / credit 警告 (Meshy 系は SP-3DP-05)。判定値: G-B/G-C/G-E の値 / 拒否率警告 / 滞留・不発の時間。
   - ページ先頭の注意書き (UR-7):「ここにある判定値・上限値・警告ラインは提案値であり、運営者は承認していません」。グループごとの「確認した」ボタンと `ProposedValueBadge` (`提案値 (未承認)` / `確認済` / `変更済 (未確認)`)。

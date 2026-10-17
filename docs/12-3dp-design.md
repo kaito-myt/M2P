@@ -825,6 +825,51 @@ migration の `DEFAULT` と一致させるテストを置く (F-3DP-38 の「判
 | `sales_source` | `'manual'` | `manual` \| `booth_manage_readonly` (§17.5.6) |
 | `booth_fetch` | `{interval_ms:3000, max_pages:10}` | F-3DP-23 / A-14 |
 
+#### 7.3a 設定可能範囲と group 割り当て (2026-10-16, T-3DP-02-07 で確定)
+
+上の表は**既定値**だけを決めており、**保存時に許す範囲**を書いていなかった。実装
+(`apps/3dp/lib/settings-groups-core.ts`) で決めた値をここに残す。**範囲外は丸めずに拒否し、
+拒否した値と現在値を返す** (§7.4 (f) の「黙って丸めない」と F-3DP-41 に揃える)。
+
+| 項目 | 範囲 | 根拠 |
+|---|---|---|
+| `tdp_monthly_publish_limit` / `tdp_jinxxy_monthly_limit` | **0〜12**、かつ**合計 ≤ 12** | `TDP_MONTHLY_LIMIT_HARD_MAX` (F-3DP-41)。媒体を増やして総量を増やす抜け道を作らない |
+| `tdp_min_price_jpy` | **500〜100000** | **下限 500 は §13.3 の「¥300 は手取り 79%、¥100 は 49%」から。下限 1 だと「1 円で売る」が UR-4 に反して無抵抗に設定できる** (当初実装は 1。T-3DP-02-07 のレビューで 500 に変更) |
+| `tdp_regen_cap_asset` | 1〜20 | 暫定 (設計に記載なし) |
+| `tdp_regen_cap_product` | 1〜50 | 暫定 (設計に記載なし) |
+| `tdp_gate_b_min_sales` | 1〜10000 | 暫定 |
+| `tdp_gate_b_window_days` / `tdp_gate_c_point_days` | 1〜730 | 暫定 |
+| `tdp_gate_e_monthly_minutes` | 1〜100000 | 暫定 |
+| 警告率系 (`tdp_yield_warn_pct` / `tdp_derivative_reject_warn_pct` ほか `*_warn_pct`) | 0〜100 | 率なので自明 |
+| `listing_extra_forbidden` | 1 語 80 字以内・500 語まで | 暫定 |
+| `tdp_kind_weights_json` | 各 0 以上・**合計 100** | 構成比なので |
+| `meshy_poll_max_minutes` | **≤ 90** | §17.5.2 に記載済み (唯一、設計側にあった範囲) |
+| 下記 7 項目 | **≥ 1** | `release_reason_min_chars` / `reject_reason_min_chars` は §17.4「理由は空・空白のみ不可」と矛盾しないため。`intermediate_keep_versions` は A-10「再出品の原資を失わない」ため。`stall_hours` / `status_check_stale_hours` / `status_check_cycle_days` / `slot_reserve_expire_days` は 0 だと検知が成立しないため |
+
+> 下限は **`TdpTuningSchema` (contracts) の 1 箇所**に置く。当初は contracts が `min(0)` で
+> 保存時だけ `min(1)` を重ねており、**DB に 0 が入っていると読めるが保存し直せない**
+> 非対称が起きていた (T-3DP-02-07 のレビューで解消)。
+
+**group 割り当て** — `tdp_settings_confirmed_json` の group は 5 つ
+(`safety` / `plan_price` / `generation` / `gates` / `media`) で、§9.8 S-3DP-06 のタブは 6 つ
+(安全装置 / 企画と価格 / 生成 / 判定値 / **媒体 = Inc-4** / **運用 = Inc-5**)。
+**Inc-1 で作るタブは 4 つ**なので、`media` グループにタブが無いのは正常な状態
+(T-3DP-02-08)。「運用」タブの `tdp_retire_mode` / `tdp_degrade_mode` は
+`setRetireMode` / `setDegradeMode` が担当するので group を持たない。
+
+§9.8 が置き場を書いていなかったキーの割り当て (実装の実態):
+
+| キー | group | 備考 |
+|---|---|---|
+| `r2_warn_gb` / `intermediate_keep_versions` | `generation` | §9.8 の生成タブが「R2 の保持方針と使用量」を含むため (当初 `media` にあったのを T-3DP-02-07 のレビューで移した) |
+| `render_selfcheck` / `sales_source` / `booth_fetch` / `listing_extra_forbidden` / `status_check_full_below` / `status_check_cycle_days` | `media` | 媒体タブ (Inc-4) で出す |
+| **`status_check_unreachable_warn_days`** | `media` (暫定) | **要判断**: G-D を warn にする判定値なので `gates` (判定値タブ) の方が §9.8 に近い。ただし G-D の実装は Inc-5 なので Inc-1 では差が出ない。**SP-3DP-11 (G-D の実装) の着手前に決める** |
+
+**§17.4 に Action が無い設定列** (触る手段が設計上存在しない。いずれも既定が安全側なので
+現時点の穴ではないが、該当増分で Action を足すこと):
+`tdp_booth_public_fetch_enabled` (`setTaskFlag` の enum は research / plan / sales の 3 つだけ) /
+`tdp_jinxxy_counts_toward_gate` / `tdp_jinxxy_gate_switched_at` (媒体タブ = Inc-4 相当)。
+
 ### 7.4 手書き SQL (Prisma DSL で書けない制約)
 
 ```sql
