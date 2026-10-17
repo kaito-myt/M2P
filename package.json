@@ -12,6 +12,7 @@
     "typecheck": "pnpm -r --if-present typecheck && pnpm typecheck:e2e",
     "typecheck:e2e": "tsc --noEmit -p tests/e2e/tsconfig.json",
     "test:unit": "pnpm -r --if-present test:unit",
+    "test:integration": "pnpm -r --if-present test:integration",
     "test:e2e": "playwright test",
     "test:e2e:install": "playwright install --with-deps chromium",
     "build": "pnpm -r --if-present build",

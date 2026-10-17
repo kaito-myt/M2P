@@ -4372,6 +4372,12 @@ export function computeSlots(a: {
 4. `recoverTdpOnBoot`: 15 分超ロックされた `tdp-*` キューが解放され、5 分のものは触られない (U-25 の内部表名の確認を兼ねる)。
 5. `is_distribution` の付け替えが部分 UNIQUE に違反しない。
 
+**採用方式 (T-3DP-02-04 で確定。実装 `packages/db/src/testing/pg.ts`、`@a2p/db/testing`)**: 接続先は ① `TDP_TEST_DATABASE_URL` (CI) → ② Docker の `@testcontainers/postgresql` → ③ skip + 警告 (`TDP_REQUIRE_PG=1` では失敗)。テストファイルごとに一意スキーマを作り、`migrations/*` を昇順に全再生する。
+
+1. **全 migration 昇順再生 + ANP ドリフト由来の 42P01 11 本をスキップ**。ANP の `note_*` ベース表を CREATE する migration がリポジトリに無く (`docs/11` 参照)、空 DB への素直な 60 本再生は 11 本が `relation "note_*" does not exist` で落ちる。タスクの「最小テーブル方式に倒す」ではなくこの第三の方式を採った (新しい migration への自動追従を優先)。
+2. **副作用**: migration.sql は 1 本の暗黙トランザクションで流すため、スキップは「そのファイルの全文を失う」。結果、`model_assignments.reasoning_effort` / `promotion_posts.note_article_id` / `promotion_accounts.note_account_id` が欠け、`anp_agent_roles` が存在しない。3DP の表 (`app_settings` / `jobs` / `token_usage` / `tdp_*`) は無傷。
+3. **検知**: `TestDb.untrustedTables` (スキップした migration が触れる非 `note_*` 表) を公開し、`createTestDb` が 1 回 WARN する。`assertTrustworthy(db, [表...])` は交差したら throw するので、**信用できない表に依存する統合テストは緑になれない**。ガードテストは影響表の集合を許可リストと完全一致で固定し、新しい migration が巻き込んだら落ちる。
+
 **静的テスト (再発防止。ファイルを grep する単体テスト)**
 
 | テスト | 防ぐもの |

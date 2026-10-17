@@ -2767,3 +2767,55 @@ OR/equals filter OK
 `last_execution = null`。cron は `0 2 * * 1` (月曜 11:00 JST) で、実装が 2026-10-14 (水) なので
 **初回は 2026-10-19 (月)**。今ある `research_json` は 10-14 に手で回した分。
 「週次で鮮度を保つ」はまだ実証されていない。
+
+---
+
+## note_* テーブルがどの migration にも無い (2026-10-16 発覚)
+
+3DP の実 PG テスト基盤 (T-3DP-02-04) で **空の PostgreSQL 16 に `packages/db/migrations/` の
+60 本を昇順で適用する**ことを初めて試し、**11 本が失敗する**ことが分かった。
+すべて SQLSTATE **42P01** `relation "note_*" does not exist`。
+
+| 失敗した migration |
+|---|
+| `20260916000000_anp_promo_sales` / `20260919000000_anp_account_design` / `20260921000000_anp_account_consult` / `20260921010000_anp_account_settings_authrelay` / `20260921020000_anp_session_link` / `20260921030000_anp_account_profile` / `20260921040000_anp_editorial_policy` / `20260921050000_anp_promotion_policy_agent_roles` / `20260922000000_anp_promotion_account_link` / `20260924000000_model_effort_and_note_seo` / `20261014000000_note_account_research` |
+
+**原因**: `schema.prisma` には `Note*` モデルが **10 個**あるのに、`CREATE TABLE` を持つ
+migration は **3 本分しかない** (`note_account_designs` / `note_account_consultations` /
+`note_account_consultation_messages`)。**`note_accounts` / `note_articles` / `note_themes` /
+`note_sales` / `note_membership_stats` / `note_auth_requests` / `note_locks` を作る migration は
+リポジトリに存在しない。** これらは `prisma db push` で本番に直接作られたため、
+本番のスキーマにはあるが**リポジトリには再現手順が無い**。
+
+```
+grep -rhoE 'CREATE TABLE (IF NOT EXISTS )?"note_[a-z_]+"' packages/db/migrations/ | sort -u
+  => note_account_consultation_messages / note_account_consultations / note_account_designs
+grep -c '^model Note' packages/db/schema.prisma
+  => 10
+```
+
+### 何が壊れているか
+
+- **リポジトリから DB を再構築できない。** 災害復旧も、staging の新規作成も、
+  「本番と同じ形のスキーマ」を空の DB に作ることができない。
+- 既に [#14/#15] で記録済みの **P3009 (`20260625000000_add_book_publish_status` が
+  `finished_at IS NULL` のまま)** と合わせて、**migration の履歴が二重に信用できない**状態。
+  2026-10-16 実測で本番の `_prisma_migrations` は **29 行**、リポジトリは **60 本**。
+
+### 当座の対処 (T-3DP-02-04)
+
+3DP の統合テストは「全 migration を昇順に再生し、**`note_*` が無いことによる 42P01 で
+落ちたものだけ**をスキップして記録する」方式で土台を作った (それ以外の失敗は即 throw)。
+3DP が使う `app_settings` / `jobs` / `token_usage` / `tdp_*` は全 migration を通して作られる。
+**これは 3DP が前進するための回避で、上の問題は直っていない。**
+
+### 直すときの手順 (未着手)
+
+1. `prisma migrate diff --from-empty --to-schema-datamodel schema.prisma` で欠けている
+   `CREATE TABLE` を生成し、**冪等な (`IF NOT EXISTS`) baseline migration** として
+   欠けている 7 表分を起こす。既存の 11 本より**前**の timestamp に置く。
+2. 本番には適用しない (既にある)。`migrate resolve --applied` で履歴だけ足す。
+3. 空 DB への 60+1 本の再生が通ることを `packages/db/__tests__/pg-helper.int.test.ts` で確認し、
+   `isNoteDrift` のスキップを**外す**。
+4. P3009 の `20260625000000_add_book_publish_status` も同時に片付ける
+   (`docs/operations/runbook.md` §4.1。**`migrate reset` は本番データ保護のため厳禁**)。

@@ -10,12 +10,15 @@
     "./cost-aggregation": "./src/cost-aggregation.ts",
     "./books-kpi": "./src/books-kpi.ts",
     "./book-cull": "./src/book-cull.ts",
-    "./ab-comparison": "./src/ab-comparison.ts"
+    "./ab-comparison": "./src/ab-comparison.ts",
+    "./testing": "./src/testing/pg.ts",
+    "./testing/global-setup": "./src/testing/global-setup.ts"
   },
   "scripts": {
     "postinstall": "prisma generate --schema=./schema.prisma",
     "typecheck": "tsc --noEmit",
     "test:unit": "vitest run",
+    "test:integration": "vitest run --config vitest.integration.config.ts",
     "test:watch": "vitest",
     "prisma": "prisma",
     "format": "prisma format --schema=./schema.prisma",
@@ -36,7 +39,11 @@
   },
   "devDependencies": {
     "@a2p/contracts": "workspace:*",
+    "@testcontainers/postgresql": "^10.16.0",
     "@types/node": "^22.9.0",
+    "@types/pg": "^8.20.0",
+    "graphile-worker": "^0.16.6",
+    "pg": "^8.21.0",
     "prisma": "^6.1.0",
     "tsx": "^4.19.2",
     "typescript": "^5.6.3",

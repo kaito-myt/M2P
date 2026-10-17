@@ -173,6 +173,7 @@ interface LLMClient {
 | H-02 | E2E テスト | **Playwright ^1.50** | 全 UC、特に UC-01〜UC-06 | C-14 確定 | — | — |
 | H-03 | LLM モック | **`msw` (Mock Service Worker) ^2** で HTTP レベル interception | 単体テスト全般 | Anthropic/OpenAI/Gemini を HTTP レベルで一様にモック可能、`packages/agents` テストの再現性が高い | nock / 手書きスタブ | streaming response のモックは複雑 → `msw` のストリーミングサポートを利用 |
 | H-04 | フィクスチャ DB | **Testcontainers (`@testcontainers/postgresql`)** | DB 関連テスト | 各テストランで一時 Postgres を起動、本番と同一バージョン (PG 16) で再現性高 | sqlite モック / 共有 DB | Docker daemon 必要 → CI と開発端末で必須。Windows でも Docker Desktop で動作 |
+| H-04a | 実 PG 統合テストの接続先 (T-3DP-02-04 で確定) | **3 経路**: ① `TDP_TEST_DATABASE_URL` (CI は `services: postgres:16` + `TDP_REQUIRE_PG=1` でこれ) → ② 無ければ Docker で `@testcontainers/postgresql` (`packages/db` devDependencies、`postgres:16-alpine`) → ③ どちらも駄目なら skip + 警告 (`TDP_REQUIRE_PG=1` では失敗) | `@a2p/db/testing` (`withTestDb`) | 実装 `packages/db/src/testing/pg.ts`。テストファイルごとに一意スキーマ + 全 migration 昇順再生 (ANP の `note_*` ベース表が migration に無く 11 本は 42P01 で許容スキップ、冒頭コメント参照) | 共有 DB / モック | ローカルでは Docker 経路で実測緑。1 回の再生は 3〜10 秒 |
 | H-05 | E2E CI 実行環境 | **GitHub Actions** (`ubuntu-latest` ＋ Playwright Docker image) | 全 UC | Railway 上で E2E を回すと本番ジョブと衝突 → GitHub Actions で分離。無料枠 2,000 分/月で十分 | Railway 上で実行 / CircleCI | 課金は無料枠内、超過時のみ判断 |
 
 ### I. CI/CD
