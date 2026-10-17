@@ -9,6 +9,7 @@
  */
 import Link from 'next/link';
 
+import { TDP_MONTHLY_LIMIT_DEFAULT } from '@a2p/contracts/tdp/settings';
 import { prisma } from '@a2p/db';
 
 import { messages } from '@/lib/messages';
@@ -33,7 +34,7 @@ async function loadHomeData() {
   return {
     quota: buildQuotaView({
       listedThisMonth,
-      monthlyLimit: settings?.tdp_monthly_publish_limit ?? 8,
+      monthlyLimit: settings?.tdp_monthly_publish_limit ?? TDP_MONTHLY_LIMIT_DEFAULT,
     }),
     rows,
     total: totalCount(rows),

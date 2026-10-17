@@ -115,6 +115,17 @@ export const messages = {
       limitRange: (refused: number | null, current: number | null, max: number) =>
         `${refused === null ? '入力された値' : String(refused)} は保存されていません。サーバー側で拒否しました (0〜${max} の整数のみ。最大 ${max})。現在の値: ${current === null ? '不明' : String(current)}`,
       denylistTooMany: '禁止語は 500 語までです',
+      limitTotal: (total: number, current: number, max: number) =>
+        `BOOTH と Jinxxy の合計 ${total} は保存されていません。サーバー側で拒否しました (各枠も合計も最大 ${max})。現在の合計: ${current}`,
+      refusal: (field: string, refused: string, current: string) =>
+        `${field}: ${refused} は保存されていません。範囲外のためサーバー側で拒否しました。現在の値: ${current}`,
+      refusalUnknownKey: (field: string) => `${field}: このグループにない項目のため拒否しました`,
+      refusalSum: (field: string, current: string) =>
+        `${field}: 構成比の合計が 100 ではないため拒否しました。現在の値: ${current}`,
+      refusalEmpty: '変更する項目がありません',
+      refusalRequired: (field: string) => `${field}: 値が空のため拒否しました`,
+      validationSummary: (count: number) => `${count} 件の項目を拒否しました。何も保存していません`,
+      invalidInput: '入力の形式が正しくありません',
     },
   },
   /** 設定画面に出す「常時有効な判定」の説明。derivative-guard.ts の実装と対応。 */

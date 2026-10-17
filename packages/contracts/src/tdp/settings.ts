@@ -39,6 +39,12 @@ export const TDP_SETTINGS_DEFAULTS = {
 } as const;
 
 export const TDP_KINDS = ['accessory', 'texture', 'prop', 'furniture'] as const;
+/** tdp_monthly_publish_limit の既定 (DB の DEFAULT と同値)。worker も読むので contracts の 1 箇所に置く。 */
+export const TDP_MONTHLY_LIMIT_DEFAULT = 8;
+
+/** tdp_kind_weights_json の null = この構成比 (合計 100)。DB 側に DEFAULT は無い。 */
+export const TDP_DEFAULT_KIND_WEIGHTS = { accessory: 50, texture: 30, prop_furniture: 20 } as const;
+
 export type TdpKind = (typeof TDP_KINDS)[number];
 export type TdpKindGroup = 'accessory' | 'texture' | 'prop_furniture';
 
@@ -50,15 +56,29 @@ export function kindGroup(kind: TdpKind): TdpKindGroup {
 }
 
 const posInt = z.number().int().min(0);
+// 0 だと「理由が空でよい」「0 日ごと」など判定が壊れる項目 (docs/12 §17.4 / A-10)
+const posIntMin1 = z.number().int().min(1);
+
+export const RenderSelfcheckSchema = z.object({
+  min_non_bg_ratio: z.number().min(0).max(1).default(0.02),
+  min_stddev: z.number().min(0).default(6),
+});
+
+export const BoothFetchSchema = z.object({
+  interval_ms: posInt.default(3000),
+  max_pages: posInt.default(10),
+  // UA に明示する運営者の連絡先 (F-3DP-23/39)。未設定のまま BOOTH を取得するタスクは実行しない。
+  contact: z.string().nullable().default(null),
+});
 
 export const TdpTuningSchema = z.object({
-  stall_hours: posInt.default(24),
-  status_check_stale_hours: posInt.default(48),
+  stall_hours: posIntMin1.default(24),
+  status_check_stale_hours: posIntMin1.default(48),
   status_check_full_below: posInt.default(30),
-  status_check_cycle_days: posInt.default(3),
+  status_check_cycle_days: posIntMin1.default(3),
   status_check_unreachable_warn_days: posInt.default(2),
   stock_cap_multiplier: z.number().min(0).default(2),
-  intermediate_keep_versions: posInt.default(3),
+  intermediate_keep_versions: posIntMin1.default(3),
   r2_warn_gb: z.number().min(0).default(20),
   credit_warn_per_product: posInt.default(60),
   credit_cap_per_product: posInt.default(250),
@@ -67,27 +87,15 @@ export const TdpTuningSchema = z.object({
   meshy_poll_interval_sec: z.number().int().min(1).nullable().default(null),
   // sweepStaleJobs の 120 分より短く (docs/12 §17.5.2)
   meshy_poll_max_minutes: z.number().int().min(1).max(90).nullable().default(null),
-  slot_reserve_expire_days: posInt.default(14),
+  slot_reserve_expire_days: posIntMin1.default(14),
   work_cap_review_min: posInt.default(30),
   work_cap_publish_min: posInt.default(60),
-  release_reason_min_chars: posInt.default(20),
-  reject_reason_min_chars: posInt.default(5),
+  release_reason_min_chars: posIntMin1.default(20),
+  reject_reason_min_chars: posIntMin1.default(5),
   listing_extra_forbidden: z.array(z.string()).default([]),
-  render_selfcheck: z
-    .object({
-      min_non_bg_ratio: z.number().min(0).max(1).default(0.02),
-      min_stddev: z.number().min(0).default(6),
-    })
-    .default({}),
+  render_selfcheck: RenderSelfcheckSchema.default({}),
   sales_source: z.enum(['manual', 'booth_manage_readonly']).default('manual'),
-  booth_fetch: z
-    .object({
-      interval_ms: posInt.default(3000),
-      max_pages: posInt.default(10),
-      // UA に明示する運営者の連絡先 (F-3DP-23/39)。未設定のまま BOOTH を取得するタスクは実行しない。
-      contact: z.string().nullable().default(null),
-    })
-    .default({}),
+  booth_fetch: BoothFetchSchema.default({}),
 });
 
 export type TdpTuning = z.infer<typeof TdpTuningSchema>;
@@ -109,7 +117,7 @@ export function parseTuning(json: unknown): TdpTuning {
     }
     if (isPlainObject(d)) {
       const sub = isPlainObject(src[key]) ? (src[key] as Record<string, unknown>) : {};
-      const inner = (field as unknown as z.ZodDefault<z.ZodObject<z.ZodRawShape>>)._def.innerType.shape;
+      const inner = (key === 'render_selfcheck' ? RenderSelfcheckSchema : BoothFetchSchema).shape;
       const merged: Record<string, unknown> = {};
       for (const [k, f] of Object.entries(inner)) {
         const r = (f as z.ZodTypeAny).safeParse(sub[k]);

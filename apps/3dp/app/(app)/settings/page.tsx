@@ -7,6 +7,7 @@
  * 価格帯・生成プロバイダ・API キーは、生成が入る Inc-2 で足す
  * (API キーはポータルの「API 管理」が持つので 3DP 側には置かない方針)。
  */
+import { TDP_MONTHLY_LIMIT_DEFAULT } from '@a2p/contracts/tdp/settings';
 import { prisma } from '@a2p/db';
 
 import { messages } from '@/lib/messages';
@@ -39,7 +40,7 @@ export default async function SettingsPage() {
     prisma.tdpProduct.count({ where: { listed_at: { gte: start, lt: end } } }),
   ]);
 
-  const limit = settings?.tdp_monthly_publish_limit ?? 8;
+  const limit = settings?.tdp_monthly_publish_limit ?? TDP_MONTHLY_LIMIT_DEFAULT;
   const denylist = settings?.tdp_derivative_denylist ?? [];
   const quota = buildQuotaView({ listedThisMonth, monthlyLimit: limit });
 
