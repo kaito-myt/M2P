@@ -1841,6 +1841,32 @@ Inc-2 の完了条件を「椅子 1 個」にしているのは、**3D 生成の
 | `apps/3dp` スケルトン | **完了・コミット済 (fec85db)** | `apps/3dp` (`@3dp/web`)。ログイン / ホーム / 商品一覧 / 設定。設定は月間上限と禁止語が実動作 |
 | ポータルタイル + ロゴ/ファビコン | **完了・コミット済 (fec85db)** | `apps/portal/lib/tools.ts` + `public/tools/3dp.png` / `apps/3dp/app/icon.png`。`NEXT_PUBLIC_TOOL_3DP_URL` 設定時のみ点灯 |
 
+#### Inc-1 の残り (SP-3DP-02) — 状態: **コード完了・本番未適用** (2026-10-19 記録)
+
+> **「適用済み」ではない。** `packages/db/migrations/20261016010000_tdp_inc1_foundation/` は
+> **本番 DB に適用していない (dev-plan OP-18 未消化)**。次の担当は**コードのデプロイより先に**
+> migration を当てること。当てずにデプロイすると、本番の設定画面が新しい列を読めず落ちる。
+> 適用手順は migration.sql 先頭のコメント (`prisma migrate deploy` は P3009 で使えない。手動の psql 経路)。
+
+| 要素 | 状態 | 場所 |
+|---|---|---|
+| R-1 の天井 12 (アプリ側) | **完了・本番反映はデプロイ時** | `TDP_MONTHLY_LIMIT_HARD_MAX` = `packages/contracts/src/tdp/settings.ts` の 1 箇所 |
+| 設定の既定値・状態機械・`computeSlots` | **完了 (純ロジック)** | `contracts/src/tdp/{settings,status,hold}.ts` |
+| DB migration (Inc-1) | **コード完了・本番未適用 (OP-18)** | `20261016010000_tdp_inc1_foundation`。CHECK (d)(f)・`approved_at`・`jobs.tdp_product_id`。静的テスト `tdp-migration.test.ts` / 実 PG テスト `tdp-constraints.int.test.ts` |
+| 実 PG テスト基盤 | **完了 (ローカル + CI の `test-integration`)** | `@a2p/db/testing` (`withTestDb`)。SP-3DP-03 以降の前提 |
+| 設定画面 (4 タブ・提案値バッジ・確認操作・U-9/U-10 回答欄) | **完了・本番反映はデプロイ時** | `apps/3dp/app/(app)/settings/` |
+| ホーム・商品一覧の差分 | **完了・本番反映はデプロイ時** | `home-core.ts` ほか |
+| 3DP の E2E 基盤 | **完了 (ローカル実行のみ。CI ジョブ未追加)** | `tests/e2e/3dp/`、`E2E_TARGET=3dp` |
+
+運営者側で**未消化**のもの: OP-18 (本番 migration 適用) / OP-11 (U-9/U-10 への回答。欄は実装済み) / OP-01・OP-02 (Meshy キーと実キー検証の承認 = SP-3DP-03 以降のブロッカー)。
+
+既知の残課題 (Inc-1 のスコープ外):
+
+- `app_settings` に `schema.prisma` の 24 列が migration に無い (`prisma db push` で入ったと思われる)。migration だけで再生した DB では設定が degraded になる (E2E は fixture で補っている)。
+- 本番は `_prisma_migrations` 29 行に対し migration が 60 本あり、`20260625000000_add_book_publish_status` が未完了で P3009。
+- `pnpm typecheck:e2e` は既存 40 件が赤 (3DP 以外のファイル)。`E2E_TARGET` 未指定の `playwright test --list` も 0 件 exit=1。
+- 未決の設計判断: TBD-12 (SP-3DP-04 着手前) / `status_check_unreachable_warn_days` の group (SP-3DP-11 着手前)。
+
 #### 依拠性ガードの判定仕様 (実装済み)
 
 弾く:
