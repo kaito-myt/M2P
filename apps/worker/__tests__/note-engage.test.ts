@@ -248,6 +248,76 @@ describe('runNoteEngage', () => {
     ]);
   });
 
+  /**
+   * 2026-10-19 の見落としの回帰テスト。スキは locator が「スキした人を見る」件数ボタンを
+   * 掴んでいて実装以来 1 件も成立していなかったが、`result_json` には `failed: 19` としか
+   * 出ず、理由が捨てられていたため気づけなかった。理由を残すことを固定する。
+   */
+  it('失敗した操作の理由を failed_reasons に理由別の件数で残す(件数だけにしない)', async () => {
+    const upsert = vi.fn().mockResolvedValue({});
+    const prisma: NoteEngagePrisma = {
+      appSettings: baseAppSettings(true),
+      noteAccount: {
+        findMany: vi.fn().mockResolvedValue([
+          { id: 'acc1', niche: '読書', display_name: '本の虫', target_reader: null, session_state_enc: 'ENC' },
+        ]),
+        update: vi.fn(),
+      },
+      promotionSnsEngagement: {
+        findMany: vi.fn().mockResolvedValue([]),
+        count: vi.fn().mockResolvedValue(0),
+        upsert,
+      },
+      noteAuthRequest: { findFirst: vi.fn(), create: vi.fn() },
+    };
+    const res = await runNoteEngage(
+      {},
+      {
+        prisma,
+        lineConfigured: () => false,
+        resolveProxy: async () => null,
+        decryptSession: () => '{"cookies":[]}',
+        generate: async () => ({
+          channel: 'note',
+          summary: '',
+          actions: [
+            { action_type: 'like', platform: 'note', target_handle: '@b', target_url: 'https://note.com/b/n/n1', target_desc: '', reason: '', priority: 'high' },
+            { action_type: 'like', platform: 'note', target_handle: '@c', target_url: 'https://note.com/c/n/n2', target_desc: '', reason: '', priority: 'high' },
+            { action_type: 'like', platform: 'note', target_handle: '@d', target_url: 'https://note.com/d/n/n3', target_desc: '', reason: '', priority: 'mid' },
+            { action_type: 'follow', platform: 'note', target_handle: '@e', target_url: 'https://note.com/e', target_desc: '', reason: '', priority: 'mid' },
+          ],
+          search_hashtags: [],
+          notes: [],
+        }),
+        port: {
+          // 本番で起きた形: スキは全滅、フォローだけ通る。
+          engageAll: async ({ targets }) => ({
+            outcomes: targets.map((t) =>
+              t.action === 'like'
+                ? {
+                    action: t.action,
+                    handle: t.handle,
+                    url: t.url,
+                    status: 'failed' as const,
+                    error: t.handle === '@d' ? 'like_button_not_found' : 'like_not_registered',
+                  }
+                : { action: t.action, handle: t.handle, url: t.url, status: 'done' as const },
+            ),
+          }),
+        },
+      },
+    );
+    const cell = res.per_account['acc1'];
+    expect(cell!.liked).toBe(0);
+    expect(cell!.failed).toBe(3);
+    expect(cell!.failed_reasons).toEqual({
+      'like:like_not_registered': 2,
+      'like:like_button_not_found': 1,
+    });
+    // 失敗は行を残さない (実体の無い成功記録を作らない)。done の 1 件だけ。
+    expect(upsert).toHaveBeenCalledTimes(1);
+  });
+
   it('セッション復号失敗は skip(エラーで落とさない)', async () => {
     const prisma: NoteEngagePrisma = {
       appSettings: baseAppSettings(true),

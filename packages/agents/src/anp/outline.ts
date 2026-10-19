@@ -20,7 +20,7 @@ import {
 import type { LoggingContext, WithTokenLoggingDeps } from '../lib/with-token-logging.js';
 import type { LoadModelAssignmentDeps } from '../lib/load-model-assignment.js';
 import { extractJson } from './lib/extract-json.js';
-import { editorialPolicyLines } from './account-context.js';
+import { dataSourceLines, editorialPolicyLines } from './account-context.js';
 
 const DEFAULT_MAX_OUTPUT_TOKENS = 4096;
 const MAX_PARSE_RETRIES = 2;
@@ -77,6 +77,7 @@ export async function generateNoteOutline(
     `課金種別: ${parsedInput.paid ? '有料 (無料パートの後に続きは有料)' : '無料'}`,
     `目標文字数: ${parsedInput.target_chars} 字`,
     ...editorialPolicyLines(parsedInput.account),
+    ...dataSourceLines(parsedInput.account),
     '',
     '上記の記事の「リード文」と「見出し構成」を設計してください。',
     '出力形式: JSON で以下を返してください。',

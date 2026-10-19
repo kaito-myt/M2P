@@ -46,6 +46,8 @@ export const NoteAccountContextSchema = z.object({
    * 必ずここを通す。
    */
   research: z.lazy(() => NoteAccountResearchSchema).optional(),
+  /** F-ANP-58: `settings_json.data_source` (実データ源の宣言)。空/未設定 = データ源なし。 */
+  data_source: z.string().max(500).nullable().optional(),
 });
 export type NoteAccountContext = z.infer<typeof NoteAccountContextSchema>;
 
@@ -606,6 +608,12 @@ export const NoteAccountSettingsSchema = z.object({
    * 済ませたアカウントだけ ON にする。OFF の間は judge が `paid=false` に落として無料公開する。
    */
   paid_publish_enabled: z.boolean().optional(),
+  /**
+   * [F-ANP-58] このアカウントが持つ**実データ源**の宣言 (例: 「JRA-VAN の過去 10 年分」)。
+   * 未設定/空 = データ源なし。データ源が無いアカウントは、母集団の統計 (回収率・複勝率・標本数など) を
+   * 所見とする記事を企画/執筆/有料化できない。**既知キーに入れないと保存 (mergeNoteAccountSettings) で消える。**
+   */
+  data_source: z.string().max(500).optional(),
 });
 export type NoteAccountSettings = z.infer<typeof NoteAccountSettingsSchema>;
 
@@ -630,6 +638,136 @@ export function mergeNoteAccountSettings(current: unknown, next: NoteAccountSett
 export function parseNoteAccountSettings(json: unknown): NoteAccountSettings {
   const parsed = NoteAccountSettingsSchema.safeParse(json ?? {});
   return parsed.success ? parsed.data : {};
+}
+
+// ---------------------------------------------------------------------------
+// F-ANP-58 — 実データ源を持たないアカウントに、母集団の統計を所見とする記事を作らせない・売らせない
+//
+// 2026-10-19 実測: 競馬アカウント (JRA のデータ源なし) が「単勝回収率74%」「13〜15頭の1〜3番人気で
+// 回収率104.3％」のような母集団の統計を所見として書き、18 本が有料 (¥500〜880) で販売中だった。
+// 判定は**開示語 (「架空」等) では行わない**: 開示した正直な記事だけが止まり、黙って捏造した記事が
+// 有料で通る逆の仕掛けになる。母集団 (レース・人・商品の集まり) に対する率・標本数を所見として
+// 書いているかだけを見る。著者自身の作業ログ (「約80分かかった」「8件応募で返信2件」) は対象外。
+// 較正データ: packages/contracts/__tests__/fixtures/anp-fabricated-claims.ts (全て本番の原文)。
+// ---------------------------------------------------------------------------
+
+const NUM = '[0-9０-９][0-9０-９.,．，]*';
+/** 母集団に対する率の指標。「勝率」は複勝率・単勝率も含む。 */
+const POP_RATE = '(?:回収率|勝率|的中率|実現率|連対率|入着率|3着内率|三着内率)';
+const PCT = '[%％]';
+
+export interface PopulationStatHit {
+  sentence: string;
+  /** 当たったパターンの名前 (Job.result_json とログに残す)。 */
+  reason: string;
+}
+
+/** `{reason, pattern}` を 1 本の配列にする (添字対応にすると行の挿入で理由が全部ずれる)。 */
+const POPULATION_STAT_PATTERNS: ReadonlyArray<{ reason: string; pattern: RegExp }> = [
+  {
+    reason: '率の指標に数値 (回収率・複勝率・的中率など)',
+    pattern: new RegExp(`${POP_RATE}[^。\\n0-9０-９]{0,12}${NUM}(?:[〜~～\\-–]${NUM})?\\s*${PCT}`),
+  },
+  {
+    reason: '数値%の直後に率の指標',
+    pattern: new RegExp(`${NUM}\\s*${PCT}[^。\\n0-9０-９]{0,6}${POP_RATE}`),
+  },
+  {
+    reason: '標本数 n=',
+    pattern: new RegExp(`(?<![A-Za-z0-9])[nNｎＮ]\\s*[=＝]\\s*${NUM}`),
+  },
+  {
+    reason: 'サンプル数・標本数・母数に数値',
+    pattern: new RegExp(`(?:サンプル数|標本数|標本サイズ|母数)[^。\\n]{0,10}${NUM}|${NUM}[^。\\n0-9０-９]{0,4}(?:サンプル数|標本数|母数)`),
+  },
+  {
+    reason: '期間・レース数を区切った集計の結果',
+    pattern: /[0-9０-９]+\s*(?:年間?|か月間?|ヶ月|シーズン|開催|レース|鞍|頭)[^。\n]{0,20}集計/,
+  },
+  {
+    reason: '率の差をポイントで述べる',
+    pattern: new RegExp(`${NUM}\\s*(?:ポイント|pt|ｐｔ)[^。\\n]{0,6}(?:上回|下回)|(?:上回|下回)[^。\\n]{0,6}${NUM}\\s*(?:ポイント|pt|ｐｔ)`),
+  },
+];
+
+/**
+ * 本文/文に「母集団の統計を所見として書いている」箇所があるか。
+ * 文 (。！？改行) 単位で見て、当たった文と理由を返す。開示語 (「架空」) の有無は見ない。
+ */
+export function claimsPopulationStat(text: string): { claims: boolean; hits: PopulationStatHit[] } {
+  const hits: PopulationStatHit[] = [];
+  const parts = text.match(/[^。！？!?\n]*(?:[。！？!?]+|\n|$)/g) ?? [];
+  for (const part of parts) {
+    const sentence = part.trim();
+    if (sentence.length === 0) continue;
+    const hit = POPULATION_STAT_PATTERNS.find((p) => p.pattern.test(sentence));
+    if (hit) hits.push({ sentence, reason: hit.reason });
+  }
+  return { claims: hits.length > 0, hits };
+}
+
+const AGG_MARKER = new RegExp(
+  `${NUM}\\s*(?:年分?|年間|か月|ヶ月|シーズン|鞍|頭|レース|件|試合|人|商品|社)|別|集計|サンプル|母数|標本|(?<![A-Za-z])n\\s*[=＝]?\\s*${NUM}|${NUM}\\s*${PCT}`,
+);
+
+const AGGREGATION_THEME_PATTERNS: ReadonlyArray<{ reason: string; test: (t: string) => boolean }> = [
+  {
+    reason: '率の指標 + 標本・期間・区分 (「5年分の複勝率」「帯別回収率」)',
+    test: (t) => new RegExp(POP_RATE).test(t) && AGG_MARKER.test(t),
+  },
+  {
+    reason: '期間・頭数/件数の併記 (「5年・238頭で見た」)',
+    test: (t) => new RegExp(`${NUM}\\s*年間?[・、,，\\s]*[0-9０-９,]+\\s*(?:頭|鞍|レース|件|人|社|商品)`).test(t),
+  },
+  {
+    reason: 'N年分を集計・検証・比較',
+    test: (t) =>
+      new RegExp(`${NUM}\\s*年分[^。｜|]{0,15}(?:集計|分析|検証|確かめ|比べ|調べ)|${NUM}\\s*年分の(?:データ|成績|結果|集計|実績|レース)`).test(t),
+  },
+];
+
+export interface AggregationThemeResult {
+  claims: boolean;
+  /** 当たった項目 ('title' | 'hook') と理由。 */
+  hits: Array<{ field: 'title' | 'hook'; reason: string }>;
+}
+
+/** 企画段階の仮題 (とフック) が「集計した結果」を売ると言っているか。 */
+export function claimsAggregationTheme(title: string, hook?: string): AggregationThemeResult {
+  const hits: AggregationThemeResult['hits'] = [];
+  for (const [field, text] of [['title', title], ['hook', hook ?? '']] as const) {
+    if (text.length === 0) continue;
+    const hit = AGGREGATION_THEME_PATTERNS.find((p) => p.test(text));
+    if (hit) hits.push({ field, reason: hit.reason });
+  }
+  return { claims: hits.length > 0, hits };
+}
+
+/** `settings_json.data_source` (実データ源の宣言)。未設定/空白のみ = null (データ源なし)。 */
+export function resolveDataSource(settingsJson: unknown): string | null {
+  const v = parseNoteAccountSettings(settingsJson).data_source;
+  return typeof v === 'string' && v.trim().length > 0 ? v.trim() : null;
+}
+
+export interface DroppedAggregationTheme {
+  title: string;
+  reasons: string[];
+}
+
+/** データ源の無いアカウントの企画候補から、集計結果を売る企画を落とす。落とした分は理由つきで返す。 */
+export function dropAggregationThemes<T extends { title: string; hook?: string }>(
+  candidates: readonly T[],
+  dataSource: string | null,
+): { kept: T[]; dropped: DroppedAggregationTheme[] } {
+  if (dataSource !== null) return { kept: [...candidates], dropped: [] };
+  const kept: T[] = [];
+  const dropped: DroppedAggregationTheme[] = [];
+  for (const c of candidates) {
+    const r = claimsAggregationTheme(c.title, c.hook);
+    if (r.claims) dropped.push({ title: c.title, reasons: r.hits.map((h) => `${h.field}: ${h.reason}`) });
+    else kept.push(c);
+  }
+  return { kept, dropped };
 }
 
 // ---------------------------------------------------------------------------

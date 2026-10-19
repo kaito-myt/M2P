@@ -1841,24 +1841,47 @@ Inc-2 の完了条件を「椅子 1 個」にしているのは、**3D 生成の
 | `apps/3dp` スケルトン | **完了・コミット済 (fec85db)** | `apps/3dp` (`@3dp/web`)。ログイン / ホーム / 商品一覧 / 設定。設定は月間上限と禁止語が実動作 |
 | ポータルタイル + ロゴ/ファビコン | **完了・コミット済 (fec85db)** | `apps/portal/lib/tools.ts` + `public/tools/3dp.png` / `apps/3dp/app/icon.png`。`NEXT_PUBLIC_TOOL_3DP_URL` 設定時のみ点灯 |
 
-#### Inc-1 の残り (SP-3DP-02) — 状態: **コード完了・本番未適用** (2026-10-19 記録)
+#### Inc-1 の残り (SP-3DP-02) — 状態: **本番適用済み** (2026-10-19 12:33 UTC)
 
-> **「適用済み」ではない。** `packages/db/migrations/20261016010000_tdp_inc1_foundation/` は
-> **本番 DB に適用していない (dev-plan OP-18 未消化)**。次の担当は**コードのデプロイより先に**
-> migration を当てること。当てずにデプロイすると、本番の設定画面が新しい列を読めず落ちる。
-> 適用手順は migration.sql 先頭のコメント (`prisma migrate deploy` は P3009 で使えない。手動の psql 経路)。
+> **適用済み。** `packages/db/migrations/20261016010000_tdp_inc1_foundation/` を本番 Railway Postgres に
+> 1 トランザクション (`SET lock_timeout='5s'`) で流し、`prisma migrate resolve --applied` まで実施した
+> (OP-18 消化)。適用後の確認: `jobs.tdp_product_id` (text/nullable)・`app_settings` の tdp 列 28 本・
+> `tdp_products` 20 列・CHECK 3 本 + FK 1 本・索引 4 本。
+>
+> **当てる順番を「コードより先」と書いていたのは甘かった。実際は本番障害になった。**
+> 2026-10-19、3DP を**デプロイしていないのに**本番の worker が全滅しかけた。原因は
+> `jobs` が A2P/ANP と共有のテーブルで (§7.5)、`schema.prisma` に `tdp_product_id` を足した時点で
+> **Prisma クライアントが `prisma.job.update()` の戻り値に全スカラ列を要求する**ようになるため。
+> worker をデプロイした直後から、ジョブ行を更新する経路が
+> `The column jobs.tdp_product_id does not exist in the current database` で落ち続けた。
+>
+> 観測された壊れ方 (これが「無言で死んだジョブ」とは別の見え方をするので記録する):
+>
+> - **タスクの本体は成功し、終了記録だけが失敗する。** `note.engage` は実際に note を
+>   フォローし `promotion_sns_engagements` に行を書いたあと、`finishJob` で落ちた。
+> - `public.jobs` の行は `running` のまま残り、`error` も入らない。
+> - graphile は失敗扱いで**再試行する** → **副作用が繰り返される**。`note.engage` は
+>   04:10 / 04:16 / 04:30 と 3 回走り、そのたびにフォローを積んだ (計 14 件)。
+>   このとき被害を 1 日 10 件/アカウントで止めたのは、同日出荷した F-091 の
+>   アカウント別当日キャップ (`engage_usage`) だった。キャップが無ければ 25 回再試行している。
+> - 真因は `graphile_worker.jobs.last_error` にしか出ない。`public.jobs` を見ても分からない。
+>
+> **教訓: 共有テーブル (`jobs` / `app_settings`) に列を足す migration は、
+> その列を使う機能のデプロイとは無関係に、「どのサービスでも先に当てる」必要がある。**
+> ツール単位で独立しているのは機能で、DB は 1 つ。
 
 | 要素 | 状態 | 場所 |
 |---|---|---|
 | R-1 の天井 12 (アプリ側) | **完了・本番反映はデプロイ時** | `TDP_MONTHLY_LIMIT_HARD_MAX` = `packages/contracts/src/tdp/settings.ts` の 1 箇所 |
 | 設定の既定値・状態機械・`computeSlots` | **完了 (純ロジック)** | `contracts/src/tdp/{settings,status,hold}.ts` |
-| DB migration (Inc-1) | **コード完了・本番未適用 (OP-18)** | `20261016010000_tdp_inc1_foundation`。CHECK (d)(f)・`approved_at`・`jobs.tdp_product_id`。静的テスト `tdp-migration.test.ts` / 実 PG テスト `tdp-constraints.int.test.ts` |
+| DB migration (Inc-1) | **本番適用済み (2026-10-19, OP-18 消化)** | `20261016010000_tdp_inc1_foundation`。CHECK (d)(f)・`approved_at`・`jobs.tdp_product_id`。静的テスト `tdp-migration.test.ts` / 実 PG テスト `tdp-constraints.int.test.ts` |
 | 実 PG テスト基盤 | **完了 (ローカル + CI の `test-integration`)** | `@a2p/db/testing` (`withTestDb`)。SP-3DP-03 以降の前提 |
 | 設定画面 (4 タブ・提案値バッジ・確認操作・U-9/U-10 回答欄) | **完了・本番反映はデプロイ時** | `apps/3dp/app/(app)/settings/` |
 | ホーム・商品一覧の差分 | **完了・本番反映はデプロイ時** | `home-core.ts` ほか |
 | 3DP の E2E 基盤 | **完了 (ローカル実行のみ。CI ジョブ未追加)** | `tests/e2e/3dp/`、`E2E_TARGET=3dp` |
 
-運営者側で**未消化**のもの: OP-18 (本番 migration 適用) / OP-11 (U-9/U-10 への回答。欄は実装済み) / OP-01・OP-02 (Meshy キーと実キー検証の承認 = SP-3DP-03 以降のブロッカー)。
+運営者側で**未消化**のもの: OP-11 (U-9/U-10 への回答。欄は実装済み) / OP-01・OP-02 (Meshy キーと実キー検証の承認 = SP-3DP-03 以降のブロッカー)。
+OP-18 (本番 migration 適用) は 2026-10-19 に消化済み (上記の障害対応として実施)。
 
 既知の残課題 (Inc-1 のスコープ外):
 

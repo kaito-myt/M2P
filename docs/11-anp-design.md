@@ -298,6 +298,8 @@ ANP の機能は A2P の対応機能を note 向けに写像したもの。**太
   有効/無効)フォームを追加。
   `apps/anp/app/settings`(`SettingsForm`)にトグル3種(有効化/1日の生成数/自動採用)の UI を追加。
 
+- **F-ANP-58 実データを持たないアカウントに母集団の統計を所見とする記事を作らせない・売らせない（2026-10-19）**: 実測で、JRA のデータ源を持たない競馬アカが「単勝回収率74%」等を所見として書いた記事のうち 18 本が有料販売中だった。`note_accounts.settings_json.data_source`（実データ源の宣言、未設定=なし）が無いアカウントでは、(1) 企画で「N年分を集計した結果」型の仮題を落とし（`claimsAggregationTheme`、落とした仮題は Job.result_json）、(2) `anp.theme` v6 / `anp.writer` v2 で母集団の率・標本数を所見として書かせず、(3) 本文に該当（`claimsPopulationStat`）があれば有料にしない（judge の `resolveFinalPricing`・後付け有料化 `pipeline.note.monetize` とも）。「架空」等の開示語では判定しない（正直な記事だけが罰されるため）。競馬アカを手順・判断基準の商品に寄せるか実データ源を持つかは運営者判断・未決。詳細は末尾「F-ANP-58」節。
+
 ### 3.3 出版（note 公開）
 - **F-ANP-20b note アカウント連携（ANP 画面からの Cookie 貼り付け、実装済み 2026-09-21）**: 運営者要望
   「アカウント戦略（bio 等は AI レコメンド）→ note でアカウント作成 → ANP 側から note のアカウントを
@@ -2949,11 +2951,55 @@ A2P 表紙側など他の呼び出し元は `model` 未指定のまま挙動不�
 
 `apps/worker/src/tasks/note-engage.ts`, `apps/worker/src/tasks/note-engage/note-engage-port.ts`, `.../playwright-note-engage-port.ts`, `apps/worker/src/crontab.ts` (cron `10 23,1,4,6,8,10,12,13`), `apps/worker/__tests__/note-engage.test.ts`, `apps/worker/__tests__/crontab.test.ts`, `packages/contracts/src/agents/anp.ts` (`mergeNoteAccountSettings`), `packages/contracts/__tests__/anp-account-settings-merge.test.ts`, `apps/anp/app/actions/accounts.ts` (`updateAccountSettings` を read-modify-write に)。migration なし。
 
-### 5. 未検証
+初回実走後の修正 (同日): `playwright-note-engage-port.ts` (`likeButton` を `data-id="ButtonIcon"` + `svg[aria-label="スキ"]` の可視要素に、確認を `is_liked` API に、`looksBlocked` に一致文言のログ)、`note-engage.ts` (`per_account[].failed_reasons`)、`scripts/anp/verify-follows.cjs` (新規・無認証でフォロー突合)、`scripts/anp/verify-likes.mjs` (新規・セッション付きでスキ監査)。
 
-note の検索ページの DOM (`a[href*="/n/"]`)、`current_user` API の応答形、エラー領域のセレクタ、**フォロー / スキのボタン locator** は本番セッションでの実走を未実施。実走時に収穫 0 が続くなら `skipped` が `harvest_empty_fallback_empty` / scout フォールバックになるので気づける。
+### 5. 初回実走の結果 (2026-10-19 JST 13:10、実機検証済み)
 
-**初回実走で必ず突き合わせること**: `followButton` / `likeButton` は `main` で見つからないとき `'button, [role=button]'` / `'body'` に落ちる。この経路に落ちると**別人 (おすすめクリエイター欄) のボタンを押し、その結果を対象者のハンドルで記録する**可能性が残る (`main` が効いている限り発生しない)。初回実走では `promotion_sns_engagements` の新規行のハンドルと、note 側の「フォロー中リスト / 通知」を 1 件ずつ突き合わせる。ズレていたら `main` 外フォールバックを削除して fail-closed (`*_button_not_found` で行を残さない) にする。
+**フォローは成立、スキは実装以来 1 件も成立していなかった。**
+
+| | 結果 |
+|---|---|
+| follow | 1 日 **18 件**。競馬アカは全期間 0 件 → **10 件** (アカウント横断共有キャップの解消が効いた)。突合 **23/23 一致・不一致 0** |
+| like | **0 件**。19 件全滅。過去の「成功 14 件」もすべて実体の無い行で、`is_liked=false` を確認して 2026-10-19 に削除した |
+
+**外部から確かめる口が 2 つある** (運営者の手作業は不要になった)。
+
+- `GET https://note.com/api/v2/creators/<handle>/followings` — **無認証**でフォロー中リストを返す。突合 = `scripts/anp/verify-follows.cjs` (不一致が 1 件でも exit 1)。
+- `GET https://note.com/api/v3/notes/<id>` — **認証付き**で `data.is_liked` を返す。監査 = `scripts/anp/verify-likes.mjs` (`--apply` で実体の無い行を削除)。
+
+#### スキが効いていなかった真因 (実 DOM で確定)
+
+記事ページには「スキした人を見る」件数ボタンが先にいて、それが
+
+```html
+<button class="ml-2 ..." aria-label="97スキ この記事にスキをつけたユーザーを見る">97</button>
+```
+
+なので、`aria-label*="スキ"` の最初の一致が**件数ボタン**になる。押すとユーザー一覧ダイアログが開くだけで、
+`aria-pressed` を持たないため確認が必ず false になる。**本物は別物**:
+
+```html
+<button data-id="ButtonIcon" aria-pressed="false" aria-haspopup="dialog"><svg aria-label="スキ">…</svg></button>
+```
+
+同じボタンが記事上部・下部アクションバー・固定フッターに複数あり、**0x0 の非表示実体が混じる**ので、
+`button[data-id="ButtonIcon"]:has(svg[aria-label="スキ"])` のうち**見えているもの**を選ぶ。
+確認の正は DOM ではなく **`is_liked`** にした (`like_not_registered` = 押したが登録されていない)。
+
+#### 気づけなかった理由 — 失敗理由を捨てていた
+
+`result_json` には `failed: 19` としか出ず、`like_button_not_found` / `like_not_confirmed` の区別が
+どこにも残っていなかった。**件数だけの記録は障害を隠す**。
+`per_account[].failed_reasons` に理由別の件数を残すようにし、回帰テストを置いた
+(`note-engage.test.ts` の「失敗した操作の理由を failed_reasons に…」)。
+`looksBlocked` も、何の文言に当たって止めたかを WARN に出すようにした
+(初回実走で `action_blocked` が出たが、誤検出か実際の制限かを後から判別できなかった)。
+
+#### なお未検証
+
+エラー領域のセレクタ (`ALERT_SELECTOR` / `BLOCK_RE`)。`main` 外 locator フォールバックは
+突合 23/23 一致で別人を押していないことが確かめられたため、fail-closed 化は行わない。
+ポートの DOM 操作部分は unit test でなく**実機偵察で検証している** (`is_liked` と実 DOM ダンプ)。
 
 ### 6. 既知の不整合 (害は無いが、次に触るとき揃えるもの)
 
@@ -2961,3 +3007,106 @@ note の検索ページの DOM (`a[href*="/n/"]`)、`current_user` API の応答
 2. `rotateAccounts` だけ UTC 日基準で、順序が JST 9:00 (8:10 の回と 10:10 の回の間) で入れ替わる。影響は処理順と削りのタイブレークだけ。`engageDay` に揃えると説明が 1 本になる。
 3. **`unknown` が続いたときの気づき口が弱い**: `session_check_failed:*` は LINE を出さない設計 (誤 paused を避けるため正しい) だが、`jobs.result_json.skipped` とログにしか出ないので、WAF 等で数日何もしない状態が埋もれ得る。「N 回連続でフォロー / スキ 0 件」で 1 通だけ出す日次ダイジェストを入れると、この機能が過去 2 回やった「数字は動いているのに実体ゼロ」を確実に捕まえられる。
 4. `engage_usage` の加算は実行開始時のスナップショット + 今回分なので、note.engage が 2 回重なると増分が失われる (1 回の実行は最大 ~1 時間、cron 間隔は 2 時間なので実害はほぼ無い)。`already` は当日使用数に積まない (note 側で操作していないので妥当) が、チャンネル合算には乗る。
+
+## 実データを持たないアカウントに、母集団の統計を所見とする記事を作らせない・売らせない (F-ANP-58, 2026-10-19)
+
+### 1. 実測 (2026-10-19, 本番 DB)
+
+- ANP 全体: 公開 196 本 / 2026-10 の閲覧 **743 PV** / 売上 **¥0** / 購入 **0**。有料は 67 本 (¥500〜1480)。
+  2026-10 の生成コストは **¥16,825**、公開 166 本で **¥85/本**。
+- アカウントは 2 つ。`note-acc-1` (あや＠AI副業, aisidebiz) と `cmu9z5oqy0000pk0lncwogh3n` (手堅く勝つ馬券術, baken_jutsu)。
+- 競馬アカは公開 104 本・閲覧 413 PV・**スキ 0**・フォロワー 1。**JRA のデータ源を一切持っていない。**
+- にもかかわらず「10.0〜19.9倍で単勝回収率74%」「13〜15頭の1〜3番人気で回収率104.3％となった結果」
+  「10番人気以下はn=16」のような**母集団の統計を所見として書いた記事が多数**あり、**18 本が有料 (¥500〜880) で販売中**。
+  38 本は「架空」と開示しているが、残りは開示せず事実として書いている。
+- 発生源は `anp.theme` v5 の例示「馬体重の増減と次走成績の関係を6年分集計する」。モデルは例示を真似て
+  「N年分を集計した」型の企画を量産し、`anp.writer` は企画に従って数字を作った。judge は数字の**整合**
+  (`pipeline.note.numcheck`) は見るが**実在**は見ない。
+
+### 2. 線の引き方 — 開示語で弾かない
+
+公開済み 196 本を読むと、架空の数値の扱いは 3 種類に割れていた。
+
+| 型 | 例 | 扱い |
+|---|---|---|
+| 1. 著者自身の作業ログ | 「8件応募で返信2件」「確認に13分」「約80分かかりました」「5回中2回」 | 通す。題材が架空でも、所見は実際に手を動かして測った値で再現できる |
+| 2. 母集団の統計を、架空と開示して書いたもの | 「この架空表の全体回収率は約86.4％」 | 有料にしない。読者が払うのは実在しない集計 |
+| 3. 母集団の統計を、開示せず事実として書いたもの | 「13〜15頭の1〜3番人気で回収率104.3％」 | **2 より悪い**。有料にしない |
+
+**「架空」等の開示語で弾く設計にしてはいけない。** それをやると 2 だけが止まり、黙って捏造した 3 が有料で通る —
+正直に書いた記事だけが罰される逆の仕掛けになる。判定は**母集団 (レース・人・商品の集まり) に対する率・標本数を
+所見として書いているか**だけで行う。母集団統計の指標 (`回収率` `複勝率` `勝率` `的中率` `実現率` `サンプル数` `n=` `母数`) と、
+著者自身の作業ログ (`平均4分` のような数回試した平均を含む) を混同しない。
+
+較正データ = `packages/contracts/__tests__/fixtures/anp-fabricated-claims.ts`。**全て本番の公開記事の原文**
+(母集団統計 12 文 / 作業ログ 9 文 / 弾く仮題 8 / 通す仮題 8)。ここに足すときも本番の本文から取る (自作の短文は検知の抜けを残す)。
+
+### 3. `settings_json.data_source` — 実データ源の宣言
+
+- `note_accounts.settings_json.data_source` (任意の文字列、例「JRA-VAN 過去10年の全レース結果」)。
+  **未設定/空白のみ = データ源なし (既定)。** migration 不要。
+- `NoteAccountSettingsSchema` の既知キー (`packages/contracts/src/agents/anp.ts`)。既知キーに入れないと
+  `mergeNoteAccountSettings` が保存で消す。**逆に、既知キーのため設定フォーム (`updateAccountSettings`) が送らないと
+  保存の度に消える**ので、`apps/anp/app/actions/accounts.ts` は現在値を引き継ぐ (UI を持つまでの措置)。
+- 現状 UI は無い。設定は DB への直接 UPDATE (例: `settings_json = settings_json || '{"data_source":"…"}'`)。
+  宣言したアカウントはゲートが全て外れる。**宣言は「実際に取り込めるデータがある」ことの運営者の責任表明**で、
+  コードは中身を検証しない。
+- 実効値の解決: `resolveDataSource` (contracts) / `resolveAccountDataSource` (`apps/worker/src/tasks/lib/note-account-settings.ts`)。
+
+### 4. 3 層の役割分担
+
+| 層 | どこで | 何をする | 失敗時の見え方 |
+|---|---|---|---|
+| 企画で落とす | `note-theme-generate.ts` / `note-theme-auto.ts` (無人運転の本番経路) の `dropAggregationThemes` + `claimsAggregationTheme` | データ源なしの候補から「集計した結果を売る」仮題 (タイトル・フック) を NoteTheme にしない | `Job.result_json.dropped_aggregation_count` / `dropped_aggregation[{title,reasons}]`。全件落ちたら `createMany` せず `outcome: 'all_dropped_aggregation_without_data_source'` で done (黙って 0 件にしない)。`generated_count` と比べれば分かる |
+| 執筆させない | `anp.theme` v6 / `anp.writer` v2 (DB) + `dataSourceLines` (実行時注入) | 企画・構成・本文に母集団の率・標本数を所見として書かせない。具体性は手順の工程数・判断基準の個数・著者自身の実測値で満たす。架空の題材は入力素材としてなら可 | プロンプトのみ。破られても次の層が止める |
+| 有料にしない | `pipeline-note-judge.ts` `resolveFinalPricing` / `pipeline-note-monetize.ts` | データ源なし + 本文 (タイトル・リード・本文) に `claimsPopulationStat` の該当 → `paid=false` (価格の提案は残す)。後付け有料化は `status: 'population_stat_without_data_source'` で拒否 | judge: `result_json.population_stat_without_data_source` / `population_stat_hits[{sentence,reason}]` / `paid_blocked_reason`。monetize: `result_json.status` と `population_stat_hits` |
+
+プロンプト本文は全アカウント共有なので「データを持つか」は本文に焼かず、`dataSourceLines`
+(`packages/agents/src/anp/account-context.ts`) がユーザーメッセージに【実データ源: なし】/【実データ源 (運営者宣言): …】を
+差し込む (F-ANP-56 と同じ実行時注入)。theme / outline / writer の 3 エージェントに入る。
+
+judge ゲートは F-ANP-45 (2026-09-25「judge が全記事に recommend_paid=false を返し有料が全て無料になった」) の設計意図を壊さない:
+あの事故は「judge の**品質判断**で格下げさせた」ことが問題で、これは judge の判断ではなく**本文の機械判定**であり、
+データ源なしのアカウントに限る。企画時に無料の記事を勝手に有料へ上げない挙動 (格上げは許す) は変えていない。
+
+### 5. 判定関数 (`packages/contracts/src/agents/anp.ts`)
+
+- `claimsPopulationStat(text)` → `{ claims, hits[{sentence, reason}] }`。文 (。！？改行) 単位。
+  率の指標 + 数値% / 数値% の直後の指標 / `n=` / サンプル数・母数 + 数値 / 「N年・Nレースを集計」 / 率の差をポイントで述べる。
+  `{reason, pattern}` を 1 本の配列にしてある (`stripBannedMotifs` の教訓: 添字対応にすると行の挿入で理由が全部ずれる)。
+- `claimsAggregationTheme(title, hook?)` → `{ claims, hits[{field, reason}] }`。率の指標 + 標本/期間/区分 /
+  「5年・238頭」/ 「N年分を集計・検証」。指標を含まない手順・判断基準・自分の記録の仮題は通す。
+- 既知の限界 (ヒューリスティックである): 数値を伴わない率の言及 (「回収率は低い」) と、率の指標語を使わない捏造
+  (「10回中7回当たった」を母集団について書く) は検知しない。著者自身の記録として `的中率40%` と書いた作業ログは誤検知し得る
+  (データ源を宣言すれば外れる)。偽陰性は judge の `numcheck` と運営者レビューで拾う。
+
+### 6. 未決・運営者判断 (記録)
+
+- **競馬アカウントは構造的に「データ所見」を売れない。** JRA のデータ源を持たないので、(a) 手順・判断基準・テンプレート・
+  自分の記録の商品に寄せる、(b) 実データ源 (JRA-VAN 等) を持って `data_source` を宣言する、のどちらかが要る。
+  **どちらにするかは未決** (運営者判断)。(a) なら `anp.theme` v6 のまま運用できる。(b) なら取り込み基盤の設計が別途要る。
+- **既に販売中の有料 18 本は触っていない。** このゲートは新規の判定で、公開済み記事の取り下げ・無料化は行わない
+  (note 上の操作は不可逆に近く、運営者判断)。同様に、データ源なしアカウントの**無料**記事は、母集団の統計を含んでいても
+  公開される (有料にしないだけ)。無料記事まで止める (needs_human_review に倒す) かは未決。
+- 流通がほぼ無い (743 PV / ¥0) ので、生産量そのものの見直し (在庫過多・¥85/本) は F-ANP-58 の範囲外。別途検討する。
+- `data_source` の設定 UI は未実装 (§3)。
+
+### 7. 変更したファイル
+
+| 区分 | ファイル |
+|---|---|
+| 契約 | `packages/contracts/src/agents/anp.ts` (`data_source` 既知キー / `NoteAccountContext.data_source` / `claimsPopulationStat` / `claimsAggregationTheme` / `resolveDataSource` / `dropAggregationThemes`) |
+| 注入 | `packages/agents/src/anp/account-context.ts` (`dataSourceLines`) / `theme.ts` / `outline.ts` / `writer.ts` |
+| worker | `note-theme-generate.ts` / `note-theme-auto.ts` / `pipeline-note-judge.ts` / `pipeline-note-monetize.ts` / `pipeline-note-writer-outline.ts` / `pipeline-note-writer-body.ts` / `lib/note-account-settings.ts` |
+| UI action | `apps/anp/app/actions/accounts.ts` (設定保存で `data_source` を保持) |
+| プロンプト | `scripts/anp/apply-f-anp-58-prompts.cjs` (`anp.theme` v6 / `anp.writer` v2、旧版は archived。**運営者が実行**: `bash scripts/paperback/pb-env.sh node scripts/anp/apply-f-anp-58-prompts.cjs --dry` → 本実行) |
+| テスト | `packages/contracts/__tests__/anp-fabricated-claims.test.ts` / `apps/worker/__tests__/note-fabricated-claims-gate.test.ts` (較正データは `fixtures/anp-fabricated-claims.ts`) |
+
+テストは判定関数を「常に true」「常に false」に差し替える / 各ゲート (judge・monetize・generate・auto) を外す、の 8 通りの改変で
+いずれも落ちることを確認済み。
+
+### 8. 反映の注意
+
+- プロンプトは `apply-f-anp-58-prompts.cjs` を実行するまで v5 / v1 のまま。**コードだけでは「執筆させない」層は効かない**
+  (企画で落とす層と有料にしない層はコードだけで効く)。
+- worker のコード変更の反映は worker 再デプロイ (`railway up --service A2P-Worker --detach`)。cron の構成は変えていないので再起動以外の手順は不要。

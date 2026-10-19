@@ -29,6 +29,7 @@
     "./agents/promoter": "./src/agents/promoter.ts",
     "./agents/judge": "./src/agents/judge.ts",
     "./agents/anp": "./src/agents/anp.ts",
+    "./test-fixtures/anp-fabricated-claims": "./__tests__/fixtures/anp-fabricated-claims.ts",
     "./agents/optimizer": "./src/agents/optimizer.ts",
     "./agents/seo-optimizer": "./src/agents/seo-optimizer.ts",
     "./agents/blog-seo": "./src/agents/blog-seo.ts",

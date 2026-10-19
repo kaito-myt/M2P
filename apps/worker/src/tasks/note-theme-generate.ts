@@ -3,10 +3,12 @@ import { z } from 'zod';
 
 import { generateNoteThemes as defaultGenerateNoteThemes } from '@a2p/agents/anp/theme';
 import {
-  parseNoteAccountResearch, parseNoteMonetizationPolicy, type NoteThemeInput, type NoteThemeOutput } from '@a2p/contracts/agents/anp';
+  dropAggregationThemes, parseNoteAccountResearch, parseNoteMonetizationPolicy, type NoteThemeInput, type NoteThemeOutput } from '@a2p/contracts/agents/anp';
 import { NotFoundError, ValidationError } from '@a2p/contracts/errors';
 import { createLogger, type Logger } from '@a2p/contracts/logger';
 import { prisma as defaultPrisma } from '@a2p/db';
+
+import { resolveAccountDataSource } from './lib/note-account-settings.js';
 
 /**
  * `note.theme.generate` タスク (docs/11-anp-design.md §7, F-ANP-10).
@@ -60,7 +62,7 @@ export interface NoteThemeGeneratePrisma {
   noteAccount: {
     findUnique: (args: {
       where: { id: string };
-      select: { id: true; niche: true; target_reader: true; tone: true; editorial_policy?: true; monetization_policy_json?: true; research_json?: true };
+      select: { id: true; niche: true; target_reader: true; tone: true; editorial_policy?: true; monetization_policy_json?: true; research_json?: true; settings_json?: true };
     }) => Promise<{
       id: string;
       niche: string;
@@ -69,6 +71,7 @@ export interface NoteThemeGeneratePrisma {
       editorial_policy?: string | null;
       monetization_policy_json?: unknown;
       research_json?: unknown;
+      settings_json?: unknown;
     } | null>;
   };
   noteTheme: {
@@ -147,7 +150,7 @@ export async function runNoteThemeGenerate(
       // monetization_policy_json を 2026-10-15 まで select していなかったため、
       // 手動の「テーマを作る」では有料比率・価格帯 (F-ANP-08) が既定値に落ちていた
       // (undefined を parse すると既定が返るので、エラーにならず静かに無視されていた)。
-      select: { id: true, niche: true, target_reader: true, tone: true, editorial_policy: true, research_json: true, monetization_policy_json: true },
+      select: { id: true, niche: true, target_reader: true, tone: true, editorial_policy: true, research_json: true, monetization_policy_json: true, settings_json: true },
     });
     if (!account) {
       throw new NotFoundError(`NoteAccount not found: ${noteAccountId}`, {
@@ -155,6 +158,7 @@ export async function runNoteThemeGenerate(
       });
     }
 
+    const dataSource = resolveAccountDataSource(account.settings_json);
     const since = new Date(now().getTime() - EXCLUDE_LOOKBACK_DAYS * 24 * 60 * 60 * 1000);
     const recentAccepted = await prisma.noteTheme.findMany({
       where: { note_account_id: noteAccountId, status: 'accepted', created_at: { gte: since } },
@@ -175,6 +179,7 @@ export async function runNoteThemeGenerate(
           ? { research: parseNoteAccountResearch(account.research_json)! }
           : {}),
         monetization: parseNoteMonetizationPolicy(account.monetization_policy_json),
+        data_source: dataSource,
       },
       count,
       exclude_titles_recent: recentAccepted.map((r) => r.title),
@@ -183,8 +188,10 @@ export async function runNoteThemeGenerate(
 
     const result = await generateThemes(input);
 
-    const inserted = await prisma.noteTheme.createMany({
-      data: result.candidates.map((c) => ({
+    // F-ANP-58: 実データ源の無いアカウントでは、集計結果を売る企画を落とす (黙って 0 件にしない)。
+    const { kept, dropped } = dropAggregationThemes(result.candidates, dataSource);
+    const inserted = kept.length === 0 ? { count: 0 } : await prisma.noteTheme.createMany({
+      data: kept.map((c) => ({
         note_account_id: noteAccountId,
         title: c.title,
         hook: c.hook,
@@ -203,12 +210,23 @@ export async function runNoteThemeGenerate(
         status: 'done',
         finished_at: now(),
         error: null,
-        result_json: { note_account_id: noteAccountId, candidate_count: inserted.count },
+        result_json: {
+          note_account_id: noteAccountId,
+          candidate_count: inserted.count,
+          generated_count: result.candidates.length,
+          ...(dropped.length > 0
+            ? {
+                dropped_aggregation_count: dropped.length,
+                dropped_aggregation: dropped,
+                ...(kept.length === 0 ? { outcome: 'all_dropped_aggregation_without_data_source' } : {}),
+              }
+            : {}),
+        },
       },
     });
 
     log.info(
-      { task: NOTE_THEME_GENERATE_TASK_NAME, jobId, noteAccountId, candidateCount: inserted.count },
+      { task: NOTE_THEME_GENERATE_TASK_NAME, jobId, noteAccountId, candidateCount: inserted.count, droppedAggregation: dropped },
       'note.theme.generate done — NoteThemes inserted',
     );
   } catch (err) {

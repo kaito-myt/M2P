@@ -2,8 +2,10 @@ import type { JobHelpers, Task } from 'graphile-worker';
 
 import { generateNoteThemes as defaultGenerateNoteThemes } from '@a2p/agents/anp/theme';
 import {
+  dropAggregationThemes,
   parseNoteAccountResearch,
   parseNoteMonetizationPolicy,
+  type DroppedAggregationTheme,
   type NoteThemeInput,
   type NoteThemeOutput,
 } from '@a2p/contracts/agents/anp';
@@ -11,7 +13,7 @@ import { createLogger, type Logger } from '@a2p/contracts/logger';
 import { prisma as defaultPrisma } from '@a2p/db';
 
 import { readAnpAutopass, type AnpAutopassPrisma } from './lib/anp-autopass.js';
-import { resolveThemeAutoSettings } from './lib/note-account-settings.js';
+import { resolveAccountDataSource, resolveThemeAutoSettings } from './lib/note-account-settings.js';
 import { NOTE_THEME_GENERATE_TASK_NAME } from './note-theme-generate.js';
 import { PIPELINE_NOTE_WRITER_OUTLINE_TASK_NAME } from './pipeline-note-writer-outline.js';
 
@@ -147,6 +149,8 @@ export interface NoteThemeAutoAccountResult {
   note_account_id: string;
   generated: number;
   accepted: number;
+  /** F-ANP-58: データ源の無いアカウントで落とした「集計結果を売る」企画 (理由つき)。 */
+  dropped_aggregation?: DroppedAggregationTheme[];
   error?: string;
 }
 
@@ -198,6 +202,7 @@ export async function runNoteThemeAuto(deps: NoteThemeAutoDeps = {}): Promise<No
     }
 
     try {
+      const dataSource = resolveAccountDataSource(account.settings_json);
       const since = new Date(now().getTime() - EXCLUDE_LOOKBACK_DAYS * 24 * 60 * 60 * 1000);
       const recentAccepted = await prisma.noteTheme.findMany({
         where: { note_account_id: account.id, status: 'accepted', created_at: { gte: since } },
@@ -233,6 +238,7 @@ export async function runNoteThemeAuto(deps: NoteThemeAutoDeps = {}): Promise<No
             ? { research: parseNoteAccountResearch(account.research_json)! }
             : {}),
           monetization: parseNoteMonetizationPolicy(account.monetization_policy_json),
+          data_source: dataSource,
         },
         count: effective.themes_per_day,
         exclude_titles_recent: recentAccepted.map((r) => r.title),
@@ -249,8 +255,16 @@ export async function runNoteThemeAuto(deps: NoteThemeAutoDeps = {}): Promise<No
         throw err;
       }
 
+      // F-ANP-58: 実データ源の無いアカウントでは、集計結果を売る企画を採用前に落とす。黙って 0 件にしない。
+      const { kept, dropped } = dropAggregationThemes(result.candidates, dataSource);
+      if (dropped.length > 0) {
+        log.warn(
+          { task: NOTE_THEME_AUTO_TASK_NAME, noteAccountId: account.id, dropped },
+          'F-ANP-58: データ源の無いアカウントの集計系企画を除外',
+        );
+      }
       const createdThemes: CreatedTheme[] = [];
-      for (const c of result.candidates) {
+      for (const c of kept) {
         const row = await prisma.noteTheme.create({
           data: {
             note_account_id: account.id,
@@ -275,7 +289,19 @@ export async function runNoteThemeAuto(deps: NoteThemeAutoDeps = {}): Promise<No
           status: 'done',
           finished_at: now(),
           error: null,
-          result_json: { note_account_id: account.id, candidate_count: createdThemes.length, trigger: 'autopass' },
+          result_json: {
+            note_account_id: account.id,
+            candidate_count: createdThemes.length,
+            trigger: 'autopass',
+            generated_count: result.candidates.length,
+            ...(dropped.length > 0
+              ? {
+                  dropped_aggregation_count: dropped.length,
+                  dropped_aggregation: dropped,
+                  ...(kept.length === 0 ? { outcome: 'all_dropped_aggregation_without_data_source' } : {}),
+                }
+              : {}),
+          },
         },
       });
 
@@ -325,7 +351,12 @@ export async function runNoteThemeAuto(deps: NoteThemeAutoDeps = {}): Promise<No
         }
       }
 
-      accountResults.push({ note_account_id: account.id, generated: createdThemes.length, accepted });
+      accountResults.push({
+        note_account_id: account.id,
+        generated: createdThemes.length,
+        accepted,
+        ...(dropped.length > 0 ? { dropped_aggregation: dropped } : {}),
+      });
     } catch (err) {
       log.warn(
         { task: NOTE_THEME_AUTO_TASK_NAME, noteAccountId: account.id, err },

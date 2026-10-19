@@ -12,6 +12,7 @@ import { createLogger, type Logger } from '@a2p/contracts/logger';
 import { prisma as defaultPrisma } from '@a2p/db';
 
 import { applyNoteArticleCostFromJob, type NoteArticleCostPrisma } from './lib/note-article-cost.js';
+import { resolveAccountDataSource } from './lib/note-account-settings.js';
 import type { NoteArticleRepo } from './lib/note-article-repo.js';
 import { resolveTargetChars } from './lib/note-target-chars.js';
 import { PIPELINE_NOTE_WRITER_BODY_TASK_NAME } from './pipeline-note-writer-body.js';
@@ -98,6 +99,7 @@ export interface PipelineNoteWriterOutlinePrisma {
         tone: true;
         monetization_policy_json?: true;
         editorial_policy?: true;
+        settings_json?: true;
       };
     }) => Promise<{
       id: string;
@@ -106,6 +108,7 @@ export interface PipelineNoteWriterOutlinePrisma {
       tone: string | null;
       monetization_policy_json?: unknown;
       editorial_policy?: string | null;
+      settings_json?: unknown;
     } | null>;
   };
   noteTheme: {
@@ -201,6 +204,7 @@ export async function runPipelineNoteWriterOutline(
         tone: true,
         monetization_policy_json: true,
         editorial_policy: true,
+        settings_json: true,
       },
     });
     if (!account) {
@@ -219,7 +223,7 @@ export async function runPipelineNoteWriterOutline(
     const input: NoteOutlineInput = {
       note_article_id: noteArticleId,
       job_id: jobId,
-      account: { niche: account.niche, target_reader: account.target_reader, tone: account.tone, editorial_policy: account.editorial_policy ?? null },
+      account: { niche: account.niche, target_reader: account.target_reader, tone: account.tone, editorial_policy: account.editorial_policy ?? null, data_source: resolveAccountDataSource(account.settings_json) },
       theme: {
         title: article.title,
         hook: theme?.hook ?? article.title,

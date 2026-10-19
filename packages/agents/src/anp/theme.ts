@@ -31,6 +31,7 @@ import type { LoadModelAssignmentDeps } from '../lib/load-model-assignment.js';
 import { extractJson } from './lib/extract-json.js';
 import {
   accountResearchLines,
+  dataSourceLines,
   editorialPolicyLines,
   monetizationLines,
   operatorInstructionLines,
@@ -89,6 +90,7 @@ export async function generateNoteThemes(
     `想定読者: ${parsedInput.account.target_reader ?? '(指定なし)'}`,
     `トーン: ${parsedInput.account.tone ?? '(指定なし)'}`,
     ...editorialPolicyLines(parsedInput.account),
+    ...dataSourceLines(parsedInput.account),
     ...monetizationLines(parsedInput.account, parsedInput.count),
     // F-ANP-56: 週次リサーチの成果 (効いている型 / 狙う題材 / 避ける題材)。
     // アカウント固有なので役割プロンプト本文ではなくここから注入する。

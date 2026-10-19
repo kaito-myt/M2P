@@ -7,7 +7,7 @@ import { revalidatePath } from 'next/cache';
 import { z } from 'zod';
 
 import { prisma } from '@a2p/db';
-import { NOTE_PROMOTION_CHANNELS, NoteAccountProfileTargetSchema, NoteAccountSettingsSchema, NoteMonetizationPolicySchema, mergeNoteAccountSettings, parseNoteMonetizationPolicy } from '@a2p/contracts/agents/anp';
+import { NOTE_PROMOTION_CHANNELS, NoteAccountProfileTargetSchema, NoteAccountSettingsSchema, NoteMonetizationPolicySchema, mergeNoteAccountSettings, parseNoteAccountSettings, parseNoteMonetizationPolicy } from '@a2p/contracts/agents/anp';
 import { encryptKdpCredentials } from '@a2p/crypto';
 
 import { auth } from '@/auth';
@@ -128,9 +128,12 @@ export async function updateAccountSettings(input: unknown): Promise<ActionResul
 
   try {
     const cur = await prisma.noteAccount.findUnique({ where: { id: accountId }, select: { settings_json: true } });
+    // F-ANP-58: data_source は既知キーなので、このフォームが送らないと merge で消える。UI を持つまでは現在値を引き継ぐ。
+    const dataSource = parseNoteAccountSettings(cur?.settings_json).data_source;
+    const merged = dataSource ? { ...nextSettings, data_source: dataSource } : nextSettings;
     await prisma.noteAccount.update({
       where: { id: accountId },
-      data: { settings_json: mergeNoteAccountSettings(cur?.settings_json, nextSettings) as never },
+      data: { settings_json: mergeNoteAccountSettings(cur?.settings_json, merged) as never },
     });
     revalidatePath(`/accounts/${accountId}`);
     return { ok: true, data: undefined };

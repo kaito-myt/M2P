@@ -5,7 +5,7 @@
  * `AppSettings` (`AnpAutopassFlags` / `anp_auto_publish_enabled`) に従う。`note.theme.auto` /
  * `note.publish.dispatch` がアカウントごとの実効値を計算する際に使う。
  */
-import { parseNoteAccountSettings } from '@a2p/contracts/agents/anp';
+import { parseNoteAccountSettings, resolveDataSource } from '@a2p/contracts/agents/anp';
 
 import type { AnpAutopassFlags } from './anp-autopass.js';
 
@@ -38,4 +38,9 @@ export function resolveAutoPublishEnabled(accountSettingsJson: unknown, globalEn
 export function resolveTiktokEnabled(accountSettingsJson: unknown): boolean {
   const s = parseNoteAccountSettings(accountSettingsJson);
   return s.tiktok_enabled ?? false;
+}
+
+/** F-ANP-58: 実データ源の宣言 (`settings_json.data_source`)。未設定/空 = null = データ源なし。 */
+export function resolveAccountDataSource(accountSettingsJson: unknown): string | null {
+  return resolveDataSource(accountSettingsJson);
 }

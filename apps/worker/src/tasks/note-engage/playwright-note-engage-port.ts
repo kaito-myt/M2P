@@ -184,12 +184,20 @@ async function runSession(args: NoteSessionArgs | (NoteEngageArgs & NoteSessionA
  * セレクタは実機未検証。外れても「検出できない」だけで誤検出はしない側に倒す。
  */
 async function looksBlocked(page: Page, status?: number): Promise<boolean> {
-  if (status === 429) return true;
+  if (status === 429) {
+    log.warn({ url: page.url() }, 'note engage blocked: HTTP 429');
+    return true;
+  }
   const texts = await page
     .locator(ALERT_SELECTOR)
     .evaluateAll((els) => els.slice(0, 10).map((e) => ((e as HTMLElement).innerText || '').slice(0, 300)))
     .catch(() => [] as string[]);
-  return texts.some((t) => BLOCK_RE.test(t));
+  const hit = texts.find((t) => BLOCK_RE.test(t));
+  if (hit === undefined) return false;
+  // 何に当たって止めたかを残す。セレクタと文言が実機未検証なので、誤検出かどうかを後から判別できるようにする
+  // (2026-10-19: 理由が残らず action_blocked の根拠が追えなかった)。
+  log.warn({ url: page.url(), matched: hit.slice(0, 200) }, 'note engage blocked: 文言に一致');
+  return true;
 }
 
 /**
@@ -281,35 +289,90 @@ async function doFollow(page: Page, handle: string, url: string): Promise<NoteEn
   return { action: 'follow', handle, url, status: 'failed', error: 'follow_not_confirmed' };
 }
 
-/** 記事のスキボタン (アクションバー優先 → main → 全体)。aria-label を持つものを優先する。 */
+/**
+ * 記事のスキボタン。**`aria-label*="スキ"` で引いてはいけない** (2026-10-19 実機確認)。
+ *
+ * 記事ページには「スキした人を見る」件数ボタンが先にいて、こちらが
+ * `<button aria-label="97スキ この記事にスキをつけたユーザーを見る">97</button>` なので
+ * `aria-label*="スキ"` の最初の一致がそれになる。押すとユーザー一覧ダイアログが開くだけで、
+ * `aria-pressed` も持たないため確認が必ず false になり、**スキは実装以来 1 件も成立していなかった**
+ * (記録上の 14 件は note の `is_liked` が全て false = 実体の無い行。2026-10-19 に削除した)。
+ *
+ * 本物は `<button data-id="ButtonIcon">` の中に `<svg aria-label="スキ">` を持つもので、
+ * 状態は `aria-pressed`。同じボタンが記事上部・下部アクションバー・固定フッターに複数あり、
+ * 表示されていない実体 (0x0) も混ざるので、**見えているものを選ぶ**。
+ */
 async function likeButton(page: Page): Promise<Locator | null> {
-  const scopes = ['main [class*="ction"]', 'main', 'body'];
-  for (const scope of scopes) {
-    const byAria = page
-      .locator(`${scope} :is(button,[role=button])[aria-label*="スキ"], ${scope} :is(button,[role=button])[aria-label*="いいね"]`)
-      .first();
-    if ((await byAria.count().catch(() => 0)) > 0) return byAria;
-    const byText = page.locator(`${scope} :is(button,[role=button])`).filter({ hasText: LIKE_HINT }).first();
-    if ((await byText.count().catch(() => 0)) > 0) return byText;
+  const sel = 'button[data-id="ButtonIcon"]:has(svg[aria-label="スキ"])';
+  for (const scope of [`main ${sel}`, sel]) {
+    const loc = page.locator(scope);
+    const n = await loc.count().catch(() => 0);
+    for (let i = 0; i < n; i += 1) {
+      const cand = loc.nth(i);
+      if (await cand.isVisible().catch(() => false)) return cand;
+    }
   }
   return null;
 }
 
-async function isLiked(btn: Locator): Promise<boolean> {
+/** 記事 URL (`https://note.com/<urlname>/n/<id>`) から記事 ID を取る。 */
+function articleIdOf(url: string): string | null {
+  return /\/n\/([A-Za-z0-9]+)/.exec(url)?.[1] ?? null;
+}
+
+/**
+ * note 自身に「この記事をスキ済みか」を聞く (2026-10-19 実機確認)。
+ * `GET /api/v3/notes/<id>` は認証付きで `data.is_liked` を返す。DOM の読み直しより確実なので
+ * **これを確認の正とする**。`page.request` はページと同じ cookie を使う。
+ * 判定不能 (非 200 / 形が違う) のときだけ null を返し、呼出側が DOM に落ちる。
+ */
+async function fetchIsLiked(page: Page, articleId: string): Promise<boolean | null> {
+  try {
+    const res = await page.request.get(`https://note.com/api/v3/notes/${articleId}`, { timeout: 15_000 });
+    if (!res.ok()) return null;
+    const body = (await res.json()) as { data?: { is_liked?: unknown } };
+    const v = body?.data?.is_liked;
+    return typeof v === 'boolean' ? v : null;
+  } catch {
+    return null;
+  }
+}
+
+async function isLikedByDom(btn: Locator): Promise<boolean> {
   const pressed = await btn.getAttribute('aria-pressed').catch(() => null);
   const label = (await btn.getAttribute('aria-label').catch(() => '')) + ' ' + norm(await btn.textContent().catch(() => ''));
   return pressed === 'true' || LIKED_HINT.test(label);
 }
 
-/** 記事の「スキ」ボタンを押す。同一ボタンが「スキ済み」へ変わったのを確認して done。 */
+/**
+ * 記事の「スキ」ボタンを押す。押す前後で note の `is_liked` を確認し、
+ * **true になって初めて done**。false のままなら行を残さない (`like_not_registered`)。
+ */
 async function doLike(page: Page, handle: string, url: string): Promise<NoteEngageOutcome> {
+  const id = articleIdOf(url);
+  const before = id ? await fetchIsLiked(page, id) : null;
+  if (before === true) return { action: 'like', handle, url, status: 'already' };
+
   const btn = await likeButton(page);
   if (!btn) return { action: 'like', handle, url, status: 'failed', error: 'like_button_not_found' };
-  if (await isLiked(btn)) return { action: 'like', handle, url, status: 'already' };
+  if (before === null && (await isLikedByDom(btn))) return { action: 'like', handle, url, status: 'already' };
 
+  await btn.scrollIntoViewIfNeeded({ timeout: 5_000 }).catch(() => {});
   await btn.click({ timeout: 10_000 }).catch(() => {});
   await page.waitForTimeout(1500);
-  if (await isLiked(btn)) return { action: 'like', handle, url, status: 'done' };
+
+  if (id) {
+    let after = await fetchIsLiked(page, id);
+    if (after !== true) {
+      // 反映に間があることがあるので 1 回だけ待って聞き直す。
+      await page.waitForTimeout(2500);
+      after = await fetchIsLiked(page, id);
+    }
+    if (after === true) return { action: 'like', handle, url, status: 'done' };
+    if (after === false) return { action: 'like', handle, url, status: 'failed', error: 'like_not_registered' };
+  }
+  // API で判定できないときだけ DOM に落ちる。
+  if (await isLikedByDom(btn)) return { action: 'like', handle, url, status: 'done' };
   return { action: 'like', handle, url, status: 'failed', error: 'like_not_confirmed' };
 }
 

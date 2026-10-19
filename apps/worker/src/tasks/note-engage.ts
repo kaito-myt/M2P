@@ -121,6 +121,12 @@ export interface NoteEngageResult {
       liked: number;
       already: number;
       failed: number;
+      /**
+       * 失敗理由ごとの件数 (`like_button_not_found` / `like_not_registered` / `follow_not_confirmed` など)。
+       * 2026-10-19: 理由を捨てていたため「19 件失敗」しか分からず、スキが実装以来 1 件も
+       * 成立していなかったことに気づけなかった。件数だけでなく理由を必ず残す。
+       */
+      failed_reasons?: Record<string, number>;
       blocked?: string;
     }
   >;
@@ -291,6 +297,7 @@ export async function runNoteEngage(payload: unknown, deps: NoteEngageDeps = {})
         liked: 0,
         already: 0,
         failed: 0 as number,
+        failed_reasons: {} as Record<string, number>,
         blocked: undefined as string | undefined,
       };
       result.per_account[account.id] = cell;
@@ -399,6 +406,10 @@ export async function runNoteEngage(payload: unknown, deps: NoteEngageDeps = {})
           cell.already += 1;
         } else {
           cell.failed += 1;
+          // 理由を落とさない。エラー文は port 側の固定文字列か例外メッセージなので、
+          // 無制限に増えないよう先頭 60 文字に切って集計する。
+          const reason = `${o.action}:${(o.error ?? 'unknown').slice(0, 60)}`;
+          cell.failed_reasons[reason] = (cell.failed_reasons[reason] ?? 0) + 1;
         }
         // 成功/既実行のみ記録(重複防止)。failed は再挑戦余地を残し記録しない。
         // (port 側は押下後に状態を読み直して done を返す — 実行していない行を残さない。)

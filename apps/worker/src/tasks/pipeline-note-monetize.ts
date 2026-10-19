@@ -29,13 +29,14 @@ import {
   acquireNoteLock as defaultAcquireNoteLock,
   releaseNoteLock as defaultReleaseNoteLock,
 } from '@a2p/agents/lib/note-lock';
-import { parseNoteAccountSettings } from '@a2p/contracts/agents/anp';
+import { claimsPopulationStat, parseNoteAccountSettings } from '@a2p/contracts/agents/anp';
 import { NotFoundError, ValidationError } from '@a2p/contracts/errors';
 import { createLogger, type Logger } from '@a2p/contracts/logger';
 import { decryptKdpCredentials } from '@a2p/crypto';
 import { prisma as defaultPrisma } from '@a2p/db';
 
 import { pushLine } from './lib/line-auth-relay.js';
+import { resolveAccountDataSource } from './lib/note-account-settings.js';
 import { notifyNoteSessionExpired, type NoteAuthRelayPrisma } from './lib/note-auth-relay.js';
 import { computePaywallSplit } from './note-publish/paywall-split.js';
 import type { NoteMonetizeResult, NotePublishPort } from './note-publish/playwright-note-publish-port.js';
@@ -220,6 +221,18 @@ export async function runPipelineNoteMonetize(
       throw new NotFoundError(`NoteAccount not found: ${article.note_account_id}`, {
         details: { noteAccountId: article.note_account_id, jobId },
       });
+    }
+    // F-ANP-58: 実データ源の無いアカウントが母集団の統計を所見に書いた記事は、後からでも有料にしない。
+    if (resolveAccountDataSource(account.settings_json) === null) {
+      const stat = claimsPopulationStat([article.title, article.body_md ?? ''].join('\n\n'));
+      if (stat.claims) {
+        log.warn({ articleId, accountId: account.id, hits: stat.hits.slice(0, 5) }, '母集団の統計を所見とする記事は有料化しない — skip');
+        await finishJob(prisma, jobId, now(), {
+          status: 'population_stat_without_data_source',
+          population_stat_hits: stat.hits.slice(0, 10),
+        });
+        return { ok: false, status: 'population_stat_without_data_source', reason: 'population_stat_without_data_source' };
+      }
     }
     if (!account.session_state_enc) {
       log.warn({ articleId, accountId: account.id }, 'note session 未設定 — skip');

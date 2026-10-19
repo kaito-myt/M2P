@@ -23,7 +23,7 @@ import {
 import type { LoggingContext, WithTokenLoggingDeps } from '../lib/with-token-logging.js';
 import type { LoadModelAssignmentDeps } from '../lib/load-model-assignment.js';
 import { extractJson } from './lib/extract-json.js';
-import { editorialPolicyLines } from './account-context.js';
+import { dataSourceLines, editorialPolicyLines } from './account-context.js';
 
 /**
  * 出力上限。日本語本文を JSON 文字列として返すため、実測で **1 字あたり約 1.5 トークン**
@@ -151,6 +151,7 @@ export async function generateNoteBody(
     `見出し構成 (順守):\n${parsedInput.headings.map((h, i) => `${i + 1}. ${h}`).join('\n')}`,
     `目標文字数: ${parsedInput.target_chars} 字`,
     ...editorialPolicyLines(parsedInput.account),
+    ...dataSourceLines(parsedInput.account),
   ];
   if (parsedInput.paid) {
     lines.push(

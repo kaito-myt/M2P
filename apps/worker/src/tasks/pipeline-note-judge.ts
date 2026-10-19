@@ -13,12 +13,17 @@ import {
   type NoteJudgeInput,
   type NoteJudgeOutput,
 } from '@a2p/contracts/agents/anp';
-import { parseNoteAccountSettings } from '@a2p/contracts/agents/anp';
+import {
+  claimsPopulationStat,
+  parseNoteAccountSettings,
+  type PopulationStatHit,
+} from '@a2p/contracts/agents/anp';
 import { NotFoundError, ValidationError } from '@a2p/contracts/errors';
 import { createLogger, type Logger } from '@a2p/contracts/logger';
 import { prisma as defaultPrisma } from '@a2p/db';
 
 import { applyNoteArticleCostFromJob, type NoteArticleCostPrisma } from './lib/note-article-cost.js';
+import { resolveAccountDataSource } from './lib/note-account-settings.js';
 import type { NoteArticleRepo } from './lib/note-article-repo.js';
 import { PIPELINE_NOTE_EDITOR_TASK_NAME } from './pipeline-note-editor.js';
 import { PIPELINE_NOTE_WRITER_OUTLINE_TASK_NAME } from './pipeline-note-writer-outline.js';
@@ -242,7 +247,13 @@ export async function runPipelineNoteJudge(
     // [F-ANP-16b] アカウント設定で有料公開が許可されていれば judge の判断どおり有料のまま確定する。
     // 許可されていない (= note の本人確認が未完了) 間は従来どおり paid=false に落として価格だけ提案として残す。
     const paidAllowed = parseNoteAccountSettings(account.settings_json).paid_publish_enabled === true;
-    const finalPricing = resolveFinalPricing(article, judged, paidAllowed);
+    // F-ANP-58: 実データ源の無いアカウントが母集団の統計を所見に書いた記事は有料にしない。
+    // 開示語 (「架空」) の有無は見ない — 黙って捏造した記事の方が悪いので、正直な記事だけを止める仕掛けにしない。
+    const populationStat =
+      resolveAccountDataSource(account.settings_json) === null
+        ? claimsPopulationStat([article.title, article.lead, article.body_md].join('\n\n'))
+        : null;
+    const finalPricing = resolveFinalPricing(article, judged, paidAllowed, populationStat);
 
     // F-ANP-44: 85 以上=公開 / 70〜84=校閲へ / 69 以下=構成から書き直し / 差し戻し上限=人手。
     const route = routeByJudgeScore(judged.score_total, retryCount, RETRY_LIMIT);
@@ -361,6 +372,13 @@ export async function runPipelineNoteJudge(
           // 合格ライン未満で公開に回した記事 (運営者指示「必ず公開」の下限適用分)。
           published_below_pass: belowPass,
           next_job_id: nextJobId,
+          ...(populationStat?.claims
+            ? {
+                population_stat_without_data_source: true,
+                population_stat_hits: populationStat.hits.slice(0, 10),
+                ...(finalPricing.blockedReason ? { paid_blocked_reason: finalPricing.blockedReason } : {}),
+              }
+            : {}),
         },
       },
     });
@@ -394,12 +412,18 @@ export async function runPipelineNoteJudge(
  * 決めた記事がすべて無料で公開されていた (運営者報告「有料記事がすべて無料で掲載されています」)。
  * さらに paid=false になった時点で `paywall_line_pos` も消えるため、後から有料に戻すこともできなかった。
  * 品質が低い記事は「無料で出す」ではなく needs_human_review で止めるのが本来の設計。
+ *
+ * [F-ANP-58] 唯一の例外: 実データ源の無いアカウントが母集団の統計を所見として書いた記事は、
+ * 企画時に有料でも有料にしない (読者が払うのは実在しない集計結果になる)。上の事故は
+ * 「judge の品質判断で格下げした」ことが問題だったので、ここは judge の判断ではなく本文の機械判定。
  */
 export function resolveFinalPricing(
   article: { paid: boolean; price_jpy: number | null; paywall_line_pos?: number | null },
   judged: NoteJudgeOutput,
   paidAllowed: boolean,
-): { paid: boolean; price_jpy: number | null } {
+  /** データ源の無いアカウントのときだけ渡す本文走査の結果。データ源ありなら null。 */
+  populationStat: { claims: boolean; hits: PopulationStatHit[] } | null = null,
+): { paid: boolean; price_jpy: number | null; blockedReason?: string } {
   // 企画時に有料なら有料のまま。無料でも judge が有料を勧めるなら格上げは許す。
   const plannedPaid = article.paid || judged.recommend_paid === true;
   if (!plannedPaid) return { paid: false, price_jpy: null };
@@ -418,6 +442,9 @@ export function resolveFinalPricing(
   const price = suggested ?? planned;
   // 有料にできるのは「アカウントが許可」かつ「有料ラインが本文にある」かつ「価格が決まっている」ときだけ。
   // (有料ラインが無いまま paid にすると publish 時に本文が丸ごと有料側へ入ってしまう)
+  if (populationStat?.claims) {
+    return { paid: false, price_jpy: price, blockedReason: 'population_stat_without_data_source' };
+  }
   const canPaid = paidAllowed && price !== null && price > 0 && (article.paywall_line_pos ?? null) !== null;
   return { paid: canPaid, price_jpy: price };
 }
