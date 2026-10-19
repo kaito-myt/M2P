@@ -14,7 +14,7 @@ import {
 import { TDP_MONTHLY_LIMIT_HARD_MAX } from '@a2p/contracts/tdp/settings';
 
 import { messages } from './messages';
-import type { Refusal } from './settings-groups-core';
+import { U9U10_FIELDS, type Refusal } from './settings-groups-core';
 import type { TdpSettings } from './tdp-settings';
 
 /** Inc-1 で作るタブ。media (Inc-4) と運用 (Inc-5) は対応するタブがまだ無く、それが正常 (§7.3a)。 */
@@ -98,8 +98,13 @@ export function formatRefusals(refusals: readonly Refusal[]): string[] {
     tdp_monthly_publish_limit: messages.settings.limit.boothLabel,
     tdp_jinxxy_monthly_limit: messages.settings.limit.jinxxyLabel,
   };
-  const label = (f: string) => limitField[f] ?? messages.settings.fields[f]?.label ?? f;
+  const label = (f: string) =>
+    limitField[f] ?? messages.settings.u9u10.fieldLabels[f] ?? messages.settings.fields[f]?.label ?? f;
+  const yn = (v: unknown) => (v === true ? messages.settings.u9u10.yes : v === false ? messages.settings.u9u10.no : v);
   return refusals.map((r) => {
+    if (r.field === U9U10_FIELDS.shares && r.reason === 'range') {
+      return e.refusal(label(r.field), show(yn(r.refused)), show(yn(r.current)));
+    }
     switch (r.reason) {
       case 'unknown_key':
         return e.refusalUnknownKey(label(r.field));
@@ -112,7 +117,7 @@ export function formatRefusals(refusals: readonly Refusal[]): string[] {
       case 'total':
         return e.limitTotal(Number(r.refused), r.current === null ? null : Number(r.current), TDP_MONTHLY_LIMIT_HARD_MAX);
       default: {
-        const base = e.refusal(label(r.field), show(r.refused), show(r.current));
+        const base = e.refusal(label(r.field), show(r.refused), show(r.current)) + (messages.settings.u9u10.rangeHint[r.field] ?? '');
         return r.field in limitField ? `${base} (0〜${TDP_MONTHLY_LIMIT_HARD_MAX} の整数)` : base;
       }
     }

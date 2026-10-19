@@ -18,9 +18,10 @@ import {
   buildConfirmed,
   validateGroupPatch,
   validateMonthlyLimitPair,
+  validateU9U10,
   type Refusal,
 } from '@/lib/settings-groups-core';
-import { settingsFromRow } from '@/lib/tdp-settings';
+import { settingsFromRow, type U10Answer, type U9Answer } from '@/lib/tdp-settings';
 
 export type ActionErrorCode = 'auth' | 'validation' | 'limit_range' | 'save_failed';
 export type ActionResult<T> =
@@ -230,4 +231,38 @@ export async function updateDerivativeDenylist(raw: unknown): Promise<ActionResu
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : m.saveFailed };
   }
+}
+
+/**
+ * U-9 / U-10 の回答を記録する (F-3DP-42)。回答が空の間は初回の出品が保留される。
+ * 送られた側だけを `answered_at` つきで上書きし、送られなかった側は触らない。拒否が 1 件でもあれば何も保存しない。
+ * 設定の行が読めないときは保存しない (読めない状態で書くと既存の回答を消しうる)。
+ * エラー文に DB の生メッセージは出さない (§17.11)。
+ */
+export async function recordU9U10(
+  raw: unknown,
+): Promise<ActionResult<{ u9: U9Answer | null; u10: U10Answer | null }>> {
+  const session = await auth();
+  if (!session?.user) return authError;
+
+  let row: Record<string, unknown> | null;
+  try {
+    row = (await prisma.appSettings.findUnique({ where: SINGLETON })) as Record<string, unknown> | null;
+  } catch {
+    return { ok: false, code: 'save_failed', error: m.saveFailed };
+  }
+  if (!row) return { ok: false, code: 'save_failed', error: messages.settings.u9u10.saveFailedNoRow };
+  const settings = settingsFromRow(row);
+
+  const v = validateU9U10(raw, settings, new Date());
+  if (!v.ok) return validationError(v.refusals);
+
+  try {
+    await prisma.appSettings.update({ where: SINGLETON, data: v.columns as never });
+  } catch {
+    return { ok: false, code: 'save_failed', error: m.saveFailed };
+  }
+  revalidatePath('/settings');
+  revalidatePath('/');
+  return { ok: true, data: { u9: v.columns.tdp_u9_json ?? settings.u9, u10: v.columns.tdp_u10_json ?? settings.u10 } };
 }

@@ -27,15 +27,15 @@ F-3DP-38 (判定値を `app_settings` に), F-3DP-41 (R-1 天井), F-3DP-11 (設
 
 | ID | 状態 | タスク | 概要 | 対応機能 | 工数 |
 |---|---|---|---|---|---|
-| T-3DP-02-01 | ⬜ | contracts: 設定の既定値・状態機械 | `settings.ts` / `status.ts` と exports | F-3DP-38, 41 | M |
-| T-3DP-02-02 | ✅ (一部) | **R-1 の天井を 12 に (アプリ側)** | 50 → 12、拒否時に拒否値と現在値、丸めない | F-3DP-41 | S |
-| T-3DP-02-03 | ⬜ | DB migration (Inc-1) + 一致テスト | `app_settings` 列・`tdp_products` 列・`jobs` 列・CHECK (d)(f) | F-3DP-38, 41 | L |
+| T-3DP-02-01 | ✅ | contracts: 設定の既定値・状態機械 | `settings.ts` / `status.ts` と exports | F-3DP-38, 41 | M |
+| T-3DP-02-02 | ✅ | **R-1 の天井を 12 に (アプリ側)** | 50 → 12、拒否時に拒否値と現在値、丸めない | F-3DP-41 | S |
+| T-3DP-02-03 | ✅ | DB migration (Inc-1) + 一致テスト | `app_settings` 列・`tdp_products` 列・`jobs` 列・CHECK (d)(f) | F-3DP-38, 41 | L |
 | T-3DP-02-04 | ✅ | 実 PG テスト基盤 | 統合テストの harness・CI の Postgres・`TDP_REQUIRE_PG` | (全体の前提) | L |
 | T-3DP-02-05 | ✅ | DB 制約の統合テスト | CHECK / FK を実 PG で固定 | F-3DP-28 ①, 41 | S |
 | T-3DP-02-06 | ✅ | `computeSlots` (枠の計算) | `hold.ts`、`canListMore` を委譲 | F-3DP-02, 30 | S |
 | T-3DP-02-07 | ✅ | 設定グループの core・loader・Action | 検証・提案値の確認状態・媒体別枠 | F-3DP-38, 41 | M |
 | T-3DP-02-08 | ✅ | 設定画面のタブ化と提案値バッジ | 4 タブ + 注意書き + 確認操作 | F-3DP-11, 38 | L |
-| T-3DP-02-09 | ⬜ | U-9 / U-10 回答欄 | Action と安全装置タブ内のフォーム | F-3DP-42 | S |
+| T-3DP-02-09 | ✅ | U-9 / U-10 回答欄 | Action と安全装置タブ内のフォーム | F-3DP-42 | S |
 | T-3DP-02-10 | ⬜ | ホーム・商品一覧の Inc-1 差分 | ヒーロー差し替え・空状態・立ち上げチェック・状態ピル | F-3DP-12, 35 | M |
 | T-3DP-02-11 | ⬜ | E2E 基盤 (`apps/3dp`) | Playwright の 3dp 対象・設定天井と空状態のシナリオ | F-3DP-41 | L |
 | T-3DP-02-12 | ⬜ | 設計書の追従 | docs/12 の増分表・cron 表・不整合の訂正、docs/10 の env 名 | (Rule #7/#8) | S |
@@ -71,7 +71,7 @@ F-3DP-38 (判定値を `app_settings` に), F-3DP-41 (R-1 天井), F-3DP-11 (設
 - **やること**: `MONTHLY_LIMIT_MAX = 50` を廃し `TDP_MONTHLY_LIMIT_HARD_MAX` (T-3DP-02-01) を参照。`validateMonthlyLimit` は**丸めずに失敗**を維持しつつ、失敗結果に `{refused:number|null}` を持たせる。Action は拒否時に「**13 は保存されていません。サーバー側で拒否しました (最大 12)。現在の値: 8**」の形の文面 (`messages` に関数として)。入力欄の `max` と注記「設定できる最大は 12 です (コード側の固定値。この画面からは変更できません)」を常時表示。
 - **受入基準**:
   1. `validateMonthlyLimit`: 12 → ok / 13・50・-1・1.5・`''`・`null`・`'abc'` → `ok:false` (**空や null を 0 として受けない**既存挙動を維持)。
-  2. Action のテスト: 13 を渡すと DB 更新関数が**呼ばれず**、返却文面が「13」「最大 12」「現在の値」を含む。未認証は拒否され DB を読み書きしない (`code:'auth'` は `ActionResult` の拡張を伴うため T-3DP-02-07 の受入基準 4 で実装。T-3DP-02-02 では見送り)。
+  2. Action のテスト: 13 を渡すと DB 更新関数が**呼ばれず**、返却文面が「13」「最大 12」「現在の値」を含む。未認証は拒否され DB を読み書きしない (`code:'auth'` は `ActionResult` の拡張を伴うため T-3DP-02-07 の受入基準 4 で実装。T-3DP-02-02 では見送り → T-3DP-02-07 で実装済)。
   3. `apps/3dp` 配下に数値リテラル `50` が天井として残っていない (`grep -rn "MONTHLY_LIMIT_MAX\|0〜50" apps/3dp` が 0 件)。
   4. `grep -rn "TDP_MONTHLY_LIMIT_HARD_MAX *=" apps packages` が contracts の 1 件のみ。
   5. 既存の `settings-core.test.ts` を壊さず、天井関連のみ更新。`pnpm --filter @3dp/web test:unit` / `typecheck` 緑。

@@ -15,7 +15,7 @@ import {
 } from '@a2p/contracts/tdp/settings';
 
 import { validateMonthlyLimit } from './settings-core';
-import type { TdpSettings } from './tdp-settings';
+import type { TdpSettings, U10Answer, U9Answer } from './tdp-settings';
 
 export const SETTINGS_GROUPS = ['safety', 'plan_price', 'generation', 'gates', 'media'] as const;
 export type SettingsGroup = (typeof SETTINGS_GROUPS)[number];
@@ -249,4 +249,94 @@ export function buildConfirmed(group: SettingsGroup, settings: TdpSettings, now:
   const values: Record<string, unknown> = {};
   for (const key of groupKeys(group)) values[key] = currentValue(key, settings);
   return { ...base, [group]: { confirmed_at: now.toISOString(), values } };
+}
+
+export const U9_NOTE_MAX = 500;
+export const U9U10_FIELDS = {
+  shares: 'u9.shares_pixiv_account',
+  note: 'u9.note',
+  pct: 'u10.booth_share_pct',
+} as const;
+
+export type U9U10Result =
+  | { ok: true; columns: { tdp_u9_json?: U9Answer; tdp_u10_json?: U10Answer } }
+  | { ok: false; refusals: Refusal[] };
+
+const isObj = (v: unknown): v is Record<string, unknown> => !!v && typeof v === 'object' && !Array.isArray(v);
+
+/**
+ * U-9 / U-10 の回答の検証 (F-3DP-42)。丸めず拒否し、1 件でも拒否があれば何も返さない (all-or-nothing)。
+ * 含まれた側だけを更新対象にし、含まれなかった側の回答 (と answered_at) は触らない。
+ * 拒否文に長文のメモを丸ごと載せないため、メモの refused / current は文字数で表す。
+ */
+export function validateU9U10(raw: unknown, settings: Pick<TdpSettings, 'u9' | 'u10'>, now: Date): U9U10Result {
+  if (!isObj(raw) || !('u9' in raw || 'u10' in raw)) {
+    return { ok: false, refusals: [{ field: '(patch)', refused: raw, current: null, reason: 'empty' }] };
+  }
+  const refusals: Refusal[] = [];
+  const columns: { tdp_u9_json?: U9Answer; tdp_u10_json?: U10Answer } = {};
+  const answeredAt = now.toISOString();
+  const lenText = (s: string) => `${[...s].length} 文字`;
+
+  for (const k of Object.keys(raw)) {
+    if (k !== 'u9' && k !== 'u10') refusals.push({ field: k, refused: raw[k], current: null, reason: 'unknown_key' });
+  }
+
+  if ('u9' in raw) {
+    const o = raw.u9;
+    const curShares = settings.u9 ? settings.u9.shares_pixiv_account : null;
+    const curNote = settings.u9 ? lenText(settings.u9.note) : null;
+    if (!isObj(o)) {
+      refusals.push({ field: U9U10_FIELDS.shares, refused: o, current: curShares, reason: 'range' });
+    } else {
+      const n0 = refusals.length;
+      for (const k of Object.keys(o)) {
+        if (k !== 'shares_pixiv_account' && k !== 'note') {
+          refusals.push({ field: `u9.${k}`, refused: o[k], current: null, reason: 'unknown_key' });
+        }
+      }
+      const shares = o.shares_pixiv_account;
+      if (shares === undefined) refusals.push({ field: U9U10_FIELDS.shares, refused: shares, current: curShares, reason: 'required' });
+      else if (typeof shares !== 'boolean') {
+        refusals.push({ field: U9U10_FIELDS.shares, refused: shares, current: curShares, reason: 'range' });
+      }
+      const noteRaw = o.note;
+      let note = '';
+      if (noteRaw !== undefined && noteRaw !== null) {
+        if (typeof noteRaw !== 'string') {
+          refusals.push({ field: U9U10_FIELDS.note, refused: noteRaw, current: curNote, reason: 'range' });
+        } else {
+          note = noteRaw.trim();
+          if ([...note].length > U9_NOTE_MAX) {
+            refusals.push({ field: U9U10_FIELDS.note, refused: lenText(note), current: curNote, reason: 'range' });
+          }
+        }
+      }
+      if (refusals.length === n0) {
+        columns.tdp_u9_json = { answered_at: answeredAt, shares_pixiv_account: shares as boolean, note };
+      }
+    }
+  }
+
+  if ('u10' in raw) {
+    const o = raw.u10;
+    const cur = settings.u10 ? settings.u10.booth_share_pct : null;
+    if (!isObj(o)) {
+      refusals.push({ field: U9U10_FIELDS.pct, refused: o, current: cur, reason: 'range' });
+    } else {
+      const n0 = refusals.length;
+      for (const k of Object.keys(o)) {
+        if (k !== 'booth_share_pct') refusals.push({ field: `u10.${k}`, refused: o[k], current: null, reason: 'unknown_key' });
+      }
+      const pct = o.booth_share_pct;
+      if (pct === undefined) refusals.push({ field: U9U10_FIELDS.pct, refused: pct, current: cur, reason: 'required' });
+      else if (typeof pct !== 'number' || !Number.isFinite(pct) || pct < 0 || pct > 100) {
+        refusals.push({ field: U9U10_FIELDS.pct, refused: pct, current: cur, reason: 'range' });
+      } else if (refusals.length === n0) {
+        columns.tdp_u10_json = { answered_at: answeredAt, booth_share_pct: pct };
+      }
+    }
+  }
+
+  return refusals.length > 0 ? { ok: false, refusals } : { ok: true, columns };
 }

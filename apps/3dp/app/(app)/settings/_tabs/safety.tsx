@@ -8,6 +8,7 @@ import type { TdpSettings } from '@/lib/tdp-settings';
 import { DenylistForm } from '../denylist-form';
 import { LimitForm } from '../limit-form';
 import { GroupForm } from './group-form';
+import { SafetyU9U10 } from './safety-u9u10';
 import { TabIntro } from './tab-intro';
 
 const m = messages.settings;
@@ -105,7 +106,13 @@ export function SafetyTab({
         <p className="mt-1 max-w-2xl text-caption text-muted">{m.sharedAccountNote}</p>
       </section>
 
-      {/* U-9 / U-10 の回答欄はここに差し込む (_tabs/safety-u9u10.tsx) */}
+      {/* U-9 / U-10 の回答 (F-3DP-42。初回の出品の前に必須) */}
+      <section className="mt-space-loose border-t border-border-warm pt-space-loose" data-testid="tdp-u9u10-section">
+        <h2 className="text-section-title text-charcoal">{m.u9u10.title}</h2>
+        <div className="mt-space-relaxed">
+          <SafetyU9U10 u9={settings.u9} u10={settings.u10} readOnly={readOnly} />
+        </div>
+      </section>
     </div>
   );
 }

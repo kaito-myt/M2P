@@ -162,6 +162,43 @@ export const messages = {
     },
     sharedAccountNote:
       '3DP の出品は A2P と同じ BOOTH アカウントを使います。処分されると A2P の BOOTH チャネルも同時に失います。',
+    u9u10: {
+      title: '共用アカウントについての回答 (U-9 / U-10)',
+      required: '初回の出品の前に必須です。',
+      requiredDetail: '2 つの回答がそろうまで、BOOTH への出品は保留されます。',
+      statusAnswered: '回答済み',
+      statusUnanswered: '未回答',
+      statusPending: 'U-9 と U-10 のどちらか、または両方が未回答です。',
+      statusDone: 'U-9 と U-10 の回答がそろっています。',
+      answeredAt: (at: string) => `回答日時 ${at} (日本時間)`,
+      u9Label: 'U-9: 同じ pixiv (BOOTH) アカウントを、BOOTH 以外にも使っていますか',
+      u9Hint: 'pixiv 本体への投稿や FANBOX など。使っていると、処分されたときの影響が BOOTH の外にも広がります。',
+      yes: 'はい',
+      no: 'いいえ',
+      noteLabel: '用途メモ (任意・500 文字まで)',
+      u10Label: 'U-10: A2P の BOOTH 書籍売上は、A2P 全体の売上の何 % ですか',
+      u10Hint: '0〜100 の数で答えます。BOOTH の書籍売上がまだ無ければ 0 と答えてください。',
+      pctUnit: '%',
+      pctValue: (pct: number) => `${pct} %`,
+      pctZeroNote: 'BOOTH の書籍売上はゼロ',
+      advice:
+        'この割合は、アカウントを失ったときの影響の大きさを表します。月間出品上限 (R-1) を下げることを検討してください。',
+      save: '回答を保存',
+      saving: '保存中…',
+      saved: '回答を保存しました。',
+      overwriteNote: '回答し直すと、前の回答は上書きされます。',
+      /** 拒否文の項目名 (設定グループの項目ではないので fields とは別)。 */
+      fieldLabels: {
+        'u9.shares_pixiv_account': 'U-9 同じアカウントの他の用途',
+        'u9.note': 'U-9 用途メモ',
+        'u10.booth_share_pct': 'U-10 BOOTH 書籍売上の割合',
+      } as Record<string, string>,
+      rangeHint: {
+        'u9.note': ' (500 文字まで)',
+        'u10.booth_share_pct': ' (0〜100 の数)',
+      } as Record<string, string>,
+      saveFailedNoRow: '設定の行が見つからないため、回答を保存できません。',
+    },
     safetyValuesTitle: '理由の文字数と枠の返却',
     sharedAccountTitle: 'BOOTH アカウントの共用',
     fields: {
