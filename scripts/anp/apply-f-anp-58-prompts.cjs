@@ -16,7 +16,7 @@
  * 使い方 (運営者が実行): bash scripts/paperback/pb-env.sh node scripts/anp/apply-f-anp-58-prompts.cjs [--dry]
  * 旧版が想定の版 (theme=5 / writer=1) でなければ中止する。強行するなら --force。
  */
-const { Client } = require('pg');
+const { Client } = require('C:/DEV/M2P/node_modules/.pnpm/pg@8.21.0/node_modules/pg');
 
 const DRY = process.argv.includes('--dry');
 const FORCE = process.argv.includes('--force');
