@@ -15,6 +15,7 @@ describe('loadTdpSettings', () => {
     });
     expect(r.degraded).toBe(true);
     expect(r.warnings[0]).toContain('db down');
+    expect(r.reason).toBe('read_failed');
     expect(r.settings.tdp_status_check_enabled).toBe(TDP_SETTINGS_DEFAULTS.tdp_status_check_enabled);
     expect(r.settings.tdp_research_enabled).toBe(false);
     expect(r.settings.tuning.stall_hours).toBe(24);
@@ -24,6 +25,7 @@ describe('loadTdpSettings', () => {
     const r = await loadTdpSettings({ appSettings: { findUnique: async () => null } });
     expect(r.degraded).toBe(true);
     expect(r.warnings).toHaveLength(1);
+    expect(r.reason).toBe('no_row');
   });
 
   it('実値は widen された型で受け取れ、tuning は parseTuning で補われる', async () => {

@@ -31,6 +31,8 @@ export interface LoadedTdpSettings {
   settings: TdpSettings;
   /** true = DB から読めず全項目が既定。呼び出し側は「既定だから安全」と決めつけず警告を出す。 */
   degraded: boolean;
+  /** degraded の原因 (画面は生の例外文ではなくこれで固定文を選ぶ)。 */
+  reason: 'no_row' | 'read_failed' | null;
   warnings: string[];
 }
 
@@ -80,11 +82,11 @@ export async function loadTdpSettings(db: TdpSettingsReader): Promise<LoadedTdpS
   try {
     const row = await db.appSettings.findUnique({ where: { id: 'singleton' } });
     if (!row) {
-      return { settings: settingsFromRow(null), degraded: true, warnings: ['app_settings の singleton 行がありません。既定値で動作します'] };
+      return { settings: settingsFromRow(null), degraded: true, reason: 'no_row', warnings: ['app_settings の singleton 行がありません。既定値で動作します'] };
     }
-    return { settings: settingsFromRow(row), degraded: false, warnings: [] };
+    return { settings: settingsFromRow(row), degraded: false, reason: null, warnings: [] };
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    return { settings: settingsFromRow(null), degraded: true, warnings: [`設定の読込に失敗したため既定値で動作します: ${msg}`] };
+    return { settings: settingsFromRow(null), degraded: true, reason: 'read_failed', warnings: [`設定の読込に失敗したため既定値で動作します: ${msg}`] };
   }
 }

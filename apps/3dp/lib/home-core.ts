@@ -3,6 +3,7 @@
  * ここだけをユニットテストする (apps/anp/lib/home-core.ts と同じ方針)。
  */
 import { canListMore } from '@a2p/contracts/tdp/derivative-guard';
+import { computeSlots } from '@a2p/contracts/tdp/hold';
 
 /** docs/12 §7 `tdp_products.status` の正準順。UI の並びもこの順に固定する。 */
 export const PRODUCT_STATUSES = [
@@ -53,8 +54,12 @@ export function totalCount(rows: ReadonlyArray<StatusCountRow>): number {
 }
 
 export interface QuotaView {
-  /** 月間上限 (app_settings.tdp_monthly_publish_limit)。 */
+  /** 実効上限 (設定値をコード側の天井で切った値。残枠の計算に使うのはこれ)。 */
   limit: number;
+  /** 設定値 (app_settings.tdp_monthly_publish_limit)。天井を超えて保存されていると limit と違う。 */
+  configuredLimit: number;
+  /** 設定値が天井で読み替えられているか (§17.10.4)。 */
+  clamped: boolean;
   /** 当月すでに出品した件数。 */
   listed: number;
   /** あと何件出せるか。 */
@@ -71,10 +76,13 @@ export interface QuotaView {
  */
 export function buildQuotaView(args: { listedThisMonth: number; monthlyLimit: number }): QuotaView {
   const listed = Math.max(0, args.listedThisMonth);
-  const limit = Math.max(0, args.monthlyLimit);
-  const result = canListMore({ listedThisMonth: listed, monthlyLimit: limit });
+  const configuredLimit = Math.max(0, args.monthlyLimit);
+  const result = canListMore({ listedThisMonth: listed, monthlyLimit: configuredLimit });
+  const { limit } = computeSlots({ limit: configuredLimit, publishedThisMonth: listed, activeReservations: 0 });
   return {
     limit,
+    configuredLimit,
+    clamped: configuredLimit > limit,
     listed,
     remaining: result.remaining,
     allowed: result.allowed,

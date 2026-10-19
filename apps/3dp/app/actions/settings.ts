@@ -46,7 +46,7 @@ function refusalText(r: Refusal): string {
     case 'required':
       return m.refusalRequired(r.field);
     case 'total':
-      return m.limitTotal(Number(r.refused), Number(r.current), TDP_MONTHLY_LIMIT_HARD_MAX);
+      return m.limitTotal(Number(r.refused), r.current === null ? null : Number(r.current), TDP_MONTHLY_LIMIT_HARD_MAX);
     default:
       return m.refusal(r.field, show(r.refused), show(r.current));
   }
@@ -105,7 +105,11 @@ export async function updateMonthlyPublishLimit(
   const parsed = validateMonthlyLimitPair(input, current);
   if (!parsed.ok) {
     const first = parsed.refusals[0]!;
-    if (first.reason === 'total') return validationError(parsed.refusals, 'limit_range');
+    // 行が読めないときの現在値 0 は「出品を止めた状態」と区別できない。不明 (null) として返す。
+    if (first.reason === 'total') {
+      const refusals = row ? parsed.refusals : parsed.refusals.map((r) => ({ ...r, current: null }));
+      return validationError(refusals, 'limit_range');
+    }
     return {
       ok: false,
       code: 'limit_range',

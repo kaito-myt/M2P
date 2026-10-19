@@ -30,11 +30,11 @@ F-3DP-38 (判定値を `app_settings` に), F-3DP-41 (R-1 天井), F-3DP-11 (設
 | T-3DP-02-01 | ⬜ | contracts: 設定の既定値・状態機械 | `settings.ts` / `status.ts` と exports | F-3DP-38, 41 | M |
 | T-3DP-02-02 | ✅ (一部) | **R-1 の天井を 12 に (アプリ側)** | 50 → 12、拒否時に拒否値と現在値、丸めない | F-3DP-41 | S |
 | T-3DP-02-03 | ⬜ | DB migration (Inc-1) + 一致テスト | `app_settings` 列・`tdp_products` 列・`jobs` 列・CHECK (d)(f) | F-3DP-38, 41 | L |
-| T-3DP-02-04 | ⬜ | 実 PG テスト基盤 | 統合テストの harness・CI の Postgres・`TDP_REQUIRE_PG` | (全体の前提) | L |
-| T-3DP-02-05 | ⬜ | DB 制約の統合テスト | CHECK / FK を実 PG で固定 | F-3DP-28 ①, 41 | S |
-| T-3DP-02-06 | ⬜ | `computeSlots` (枠の計算) | `hold.ts`、`canListMore` を委譲 | F-3DP-02, 30 | S |
-| T-3DP-02-07 | ⬜ | 設定グループの core・loader・Action | 検証・提案値の確認状態・媒体別枠 | F-3DP-38, 41 | M |
-| T-3DP-02-08 | ⬜ | 設定画面のタブ化と提案値バッジ | 4 タブ + 注意書き + 確認操作 | F-3DP-11, 38 | L |
+| T-3DP-02-04 | ✅ | 実 PG テスト基盤 | 統合テストの harness・CI の Postgres・`TDP_REQUIRE_PG` | (全体の前提) | L |
+| T-3DP-02-05 | ✅ | DB 制約の統合テスト | CHECK / FK を実 PG で固定 | F-3DP-28 ①, 41 | S |
+| T-3DP-02-06 | ✅ | `computeSlots` (枠の計算) | `hold.ts`、`canListMore` を委譲 | F-3DP-02, 30 | S |
+| T-3DP-02-07 | ✅ | 設定グループの core・loader・Action | 検証・提案値の確認状態・媒体別枠 | F-3DP-38, 41 | M |
+| T-3DP-02-08 | ✅ | 設定画面のタブ化と提案値バッジ | 4 タブ + 注意書き + 確認操作 | F-3DP-11, 38 | L |
 | T-3DP-02-09 | ⬜ | U-9 / U-10 回答欄 | Action と安全装置タブ内のフォーム | F-3DP-42 | S |
 | T-3DP-02-10 | ⬜ | ホーム・商品一覧の Inc-1 差分 | ヒーロー差し替え・空状態・立ち上げチェック・状態ピル | F-3DP-12, 35 | M |
 | T-3DP-02-11 | ⬜ | E2E 基盤 (`apps/3dp`) | Playwright の 3dp 対象・設定天井と空状態のシナリオ | F-3DP-41 | L |

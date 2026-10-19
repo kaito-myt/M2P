@@ -86,11 +86,10 @@ export const messages = {
   settings: {
     pageTitle: '設定',
     pageDescription:
-      'BOOTH の AI 生成物規制 (2025-07-18) に対する 2 つの安全装置を設定します。どちらもツール側の自主制限です。',
+      '出品の出しすぎや依拠性のある企画を止める安全装置と、判定に使う値を設定します。安全装置はツール側の自主制限です。',
     limitTitle: '月間出品上限 (R-1)',
     limitDescription:
       'BOOTH は「大量・連続的な出品」を監視対象にしており、違反はショップ強制非公開・アカウント停止に至ります。閾値は非開示のため、分からない以上は少なく出す方に倒します。0 にすると出品を完全に止められます。',
-    limitLabel: '1 か月に出品する上限件数',
     limitCeilingNote: (max: number) =>
       `設定できる最大は ${max} です (コード側の固定値。この画面からは変更できません)`,
     limitRemainingPrefix: '当月はあと',
@@ -110,13 +109,98 @@ export const messages = {
     builtinTitle: '常時有効な判定 (設定不要)',
     builtinDescription:
       '以下は禁止語リストとは独立に、決定論的に弾きます (LLM には判定させません。同じ企画は毎回同じ結果になる必要があるため)。',
+    proposalNotice:
+      'ここにある判定値・上限値・警告ラインは提案値であり、運営者は承認していません。実績が出たら見直してください。',
+    tabsAriaLabel: '設定の区分',
+    tabs: {
+      safety: '安全装置',
+      plan_price: '企画と価格',
+      generation: '生成',
+      gates: '判定値',
+    } as Record<string, string>,
+    tabDescriptions: {
+      safety: '出品の出しすぎと、依拠性のある企画を止めるための設定です。',
+      plan_price: '企画する商品の種類の配分と、価格の下限を決めます。値の保存と確認ができ、企画の自動作成が始まると効きます。',
+      generation: '3D 生成の試作回数・費用の上限・警告ラインを決めます。値の保存と確認ができ、生成が始まると効きます。',
+      gates: '続けるか止めるかの判定に使う値です。値の保存と確認ができ、判定が始まると効きます。',
+    } as Record<string, string>,
+    badge: {
+      proposed: '提案値 (未承認)',
+      confirmed: '確認済',
+      changed: '変更済 (未確認)',
+    } as Record<string, string>,
+    confirm: {
+      button: 'このタブの値を確認した',
+      pending: '確認中…',
+      hint: '保存済みの値をそのまま確認済みにします。未保存の入力は含まれません。',
+      doneAt: (at: string) => `確認日時 ${at} (日本時間)`,
+      never: 'このタブの値はまだ確認していません。',
+      done: '確認済みにしました。',
+    },
+    degraded: {
+      noRow: '設定の行が見つかりません。データベースの migration と初期データがまだ適用されていない可能性があります。',
+      readFailed: '設定の読み込みに失敗しました。再読み込みしても直らないときは、サーバーのログを確認してください。',
+      readOnly: '表示している値は既定値で、実際の設定とは限りません。復旧するまで保存と確認はできません。',
+    },
+    group: {
+      save: '変更を保存',
+      saving: '保存中…',
+      saved: '保存しました。',
+      weightsSum: (sum: number) => `合計 ${sum}`,
+      weightsSumNote: '合計が 100 になる必要があります。',
+      nullableHint: '空欄にすると暫定値を使います。',
+      kinds: { accessory: '装飾品', texture: 'テクスチャ', prop_furniture: 'プロップ・家具' } as Record<string, string>,
+    },
+    limit: {
+      boothLabel: 'BOOTH の月間出品上限',
+      jinxxyLabel: 'Jinxxy の月間出品上限',
+      total: (n: number) => `合計 ${n}`,
+      shareNote: '同じ商品を 2 つの媒体に出すと、枠は媒体ごとに 1 件ずつ消費します。',
+      clamped: (configured: number, effective: number) =>
+        `設定値は ${configured} ですが、コード側の上限 ${effective} で読み替えています。実際に効いているのは ${effective} です。`,
+      unavailable: '当月の出品数を取得できませんでした。',
+    },
+    sharedAccountNote:
+      '3DP の出品は A2P と同じ BOOTH アカウントを使います。処分されると A2P の BOOTH チャネルも同時に失います。',
+    safetyValuesTitle: '理由の文字数と枠の返却',
+    sharedAccountTitle: 'BOOTH アカウントの共用',
+    fields: {
+      tdp_monthly_publish_limit: { label: 'BOOTH の月間出品上限', unit: '件' },
+      tdp_jinxxy_monthly_limit: { label: 'Jinxxy の月間出品上限', unit: '件' },
+      release_reason_min_chars: { label: '出品停止を解除するときの理由の最小文字数', unit: '文字' },
+      reject_reason_min_chars: { label: '差し戻しの理由の最小文字数', unit: '文字' },
+      slot_reserve_expire_days: { label: '予約した出品枠を返すまでの日数', unit: '日' },
+      tdp_min_price_jpy: { label: '価格の下限', unit: '円' },
+      tdp_kind_weights_json: { label: '企画する種類の構成比', unit: '%' },
+      stock_cap_multiplier: { label: '公開待ちの在庫の上限 (残り枠の何倍まで)', unit: '倍' },
+      tdp_regen_limit_asset: { label: '同じ系列の試作回数の上限', unit: '回' },
+      tdp_regen_limit_product: { label: '1 企画あたりの試作回数の上限', unit: '回' },
+      tdp_yield_warn_pct: { label: '検査通過率の警告ライン', unit: '%' },
+      credit_warn_per_product: { label: '1 商品あたりの credit 警告', unit: 'credit' },
+      credit_cap_per_product: { label: '1 商品あたりの credit 上限 (超えると生成を打ち切る)', unit: 'credit' },
+      meshy_monthly_credit_cap: { label: '月間の credit 消費上限 (超えると生成を止める)', unit: 'credit' },
+      meshy_balance_warn: { label: 'credit 残高の警告ライン', unit: 'credit' },
+      meshy_poll_interval_sec: { label: '生成状況の確認間隔 (空欄で暫定の 15 秒)', unit: '秒' },
+      meshy_poll_max_minutes: { label: '生成を待つ最大時間 (最大 90。空欄で暫定の 45 分)', unit: '分' },
+      r2_warn_gb: { label: '保存領域の使用量の警告ライン', unit: 'GB' },
+      intermediate_keep_versions: { label: '中間版を残す本数', unit: '本' },
+      tdp_gate_b_min_sales: { label: '市場判定: 累計販売本数のライン', unit: '本' },
+      tdp_gate_b_window_days: { label: '市場判定: 観測する期間', unit: '日' },
+      tdp_gate_c_point_days: { label: '採算判定: 判定する日', unit: '日' },
+      tdp_gate_e_monthly_minutes: { label: '月間の作業時間の上限', unit: '分' },
+      tdp_derivative_reject_warn_pct: { label: '依拠性による拒否率の警告ライン', unit: '%' },
+      stall_hours: { label: '状態が動かないとき滞留とみなす時間', unit: '時間' },
+      status_check_stale_hours: { label: '公開状態の確認が来ないとみなす時間', unit: '時間' },
+      work_cap_review_min: { label: '承認作業 1 件あたりの算入上限', unit: '分' },
+      work_cap_publish_min: { label: '公開作業 1 件あたりの算入上限', unit: '分' },
+    } as Record<string, { label: string; unit: string }>,
     errors: {
       saveFailed: '保存に失敗しました',
       limitRange: (refused: number | null, current: number | null, max: number) =>
         `${refused === null ? '入力された値' : String(refused)} は保存されていません。サーバー側で拒否しました (0〜${max} の整数のみ。最大 ${max})。現在の値: ${current === null ? '不明' : String(current)}`,
       denylistTooMany: '禁止語は 500 語までです',
-      limitTotal: (total: number, current: number, max: number) =>
-        `BOOTH と Jinxxy の合計 ${total} は保存されていません。サーバー側で拒否しました (各枠も合計も最大 ${max})。現在の合計: ${current}`,
+      limitTotal: (total: number, current: number | null, max: number) =>
+        `BOOTH と Jinxxy の合計 ${total} は保存されていません。サーバー側で拒否しました (各枠も合計も最大 ${max})。現在の合計: ${current === null ? '不明' : current}`,
       refusal: (field: string, refused: string, current: string) =>
         `${field}: ${refused} は保存されていません。範囲外のためサーバー側で拒否しました。現在の値: ${current}`,
       refusalUnknownKey: (field: string) => `${field}: このグループにない項目のため拒否しました`,

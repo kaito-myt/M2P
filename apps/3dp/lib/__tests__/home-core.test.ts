@@ -105,3 +105,18 @@ describe('jstMonthRange', () => {
     expect(end.toISOString()).toBe('2027-01-31T15:00:00.000Z');
   });
 });
+
+describe('buildQuotaView: 天井を超えた設定値', () => {
+  it('設定値 20・当月 3 → 実効上限 12 / 残り 9 (ホームと設定で同じ数を言う)', () => {
+    const q = buildQuotaView({ listedThisMonth: 3, monthlyLimit: 20 });
+    expect(q.limit).toBe(12);
+    expect(q.configuredLimit).toBe(20);
+    expect(q.clamped).toBe(true);
+    expect(q.remaining).toBe(9);
+  });
+  it('天井内なら読み替えない', () => {
+    const q = buildQuotaView({ listedThisMonth: 3, monthlyLimit: 8 });
+    expect(q.clamped).toBe(false);
+    expect(q.limit).toBe(8);
+  });
+});

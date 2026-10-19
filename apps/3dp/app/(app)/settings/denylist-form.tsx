@@ -16,7 +16,7 @@ import { formatDenylist } from '@/lib/settings-core';
 
 const m = messages.settings;
 
-export function DenylistForm({ initialTerms }: { initialTerms: string[] }) {
+export function DenylistForm({ initialTerms, readOnly = false }: { initialTerms: string[]; readOnly?: boolean }) {
   const [text, setText] = useState(formatDenylist(initialTerms));
   const [savedText, setSavedText] = useState(formatDenylist(initialTerms));
   const [count, setCount] = useState(initialTerms.length);
@@ -50,7 +50,7 @@ export function DenylistForm({ initialTerms }: { initialTerms: string[] }) {
         <textarea
           value={text}
           rows={8}
-          disabled={isPending}
+          disabled={readOnly || isPending}
           placeholder={m.denylistPlaceholder}
           onChange={(e) => setText(e.target.value)}
           className="w-full max-w-xl rounded-default border border-border-warm bg-cream-light px-3 py-2 font-mono text-button-sm leading-relaxed text-charcoal focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
@@ -62,7 +62,7 @@ export function DenylistForm({ initialTerms }: { initialTerms: string[] }) {
         <button
           type="button"
           onClick={save}
-          disabled={isPending || !dirty}
+          disabled={readOnly || isPending || !dirty}
           className="h-[38px] rounded-default border border-border-warm bg-cream-light px-4 text-button-sm text-charcoal-82 hover:bg-charcoal-04 hover:text-charcoal disabled:cursor-not-allowed disabled:opacity-40"
           data-testid="tdp-denylist-save"
         >
