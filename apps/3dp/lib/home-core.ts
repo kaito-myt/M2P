@@ -4,21 +4,14 @@
  */
 import { canListMore } from '@a2p/contracts/tdp/derivative-guard';
 import { computeSlots } from '@a2p/contracts/tdp/hold';
+import { PRODUCT_STATUSES } from '@a2p/contracts/tdp/status';
 
-/** docs/12 §7 `tdp_products.status` の正準順。UI の並びもこの順に固定する。 */
-export const PRODUCT_STATUSES = [
-  'planned',
-  'generating',
-  'inspecting',
-  'needs_fix',
-  'ready',
-  'review',
-  'listed',
-  'failed',
-  'rejected',
-] as const;
+import { messages } from './messages';
+import { groupKeys, proposalState, type SettingsGroup } from './settings-groups-core';
+import { u9u10Status, type TdpSettings } from './tdp-settings';
 
-export type ProductStatus = (typeof PRODUCT_STATUSES)[number];
+/** 状態の正準順は contracts (`tdp/status`) の 1 箇所だけが持つ。ここに写さない。 */
+export { PRODUCT_STATUSES };
 
 export interface StatusCountRow {
   status: string;
@@ -90,17 +83,135 @@ export function buildQuotaView(args: { listedThisMonth: number; monthlyLimit: nu
   };
 }
 
+export interface QuotaSummary {
+  /** null = 設定を読めず上限が分からない (0 = 出品停止、とは別物)。 */
+  limit: number | null;
+  configuredLimit: number | null;
+  clamped: boolean;
+  /** null = 当月の出品数を取得できなかった (0 件、とは別物)。 */
+  listed: number | null;
+  /** 上限も出品数も分かるときだけ判定する。 */
+  allowed: boolean | null;
+  reason?: string;
+}
+
 /**
- * JST の当月範囲 (UTC の Date で返す)。
- *
- * `listed_at` は timestamp に UTC を入れているので、JST の月初は UTC 月初 -9h。
- * (`@a2p/contracts/cost-attribution` の `jstMonthRange` と同一の考え方。
- *  ここで 1 時間ずれると「当月の出品枠」が月初/月末に食い違う。)
+ * ホームの「当月の出品枠」。数値は必ず `buildQuotaView` を通す (設定画面と別の数を言わないため)。
+ * 読めなかったものは 0 に丸めず null で返す。
  */
-export function jstMonthRange(now: Date): { start: Date; end: Date } {
-  const jst = new Date(now.getTime() + 9 * 3600_000);
-  const y = jst.getUTCFullYear();
-  const m = jst.getUTCMonth();
-  const at = (year: number, month: number) => new Date(Date.UTC(year, month, 1) - 9 * 3600_000);
-  return { start: at(y, m), end: at(y, m + 1) };
+export function buildQuotaSummary(args: {
+  listedThisMonth: number | null;
+  monthlyLimit: number | null;
+}): QuotaSummary {
+  const { listedThisMonth, monthlyLimit } = args;
+  const view = buildQuotaView({ listedThisMonth: listedThisMonth ?? 0, monthlyLimit: monthlyLimit ?? 0 });
+  const known = listedThisMonth !== null && monthlyLimit !== null;
+  return {
+    limit: monthlyLimit === null ? null : view.limit,
+    configuredLimit: monthlyLimit === null ? null : view.configuredLimit,
+    clamped: monthlyLimit !== null && view.clamped,
+    listed: listedThisMonth === null ? null : view.listed,
+    allowed: known ? view.allowed : null,
+    ...(known && view.reason !== undefined ? { reason: view.reason } : {}),
+  };
+}
+
+export type Stage = 'stage0' | 'stage1' | 'stage2';
+
+/** docs/12 §9.6.1。データから自動判定する (設定項目にしない)。 */
+export function determineStage(args: { total: number; listed: number }): Stage {
+  if (args.listed > 0) return 'stage2';
+  return args.total > 0 ? 'stage1' : 'stage0';
+}
+
+export interface HeroMetric {
+  /** 表示する値。売上が無い間は '—' (0 円とは別物)。 */
+  value: string;
+  /** value が '—' のときの理由。値があるときは null。 */
+  reason: string | null;
+  available: boolean;
+}
+
+function yen(n: number): string {
+  return `${n < 0 ? '−' : ''}¥${Math.abs(n).toLocaleString('ja-JP')}`;
+}
+
+/**
+ * ヒーロー (UR-1/UR-2)。売上を取得していない間は '0' を返さず '—' + 理由。
+ * 取得済みで売上ゼロ (`salesTotalJpy === 0`) は '¥0' になり、未取得と区別される。
+ */
+export function buildHero(args: {
+  salesFetched: boolean;
+  netProfitJpy: number | null;
+  salesTotalJpy: number | null;
+  listedProducts: number;
+}): { netProfit: HeroMetric; salesPerProduct: HeroMetric } {
+  const h = messages.home.hero;
+  const none = (reason: string): HeroMetric => ({ value: h.none, reason, available: false });
+  if (!args.salesFetched) {
+    return { netProfit: none(h.notStarted), salesPerProduct: none(h.notStarted) };
+  }
+  const netProfit: HeroMetric =
+    args.netProfitJpy === null
+      ? none(h.costUnknown)
+      : { value: yen(args.netProfitJpy), reason: null, available: true };
+  let salesPerProduct: HeroMetric;
+  if (args.salesTotalJpy === null) salesPerProduct = none(h.notStarted);
+  else if (args.listedProducts <= 0) salesPerProduct = none(h.noListed);
+  else {
+    salesPerProduct = {
+      value: yen(Math.round(args.salesTotalJpy / args.listedProducts)),
+      reason: null,
+      available: true,
+    };
+  }
+  return { netProfit, salesPerProduct };
+}
+
+export type CheckState = 'done' | 'todo' | 'unknown';
+export type CheckId = 'confirm_proposals' | 'first_prototype' | 'u9u10';
+
+export interface CheckItem {
+  id: CheckId;
+  state: CheckState;
+}
+
+/** 立ち上げチェックが「確認済」を要求する設定グループ (docs/12 §9.6.2 項目 1。媒体は Inc-4)。 */
+export const CHECKED_GROUPS: readonly SettingsGroup[] = ['safety', 'plan_price', 'generation', 'gates'];
+
+export function unconfirmedGroups(settings: TdpSettings): SettingsGroup[] {
+  return CHECKED_GROUPS.filter((g) => !groupKeys(g).every((k) => proposalState(g, k, settings) === 'confirmed'));
+}
+
+/**
+ * 立ち上げチェック (docs/12 §9.6.2 の項目 1 / 3 / 4)。運営者の手が要るものだけ。
+ * 読めなかったものは 'unknown' (済にも未にも倒さない)。
+ * @param settingsOk 設定を DB から実際に読めたか (false なら項目 1 / 4 は確認できない)
+ * @param productTotal null = 商品件数を取得できなかった
+ */
+export function buildLaunchChecklist(args: {
+  settings: TdpSettings;
+  settingsOk: boolean;
+  productTotal: number | null;
+}): CheckItem[] {
+  const { settings, settingsOk, productTotal } = args;
+  return [
+    {
+      id: 'confirm_proposals',
+      state: !settingsOk ? 'unknown' : unconfirmedGroups(settings).length === 0 ? 'done' : 'todo',
+    },
+    {
+      id: 'first_prototype',
+      state: productTotal === null ? 'unknown' : productTotal > 0 ? 'done' : 'todo',
+    },
+    {
+      id: 'u9u10',
+      state: !settingsOk ? 'unknown' : u9u10Status(settings).state === 'answered' ? 'done' : 'todo',
+    },
+  ];
+}
+
+/** Stage 0 は全項目、Stage 1 以降は済でない項目だけ (全部済なら空 = 節ごと畳む)。 */
+export function visibleChecklist(stage: Stage, items: ReadonlyArray<CheckItem>): CheckItem[] {
+  return stage === 'stage0' ? [...items] : items.filter((i) => i.state !== 'done');
 }

@@ -3,9 +3,9 @@
  * タブは 4 つ (安全装置 / 企画と価格 / 生成 / 判定値)。媒体と運用のタブは対応する機能が入るときに足す (§7.3a)。
  * 項目と範囲は settings-groups-core の GROUP_KEYS が持つ。ここにもタブ側にも書き写さない。
  */
+import { jstMonthRange } from '@a2p/contracts/cost-attribution';
 import { prisma } from '@a2p/db';
 
-import { jstMonthRange } from '@/lib/home-core';
 import { messages } from '@/lib/messages';
 import { resolveTab } from '@/lib/settings-tabs-core';
 import { loadTdpSettings, type TdpSettingsReader } from '@/lib/tdp-settings';
@@ -24,11 +24,11 @@ export default async function SettingsPage({
   searchParams: Promise<{ tab?: string | string[] }>;
 }) {
   const tab = resolveTab((await searchParams).tab);
-  const { start, end } = jstMonthRange(new Date());
+  const { monthStart, nextMonthStart } = jstMonthRange(new Date());
 
   const [loaded, listedThisMonth] = await Promise.all([
     loadTdpSettings(prisma as unknown as TdpSettingsReader),
-    prisma.tdpProduct.count({ where: { listed_at: { gte: start, lt: end } } }).catch(() => null),
+    prisma.tdpProduct.count({ where: { listed_at: { gte: monthStart, lt: nextMonthStart } } }).catch(() => null),
   ]);
   const { settings, degraded, warnings, reason } = loaded;
   // 生のエラー文 (接続先・SQL を含みうる) は画面に出さず、ログに残す (§17.11)。

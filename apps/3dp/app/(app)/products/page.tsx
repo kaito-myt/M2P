@@ -1,18 +1,15 @@
 /**
  * S-3DP-02 商品一覧 (docs/12-3dp-design.md §9)。
  *
- * status 別に絞り込める一覧。Inc-1 では企画 (Inc-3) も生成 (Inc-2) も未接続なので
- * 通常は空だが、**空の枠だけを置くのではなく実データを読む** ようにしておく
- * (後続で `tdp_products` に行が入った瞬間に見える)。
- * needs_fix の検査 NG 理由 (`tdp_assets.inspect_json`) の表示は Inc-2 で足す。
+ * status 別に絞り込める一覧。実データを読む。needs_fix の検査 NG 理由 (`tdp_assets.inspect_json`) の表示は生成が入る増分で足す。
  */
 import Link from 'next/link';
 
+import { PRODUCT_STATUSES } from '@a2p/contracts/tdp/status';
 import { prisma } from '@a2p/db';
 
 import { cn } from '@/lib/cn';
 import { messages } from '@/lib/messages';
-import { PRODUCT_STATUSES } from '@/lib/home-core';
 
 const m = messages.products;
 
@@ -86,9 +83,29 @@ export default async function ProductsPage({
       </nav>
 
       {products.length === 0 ? (
-        <div className="mt-space-loose">
-          <p className="text-body text-muted">{m.empty}</p>
-          <p className="mt-1 text-caption text-muted">{m.emptyHint}</p>
+        <div className="mt-space-loose" data-testid="tdp-products-empty">
+          {status === null ? (
+            <>
+              <p className="text-body text-muted">{m.empty}</p>
+              <p className="mt-1 text-caption text-muted">{m.emptyHint}</p>
+              <Link
+                href="/"
+                className="mt-space-snug inline-block text-button-sm text-charcoal-82 underline-offset-4 hover:text-charcoal hover:underline"
+              >
+                {m.emptyAction}
+              </Link>
+            </>
+          ) : (
+            <>
+              <p className="text-body text-muted">{m.emptyFiltered}</p>
+              <Link
+                href="/products"
+                className="mt-space-snug inline-block text-button-sm text-charcoal-82 underline-offset-4 hover:text-charcoal hover:underline"
+              >
+                {m.emptyFilteredAction}
+              </Link>
+            </>
+          )}
         </div>
       ) : (
         <table className="mt-space-loose w-full border-collapse text-left" data-testid="tdp-products-table">
@@ -145,6 +162,10 @@ export default async function ProductsPage({
           </tbody>
         </table>
       )}
+
+      <p className="mt-space-snug text-caption text-muted" data-testid="tdp-products-limit-note">
+        {m.limitNote}
+      </p>
     </div>
   );
 }
