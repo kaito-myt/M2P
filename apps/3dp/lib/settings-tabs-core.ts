@@ -118,7 +118,7 @@ export function formatRefusals(refusals: readonly Refusal[]): string[] {
         return e.limitTotal(Number(r.refused), r.current === null ? null : Number(r.current), TDP_MONTHLY_LIMIT_HARD_MAX);
       default: {
         const base = e.refusal(label(r.field), show(r.refused), show(r.current)) + (messages.settings.u9u10.rangeHint[r.field] ?? '');
-        return r.field in limitField ? `${base} (0〜${TDP_MONTHLY_LIMIT_HARD_MAX} の整数)` : base;
+        return r.field in limitField ? `${base} ${e.limitCeilingHint(TDP_MONTHLY_LIMIT_HARD_MAX)}` : base;
       }
     }
   });

@@ -129,6 +129,16 @@ describe('formatRefusals', () => {
     expect(lines[1]).toContain('Jinxxy');
     expect(lines.join('')).not.toContain('tdp_');
   });
+  it('R-1 の拒否文に「最大 12」と現在値・拒否値が出る (天井がコード側の固定値だと読める)', () => {
+    const [l] = formatRefusals([{ field: 'tdp_monthly_publish_limit', refused: 13, current: 8, reason: 'range' }]);
+    expect(l).toContain('13 は保存されていません');
+    expect(l).toContain('最大 12');
+    expect(l).toContain('現在の値: 8');
+    expect(l).toContain('コード側の固定値');
+    const msg = refusalMessage([{ field: 'tdp_monthly_publish_limit', refused: 13, current: 8, reason: 'range' }], 'x');
+    expect(msg).toContain('何も保存していません');
+    expect(msg).toContain('最大 12');
+  });
   it('DB 列名ではなく表示名を使う', () => {
     const [l] = formatRefusals([{ field: 'tdp_min_price_jpy', refused: 300, current: 500, reason: 'range' }]);
     expect(l).toContain(messages.settings.fields.tdp_min_price_jpy!.label);

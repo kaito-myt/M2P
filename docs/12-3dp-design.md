@@ -4445,8 +4445,17 @@ export function computeSlots(a: {
 | 差戻し 3 種 | 理由が空だと送れない。`rejected` / `ready` / `generating` への遷移 |
 | 出品作業 | 保留中は手順が無効で理由が出る。`recordPublished` で `listed`、URL 形式不正・重複を拒否 |
 | 停止と解除 | 全画面に停止中バー。解除は畳まれていて理由 20 字未満は送信できない。解除後に帯が消える |
-| 設定の天井 | R-1 に 13 を入れると**サーバーが拒否**し「13 は保存されていません (最大 12)。現在の値: 8」が出る |
+| 設定の天井 | R-1 に 13 を入れると**サーバーが拒否**し「13 は保存されていません (最大 12)。現在の値: 8」が出る。空欄で保存しても 0 として受けず DB は変わらない (2026-10-19 実装済み。媒体別枠の拒否は「設定できるのは 0〜12 の整数で、最大 12 はコード側の固定値…」を続けて出す。下の「実行手順と既知の制約」参照) |
 | 空状態 | 商品 0 件のホーム (Stage 0) に `ok` が出ない・「0 円」が出ない。定期タスク表に 5 行が「一度も実行されていません」で出る |
+| 設定のタブ | `/settings` は安全装置を開く。`?tab=` で 4 タブが切り替わり、未知の値と `media` は安全装置に倒れる。全タブに提案値の注意書き |
+
+**実行手順と既知の制約 (T-3DP-02-11、2026-10-19)**
+
+- **実行**: `E2E_TARGET=3dp TDP_TEST_DATABASE_URL=<使い捨て PG の URL> pnpm exec playwright test --project=3dp`。`E2E_TARGET` 未指定は従来どおり apps/web (3001)。3dp は apps/3dp (3004) を起動し、`tests/e2e/3dp` だけを読む。`.env.local` の `DATABASE_URL` (本番) は 3dp では使わず、`TDP_TEST_DATABASE_URL` から作った URL (`?schema=e2e_3dp`) で上書きする。接続先は localhost 限定で、localhost:5432 は拒否する。
+- **DB**: setup (`tests/e2e/3dp/auth.setup.ts`) がスキーマ `e2e_3dp` を作り直し、migration を再生してテストユーザーを入れる。spec ごとの初期化は商品の TRUNCATE と設定の行の既定化だけ (スキーマは作り直さない。Prisma の接続が古い OID を持つため)。テスト用の PG は testcontainers で起動し、実行後に削除する。
+- **既知の制約 1 (schema と migration の不一致)**: `migrations` の再生だけでは `schema.prisma` と一致しない。`app_settings` に 24 列 (`kdp_session_alert_at` / `x_engage_enabled` … `autopass_kdp_enabled`) が migration に無い (2026-10-19 実測)。本番には db push 等で存在する前提。Prisma の `findUnique` が全列を読むので、欠けると設定が degraded になる。E2E は fixture で補う。根本対応は migration 化 (別タスク)。T-3DP-02-04 の「全 migration を再生すれば本番と同じ」という前提はこの点で崩れている。
+- **既知の制約 2 (ESM)**: `packages/db/src/testing/pg.ts` は `import.meta` を使う ESM で、Playwright のローダ (CJS 変換) から読めない。fixture は同じ再生規則 (`note_*` の 42P01 だけ skip) を写している。
+- **既知の制約 3 (画面の文面、2026-10-19 解消)**: 初回は `formatRefusals` の文面だけが出て「最大 12」が欠けていた。programmer が `limitCeilingHint` を続ける修正を入れ、E2E は 12 件すべて緑になった。残る課題: 実画面では「現在の値: 8」と「設定できるのは…」の間に句点が無く、一続きに読める (文面の修正は未着手)。
 
 **フィクスチャの扱い**
 - **GLB**: `packages/mesh/__tests__` の合成 GLB ビルダーを再利用し、「椅子 40m」「原点が浮いている」「UV 無し」「テクスチャ 4K」を作る(実ファイルを置かない)。

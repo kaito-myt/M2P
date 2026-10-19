@@ -2820,6 +2820,15 @@ grep -c '^model Note' packages/db/schema.prisma
 4. P3009 の `20260625000000_add_book_publish_status` も同時に片付ける
    (`docs/operations/runbook.md` §4.1。**`migrate reset` は本番データ保護のため厳禁**)。
 
+### 追記 (2026-10-19): `app_settings` にも migration に無い列がある
+
+3DP の E2E 基盤 (T-3DP-02-11) が、テスト DB を **migration だけで再生**したときに本番と食い違うことを見つけた。
+
+- `schema.prisma` の `app_settings` には **24 列** (`kdp_session_alert_at` / `x_engage_enabled` … `autopass_kdp_enabled`) があるが、**どの migration にも無い**。`note_*` と同じく `prisma db push` で本番に直接入ったものと思われる (未確認)。
+- Prisma の `findUnique` は schema の**全列**を SELECT するため、migration だけで再生した空 DB では `app_settings` の読込が失敗する。3DP の `loadTdpSettings` はこれを **degraded (読込に失敗)** として扱うので、再生 DB では設定画面が読み取り専用になる。
+- よって T-3DP-02-04 が置いた「全 migration を再生すれば本番と同じスキーマになる」という前提は **`app_settings` については成り立たない**。上の baseline migration の手順 1 は `note_*` 7 表だけでなく、**`app_settings` の欠け 24 列 (`ADD COLUMN IF NOT EXISTS`) も対象**にすること。
+- 直すまでの当座は、テスト側で欠け列を補って回避する (本番には触れない)。migration はここでは追加しない (本番で `migrate deploy` が使えず、移行を増やすのは別タスク)。
+
 ## アイキャッチ品質: 禁止モチーフの絶対化 (F-ANP-14 / F-ANP-56 / F-ANP-57, 2026-10-19)
 
 運営者指摘「クオリティが低い」「AI 生成感が強すぎる」。

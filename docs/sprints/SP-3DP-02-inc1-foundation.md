@@ -37,7 +37,7 @@ F-3DP-38 (判定値を `app_settings` に), F-3DP-41 (R-1 天井), F-3DP-11 (設
 | T-3DP-02-08 | ✅ | 設定画面のタブ化と提案値バッジ | 4 タブ + 注意書き + 確認操作 | F-3DP-11, 38 | L |
 | T-3DP-02-09 | ✅ | U-9 / U-10 回答欄 | Action と安全装置タブ内のフォーム | F-3DP-42 | S |
 | T-3DP-02-10 | ✅ | ホーム・商品一覧の Inc-1 差分 | ヒーロー差し替え・空状態・立ち上げチェック・状態ピル | F-3DP-12, 35 | M |
-| T-3DP-02-11 | ⬜ | E2E 基盤 (`apps/3dp`) | Playwright の 3dp 対象・設定天井と空状態のシナリオ | F-3DP-41 | L |
+| T-3DP-02-11 | ✅ | E2E 基盤 (`apps/3dp`) | Playwright の 3dp 対象・設定天井と空状態のシナリオ | F-3DP-41 | L |
 | T-3DP-02-12 | ⬜ | 設計書の追従 | docs/12 の増分表・cron 表・不整合の訂正、docs/10 の env 名 | (Rule #7/#8) | S |
 
 合計 **12 タスク**。
@@ -217,10 +217,16 @@ F-3DP-38 (判定値を `app_settings` に), F-3DP-41 (R-1 天井), F-3DP-11 (設
   2. 空状態のホーム (商品 0 件): 「立ち上げチェック」が見え、`0 円` が無く、`—` と理由があり、`Inc-` の文字列が無い。
   3. `/settings` が「安全装置」を開き、`?tab=generation` でタブが切り替わる。提案値の注意書きが全タブにある。
 - **受入基準**: `E2E_TARGET=3dp pnpm exec playwright test --project=3dp` が緑。`pnpm typecheck:e2e` 緑。`E2E_TARGET` 未指定の `pnpm exec playwright test --list` の出力が変更前と同一 (既存 E2E の列挙が変わらない)。
-- **現状 (未整備)**: `playwright.config.ts` は `apps/web` (port 3001) 固定で、`E2E_TARGET` 切替・`--project=3dp`・3DP 用 storageState・テスト用 DB 固定のいずれも**まだ無い**。上記受入基準のコマンド (および §7 完了判定の同コマンド) は、このタスク完了までは**実行できない**。`packages/db/src/testing/` / `TDP_TEST_DATABASE_URL` / `TDP_REQUIRE_PG` も T-3DP-02-04 未着手のため無い。
+- **現状 (2026-10-19 更新)**: T-3DP-02-04 は完了済みで、`packages/db/src/testing/pg.ts` (`withTestDb` / `applyMigrations` / `pgAvailability`)・`global-setup.ts`・CI の `test-integration` ジョブは存在する (旧記述の「未着手」は誤り)。本タスクで `playwright.config.ts` に `E2E_TARGET=3dp` を足した (apps/3dp 3004、projects `3dp-setup` / `3dp`、testDir は `tests/e2e/3dp` のみ、web サーバーの DATABASE_URL は `TDP_TEST_DATABASE_URL` から作り `.env.local` の本番 URL は使わない)。`E2E_TARGET` 未指定の既存 E2E は従来どおり (web 側の chromium に 3dp フォルダの除外 `testIgnore` を足しただけ)。
+- **実行手順**: `E2E_TARGET=3dp TDP_TEST_DATABASE_URL=<使い捨て PG の URL> pnpm exec playwright test --project=3dp`。PG は testcontainers の URL でよい (localhost:5432 と本番は拒否される)。setup がスキーマ `e2e_3dp` を作り直す。既知の制約は `docs/12` §17.13 を参照。
 - **持ち越し検証項目 (T-3DP-02-02 由来)**: `apps/3dp` にはコンポーネントテスト基盤 (testing-library) が無く、次の 2 点は現状どのテストでも覆われていない。E2E でしか取れない保証であり、`limit-form.tsx` に数値化 (`Number('')` 等) が戻っても検知できなくなるため、シナリオ 1 に必ず含める。
   1. 入力欄を**空にして保存**したとき、`0` などの数値化された値がサーバーに送られず、DB の値が変わらないこと (空を 0 として受けない)。
-  2. 拒否時の文面 (「13 は保存されていません」「最大 12」「現在の値」) が画面に出ること。掴む先は `data-testid="tdp-limit-error"`。成功時は `tdp-limit-success`。値の確認は `tdp-limit-input` / `tdp-limit-save` / `tdp-limit-ceiling` / `tdp-limit-remaining`。
+  2. 拒否時の文面 (「13 は保存されていません」「最大 12」「現在の値」) が画面に出ること。掴む先は `data-testid="tdp-limit-error"`。成功時は `tdp-limit-success`。値の確認は `tdp-limit-input` / `tdp-limit-jinxxy-input` (T-3DP-02-08 で 2 欄化) / `tdp-limit-save` / `tdp-limit-ceiling` / `tdp-limit-remaining`。
+- **実施結果 (2026-10-19)**: 初回は 12 件中 11 件成功、「設定の天井 › 13 は拒否され…」だけが「最大 12」の欠落で失敗した (`formatRefusals` の文面しか出ていなかった)。programmer が媒体別枠の拒否に `limitCeilingHint` (「設定できるのは 0〜12 の整数で、最大 12 はコード側の固定値のため…」) を続ける修正を入れた後、**12 件すべて成功** (2 回目も同じ結果を確認、テスト用 PG は新規)。
+  - 画面の拒否文 (実測): 「1 件の項目を拒否しました。何も保存していません」/「BOOTH の月間出品上限: 13 は保存されていません。範囲外のためサーバー側で拒否しました。現在の値: 8 設定できるのは 0〜12 の整数で、最大 12 はコード側の固定値のため、この画面からは変えられません。」。**「現在の値: 8」と次の文の間に句点が無く、一続きに読める** (読みやすさの課題。文面の修正は programmer 担当)。
+- **既知の問題 (本タスクで回避)**: (1) `migrations` の再生だけでは `schema.prisma` と一致しない。`app_settings` に 24 列 (`kdp_session_alert_at` / `x_engage_enabled` … `autopass_kdp_enabled`) が無く、Prisma の `findUnique` が全列を読むため設定が degraded になる (本番には db push 等で存在する前提)。E2E の fixture で補う (`tests/e2e/fixtures/tdp-db.ts`)。根本対応は migration 化の別タスク。(2) `pnpm typecheck:e2e` は本タスク外の既存 spec の 40 件で赤のまま (sp08 / sp09 / uc06 / sales-auto-fetch 等)。本タスクの新規ファイルはエラーゼロ。
+  - 成功: 空欄で保存しても DB 不変 (持ち越し 1) / 12 は保存される / 天井の注記 / タブ遷移 (4 タブ・`?tab=` 直指定・未知の値と media の安全装置への倒れ) / 全タブの提案値注意書き / 提案値バッジ「提案値 (未承認)」。ホームの空状態 (立ち上げチェック・`—` と理由・`0 円` と `Inc-` が本文に無い) も通る。
+- **既知の問題 (本タスクで回避)**: (1) `migrations` の再生だけでは `schema.prisma` と一致しない。`app_settings` に 24 列 (`kdp_session_alert_at` / `x_engage_enabled` … `autopass_kdp_enabled`) が無く、Prisma の `findUnique` が全列を読むため設定が degraded になる (本番には db push 等で存在する前提)。E2E の fixture で補う (`tests/e2e/fixtures/tdp-db.ts`)。根本対応は migration 化の別タスク。(2) `pnpm typecheck:e2e` は本タスク外の既存 spec の 40 件で赤のまま (sp08 / sp09 / uc06 / sales-auto-fetch 等)。本タスクの新規ファイルはエラーゼロ。
 - **依存**: T-3DP-02-08, T-3DP-02-10
 - **参照**: docs/12 §17.13 (Playwright シナリオ「設定の天井」「空状態」), §9.6
 
