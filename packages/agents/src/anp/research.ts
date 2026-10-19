@@ -51,7 +51,7 @@ import {
   observeRivalEyecatches as defaultObserveRivalEyecatches,
   type RivalEyecatchShot,
 } from './eyecatch-market.js';
-import { styleKeysForNiche } from './eyecatch-style.js';
+import { EYECATCH_BANNED_MOTIFS, styleKeysForNiche } from './eyecatch-style.js';
 
 const log = createLogger('agents.anp.research');
 
@@ -613,6 +613,24 @@ function rivalEyecatchBlock(observation: NoteRivalEyecatchObservation | null): s
   return lines;
 }
 
+/**
+ * art_direction に書いてはならないモチーフ。`EYECATCH_BANNED_MOTIFS` を**そのまま**埋め込む (二重管理しない)。
+ * 2026-10-19 実測: 副業アカの art_direction が「ノートPCに向かう会社員イラスト＋円形アイコン＋机まわり」を
+ * 指定し、別記事 2 本が同一の絵になった。生成側でも落とすが (stripBannedMotifs)、書かせない方が質が上がる。
+ */
+export function artDirectionBanLines(): string[] {
+  return [
+    '',
+    '【art_direction に書いてはならないモチーフ (書いた文は画像生成の段で機械的に削除される)】',
+    ...EYECATCH_BANNED_MOTIFS.map((m) => `- ${m}`),
+    '1 文でも当たると art_direction 全体が捨てられ、ジャンル既定に戻る。',
+    '特に「フラットなベクターの会社員イラスト＋浮遊する円形アイコン」の組み合わせは名指しで禁止。',
+    '**優先関係**: 競合サムネの観察に禁止モチーフが出てきたら、その要素は art_direction に書かず、',
+    '観察の他の要素で組む。観察に無い質感・被写体を創作して穴埋めしない (上の「観察に書かれている要素だけ」が優先)。',
+    '観察に、実写風・紙/版画・立体・手描きなどの質感のある作りが写っていれば、それを優先して拾う。',
+  ];
+}
+
 function buildReportUserMessage(
   input: NoteAccountResearchInput,
   plan: ResearchPlan,
@@ -655,6 +673,7 @@ function buildReportUserMessage(
   // F-ANP-57: 画作りの根拠は**実物のサムネを見た結果だけ**。テキストの一次情報の後、
   // 出力指定の直前に置く (画像モデルと同じく LLM も後ろの指示を強く守るため)。
   lines.push(...rivalEyecatchBlock(rivalObservation));
+  lines.push(...artDirectionBanLines());
 
   // F-ANP-57: 自分たちのサムネの実績 (画風別の閲覧/スキ)。これを渡していなかったので
   // 「どの画風で数字が出たか」が一度もリサーチに届いていなかった。
@@ -680,7 +699,9 @@ function buildReportUserMessage(
     '{',
     '  "findings": [ { "angle": "観点名", "finding": "知見", "implication": "記事づくりへの示唆", "sources": ["URL", ...] }, ... ],',
     '  "winning_patterns": ["今このアカウントで効く記事の型 (タイトル/導入/構成)", ...],',
-    '  "art_direction": "アイキャッチの画作り指示。被写体・構図・色・質感・避けるもの。',
+    '  "art_direction": "アイキャッチの画作り指示。被写体・構図・色・質感だけを書く。',
+    '                    **「避ける」「描かない」「〜しない」は書かない** (禁止は画像プロンプト側で別に効かせる。',
+    '                    否定文を書くと検査に当たって art_direction 全体が捨てられることがある)。',
     '                    **上の「競合サムネの実物」に書かれている要素だけ**で 200〜600 字。',
     '                    画像モデルがそのまま使える指示にする (汎用的な美辞麗句は書かない)。',
     '                    実物を見られなかった回は必ず空文字にする。",',

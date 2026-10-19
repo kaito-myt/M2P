@@ -34,6 +34,7 @@
  *  4. R2 に upload (`note/{note_article_id}/eyecatch.jpg`)
  */
 import { classifyNicheGenre, type NoteGenreProfile } from '@a2p/contracts/note-genre';
+import { createLogger } from '@a2p/contracts/logger';
 import { noteArticleEyecatch } from '@a2p/storage/keys';
 import {
   composeNoteEyecatch,
@@ -46,7 +47,13 @@ import {
   type NoteEyecatchScheme,
 } from '@a2p/output-image';
 
-import { EYECATCH_BANNED_MOTIFS, pickEyecatchStyle, type EyecatchStyle } from './eyecatch-style.js';
+import {
+  EYECATCH_BANNED_MOTIFS,
+  pickEyecatchStyle,
+  stripBannedMotifs,
+  type DroppedSentence,
+  type EyecatchStyle,
+} from './eyecatch-style.js';
 import { verifyNoteEyecatchText, type VerifyNoteEyecatchTextDeps } from './eyecatch-text-check.js';
 
 import {
@@ -64,6 +71,8 @@ import {
   loadModelAssignment as defaultLoadModelAssignment,
   type LoadModelAssignmentDeps,
 } from '../lib/load-model-assignment.js';
+
+const log = createLogger('agents.anp.eyecatch');
 
 /**
  * 生成サイズ。gpt-image-2 は任意解像度に対応するが **幅・高さともに 16 の倍数**が条件。
@@ -150,6 +159,8 @@ export interface GenerateNoteEyecatchResult {
   textRetries: number;
   /** 画像の alt テキスト (note の画像説明・SEO 用)。 */
   alt: string;
+  /** 禁止モチーフを指定していたため art direction ごと捨てたときの該当文 (jobs.result_json に残す)。 */
+  droppedMotifs?: DroppedSentence[];
 }
 
 export interface UploadBufferFn {
@@ -174,6 +185,29 @@ export interface GenerateNoteEyecatchDeps {
   verifyTextDeps?: VerifyNoteEyecatchTextDeps;
   /** 文字崩れ検査を回さない (既定 false)。コストを抑えたい一括再生成などで使う。 */
   skipTextCheck?: boolean;
+  /** 禁止モチーフを落としたときの WARN の出し口 (既定は共通 logger)。 */
+  logger?: { warn(payload: Record<string, unknown>, msg?: string): void };
+}
+
+/**
+ * account art direction から禁止モチーフを指定する文を検出する (優先順位: 禁止 > アカウント指示 > 既定)。
+ *
+ * **1 文でも当たったら art direction 全体を捨てる** (art='' = 指示なし扱い → genre.art +
+ * 既定の色指定 + 「描くモノは 1 個だけ」に倒れる)。部分削除だと「モチーフは合計4点まで」のような
+ * 残骸が「これが最優先」に昇格し、既定側が格下げされて悪化した (2026-10-19 実測)。
+ *
+ * copy_rules は対象外: 禁止リストは絵のモチーフの話で、文字規則 (「右肩上がりのような煽りは避ける」等の
+ * 正しい規則) を誤って消すうえ、コピー生成側 (account-context 経由) は無検閲なので経路間で中身が割れる。
+ */
+export function sanitizeAccountDirection(input: GenerateNoteEyecatchInput): {
+  art: string;
+  copyRules: string[];
+  dropped: DroppedSentence[];
+} {
+  const raw = (input.accountArtDirection ?? '').trim();
+  const { dropped } = stripBannedMotifs(raw);
+  const copyRules = (input.accountCopyRules ?? []).map((r) => r.trim()).filter((r) => r.length > 0);
+  return { art: dropped.length > 0 ? '' : raw, copyRules, dropped };
 }
 
 /**
@@ -194,13 +228,15 @@ export function buildPrompt(
   const sub = (input.eyecatchSub ?? '').trim();
   const hasText = copy.length > 0;
   // F-ANP-56: アカウント固有の指示 (週次リサーチ) があればジャンル既定を置き換える。
-  const accountArtRaw = (input.accountArtDirection ?? '').trim();
+  // 禁止モチーフを指定する指示は、実物を見て書かれたものであってもここで必ず捨てる。
+  const sanitized = sanitizeAccountDirection(input);
+  const accountArtRaw = sanitized.art;
   // F-ANP-57: 実物のサムネを見た上での指示だけを「最優先」に昇格させる。
   // 見ていない指示 (= テキストからの推測) はジャンル既定を置き換えず、補足として添える。
   const grounded = input.accountArtDirectionGrounded === true;
   const accountArt = grounded ? accountArtRaw : '';
   const accountArtHint = grounded ? '' : accountArtRaw;
-  const copyRules = (input.accountCopyRules ?? []).map((r) => r.trim()).filter((r) => r.length > 0);
+  const copyRules = sanitized.copyRules;
 
   // 2026-10-14 実測の教訓: アカウント指示を「ジャンルの作法」の位置に置くだけでは効かない。
   // 後続の【文字と帯の色】が「ここは厳密に守る」、【絵の画風】が具体的な既定値を出すため、
@@ -213,6 +249,21 @@ export function buildPrompt(
   const styleHeader = accountArt
     ? '【絵の画風 (既定。上のアカウント指定に書かれていない項目だけ適用する)】'
     : '【絵の画風】';
+
+  // 【モチーフ数の優先順位 (2026-10-19 決定)】既定は「1 個だけ」、アカウント指定は「合計 4 点まで」のように
+  // 数が食い違い、両方を書いてモデルに選ばせていた。色/画風と同じ扱いに揃える:
+  // アカウント指定 (実物を見て書かれたもの) があればその数・構成が勝ち、既定の「1 個だけ」は
+  // 「指定が無いときだけ」に格下げする。競馬アカの「馬 1 頭＋騎手 1 名」のように、実物の勝ち筋は
+  // 1 個とは限らないため。禁止モチーフ (ノートPC等) はどの経路でも別に落とすので、数が増えても事務用品には逃げない。
+  const motifCountLines = accountArt
+    ? [
+        '- 被写体の数と構成は【このアカウントの画作り】の指定に従う (指定が無いときだけ「1 個」にする)。',
+        '  ただし指定の範囲でも、焦点は 1 つに絞り、小さく表示されたときに何の記事か分かること。',
+      ]
+    : [
+        '- **描くモノは 1 個だけ**。2 個目を足したくなっても足さない。',
+        '  (2 個以上描くと焦点が散り、小さく表示されたときに何の記事か分からなくなる)',
+      ];
 
   return [
     'Web メディア (note) の記事アイキャッチを 1 枚作成してください。',
@@ -301,9 +352,8 @@ export function buildPrompt(
     `- 絵の配色: ${style.palette}`,
     '',
     '【絵の中身の作り方】',
-    '- **描くモノは 1 個だけ**。2 個目を足したくなっても足さない。',
-    '  (2 個以上描くと焦点が散り、小さく表示されたときに何の記事か分からなくなる)',
-    '- その 1 個は、**この記事にしか出てこない具体的なモノ**にする。',
+    ...motifCountLines,
+    '- 主役は、**この記事にしか出てこない具体的なモノ**にする。',
     '  タイトルとフックから名詞を 1 つ選び、それを大きく描く (抽象的な概念の比喩に逃げない)。',
     '- 題材が思いつかなくても、書類・グラフ・PC・事務用品に逃げない (下の禁止リスト)。',
     '  その記事の現場にある道具・場所・モノを探す。',
@@ -372,6 +422,15 @@ export async function generateNoteEyecatch(
   const scheme = schemeForNiche(input.niche);
   const promptUsed = buildPrompt(input, style, layout, genre, scheme);
 
+  // 黙って落とさない: 落とした文と当たったモチーフを残す (リサーチ側の指示が禁止に触れているサイン)。
+  const { dropped } = sanitizeAccountDirection(input);
+  if (dropped.length > 0) {
+    (deps.logger ?? log).warn(
+      { noteArticleId: input.noteArticleId, dropped },
+      'アカウントの画作り指示の中に禁止モチーフを指定する文があったため、art_direction 全体を捨ててジャンル既定に倒した (dropped は該当文のみ)',
+    );
+  }
+
   // Google (Nano Banana) は 16:9 が最も note のアイキャッチ比率に近い。
   const width = useGoogle ? NOTE_EYECATCH_WIDTH : IMAGE_WIDTH;
   const height = useGoogle ? NOTE_EYECATCH_HEIGHT : IMAGE_HEIGHT;
@@ -388,6 +447,8 @@ export async function generateNoteEyecatch(
       outputCompression: 90,
       // 日本語の字形は quality に素直に効く。medium 以下だと潰れる。
       ...(useGoogle ? {} : { quality: 'high' as const }),
+      // 割当モデルを実呼び出しに効かせる (従来は token_usage の model にしか効いていなかった)。
+      ...(!useGoogle && assignment.model ? { model: assignment.model } : {}),
     });
     const image = result.images[0];
     if (!image) throw new Error('anp.eyecatch: generateImage returned no image');
@@ -446,6 +507,7 @@ export async function generateNoteEyecatch(
     textMode,
     textRetries,
     alt: defaultEyecatchAlt(input.title, input.niche),
+    droppedMotifs: dropped,
   };
 }
 

@@ -7,7 +7,7 @@ import { revalidatePath } from 'next/cache';
 import { z } from 'zod';
 
 import { prisma } from '@a2p/db';
-import { NOTE_PROMOTION_CHANNELS, NoteAccountProfileTargetSchema, NoteAccountSettingsSchema, NoteMonetizationPolicySchema, parseNoteMonetizationPolicy } from '@a2p/contracts/agents/anp';
+import { NOTE_PROMOTION_CHANNELS, NoteAccountProfileTargetSchema, NoteAccountSettingsSchema, NoteMonetizationPolicySchema, mergeNoteAccountSettings, parseNoteMonetizationPolicy } from '@a2p/contracts/agents/anp';
 import { encryptKdpCredentials } from '@a2p/crypto';
 
 import { auth } from '@/auth';
@@ -103,7 +103,7 @@ const UpdateAccountSettingsSchema = z.object({
 
 /**
  * F-ANP-17 (docs/11-anp-design.md §3.1/§7): アカウント別パイプライン自動パス設定。
- * `note_accounts.settings_json` を丸ごと置き換える (フォームは常に全項目を送るため部分更新は不要)。
+ * フォームが扱う既知キーは置き換え、worker が書く engage_* 状態など未知キーは保持する (`mergeNoteAccountSettings`)。
  */
 export async function updateAccountSettings(input: unknown): Promise<ActionResult<void>> {
   const session = await auth();
@@ -127,7 +127,11 @@ export async function updateAccountSettings(input: unknown): Promise<ActionResul
   });
 
   try {
-    await prisma.noteAccount.update({ where: { id: accountId }, data: { settings_json: nextSettings } });
+    const cur = await prisma.noteAccount.findUnique({ where: { id: accountId }, select: { settings_json: true } });
+    await prisma.noteAccount.update({
+      where: { id: accountId },
+      data: { settings_json: mergeNoteAccountSettings(cur?.settings_json, nextSettings) as never },
+    });
     revalidatePath(`/accounts/${accountId}`);
     return { ok: true, data: undefined };
   } catch (err) {

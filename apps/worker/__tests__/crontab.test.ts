@@ -225,7 +225,7 @@ describe('crontab.ts', () => {
 
     const noteEngage = CRON_ITEMS.find((c) => c.task === NOTE_ENGAGE_TASK_NAME);
     expect(noteEngage).toBeDefined();
-    expect(noteEngage!.match).toBe('0 4,10 * * *');
+    expect(noteEngage!.match).toBe('10 23,1,4,6,8,10,12,13 * * *');
     expect(noteEngage!.identifier).toBe('note-engage');
 
     const growthLoop = CRON_ITEMS.find((c) => c.task === PROMOTION_GROWTH_LOOP_TASK_NAME);

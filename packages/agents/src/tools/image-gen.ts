@@ -40,6 +40,8 @@ export interface GenerateImageArgs {
   count?: number;
   /** OpenAI 品質オプション。既定 'standard'。 */
   quality?: ImageQuality;
+  /** 使用モデル。未指定なら env/既定の MODEL。割当 (model_assignments) を実呼び出しに効かせる用。generateImage のみ有効。 */
+  model?: string;
   /** 出力フォーマット (png | jpeg | webp)。未指定なら OpenAI 既定 (PNG)。 */
   outputFormat?: ImageOutputFormat;
   /** jpeg/webp の圧縮率 0-100 (高いほど高品質)。outputFormat が jpeg/webp の時のみ有効。 */
@@ -278,7 +280,7 @@ export async function generateImage(
 
   const response = await runWithRetry(() =>
     client.images.generate({
-      model: MODEL,
+      model: args.model ?? MODEL,
       prompt: args.prompt,
       size,
       n: count,

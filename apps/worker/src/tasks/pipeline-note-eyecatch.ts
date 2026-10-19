@@ -220,6 +220,7 @@ export async function runPipelineNoteEyecatch(
     // 重複を避ける (code-reviewer 任意提案)。
     let r2Key: string;
     let styleKey: string | null = null;
+    let droppedMotifs: unknown[] = [];
     if (retryCount > 0 && article.eyecatch_r2_key) {
       r2Key = article.eyecatch_r2_key;
       log.info(
@@ -321,6 +322,7 @@ export async function runPipelineNoteEyecatch(
       });
       r2Key = result.r2Key;
       styleKey = result.styleKey;
+      droppedMotifs = result.droppedMotifs ?? [];
 
       try {
         await applyNoteArticleCostFromJob(prisma, jobId, noteArticleId);
@@ -361,7 +363,7 @@ export async function runPipelineNoteEyecatch(
         status: 'done',
         finished_at: now(),
         error: null,
-        result_json: { r2_key: r2Key, next_job_id: childJob.id, skipped_regeneration: retryCount > 0 && !!article.eyecatch_r2_key, style_key: styleKey },
+        result_json: { r2_key: r2Key, next_job_id: childJob.id, skipped_regeneration: retryCount > 0 && !!article.eyecatch_r2_key, style_key: styleKey, dropped_motifs: droppedMotifs },
       },
     });
 

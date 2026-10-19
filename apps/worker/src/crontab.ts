@@ -185,11 +185,12 @@ export const PROMOTION_X_ENGAGE_CRON = '0 1,7,13 * * *';
 export const PROMOTION_SNS_ENGAGE_CRON = '0 3,9 * * *';
 
 /**
- * [F-091] note ブラウザ自動フォロー & スキ(note.engage)。1日2回 `0 4,10 * * *` UTC = JST 13/19時。
+ * [F-091] note ブラウザ自動フォロー & スキ(note.engage)。1日8回 `10 23,1,4,6,8,10,12,13 * * *` UTC = JST 8:10/10:10/13:10/15:10/17:10/19:10/21:10/22:10 (最後だけ間隔 1 時間なのは JST 23 時台を避けるため)
+ * (2026-10-19 に 2回→8回。アカウント1つ巡航 50フォロー/80スキ ÷ 1回 8/12 件。深夜帯には打たない。分 0/20/40 と出版 dispatch の :05/:15 系の発火分から外し、promotion.sns.engage(03/09時) とも重ねない = 共有ブラウザ枠の衝突回避)。静的 cron なのでデプロイで反映される。
  * タスク内で `note_engage_enabled`(既定ON=キルスイッチ)と取り込み済みセッションの有無を確認し、
- * 無効/未取り込みなら no-op。IG/TikTok より制限が緩いが ToS 配慮で控えめ(2回/日・ランプアップ・1回少量)。
+ * 無効/未取り込みなら no-op。IG/TikTok より制限が緩いが ToS 配慮でランプアップ・1回少量・ジッター付き。
  */
-export const NOTE_ENGAGE_CRON = '0 4,10 * * *';
+export const NOTE_ENGAGE_CRON = '10 23,1,4,6,8,10,12,13 * * *';
 
 /**
  * [F-081] 販促強化の継続AIループ(promotion.growth.loop)。毎日 `0 21 * * *` UTC = JST 06:00。

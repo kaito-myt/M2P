@@ -12,10 +12,22 @@ import { notifyNoteSessionExpired, type NoteAuthRelayPrisma } from './lib/note-a
 import { resolveKdpProxy } from './sales-fetch/kdp-proxy.js';
 import { createPlaywrightNoteEngagePort } from './note-engage/playwright-note-engage-port.js';
 import {
+  allocateRunQuotas,
+  buildHarvestQueries,
+  canRunScout,
+  classifyBlock,
+  engageDaysSinceStart,
   followDailyCap,
+  harvestToTargets,
   likeDailyCap,
   pickNoteTargets,
+  readEngageState,
+  rotateAccounts,
+  engageDay,
+  engageUsageToday,
+  type NoteEngageOutcome,
   type NoteEngagePort,
+  type NoteEngageTarget,
 } from './note-engage/note-engage-port.js';
 
 /**
@@ -26,7 +38,8 @@ import {
  * Playwright で再利用し、growth_scout が web_search で特定した「note 上のフォロー/スキすべき
  * 実在アカウント/記事」を自動操作する。凍結リスクに配慮し:
  *   - マスタスイッチ `note_engage_enabled`(既定 ON、キルスイッチ)
- *   - ランプアップ + 1回少量(フォロー最大10・スキ最大15) + ジッター(人間的な間)
+ *   - ランプアップ(アカウントごと) + 1回少量(フォロー最大8・スキ最大12) + ジッター(人間的な間)
+ *   - 対象は note.com 本体の検索から収穫(主系統)。収穫が使えないときだけ growth_scout にフォールバック
  *   - 冪等(promotion_sns_engagements で重複防止) + セッション切れ/ブロック検知で即停止&LINE通知
  * データセンターIP対策として住宅プロキシ(app_settings.kdp_proxy_*)が生きていれば経由する。
  *
@@ -37,8 +50,8 @@ export const NOTE_ENGAGE_TASK_NAME = 'note.engage';
 
 /** promotion_sns_engagements 上の note 用チャンネル値。 */
 const NOTE_CHANNEL = 'note';
-const PER_RUN_FOLLOW = 6; // 1回の実行でのフォロー上限(cron 1日2回に分散し 24h キャップ内に収める)
-const PER_RUN_LIKE = 10; // 1回の実行でのスキ上限
+/** 収穫するカード数の上限 (1アカウント・1回)。必要数に対し重複/既済の除外分の余裕を見る。 */
+const HARVEST_LIMIT = 80;
 const H = 3600_000;
 
 export const NoteEngagePayloadSchema = z.object({
@@ -58,6 +71,8 @@ export interface NoteEngagePrisma {
         niche: string;
         display_name: string;
         target_reader?: string | null;
+        handle?: string | null;
+        settings_json?: unknown;
         session_state_enc?: string | null;
       }>
     >;
@@ -99,6 +114,9 @@ export interface NoteEngageResult {
     {
       follow_cap: number;
       like_cap: number;
+      /** この実行に割り当てられた枠 (日次キャップではなく、均等割り+1回上限後)。 */
+      follow_quota: number;
+      like_quota: number;
       followed: number;
       liked: number;
       already: number;
@@ -185,7 +203,15 @@ export async function runNoteEngage(payload: unknown, deps: NoteEngageDeps = {})
         session_state_enc: { not: null },
         ...(onlyAccount ? { id: onlyAccount } : {}),
       },
-      select: { id: true, niche: true, display_name: true, target_reader: true, session_state_enc: true },
+      select: {
+        id: true,
+        niche: true,
+        display_name: true,
+        target_reader: true,
+        handle: true,
+        settings_json: true,
+        session_state_enc: true,
+      },
       orderBy: { created_at: 'asc' },
       take: 50,
     } as unknown);
@@ -195,37 +221,72 @@ export async function runNoteEngage(payload: unknown, deps: NoteEngageDeps = {})
       return await finalize(result);
     }
 
-    // ランプアップ用: note チャンネルの初回エンゲージ日時(全アカウント共通の稼働開始とみなす)。
-    const firstRows = await prisma.promotionSnsEngagement.findMany({
-      where: { channel: NOTE_CHANNEL },
-      orderBy: { created_at: 'asc' },
-      take: 1,
-      select: { created_at: true },
+    // 自分自身の除外は **status 無条件で全アカウント**から作る。active+session に絞ると、手動実行時や
+    // このタスクが paused にした相方が外れ、ANP が今日公開した相方の記事 (sort=new の最前列) を
+    // フォロー/スキしてしまう。
+    const allHandleRows = await prisma.noteAccount.findMany({
+      where: { handle: { not: null } },
+      select: { id: true, handle: true },
+      take: 200,
     } as unknown);
-    const firstAt = (firstRows[0] as unknown as { created_at?: Date })?.created_at;
-    const daysSinceStart = firstAt ? Math.floor((now().getTime() - new Date(firstAt).getTime()) / 86400_000) : 0;
+    const selfHandles = [...allHandleRows, ...accounts].map((a) => a.handle ?? '').filter(Boolean);
+    const isSelf = (handle: string) =>
+      selfHandles.some((sh) => sh.replace(/^@/, '').toLowerCase() === handle.replace(/^@/, '').toLowerCase());
+
     const dayStart = new Date(now().getTime() - 24 * H);
 
-    for (const account of accounts) {
+    // 24h の使用済みは note チャンネル全体の合算しか取れない (テーブルにアカウント列が無い)。
+    // そのため残り予算を **先にアカウント数で均等割り**し、アカウントを日替わりで回す。
+    // 以前は合算を各アカウントの枠として読んでいたため先頭の note-acc-1 が枠を食い切り、
+    // 2 番目 (競馬) は常に 0 でフォローが一度も成立しなかった (2026-10-19 実測)。
+    const followToday = await prisma.promotionSnsEngagement.count({
+      where: { channel: NOTE_CHANNEL, action_type: 'follow', status: { in: ['done', 'already'] }, created_at: { gte: dayStart } },
+    });
+    const likeToday = await prisma.promotionSnsEngagement.count({
+      where: { channel: NOTE_CHANNEL, action_type: 'like', status: { in: ['done', 'already'] }, created_at: { gte: dayStart } },
+    });
+    const ordered = rotateAccounts(accounts, now());
+    // ランプアップはアカウント単位 (settings_json.engage_ramp_started_at)。チャンネル最古行起点だと
+    // 全期間フォロー 0 件の競馬アカが初日から 20/30 に入り、段階を飛ばしてしまう。
+    const states = ordered.map((a) => readEngageState(a.settings_json));
+    const followCaps = states.map((s) => overrideCap ?? followDailyCap(engageDaysSinceStart(s, now())));
+    const likeCaps = states.map((s) => overrideCap ?? likeDailyCap(engageDaysSinceStart(s, now())));
+    const usages = states.map((st) => engageUsageToday(st, now()));
+    const quotas = allocateRunQuotas({
+      followCaps,
+      likeCaps,
+      followUsage: usages.map((u) => u.follow),
+      likeUsage: usages.map((u) => u.like),
+      followUsed: followToday,
+      likeUsed: likeToday,
+    });
+
+    // 既エンゲージ集合は **ループの外で 1 回**。新レートでは数週間で 5000 行を超えるので、
+    // orderBy なし + take 5000 だと任意の 5000 行になり重複防止が静かに崩れる。新しい順に十分な件数を取る。
+    const ENGAGED_TAKE = 50_000;
+    const engagedRows = await prisma.promotionSnsEngagement.findMany({
+      where: { channel: NOTE_CHANNEL },
+      select: { channel: true, action_type: true, target_handle: true },
+      orderBy: { created_at: 'desc' },
+      take: ENGAGED_TAKE,
+    } as unknown);
+    if (engagedRows.length >= ENGAGED_TAKE) result.skipped.push('engaged_set_truncated');
+    const engaged = new Set(engagedRows.map((r) => `${r.action_type}:${r.target_handle.toLowerCase()}`));
+
+    for (const [idx, account] of ordered.entries()) {
       if (!account.session_state_enc) {
         result.skipped.push(`${account.id}:no_session`);
         continue;
       }
 
-      // 24h キャップ(note チャンネル全体で共有 = 全アカウント合算で ToS 配慮)。
-      const followToday = await prisma.promotionSnsEngagement.count({
-        where: { channel: NOTE_CHANNEL, action_type: 'follow', status: { in: ['done', 'already'] }, created_at: { gte: dayStart } },
-      });
-      const likeToday = await prisma.promotionSnsEngagement.count({
-        where: { channel: NOTE_CHANNEL, action_type: 'like', status: { in: ['done', 'already'] }, created_at: { gte: dayStart } },
-      });
-      const followCap = overrideCap ?? followDailyCap(daysSinceStart);
-      const likeCap = overrideCap ?? likeDailyCap(daysSinceStart);
-      const remainingFollow = Math.min(PER_RUN_FOLLOW, Math.max(0, followCap - followToday));
-      const remainingLike = Math.min(PER_RUN_LIKE, Math.max(0, likeCap - likeToday));
+      const remainingFollow = quotas[idx]?.follow ?? 0;
+      const remainingLike = quotas[idx]?.like ?? 0;
+      const state = states[idx] ?? {};
       const cell = {
-        follow_cap: followCap,
-        like_cap: likeCap,
+        follow_cap: followCaps[idx] ?? 0,
+        like_cap: likeCaps[idx] ?? 0,
+        follow_quota: remainingFollow,
+        like_quota: remainingLike,
         followed: 0,
         liked: 0,
         already: 0,
@@ -234,10 +295,12 @@ export async function runNoteEngage(payload: unknown, deps: NoteEngageDeps = {})
       };
       result.per_account[account.id] = cell;
       if (remainingFollow <= 0 && remainingLike <= 0) {
+        // 無言で continue しない: 運営者が jobs 画面で「なぜ 0 件か」を読めるようにする。
+        result.skipped.push(`${account.id}:cap_exhausted`);
         continue;
       }
 
-      // セッション復号は **growth_scout より前**に行う (2026-10-15)。
+      // セッション復号は **収穫/growth_scout より前**に行う (2026-10-15)。
       // 復号できないアカウントのために ¥40/回 (web 検索つき) の偵察を払ってから捨てていた。
       // 実際 2026-10-13 までこの順序で **¥4,700/月を払いながらフォロー/スキは 0 件**だった
       // (原因は鍵違い — ANP は KDP_CRED_KEY で書くのにここは API_CRED_KEY で読んでいた)。
@@ -249,40 +312,84 @@ export async function runNoteEngage(payload: unknown, deps: NoteEngageDeps = {})
         continue;
       }
 
-      // 対象を growth_scout(channel=note)で特定。
-      let out: GrowthScoutOutput;
-      try {
-        out = await generate({
-          concept: account.niche || account.display_name,
-          target_audience: account.target_reader ?? '',
-          daily_target: 15,
-        });
-      } catch (err) {
-        log.warn({ task: NOTE_ENGAGE_TASK_NAME, accountId: account.id, err }, 'growth_scout 生成失敗 — スキップ');
-        result.skipped.push(`${account.id}:scout_failed`);
-        continue;
+      // 主系統: ログイン済みセッションで note.com 自体を見て実在の著者/記事を収穫し、そのまま操作する
+      // (1 ブラウザセッション = スロット取得 1 回)。
+      let outcomes: NoteEngageOutcome[] = [];
+      let blocked: string | undefined;
+      let pageOpened = true;
+      let selected = 0;
+      const queries = buildHarvestQueries(account.niche || account.display_name, account.target_reader);
+      if (port.harvestAndEngage && queries.length > 0) {
+        try {
+          const r = await port.harvestAndEngage({
+            sessionState,
+            queries,
+            limit: HARVEST_LIMIT,
+            maxFollow: remainingFollow,
+            maxLike: remainingLike,
+            proxy,
+            selectTargets: (cards) => harvestToTargets(cards, engaged, selfHandles, remainingFollow, remainingLike),
+          });
+          outcomes = r.outcomes;
+          blocked = r.blocked;
+          pageOpened = r.harvest.pageOpened;
+          selected = r.harvest.selected;
+        } catch (err) {
+          // ブラウザ枠の競合 (BrowserSlotTimeoutError) 等。タスク全体を落とすと graphile の再試行で
+          // 収穫/課金がやり直しになるので、このアカウントだけ飛ばす。scout にも回さない。
+          log.warn({ task: NOTE_ENGAGE_TASK_NAME, accountId: account.id, err }, 'ブラウザセッション失敗 — このアカウントはスキップ');
+          result.skipped.push(`${account.id}:browser_unavailable`);
+          continue;
+        }
       }
 
-      // 既エンゲージを除外(note チャンネル全体の follow/like 実績)。
-      const engagedRows = await prisma.promotionSnsEngagement.findMany({
-        where: { channel: NOTE_CHANNEL },
-        select: { channel: true, action_type: true, target_handle: true },
-        take: 5000,
-      } as unknown);
-      const engaged = new Set(engagedRows.map((r) => `${r.action_type}:${r.target_handle.toLowerCase()}`));
-      const targets = pickNoteTargets(out.actions, engaged, remainingFollow, remainingLike);
-      if (targets.length === 0) {
-        result.skipped.push(`${account.id}:no_targets`);
-        continue;
+      // 補助: ページを開けて読めた上で使える収穫が 0 件のときだけ growth_scout (¥40/回, web 検索つき)。
+      // 例外/ブロックで読めていないとき・1 アカウント 1 日 (JST) 1 回を超えるときは呼ばない
+      // (cron 8 回 × 2 アカウント × ¥40 ≒ ¥19,200/月 の露出を作らない)。
+      if (!blocked && selected === 0 && outcomes.length === 0) {
+        if (!pageOpened) {
+          result.skipped.push(`${account.id}:harvest_unreadable`);
+          continue;
+        }
+        if (!canRunScout(state, now())) {
+          result.skipped.push(`${account.id}:no_targets`, `${account.id}:scout_daily_limit`);
+          continue;
+        }
+        // 失敗しても課金は発生しうるので、呼ぶ前に当日分を消費済みにする。
+        await patchState(account.id, { engage_scout_date: engageDay(now()) });
+        let targets: NoteEngageTarget[] = [];
+        try {
+          const out: GrowthScoutOutput = await generate({
+            concept: account.niche || account.display_name,
+            target_audience: account.target_reader ?? '',
+            daily_target: 15,
+          });
+          targets = pickNoteTargets(out.actions, engaged, remainingFollow, remainingLike).filter((t) => !isSelf(t.handle));
+        } catch (err) {
+          log.warn({ task: NOTE_ENGAGE_TASK_NAME, accountId: account.id, err }, 'growth_scout 生成失敗 — スキップ');
+          result.skipped.push(`${account.id}:scout_failed`);
+          continue;
+        }
+        if (targets.length === 0) {
+          result.skipped.push(`${account.id}:harvest_empty_fallback_empty`);
+          continue;
+        }
+        try {
+          const r = await port.engageAll({
+            sessionState,
+            targets,
+            maxFollow: remainingFollow,
+            maxLike: remainingLike,
+            proxy,
+          });
+          outcomes = r.outcomes;
+          blocked = r.blocked;
+        } catch (err) {
+          log.warn({ task: NOTE_ENGAGE_TASK_NAME, accountId: account.id, err }, 'ブラウザセッション失敗 — このアカウントはスキップ');
+          result.skipped.push(`${account.id}:browser_unavailable`);
+          continue;
+        }
       }
-
-      const { outcomes, blocked } = await port.engageAll({
-        sessionState,
-        targets,
-        maxFollow: remainingFollow,
-        maxLike: remainingLike,
-        proxy,
-      });
 
       for (const o of outcomes) {
         if (o.status === 'done') {
@@ -294,7 +401,9 @@ export async function runNoteEngage(payload: unknown, deps: NoteEngageDeps = {})
           cell.failed += 1;
         }
         // 成功/既実行のみ記録(重複防止)。failed は再挑戦余地を残し記録しない。
+        // (port 側は押下後に状態を読み直して done を返す — 実行していない行を残さない。)
         if (o.status === 'done' || o.status === 'already') {
+          engaged.add(`${o.action}:${o.handle.toLowerCase()}`);
           await prisma.promotionSnsEngagement
             .upsert({
               where: {
@@ -311,20 +420,23 @@ export async function runNoteEngage(payload: unknown, deps: NoteEngageDeps = {})
         }
       }
 
+      // 当日使用数 (アカウント別の日次キャップの根拠) と、初めて実際に成功したときのランプアップ起点を記録する。
+      if (cell.followed + cell.liked > 0) {
+        const u = usages[idx] ?? { follow: 0, like: 0 };
+        await patchState(account.id, {
+          engage_usage: { day: engageDay(now()), follow: u.follow + cell.followed, like: u.like + cell.liked },
+          ...(state.engage_ramp_started_at ? {} : { engage_ramp_started_at: now().toISOString() }),
+        });
+      }
+
       if (blocked) {
         cell.blocked = blocked;
-        if (blocked === 'session_expired') {
-          // F-ANP-21 認証リレー: セッション失効はアカウントを一時停止し、再取込コマンド付きで通知する
-          // (pipeline.note.publish/note.sales.fetch/note.publish.status.sync と同型)。
-          await prisma.noteAccount
-            .update({ where: { id: account.id }, data: { status: 'paused' } })
-            .catch(() => {});
-          await notifyNoteSessionExpired(prisma, account.id, account.display_name, pushAlert);
-        } else {
-          await alert(`⚠️ note 自動フォロー/スキが「${blocked}」で中断しました。凍結回避のため本日は停止します。`);
-        }
-        // ブロックされたら他アカウントも今回は止める(同一IP/プロファイル影響回避)。
-        break;
+        const kind = classifyBlock(blocked);
+        await handleBlocked(account, blocked);
+        if (kind === 'technical') result.skipped.push(`${account.id}:${blocked}`);
+        // レート制限なら他アカウントも今回は止める(同一IP/プロファイル影響回避)。
+        // セッション切れ/環境要因はそのアカウント固有なので次のアカウントは続行する。
+        if (kind === 'rate_limit') break;
       }
     }
 
@@ -349,6 +461,38 @@ export async function runNoteEngage(payload: unknown, deps: NoteEngageDeps = {})
     }
     log.warn({ task: NOTE_ENGAGE_TASK_NAME, err }, 'note.engage failed');
     throw err;
+  }
+
+  async function handleBlocked(account: { id: string; display_name: string }, blocked: string): Promise<void> {
+    const kind = classifyBlock(blocked);
+    if (kind === 'session') {
+      // F-ANP-21 認証リレー: セッション失効はアカウントを一時停止し、再取込コマンド付きで通知する
+      // (pipeline.note.publish/note.sales.fetch/note.publish.status.sync と同型)。
+      await prisma.noteAccount.update({ where: { id: account.id }, data: { status: 'paused' } }).catch(() => {});
+      await notifyNoteSessionExpired(prisma, account.id, account.display_name, pushAlert);
+    } else if (kind === 'rate_limit') {
+      await alert('note 自動フォロー/スキでレート制限らしき表示を検知したため、この回は中止しました(次回の実行で再開します)。');
+    } else {
+      // ブラウザ/環境の問題 (playwright_unavailable / context_error / session_check_failed 等)。
+      // 凍結とは無関係なので LINE は送らず、log と result.skipped にだけ残す。
+      log.warn({ task: NOTE_ENGAGE_TASK_NAME, accountId: account.id, blocked }, 'note.engage 環境要因で中断');
+    }
+  }
+
+  /** settings_json のアカウント別エンゲージ状態を読み直してマージ保存する (他キーを壊さない)。 */
+  async function patchState(accountId: string, patch: Record<string, unknown>): Promise<void> {
+    try {
+      const rows = await prisma.noteAccount.findMany({
+        where: { id: accountId },
+        select: { id: true, settings_json: true },
+        take: 1,
+      } as unknown);
+      const cur = rows.find((r) => r.id === accountId)?.settings_json;
+      const base = cur && typeof cur === 'object' && !Array.isArray(cur) ? (cur as Record<string, unknown>) : {};
+      await prisma.noteAccount.update({ where: { id: accountId }, data: { settings_json: { ...base, ...patch } } });
+    } catch (err) {
+      log.warn({ task: NOTE_ENGAGE_TASK_NAME, accountId, err }, 'settings_json の更新に失敗');
+    }
   }
 
   async function alert(text: string): Promise<void> {

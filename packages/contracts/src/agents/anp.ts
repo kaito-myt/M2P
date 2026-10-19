@@ -609,6 +609,23 @@ export const NoteAccountSettingsSchema = z.object({
 });
 export type NoteAccountSettings = z.infer<typeof NoteAccountSettingsSchema>;
 
+/**
+ * 設定フォーム保存用のマージ。フォームが扱う既知キーは `next` で置き換える (未指定 = 削除 = グローバルに従う)。
+ * それ以外のキーは **worker が書く状態** (`engage_ramp_started_at` / `engage_scout_date` /
+ * `engage_usage` = F-091 のランプアップ・scout 上限・当日使用数) なので必ず保持する。
+ * 丸ごと置き換えると保存の度にランプアップが 0 日目に戻る (2026-10-19 レビューで判明)。
+ */
+export function mergeNoteAccountSettings(current: unknown, next: NoteAccountSettings): Record<string, unknown> {
+  const known = new Set(Object.keys(NoteAccountSettingsSchema.shape));
+  const preserved: Record<string, unknown> = {};
+  if (current && typeof current === 'object' && !Array.isArray(current)) {
+    for (const [k, v] of Object.entries(current as Record<string, unknown>)) {
+      if (!known.has(k)) preserved[k] = v;
+    }
+  }
+  return { ...preserved, ...next };
+}
+
 /** `note_accounts.settings_json` (unknown/Json) を安全にパースする。失敗時は空 (=全てグローバル追従)。 */
 export function parseNoteAccountSettings(json: unknown): NoteAccountSettings {
   const parsed = NoteAccountSettingsSchema.safeParse(json ?? {});

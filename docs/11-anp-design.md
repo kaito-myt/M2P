@@ -274,7 +274,7 @@ ANP の機能は A2P の対応機能を note 向けに写像したもの。**太
 - **F-ANP-11 構成生成（Outline）**: 記事の見出し構成。A2P Writer/outline 準拠（短尺）。
 - **F-ANP-12 本文執筆（Writer）**: note 記事本文（数千字）。**無料パート＋有料パートの「ライン」構造**（続きは有料）に対応。
 - **F-ANP-13 校閲（Editor）**: A2P Editor 準拠。note の読みやすさ（短段落・強調・リード文）に最適化。
-- **F-ANP-14 アイキャッチ画像（Eyecatch）**: 見出し画像を生成（A2P の Thumbnail Designer 準拠、`gpt-image` 系）。note の推奨比率（横長 1280×670 目安）で出力。
+- **F-ANP-14 アイキャッチ画像（Eyecatch）**: 見出し画像を生成（A2P の Thumbnail Designer 準拠、`gpt-image` 系）。note の推奨比率（横長 1280×670 目安）で出力。 **禁止モチーフは account art direction より常に強い**（1 文でも指定していたら art_direction 全体を捨てて WARN。詳細は末尾「アイキャッチ品質: 禁止モチーフの絶対化」F-ANP-14/56/57）。
 - **F-ANP-15 品質判定（Quality Judge）**: A2P 準拠。note向け評価軸（フック強度/可読性/有料転換見込み/SEO・検索流入見込み）。
 - **F-ANP-16 価格・公開設定の自動決定**: 無料/有料/価格/ラインの位置/メンバーシップ収録可否を自動提案（人間が最終承認するゲートあり）。
   **実装済み(最小・2026-09-18)**: `pipeline.note.judge`(`NoteJudgeOutputSchema.recommend_paid`/`suggested_price_jpy`、role=`anp.judge`)が
@@ -2819,3 +2819,136 @@ grep -c '^model Note' packages/db/schema.prisma
    `isNoteDrift` のスキップを**外す**。
 4. P3009 の `20260625000000_add_book_publish_status` も同時に片付ける
    (`docs/operations/runbook.md` §4.1。**`migrate reset` は本番データ保護のため厳禁**)。
+
+## アイキャッチ品質: 禁止モチーフの絶対化 (F-ANP-14 / F-ANP-56 / F-ANP-57, 2026-10-19)
+
+運営者指摘「クオリティが低い」「AI 生成感が強すぎる」。
+
+### 実測 (2026-10-19)
+
+- 画像モデルは正しかった (role=`anp.eyecatch` = openai/gpt-image-2、token_usage 直近 328 件すべて gpt-image-2)。**モデルは原因ではない。**
+- 副業アカ (note-acc-1) の `research_json.art_direction` が、`EYECATCH_BANNED_MOTIFS` の禁止モチーフを**名指しで指定**していた
+  (ノートPCに向かうバストアップの会社員イラスト / 円形アイコン / 机まわり=ノートPC・コーヒーカップ・観葉植物 / フラットなベクター)。
+- 別記事 2 本が会社員＋ノートPC＋マグカップ＋浮遊アイコンの**ほぼ同一の絵**だった。style_key は直近 7 日で 13 種に散っていたのに見た目が同じ
+  = art_direction が画風の違いを潰していた。
+- 構造: `grounded` (art_direction_evidence 非空) の art_direction は「これが最優先」として**禁止リストより前**に置かれるため、モデルは禁止より指定に従う。
+  F-ANP-57 のガードは「実物を見ていない推測が事実を上書きする」穴を塞いだが、逆の「**実物を見て書かれた指示が禁止を指定しても素通り**」が残っていた。
+
+### 決定
+
+1. **優先順位 = 禁止モチーフ > アカウント指示 (art_direction) > ジャンル既定。** 実物を見て書かれた指示 (grounded) でも例外にしない。
+2. `stripBannedMotifs(text)` (`eyecatch-style.ts`) が文単位 (。！？と改行) で `BANNED_MOTIFS` の `pattern` に当たる文を検出する。
+   **文言 (`text`) と検出パターン (`pattern`) は同じ配列要素に持つ** (旧: 添字対応。片方に行を挿入すると WARN のラベルが全部ずれた)。
+   `pattern` は裸の単語ではなく禁止リストの文脈に絞る (「雲が浮かぶ青空」「グラデーション」「背景に小さく写すスマホ」は落とさない)。
+   `pattern: null` は画像内に描く文字の禁止 (文面検査の対象外)。
+   **回避・否定の文 (「〜は描かない」「避ける」等) は検出対象外** — 以前は出力指定が art_direction に「避けるもの」を書かせており (案 A で外した。下記)、
+   外したあとも LLM が否定文を書くことはあるため、否定の記述で全体破棄になってはいけない。
+   **実際の判定規則**: 文が pattern に当たった位置から文末までに回避語 (`AVOIDS`: 描かない / 入れない / 置かない / 添えない / 並べない / 使わない / 避け / しない / 不要 / 禁止 / NG) があり、
+   かつ**禁止語と回避語の間に配置動詞** (添え / 置き / 置く / 配置 / 並べ / 散ら / 描き / 描く / 入れ / 据え / 載せ / 浮か / 使い) が無いときだけ「回避文」として検出対象外にする。
+   判定は**回避語の出現位置より前**だけを配置動詞の走査対象にする — そうしないと「描かない」の中の「描か」、「入れない」の中の「入れ」を配置動詞として拾い、純粋な否定文を落としてしまう。
+   間に配置動詞があれば回避語は別の節にかかっているとみなして落とす (例: 「円形アイコンを2〜3点だけ添え、背景には何も置かない」「会社員イラストを置き、文字と重ねることは避ける」は DROP /
+   「観葉植物、マグカップ、書類は描かない」は keep)。
+   **リサーチ側で否定文を発生させない (案 A)**: `research.ts` の art_direction 出力指定から「避けるもの」を外し、
+   「避ける / 描かない / 〜しない は書かない (書くと art_direction 全体が捨てられる)」と明記した。AVOIDS は薄い安全網。
+   **残存制約 (既知)**: 配置動詞を伴わない質感指定 + 無関係な否定が同一文に同居する形 (例: 「フラットなベクター／デジタルイラストにし、写実にしない」) は検出できず、
+   踏むと汚染指示が最優先で通り、**WARN も `dropped_motifs` も空 = 無言**になる。
+   **既知の誤検出**: 「ノートPC・スマホ + 数量詞 (1台 / 1点 等)」は、禁止リスト自身が許可する「場面の一部として小さく写す」書き方でも落ちる
+   (「背景に小さくスマホを1台置く」→ DROP。ただし全角スペースを挟んだ「スマホを 1 台」→ keep と、スペース有無で結果が反転する恣意性がある)。
+   もう 1 つ: **「〜を置く / 散らす / 描くのは避ける。」の形**も、配置動詞が回避語より前に来るため落ちる (純粋な回避文なのに全体破棄になる)。
+   案 A でリサーチ側が否定文を書かない前提になったので頻度は低い。
+   塞がない: 誤検出側のコストは観測可能かつ回復可能 (WARN と `dropped_motifs` が出て、落ち先は運営者が実物を見て決めたジャンル既定)。
+   同義語の漏れ (アイコン / サラリーマン等 / 「主役はスマホ」/ モニタ上のグラフ) は閉じた。「フラットなデジタルイラスト」等は `LIGHT_STYLES` 自身が使う語なので広げない。
+3. **`sanitizeAccountDirection` は 1 文でも当たったら art_direction 全体を捨てる** (`art=''` = 指示なし扱い)。
+   部分削除は逆効果だった: 副業アカの実データでは被写体の 4 文が落ち、残った「モチーフは合計4点まで。」が
+   「これが最優先」に昇格して `colorHeader` / `styleHeader` / モチーフ数が既定から格下げされ、**「描くモノは 1 個だけ」が消えた**。
+   全体を捨てれば `genre.art` + 「厳密に守る」色指定 + 「描くモノは 1 個だけ」の既定に倒れる。汚染された指示を残すより確実に良い絵になる。
+4. **copy_rules は motif 検閲の対象外。** 禁止リストは絵のモチーフの話で、検閲すると「右肩上がりのような煽り表現は避ける」
+   「文字の横にアイコンを置かない」といった**正しい文字規則が消える**ことを実測した。コピー生成側 (`account-context.ts` 経由) は無検閲なので、
+   画像側だけ検閲すると同じ copy_rules が経路で中身が割れる。
+5. **WARN は必ず出す**: `generateNoteEyecatch` が捨てた指示の該当文と当たったモチーフを pino `agents.anp.eyecatch` ロガー (Railway ログ) に出し、
+   `GenerateNoteEyecatchResult.droppedMotifs` → `jobs.result_json.dropped_motifs` (`pipeline-note-eyecatch.ts`) にも残す (F-ANP-57「理由を Job 行に残す」と同方針)。
+   WARN が出続けるアカウントは、リサーチ側の指示が禁止に触れているサイン。
+6. **(b) リサーチ側**: `research.ts` のまとめ段が `EYECATCH_BANNED_MOTIFS` を**そのまま**埋め込み (`artDirectionBanLines`、リストは 1 箇所参照)、
+   art_direction に書くことを禁じる。「フラットなベクターの会社員イラスト＋浮遊する円形アイコン」は名指し禁止。
+   ただし F-ANP-57 の「art_direction は観察に書かれている要素だけで組む」が優先: **観察に禁止モチーフが出てきたらその要素は書かず、
+   観察の他の要素で組む。観察に無い質感・被写体は創作しない**。観察に質感のある作り (実写風・紙/版画・立体・手描き) が写っていれば優先して拾う。
+7. **(c) モチーフ数の優先順位**: 既定「描くモノは 1 個だけ」と art_direction の「モチーフは合計 4 点まで」が両方プロンプトに載りモデルに選ばせていた。
+   色・画風と同じ扱いに揃え、**有効なアカウント指定 (検閲を通ったもの) があればその数・構成が勝ち、「1 個だけ」は指定が無いときだけ**にした。
+   理由: 競馬アカの「馬 1 頭＋騎手 1 名」のように、実物を見て決めた勝ち筋は 1 個とは限らない。検閲で捨てられたアカウントは自動的に「1 個だけ」に戻る。
+
+### 実バグ: 割当モデルが実呼び出しに効いていなかった
+
+provider='openai' のとき `assignment.model` は `token_usage.model` (`ctx.model`) にしか使われず、実呼び出しの `generateImage` は env `OPENAI_IMAGE_MODEL` / 既定 `gpt-image-2` 固定だった
+(google パスだけ model を渡していた)。割当を `gpt-image-1` やスナップショットに変えても**実際の呼び出しは変わらず、token_usage の model だけが嘘になる**状態。
+`GenerateImageArgs.model?` を追加し (`tools/image-gen.ts`。未指定なら従来どおり env/既定の `MODEL`)、`generateNoteEyecatch` が割当モデルを渡す。テストで固定。
+A2P 表紙側など他の呼び出し元は `model` 未指定のまま挙動不変。
+
+### 対象コード
+
+`packages/agents/src/anp/eyecatch-style.ts` (`BANNED_MOTIFS` / `stripBannedMotifs`) / `eyecatch.ts` (`sanitizeAccountDirection` / モチーフ数 / 割当モデル) / `research.ts` (`artDirectionBanLines`) / `tools/image-gen.ts` (`model?`) / `apps/worker/src/tasks/pipeline-note-eyecatch.ts` (`dropped_motifs`) /
+`packages/agents/__tests__/anp/eyecatch.test.ts`。
+
+## note 自動フォロー/スキ (F-091) を「効く量」にする (2026-10-19)
+
+### 1. 実測 (2026-10-19)
+
+- `promotion_sns_engagements` の `channel='note'` は**全期間でフォロー 9 件 / スキ 14 件**だけ。公開 199 本・10 月 743 PV・売上 ¥0。
+- `jobs.kind='note.engage'` の `result_json` で、競馬アカウント (`cmu9z5oqy0000pk0lncwogh3n`, フォロワー 1) は**毎回 `followed: 0`**。副業アカ (`note-acc-1`, 22) は動いていた。
+
+### 2. 原因
+
+1. **24h キャップがアカウント横断の合算**だった。`followToday` / `likeToday` に `account` 条件が無く (テーブルにアカウント列が無い)、`created_at asc` で先頭の `note-acc-1` が枠を食い切ると 2 番目は常に `remainingFollow = 0`。
+2. キャップが小さい (巡航 10/15 を 2 アカウントで分け合う)、cron は 1 日 2 回。
+3. 枠切れが `continue` するだけで `skipped` に理由が出ない。
+4. 対象が growth_scout (LLM + web 検索) の note.com URL だけで供給が細い。
+
+### 3. 変更
+
+**キャップ (アカウント 1 つあたり / 24h)**: スキーマは変えない (`promotion_sns_engagements` の一意キーは `(channel, action_type, target_handle)`。本番は `migrate deploy` が P3009 で使えない — 末尾「note_* テーブルがどの migration にも無い」参照)。代わりに
+- 残り予算 = `アカウント1つあたりキャップ × アカウント数 − 24h 使用済み(合算)` を**実行の最初にアカウント数で均等割り** (`allocateRunQuotas`、端数は先頭から 1 ずつ)。アカウントの処理順は UTC 通算日 % 件数で**日替わりローテーション** (`rotateAccounts`)。先頭が食い切って 2 番目が構造的に 0 になる状態は起きない (単体テストで固定)。
+- 制約: 記録にアカウント列が無いので、同じ相手を 2 アカウントで別々にフォローはできない (重複防止はチャンネル全体)。
+
+| 稼働日数 | フォロー/日 | スキ/日 |
+|---|---|---|
+| 0〜1 | 10 | 15 |
+| 2〜4 | 20 | 30 |
+| 5〜9 | 35 | 55 |
+| 10〜 (巡航) | 50 | 80 |
+
+根拠: 運営者の目標 (巡航 50/80) を、初日から全開にしない段階表で。**ランプアップの起点はアカウント単位** (`note_accounts.settings_json.engage_ramp_started_at`、そのアカウントで**初めて実際に成功した実行**で書く。migration なし)。当初はチャンネル最古行 (本番は 2026-10-15) 起点で実装したが、全期間フォロー 0 件の競馬アカが初日から 20/30 に入り 10/15 の 2 段を飛ばす内部矛盾があったため改めた。起点が無いアカウントは 0 日目 (10/15)。note-acc-1 も一度 0 日目から数え直す (実績は 9 件だけで保守側に倒す)。note は IG/TikTok より緩いが無制限ではないため、1 回の実行は**フォロー 8 / スキ 12 まで** (`PER_RUN_FOLLOW/LIKE`)、操作の間隔は **8〜25 秒のランダム**ジッター (従来 6〜16 秒の時刻依存)。クリックの成否は、**対象ボタンを 1 本の locator に固定して**(`main` 内の最初の一致 → 無ければ main 外。document 全体を走査すると「おすすめのクリエイター」や著者/関連記事カードにいる既フォロー済みの別人を拾い、押す前は `already`、押した後は空振りでも `done` になる)、**同一ボタンを押下前後で読み直して**「フォロー中」「スキ済み」になって初めて `done` とする。セレクタは実機未検証。`blocked` / `session_expired` 検知で LINE 通知する安全弁は維持。**日次キャップはアカウント別の当日使用数で効かせる**: `settings_json.engage_usage = {day, follow, like}` (day = JST 日付。cron が JST 8〜22 時なので UTC 日だと 09:00 JST で割れる) を実行ごとに積み、割当 = `min(1回上限, 自キャップ − 自分の当日使用数)`。チャンネル合算 (直近 24h) は二次的な上限で、超えるときだけ最大の枠から削る。当初は合算予算の均等割りだけで、`caps=[50,10]` (副業が成熟・競馬は day-0) のとき競馬アカが 8+8+8+6=30 フォロー/日 (自キャップの 3 倍) 走り、凍結リスクが最も高い「実績ゼロのアカウント」でランプが破れていた。割当枠は `result.per_account[].follow_quota/like_quota` に残る。
+
+**状態は worker が書き、UI は保持する**: `engage_ramp_started_at` / `engage_scout_date` / `engage_usage` は `note_accounts.settings_json` に worker が書く。ANP の設定フォーム (`updateAccountSettings`) は以前 `settings_json` を丸ごと置換し、`NoteAccountSettingsSchema` は未知キーを落とすため、**設定を 1 回保存するだけでランプアップが 0 日目に戻って** 巡航 50/80 のアカウントが 10/15 に落ちるところだった。`mergeNoteAccountSettings` で既知キー (`themes_per_day` / `paid_publish_enabled` など本番の実データ含む) はフォームの値で置換し、未知キーは保持する (`packages/contracts/__tests__/anp-account-settings-merge.test.ts`)。
+
+**cron**: `NOTE_ENGAGE_CRON` を `0 4,10 * * *` → **`10 23,1,4,6,8,10,12,13 * * *`** (UTC = JST 8:10/10:10/13:10/15:10/17:10/19:10/21:10/22:10、1 日 8 回、深夜に打たない)。8 回 × 8 = 64 ≥ 50、8 × 12 = 96 ≥ 80。**分 0 を外した理由 (分は 10 = 出版 dispatch の :00/:30/:20/:40 と paperback-draft の :05/:15 系のどちらからも離れる)**: `promotion.sns.engage` (`0 3,9`) や出版系 dispatch (`*/30`, `0,20,40`) と同じ単一ブラウザ枠 (`launchBrowser` のセマフォ、待ち上限 `SLOT_WAIT_MAX_MS` = 20 分) を取り合う。収益の本線 (kdp.submit / paperback.submit) を note のフォローの後ろに並べない。**これは条件付き cron ではなく静的 cron** (`buildCronItemsWithSettings` ではなく定数) なので、デプロイで反映される (worker 再起動の別手順は不要)。
+
+**対象の収穫 (主系統) と 1 セッション統合**: 以前案は harvest と engage を別ブラウザで開く (アカウントあたりスロット 2 回) 構成だったが、`harvestAndEngage` に統合し**アカウントあたりスロット取得 1 回**にした (例外: growth_scout フォールバックは `engageAll` で 2 回目のスロットを取る。1 アカウント 1 日 1 回までなので許容) (ログイン確認も 1 セッション 1 回)。セッション内で `https://note.com/search?context=note&sort=new&q=<語>` を開き、数回スクロールして `a[href*="/n/"]` から**実在の urlname と記事 ID** を収穫、`harvestToTargets` (純関数、コールバックとして同期で呼ぶ) で自分自身 (**status 無条件の全 `note_accounts.handle`** — paused の相方も含む)・既エンゲージ・重複を除いて follow=著者プロフィール / like=記事 (like の handle は記事単位 `@urlname/n/<id>`) に変換し、そのまま操作する。検索語は `buildHarvestQueries(niche, target_reader)`。`research_json` は使わない。スロット待ち (`BrowserSlotTimeoutError`) などの例外は**そのアカウントだけ `browser_unavailable` で skipped** にし、タスク全体を失敗させない (graphile の再試行で収穫/課金がやり直しになるため)。既エンゲージ集合は**ループ外で 1 回**、`created_at desc` で最大 50,000 行 (超えたら `engaged_set_truncated` を skipped に残す)。
+
+**growth_scout は補助 — 費用上限つき**: 「ページを開けて読めた上で、使える収穫が 0 件」のときだけ呼ぶ。**1 アカウント 1 日 (JST) に 1 回まで** (`settings_json.engage_scout_date`、呼ぶ前に消費済みにする。失敗でも課金は発生しうる)。最悪でも 2 アカウント × ¥40 × 1 回/日 ≒ ¥80/日 ≒ ¥2,400/月。上限が無かった当初実装は cron 8 回 × 2 アカウントで最悪 ¥19,200/月 だった (2026-10-13 の「¥4,700/月払ってフォロー 0 件」事故の 4 倍)。**収穫が例外で落ちた / ブロックされた / ページが読めなかった (`pageOpened=false`) ときは呼ばない** (ブラウザ枠の競合が LLM 課金に変換されるのを防ぐ)。skipped には `scout_daily_limit` / `harvest_unreadable` / `browser_unavailable` が残る。セッション復号は収穫/scout より前のまま。
+
+**可視化**: `result.skipped` に `<accountId>:cap_exhausted` (枠切れ) / `no_targets` / `scout_daily_limit` / `harvest_unreadable` / `browser_unavailable` / `harvest_empty_fallback_empty` (収穫 0 かつ scout も空) / `scout_failed` / `session_decrypt_failed` を必ず積む。`per_account[].follow_cap` は日次キャップ、`follow_quota` は今回の割当枠 (均等割り・1回上限後) で、枠切れの理由は両方を見れば読める。
+
+### 3b. 外部システムの事実と、それを踏まえた安全装置 (2026-10-19 レビューで判明)
+
+- **note の検索ページ・プロフィール・記事はログアウトでも 200 の公開ページ**で、`/login` へのリダイレクトではセッション切れを検出できない。死んだセッションでも収穫は成功し、「フォロー」ボタンもあり、押すとログイン誘導が出るだけ。当初実装はこのとき `done` を返して**実行していないフォローの恒久行**を `promotion_sns_engagements` に入れ、24h 予算と重複防止集合を汚染するところだった (この機能は過去 2 回「数字は動いているのに実体が無い」で失敗している: 鍵違いの `session_decrypt_failed` 量産、Prisma `in` の例外)。
+- 対策 (a): 1 ブラウザセッションにつき 1 回、`GET https://note.com/api/v2/current_user` を `context.request` で叩き、200 かつ `data.id`/`data.urlname` があるときだけ「ログイン済み」とする (`judgeCurrentUser`)。**明示的な未ログインだけ** `session_expired`: 401/403、または JSON として読めて `data` キーがあり中身が null/空。**JSON として読めない (WAF / Cloudflare の 200 HTML) / `data` キーが無い (API の形変更) / 5xx / 通信失敗は `unknown` = `session_check_failed:*` = 環境要因**で、操作はしないが `paused` にも通知にもしない (誤って `paused` にすると `note.theme.auto` など ANP の本線まで止まり、再取込でも直らない)。診断のため status と content-type をログに残す (本文・クッキーは出さない)。**この API のレスポンス形は実機未検証**。
+- 対策 (b): クリック後に状態を読み直し、`フォロー中` / `スキ済み` になって初めて `done`。ならなければ `failed` (`follow_not_confirmed` / `like_not_confirmed`) にして行を残さない。
+- レート制限の判定は**ページ本文全体に当てない** (検索結果は第三者の記事タイトルで埋まり、「問題が発生しました」「しばらく時間をおいて」等の日常語で誤爆して全アカウントのその回を止めてしまう)。HTTP 429 か、`[role=alert]`/トースト/エラー領域の文言のみ。ブロック理由は 3 種に分類 (`classifyBlock`): `session_expired` = アカウント停止+再取込通知 / `action_blocked` = LINE「この回は中止 (次回の実行で再開)」+ 他アカウントもその回は中止 / `playwright_unavailable`・`context_error`・`session_check_failed` 等 = 環境要因で LINE は送らず skipped とログのみ。
+- 起動引数に `--disable-blink-features=AutomationControlled` を渡す (従来は定義だけで未使用の死んだ export で `navigator.webdriver=true` のまま走っていた)。
+
+
+### 4. 変更したファイル
+
+`apps/worker/src/tasks/note-engage.ts`, `apps/worker/src/tasks/note-engage/note-engage-port.ts`, `.../playwright-note-engage-port.ts`, `apps/worker/src/crontab.ts` (cron `10 23,1,4,6,8,10,12,13`), `apps/worker/__tests__/note-engage.test.ts`, `apps/worker/__tests__/crontab.test.ts`, `packages/contracts/src/agents/anp.ts` (`mergeNoteAccountSettings`), `packages/contracts/__tests__/anp-account-settings-merge.test.ts`, `apps/anp/app/actions/accounts.ts` (`updateAccountSettings` を read-modify-write に)。migration なし。
+
+### 5. 未検証
+
+note の検索ページの DOM (`a[href*="/n/"]`)、`current_user` API の応答形、エラー領域のセレクタ、**フォロー / スキのボタン locator** は本番セッションでの実走を未実施。実走時に収穫 0 が続くなら `skipped` が `harvest_empty_fallback_empty` / scout フォールバックになるので気づける。
+
+**初回実走で必ず突き合わせること**: `followButton` / `likeButton` は `main` で見つからないとき `'button, [role=button]'` / `'body'` に落ちる。この経路に落ちると**別人 (おすすめクリエイター欄) のボタンを押し、その結果を対象者のハンドルで記録する**可能性が残る (`main` が効いている限り発生しない)。初回実走では `promotion_sns_engagements` の新規行のハンドルと、note 側の「フォロー中リスト / 通知」を 1 件ずつ突き合わせる。ズレていたら `main` 外フォールバックを削除して fail-closed (`*_button_not_found` で行を残さない) にする。
+
+### 6. 既知の不整合 (害は無いが、次に触るとき揃えるもの)
+
+1. **窓の不整合**: 一次クランプ (アカウント当日使用数) は JST 日、二次クランプ (チャンネル合算) は直近 24h ローリング。前日が上限近くまで走った翌日、JST 8:10 の回は窓にまだ前日分が残るので `Σcaps − channelUsed ≈ 0` となり全枠 0 (`cap_exhausted`) になる。`caps=[50,50]` で day1 100 件 → day2 約 84 件と 1 回分ほど目減りする。量を出すのが目的なので、二次クランプも `created_at >= JST 0:00` (`engageDay` 境界) に合わせるのが素直。
+2. `rotateAccounts` だけ UTC 日基準で、順序が JST 9:00 (8:10 の回と 10:10 の回の間) で入れ替わる。影響は処理順と削りのタイブレークだけ。`engageDay` に揃えると説明が 1 本になる。
+3. **`unknown` が続いたときの気づき口が弱い**: `session_check_failed:*` は LINE を出さない設計 (誤 paused を避けるため正しい) だが、`jobs.result_json.skipped` とログにしか出ないので、WAF 等で数日何もしない状態が埋もれ得る。「N 回連続でフォロー / スキ 0 件」で 1 通だけ出す日次ダイジェストを入れると、この機能が過去 2 回やった「数字は動いているのに実体ゼロ」を確実に捕まえられる。
+4. `engage_usage` の加算は実行開始時のスナップショット + 今回分なので、note.engage が 2 回重なると増分が失われる (1 回の実行は最大 ~1 時間、cron 間隔は 2 時間なので実害はほぼ無い)。`already` は当日使用数に積まない (note 側で操作していないので妥当) が、チャンネル合算には乗る。
