@@ -44,4 +44,5 @@ jobs:
           scripts/boatrace-history/rps-openat2-synthetic-bridge.test.mjs
           scripts/boatrace-history/rps-byte-admission-controller.test.mjs
           scripts/boatrace-history/rps-synthetic-schema-integration.test.mjs
+          scripts/boatrace-history/rps-metadata-inventory-synthetic.test.mjs
         timeout-minutes: 5
