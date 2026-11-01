@@ -1,0 +1,42 @@
+name: RPS openat2 synthetic helper
+
+on:
+  workflow_dispatch:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: rps-openat2-synthetic-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  synthetic-linux-test:
+    name: Synthetic Linux helper test
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Checkout the tested revision
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install compiler and OpenSSL headers
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends build-essential libssl-dev
+        timeout-minutes: 3
+
+      - name: Record immutable tested revision
+        run: |
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          printf 'Testing commit: %s\n' "$GITHUB_SHA"
+
+      - name: Run the synthetic openat2 helper test only
+        run: node --test scripts/boatrace-history/rps-openat2-synthetic-helper.test.mjs
+        timeout-minutes: 5
