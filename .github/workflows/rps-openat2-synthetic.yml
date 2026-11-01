@@ -14,7 +14,7 @@ concurrency:
 
 jobs:
   synthetic-linux-test:
-    name: Synthetic Linux helper and bridge tests
+    name: Synthetic Linux schema, bridge, and helper tests
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
@@ -37,10 +37,11 @@ jobs:
           test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
           printf 'Testing commit: %s\n' "$GITHUB_SHA"
 
-      - name: Run helper, bridge, and byte-admission controller tests
+      - name: Run synthetic schema integration and supporting tests
         run: >-
           node --test
           scripts/boatrace-history/rps-openat2-synthetic-helper.test.mjs
           scripts/boatrace-history/rps-openat2-synthetic-bridge.test.mjs
           scripts/boatrace-history/rps-byte-admission-controller.test.mjs
+          scripts/boatrace-history/rps-synthetic-schema-integration.test.mjs
         timeout-minutes: 5
