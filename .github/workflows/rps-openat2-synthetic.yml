@@ -26,12 +26,6 @@ jobs:
         with:
           node-version: 22
 
-      - name: Install compiler and OpenSSL headers
-        run: |
-          sudo apt-get update
-          sudo apt-get install --yes --no-install-recommends build-essential libssl-dev
-        timeout-minutes: 3
-
       - name: Record immutable tested revision
         run: |
           test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
@@ -40,9 +34,15 @@ jobs:
       - name: Run synthetic schema integration and supporting tests
         run: >-
           node --test
+          scripts/boatrace-history/rps-readonly-capability-probe.test.mjs
+          scripts/boatrace-history/rps-readonly-capability-ci.test.mjs
           scripts/boatrace-history/rps-openat2-synthetic-helper.test.mjs
           scripts/boatrace-history/rps-openat2-synthetic-bridge.test.mjs
           scripts/boatrace-history/rps-byte-admission-controller.test.mjs
           scripts/boatrace-history/rps-synthetic-schema-integration.test.mjs
           scripts/boatrace-history/rps-metadata-inventory-synthetic.test.mjs
         timeout-minutes: 5
+
+      - name: Run read-only capability summary
+        run: node scripts/boatrace-history/rps-readonly-capability-ci.mjs
+        timeout-minutes: 1
