@@ -7,7 +7,7 @@ import {
   V2_PRODUCER_UID_LAUNCHER_ENV,V2_PRODUCER_UID_LAUNCHER_PINS,
   assessV2ProducerUidDropProbe,assessV2ProducerUidLauncherPreflight,
   buildV2ProducerUidDropProbeArgs,buildV2ProducerUidEntryArgs,
-  launchV2ProducerUidEntry,runV2ProducerUidDropProbe,verifyV2ProducerUidLauncherPins
+  launchV2ProducerUidEntry,parseV2ProducerSupplementaryGroups,runV2ProducerUidDropProbe,verifyV2ProducerUidLauncherPins
 } from './v2-producer-uid-launcher.mjs';
 
 const GiB=1024**3,MiB=1024**2;
@@ -77,14 +77,22 @@ test('failed UID drop proof blocks entry launch',async()=>{
 });
 
 test('UID drop proof accepts only uid/gid 1000, empty groups, no capabilities, no-new-privs, and exact clean environment',()=>{
-  const proof={uid:1000,euid:1000,gid:1000,egid:1000,groups:[],noNewPrivs:1,capEff:'0000000000000000',env:{...V2_PRODUCER_UID_LAUNCHER_ENV},envKeys:Object.keys(V2_PRODUCER_UID_LAUNCHER_ENV).sort()};
+  const proof={uid:1000,euid:1000,gid:1000,egid:1000,groupsPresent:true,groups:[],noNewPrivs:1,capEff:'0000000000000000',env:{...V2_PRODUCER_UID_LAUNCHER_ENV},envKeys:Object.keys(V2_PRODUCER_UID_LAUNCHER_ENV).sort()};
   assert.equal(assessV2ProducerUidDropProbe({platform:'linux',callerUid:0,exitCode:0,stdout:JSON.stringify(proof)}).status,'UID_DROP_VERIFIED');
   assert.equal(assessV2ProducerUidDropProbe({platform:'linux',callerUid:0,exitCode:0,stdout:JSON.stringify({...proof,groups:[0]})}).status,'UID_DROP_IDENTITY_INVALID');
   assert.equal(assessV2ProducerUidDropProbe({platform:'linux',callerUid:0,exitCode:0,stdout:JSON.stringify({...proof,capEff:'0000000000000001'})}).status,'UID_DROP_IDENTITY_INVALID');
   assert.equal(assessV2ProducerUidDropProbe({platform:'linux',callerUid:0,exitCode:0,stdout:JSON.stringify({...proof,noNewPrivs:0})}).status,'UID_DROP_IDENTITY_INVALID');
   assert.equal(assessV2ProducerUidDropProbe({platform:'linux',callerUid:0,exitCode:0,stdout:JSON.stringify({...proof,euid:0})}).status,'UID_DROP_IDENTITY_INVALID');
+  const missingGroups={...proof};delete missingGroups.groupsPresent;
+  assert.equal(assessV2ProducerUidDropProbe({platform:'linux',callerUid:0,exitCode:0,stdout:JSON.stringify(missingGroups)}).status,'UID_DROP_IDENTITY_INVALID');
   assert.equal(assessV2ProducerUidDropProbe({platform:'linux',callerUid:1001,exitCode:1}).status,'NOT_CAPABLE_UNPRIVILEGED');
   assert.equal(assessV2ProducerUidDropProbe({platform:'win32',callerUid:null}).status,'UID_DROP_NOT_RUN_NON_LINUX');
+});
+
+test('supplementary group parser treats an empty Groups line as empty without consuming the next status line',()=>{
+  assert.deepEqual(parseV2ProducerSupplementaryGroups('Name:\tnode\nGroups:\nNoNewPrivs:\t1\n'),[]);
+  assert.deepEqual(parseV2ProducerSupplementaryGroups('Name:\tnode\nGroups:\t1000 1001\nNoNewPrivs:\t1\n'),[1000,1001]);
+  assert.throws(()=>parseV2ProducerSupplementaryGroups('Name:\tnode\nNoNewPrivs:\t1\n'),/groups_status_missing/);
 });
 
 test('Linux CI records real UID drop capability without silently skipping unprivileged runners',()=>{

@@ -7,6 +7,7 @@ import {fileURLToPath,pathToFileURL} from 'node:url';
 const REPO=fileURLToPath(new URL('../../',import.meta.url));
 const VOLUME='/app/apps/kelly-edge/data/keirin-history/boatrace-history';
 const SETPRIV='/usr/bin/setpriv',ENV='/usr/bin/env';
+const GROUPS_LINE_RE='^Groups:[ \\t]*(.*)$';
 const ENTRY=path.join(REPO,'scripts/boatrace-history/v2-producer-cloud-entry.mjs');
 const SHA=x=>createHash('sha256').update(x).digest('hex');
 const GiB=1024**3,MiB=1024**2;
@@ -20,9 +21,15 @@ export const V2_PRODUCER_UID_LAUNCHER_POLICY=Object.freeze({uid:1000,gid:1000,st
 const fail=reason=>({status:'NOT_STARTED_FAIL_CLOSED',reason,controllerStarted:false,producerStarted:false,privateSourceReads:0,financialActions:0,queueEligible:false,actualPurchase:false});
 
 export function buildV2ProducerUidDropProbeArgs(nodePath=process.execPath){
-  const identityCode="const s=require('node:fs').readFileSync('/proc/self/status','utf8'),m=/^NoNewPrivs:\\s+(\\d+)$/m.exec(s),c=/^CapEff:\\s+([a-f0-9]+)$/mi.exec(s);process.stdout.write(JSON.stringify({uid:process.getuid(),euid:process.geteuid(),gid:process.getgid(),egid:process.getegid(),groups:process.getgroups(),noNewPrivs:Number(m?.[1]),capEff:c?.[1]?.toLowerCase(),env:{PATH:process.env.PATH,HOME:process.env.HOME,TMPDIR:process.env.TMPDIR,LANG:process.env.LANG,TZ:process.env.TZ},envKeys:Object.keys(process.env).sort()}))";
+  const identityCode=`const s=require('node:fs').readFileSync('/proc/self/status','utf8'),m=/^NoNewPrivs:\\s+(\\d+)$/m.exec(s),c=/^CapEff:\\s+([a-f0-9]+)$/mi.exec(s),g=new RegExp(${JSON.stringify(GROUPS_LINE_RE)},'m').exec(s);process.stdout.write(JSON.stringify({uid:process.getuid(),euid:process.geteuid(),gid:process.getgid(),egid:process.getegid(),groupsPresent:!!g,groups:g?(g[1].trim()?g[1].trim().split(/\\s+/).map(Number):[]):null,noNewPrivs:Number(m?.[1]),capEff:c?.[1]?.toLowerCase(),env:{PATH:process.env.PATH,HOME:process.env.HOME,TMPDIR:process.env.TMPDIR,LANG:process.env.LANG,TZ:process.env.TZ},envKeys:Object.keys(process.env).sort()}))`;
   return ['--pdeathsig','SIGKILL','--reuid=1000','--regid=1000','--clear-groups','--bounding-set=-all','--inh-caps=-all','--ambient-caps=-all','--no-new-privs','--',ENV,'-i',
     ...Object.entries(V2_PRODUCER_UID_LAUNCHER_ENV).map(([k,v])=>`${k}=${v}`),nodePath,'--max-old-space-size=64','-e',identityCode];
+}
+
+export function parseV2ProducerSupplementaryGroups(statusText){
+  const match=new RegExp(GROUPS_LINE_RE,'m').exec(statusText);
+  if(!match)throw Error('uid_launcher_groups_status_missing');
+  return match[1].trim()?match[1].trim().split(/\s+/).map(Number):[];
 }
 
 export function assessV2ProducerUidDropProbe({platform,callerUid,exitCode,spawnError,stdout}={}){
@@ -32,7 +39,7 @@ export function assessV2ProducerUidDropProbe({platform,callerUid,exitCode,spawnE
   if(exitCode!==0)return {status:callerUid===0?'UID_DROP_CAPABILITY_FAILED':'NOT_CAPABLE_UNPRIVILEGED',probeExecuted:true,exitCode};
   let proof;try{proof=JSON.parse(stdout);}catch{return {status:'UID_DROP_IDENTITY_INVALID',probeExecuted:true};}
   const env=V2_PRODUCER_UID_LAUNCHER_ENV,keys=Object.keys(env).sort();
-  const valid=proof?.uid===1000&&proof?.euid===1000&&proof?.gid===1000&&proof?.egid===1000&&Array.isArray(proof.groups)&&proof.groups.length===0&&
+  const valid=proof?.uid===1000&&proof?.euid===1000&&proof?.gid===1000&&proof?.egid===1000&&proof?.groupsPresent===true&&Array.isArray(proof.groups)&&proof.groups.length===0&&
     proof.noNewPrivs===1&&proof.capEff==='0000000000000000'&&
     proof.envKeys?.length===keys.length&&proof.envKeys.every((k,i)=>k===keys[i])&&keys.every(k=>proof.env?.[k]===env[k]);
   return valid?{status:'UID_DROP_VERIFIED',probeExecuted:true,uid:proof.uid,gid:proof.gid,supplementaryGroupCount:0,environmentKeys:keys}:
