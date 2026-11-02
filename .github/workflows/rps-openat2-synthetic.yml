@@ -1,0 +1,48 @@
+name: RPS openat2 synthetic helper
+
+on:
+  workflow_dispatch:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: rps-openat2-synthetic-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  synthetic-linux-test:
+    name: Synthetic Linux schema, bridge, and helper tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Checkout the tested revision
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Record immutable tested revision
+        run: |
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          printf 'Testing commit: %s\n' "$GITHUB_SHA"
+
+      - name: Run synthetic schema integration and supporting tests
+        run: >-
+          node --test
+          scripts/boatrace-history/rps-readonly-capability-probe.test.mjs
+          scripts/boatrace-history/rps-readonly-capability-ci.test.mjs
+          scripts/boatrace-history/rps-openat2-synthetic-helper.test.mjs
+          scripts/boatrace-history/rps-openat2-synthetic-bridge.test.mjs
+          scripts/boatrace-history/rps-byte-admission-controller.test.mjs
+          scripts/boatrace-history/rps-synthetic-schema-integration.test.mjs
+          scripts/boatrace-history/rps-metadata-inventory-synthetic.test.mjs
+        timeout-minutes: 5
+
+      - name: Run read-only capability summary
+        run: node scripts/boatrace-history/rps-readonly-capability-ci.mjs
+        timeout-minutes: 1

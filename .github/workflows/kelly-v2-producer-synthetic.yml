@@ -1,0 +1,49 @@
+name: Kelly v2 producer synthetic Linux tests
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - '.github/workflows/kelly-v2-producer-synthetic.yml'
+      - 'scripts/boatrace-history/**'
+      - 'artifacts/kelly-doc53-cloud-e2e/*.mjs'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: kelly-v2-producer-synthetic-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  synthetic-linux-test:
+    name: Synthetic runtime closure and parent-death test
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Checkout the tested revision
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Verify immutable revision and Linux helper
+        run: |
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test "$(uname -s)" = "Linux"
+          test -x /usr/bin/setpriv
+          printf 'Testing commit: %s\n' "$GITHUB_SHA"
+          /usr/bin/setpriv --version
+
+      - name: Run synthetic controller and closure tests only
+        run: >-
+          node --test
+          scripts/boatrace-history/v2-producer-cloud-controller.test.mjs
+          scripts/boatrace-history/v2-producer-cloud-runner.test.mjs
+          scripts/boatrace-history/v2-producer-cloud-plan.test.mjs
+          scripts/boatrace-history/v2-producer-cloud-inputs.test.mjs
+          scripts/boatrace-history/v2-producer-uid-launcher.test.mjs
+        timeout-minutes: 5
