@@ -115,7 +115,9 @@ export async function runV2ProducerCloudCandidate({descriptor,signal,onProgress=
     await check();onProgress({phase:'loading_fixed_pins',runId:descriptor.runId,financialActions:0});
     const input=await (ports.loadInputs??loadFixedV2ProducerInputs)({descriptor,signal:runSignal,check});await check();
     if(!input||!Buffer.isBuffer(input.publicBytes)||!Buffer.isBuffer(input.manifestBytes)||!Buffer.isBuffer(input.metadataBytes)||
-      typeof input.readBytes!=='function'||typeof input.verifyStable!=='function'||!input.model||!input.schema||!input.metadata||!input.report||!input.conditionReceipt)fail('producer_input_contract');
+      typeof input.readBytes!=='function'||typeof input.verifyStable!=='function'||!input.model||!input.schema||!input.metadata||!input.report||!input.conditionReceipt||
+      input.sourcePinArchiveEvidence?.status!=='SOURCE_PIN_ARCHIVE_VERIFIED'||input.sourcePinArchiveEvidence.count!==37||
+      input.sourcePinArchiveEvidence.manifestSHA!=='e17336fce8c3bbbda3961fe34cd6eb214b75e36696155808969ac49a6e5ff55d')fail('producer_input_contract');
     result=await (ports.producer??producePinnedActualOneDayArtifacts)({...input,signal:runSignal});
     await check();if(result?.status!=='PRODUCED_PENDING_INDEPENDENT_PIN_REVIEW'||result.autoAdmitted!==false||result.independentApprovalRequired!==true||
       result.financialActions!==0||result.queueEligible!==false||result.actualPurchase!==false||result.privateRootRead!==false||
@@ -131,6 +133,7 @@ export async function runV2ProducerCloudCandidate({descriptor,signal,onProgress=
       candidateExternalPins:result.candidateExternalPins,artifactCount:written.length,artifactBytes:total,artifacts:written,
       sourceRows:result.sourceRows,a0Rows:result.a0Rows,days:result.days,privateBytesVerified:result.privateBytesVerified,
       sourceEvidence:result.sourceEvidence,rootExecutionEvidence:'NOT_PROVIDED',actualSuccessPathVerified:false,
+      sourcePinArchiveEvidence:input.sourcePinArchiveEvidence,
       independentApprovalRequired:true,autoAdmitted:false,fitCalls:0,predictionCalls:0,queueWrites:0,financialActions:0,queueEligible:false,actualPurchase:false};
     const candidateBytes=Buffer.from(JSON.stringify(candidate));if(candidateBytes.length>256*1024)fail('candidate_receipt_bytes');
     const candidateFile=path.posix.join(staging,'candidate.json'),h=await io.open(candidateFile,'wx',0o400);try{await h.writeFile(candidateBytes);await h.sync();}finally{await h.close();}

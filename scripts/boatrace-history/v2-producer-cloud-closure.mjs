@@ -3,7 +3,7 @@ import {readFile} from 'node:fs/promises';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 
-export const V2_PRODUCER_CLOUD_CLOSURE_MANIFEST_SHA='ed30b1d7365bdcfe70d9c8e55e1e2943302299059bd643678773f3adaee9f53d';
+export const V2_PRODUCER_CLOUD_CLOSURE_MANIFEST_SHA='cab66ee387ea915e43020476e274d5dc34f372e4cb9084dfe28c3f3fc700e361';
 const fail=reason=>{throw Error(`v2_producer_cloud_runtime_closure:${reason}`);};
 const H=bytes=>createHash('sha256').update(bytes).digest('hex');
 const manifestURL=new URL('./v2-producer-cloud-runtime-closure.json',import.meta.url);

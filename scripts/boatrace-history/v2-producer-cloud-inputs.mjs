@@ -4,11 +4,14 @@ import {fileURLToPath} from 'node:url';
 import {createHash} from 'node:crypto';
 import {stableRead,DIRECTORY} from '../../artifacts/kelly-doc53-cloud-e2e/e0-kelly-parent-dataset-reaudit.mjs';
 import {ACTUAL_ONE_DAY_PRODUCER_SOURCE_PINS} from './actual-reader-one-day-producer.mjs';
+import {verifyV2ProducerSourcePinArchive} from './v2-producer-cloud-source-pin-archive.mjs';
 
 const repo=fileURLToPath(new URL('../../',import.meta.url));
 const CONFIG='artifacts/kelly-doc53-cloud-e2e/e0-first-reference-loader-config-candidate-r2.json';
 const PUBLIC='artifacts/kelly-doc53-cloud-e2e/e0-parent-actual-prefit-result.json';
 const METADATA='artifacts/kelly-doc53-cloud-e2e/e0-parent-actual-admitted-metadata.json';
+const SOURCE_PIN_ARCHIVE='v2-producer-source-pin-archive';
+const SOURCE_PIN_ARCHIVE_MANIFEST_SHA='e17336fce8c3bbbda3961fe34cd6eb214b75e36696155808969ac49a6e5ff55d';
 const PIN=Object.freeze({configSHA:'0ea31006131231a39b7d9a2402b22b334afa9039f6a9f3bc16371c3a39ffaf6d',
   publicSHA:ACTUAL_ONE_DAY_PRODUCER_SOURCE_PINS.publicSHA,metadataSHA:ACTUAL_ONE_DAY_PRODUCER_SOURCE_PINS.metadataSHA,
   manifestSHA:ACTUAL_ONE_DAY_PRODUCER_SOURCE_PINS.manifestSHA,
@@ -18,8 +21,6 @@ const fail=code=>{throw Error(`v2_producer_cloud_inputs_${code}`);};
 const parse=b=>JSON.parse(new TextDecoder('utf8',{fatal:true}).decode(b));
 const exact=(x,keys)=>x&&typeof x==='object'&&!Array.isArray(x)&&Object.keys(x).sort().join('|')===[...keys].sort().join('|');
 const checkRef=(bytes,ref)=>{if(!Buffer.isBuffer(bytes)||bytes.length!==ref.bytes||H(bytes)!==ref.sha256)fail('reference_pin');return bytes;};
-const currentAdmission='scripts/boatrace-history/joint-kelly-prefit-pending-admission.mjs';
-
 async function fixedRead(file,cap,stamps){
   const r=await stableRead(file,cap);stamps.set(file,r.stamp);return r.bytes;
 }
@@ -38,11 +39,13 @@ export async function loadFixedV2ProducerInputs({signal,check=()=>{}}={}){
     metadata.datasetDigest!=='7bea339b237a6dd7eccd27306f3dc5b4ce0f1f866aecd87c9035bc3dbd7318bd'||
     metadata.modelArtifactSha256!=='5c0b174d5ae4a801fa7ce1f1f475883c191bca4428eee7797e6cae35fe13cfa5')fail('metadata_identity');
   if(!Array.isArray(config.sourcePins)||config.sourcePins.length!==37||new Set(config.sourcePins.map(p=>p.name)).size!==config.sourcePins.length)fail('code_pin_set');
-  for(const p of config.sourcePins){
-    if(!exact(p,['name','bytes','sha256'])||!/^([a-z0-9./-]+\.mjs|docs\/data\/[a-z0-9.-]+\.json)$/.test(p.name))fail('code_pin_shape');
-    const bytes=await readAfterV2ProducerCheck(check,()=>fixedRead(path.join(repo,p.name),2*1024**2,stamps)),expected=p.name===currentAdmission?PIN.updatedAdmissionSHA:p.sha256;
-    if(bytes.length!==p.bytes&&p.name!==currentAdmission||H(bytes)!==expected)fail('code_pin');
-  }
+  const sourcePinManifestBytes=await readAfterV2ProducerCheck(check,()=>fixedRead(path.join(repo,SOURCE_PIN_ARCHIVE,'manifest.json'),256*1024,stamps));
+  if(H(sourcePinManifestBytes)!==SOURCE_PIN_ARCHIVE_MANIFEST_SHA)fail('source_pin_archive_manifest');
+  let sourcePinManifest;try{sourcePinManifest=parse(sourcePinManifestBytes);}catch{fail('source_pin_archive_json');}
+  const sourcePinArchiveEvidence=await verifyV2ProducerSourcePinArchive({manifestBytes:sourcePinManifestBytes,manifest:sourcePinManifest,
+    expectedManifestSHA:SOURCE_PIN_ARCHIVE_MANIFEST_SHA,configBytes,config,expectedConfigSHA:PIN.configSHA,updatedAdmissionSHA:PIN.updatedAdmissionSHA,
+    readRaw:name=>readAfterV2ProducerCheck(check,()=>fixedRead(path.join(repo,SOURCE_PIN_ARCHIVE,'raw',...name.split('/')),2*1024**2,stamps)),
+    readRuntime:name=>readAfterV2ProducerCheck(check,()=>fixedRead(path.join(repo,...name.split('/')),2*1024**2,stamps))});
   const manifestBytes=await readAfterV2ProducerCheck(check,()=>fixedRead(path.join(DIRECTORY,'research/parent-prefit-v1/8dd59e8d-136f-4f04-97a5-227ff988c744/manifest.json'),2*1024**2,stamps));
   if(H(manifestBytes)!==PIN.manifestSHA)fail('manifest_pin');
   const pending=await import(pathToUrl(path.join(repo,'scripts/boatrace-history/joint-kelly-prefit-pending-admission.mjs')));
@@ -69,7 +72,7 @@ export async function loadFixedV2ProducerInputs({signal,check=()=>{}}={}){
   }
   await verifyStable();
   return {publicBytes,manifestBytes,metadataBytes,readBytes,verifyStable,model,schema:source.readerAdmission.policyFeatureSchema,
-    metadata,report,conditionReceipt:source.conditionReceipt,signal};
+    metadata,report,conditionReceipt:source.conditionReceipt,sourcePinArchiveEvidence,signal};
 }
 
 function pathToUrl(file){return new URL('file://'+file.replaceAll('\\','/').replace(/^([A-Za-z]:)/,'/$1'));}

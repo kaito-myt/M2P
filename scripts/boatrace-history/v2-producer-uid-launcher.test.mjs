@@ -15,7 +15,7 @@ const healthy={cgroupBytes:2*GiB,memoryMaxBytes:8*GiB,volumeBytes:20*GiB,volumeF
 function fakePorts({uidDrop='UID_DROP_VERIFIED',resources=healthy,uid=0,gid=0,platform='linux',spawnFail=false}={}){
   const events=[],child=new EventEmitter();
   const ports={events,child,platform,uid,gid,nodeVersion:'22.23.4',setprivCanonical:true,
-    verifyPins:async()=>({status:'UID_LAUNCHER_PINS_VERIFIED',moduleCount:43}),readResources:async()=>resources,
+    verifyPins:async()=>({status:'UID_LAUNCHER_PINS_VERIFIED',moduleCount:44}),readResources:async()=>resources,
     probeUidDrop:async()=>({status:uidDrop,probeExecuted:true,uid:uidDrop==='UID_DROP_VERIFIED'?1000:undefined,gid:uidDrop==='UID_DROP_VERIFIED'?1000:undefined}),
     spawn:(exe,args,options)=>{events.push({exe,args,options});setImmediate(()=>spawnFail?child.emit('error',Error('synthetic_spawn_failure')):child.emit('close',0,null));return child;}};
   return ports;
@@ -23,7 +23,7 @@ function fakePorts({uidDrop='UID_DROP_VERIFIED',resources=healthy,uid=0,gid=0,pl
 
 test('cloud runtime source pins and full transitive module closure verify',async()=>{
   const r=await verifyV2ProducerUidLauncherPins();
-  assert.equal(r.status,'UID_LAUNCHER_PINS_VERIFIED');assert.equal(r.moduleCount,43);
+  assert.equal(r.status,'UID_LAUNCHER_PINS_VERIFIED');assert.equal(r.moduleCount,44);
   assert.equal(r.entrySHA,V2_PRODUCER_UID_LAUNCHER_PINS.entrySHA);
 });
 

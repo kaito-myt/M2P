@@ -12,9 +12,9 @@ const ENTRY=path.join(REPO,'scripts/boatrace-history/v2-producer-cloud-entry.mjs
 const SHA=x=>createHash('sha256').update(x).digest('hex');
 const GiB=1024**3,MiB=1024**2;
 export const V2_PRODUCER_UID_LAUNCHER_PINS=Object.freeze({
-  entrySHA:'742ae1d6a8d08ceea25ed9c697c60995e4313834cb7ad2d4e8fe7045400cbe5c',
-  closureModuleSHA:'21b45fea393d65d58c8b4af7e63f2f40416dff803e491ac6269189e4462fc112',
-  closureManifestSHA:'ed30b1d7365bdcfe70d9c8e55e1e2943302299059bd643678773f3adaee9f53d'
+  entrySHA:'2f35e80e2f133f0deedffacf40beb33dbecd34e9c38f37e398082e0b36a317de',
+  closureModuleSHA:'9d90598fa2a1a6fe70fd03525360117a0167b03efedbf45968528b2a49983caf',
+  closureManifestSHA:'cab66ee387ea915e43020476e274d5dc34f372e4cb9084dfe28c3f3fc700e361'
 });
 export const V2_PRODUCER_UID_LAUNCHER_ENV=Object.freeze({PATH:'/usr/bin:/bin',HOME:'/tmp',TMPDIR:'/tmp',LANG:'C.UTF-8',TZ:'UTC'});
 export const V2_PRODUCER_UID_LAUNCHER_POLICY=Object.freeze({uid:1000,gid:1000,startMemoryBytes:3*GiB,minCgroupBytes:6*GiB,minVolumeFreeFraction:0.20,heapMiB:1024,preflightHeapMiB:64});

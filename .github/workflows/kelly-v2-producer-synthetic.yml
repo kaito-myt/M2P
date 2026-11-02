@@ -45,5 +45,6 @@ jobs:
           scripts/boatrace-history/v2-producer-cloud-runner.test.mjs
           scripts/boatrace-history/v2-producer-cloud-plan.test.mjs
           scripts/boatrace-history/v2-producer-cloud-inputs.test.mjs
+          scripts/boatrace-history/v2-producer-cloud-source-pin-archive.test.mjs
           scripts/boatrace-history/v2-producer-uid-launcher.test.mjs
         timeout-minutes: 5

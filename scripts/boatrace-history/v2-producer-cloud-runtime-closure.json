@@ -198,8 +198,8 @@
     },
     {
       "name": "scripts/boatrace-history/v2-producer-cloud-inputs.mjs",
-      "bytes": 6916,
-      "sha256": "81ae1eea55ed997f7e13bfa4b5b05fceade287b8feaf9c8fac87e9ed8dd6b279"
+      "bytes": 7583,
+      "sha256": "0f93276f438fd73298f01ac916c59c040f8a0b634d919e20193e32bbecd3901a"
     },
     {
       "name": "scripts/boatrace-history/v2-producer-cloud-plan.mjs",
@@ -208,8 +208,13 @@
     },
     {
       "name": "scripts/boatrace-history/v2-producer-cloud-runner.mjs",
-      "bytes": 14366,
-      "sha256": "3251fad81f033d5b91f48f3260bfc8b2b3fd9fdf6e49b845fa351ed9f4014c27"
+      "bytes": 14671,
+      "sha256": "c6022761f80fa7a6eae4db33a3b28a39c00b083277e8d291e1ce8edf82efd700"
+    },
+    {
+      "name": "scripts/boatrace-history/v2-producer-cloud-source-pin-archive.mjs",
+      "bytes": 3463,
+      "sha256": "55fcf20420485accf30c2496f97210bcf0008146e0ef0a4fffe11a822005bc56"
     },
     {
       "name": "scripts/boatrace-history/v2-producer-cloud-worker.mjs",

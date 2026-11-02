@@ -26,7 +26,8 @@ function memoryIo({failWriteAt=0,failRename=false,failNamespaceSyncAt=0,failRm=f
 }
 const pathPosixDirname=p=>p.slice(0,p.lastIndexOf('/'))||'/';
 const input={publicBytes:Buffer.from('public'),manifestBytes:Buffer.from('manifest'),metadataBytes:Buffer.from('metadata'),
-  readBytes:async()=>Buffer.from(''),verifyStable:async()=>{},model:{},schema:{},metadata:{},report:{},conditionReceipt:{}};
+  readBytes:async()=>Buffer.from(''),verifyStable:async()=>{},model:{},schema:{},metadata:{},report:{},conditionReceipt:{},
+  sourcePinArchiveEvidence:{status:'SOURCE_PIN_ARCHIVE_VERIFIED',count:37,manifestSHA:'e17336fce8c3bbbda3961fe34cd6eb214b75e36696155808969ac49a6e5ff55d',files:[]}};
 const dates=()=>{const out=[];for(let t=Date.UTC(2026,1,1);t<Date.UTC(2026,9,1);t+=86400000){const d=new Date(t).toISOString().slice(0,10);if(!d.startsWith('2026-03'))out.push(d);}return out;};
 function artifacts(){const dayReceipts=new Map(dates().map(d=>[`day-${d}-receipt.json`,Buffer.from('{}')]));return {reportBytes:Buffer.from('{}'),manifestBytes:Buffer.from('{}'),producerReceiptBytes:Buffer.from('{}'),dayReceipts};}
 function producerResult(){return {status:'PRODUCED_PENDING_INDEPENDENT_PIN_REVIEW',sourceMode:'PINNED_SOURCE_BYTES',autoAdmitted:false,independentApprovalRequired:true,financialActions:0,queueEligible:false,actualPurchase:false,privateRootRead:false,candidateExternalPins:{reportSHA:'a'.repeat(64)},inputSourcePins:{},sourceRows:1,a0Rows:1,days:211,privateBytesVerified:1,sourceEvidence:'PINNED_INPUT_BYTES_ONLY',artifacts:artifacts()};}
@@ -58,6 +59,7 @@ test('complete synthetic run publishes exactly 214 files in its own candidate di
   const ports=runnerPorts(),result=await execute(ports),folder=`${ROOT}/research/actual-one-day-v2-candidates/${ports.runId}`;
   assert.equal(result.status,'PENDING_INDEPENDENT_PIN_REVIEW');assert.equal(result.artifactCount,214);assert.equal(result.queueEligible,false);
   assert.equal(ports.io.entries.get(folder)?.directory,true);assert.equal(ports.io.entries.get(`${folder}/candidate.json`)?.bytes.length>0,true);
+  const candidate=JSON.parse(ports.io.entries.get(`${folder}/candidate.json`).bytes.toString());assert.equal(candidate.sourcePinArchiveEvidence.manifestSHA,input.sourcePinArchiveEvidence.manifestSHA);
   assert.equal([...ports.io.entries.keys()].filter(p=>p.startsWith(folder+'/')).length,215);
 });
 
