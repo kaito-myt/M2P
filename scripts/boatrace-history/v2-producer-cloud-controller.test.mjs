@@ -131,8 +131,9 @@ test('stale worker heartbeat cannot authorize the fixed-source runner',async()=>
 test('Linux detached setpriv worker receives parent-death signal and controller cleanup stops its grandchild',{skip:process.platform!=='linux'||!fs.existsSync('/usr/bin/setpriv')},async()=>{
   const workerCode="const{spawn}=require('node:child_process'),fs=require('node:fs');const grandchild=spawn(process.execPath,['-e','setInterval(()=>{},1000)'],{stdio:'ignore'});grandchild.once('spawn',()=>fs.writeSync(1,JSON.stringify({worker:process.pid,grandchild:grandchild.pid})+' '));setInterval(()=>{},1000)";
   const supervisorScript=`const{spawn}=require('node:child_process'),fs=require('node:fs');const c=spawn('/usr/bin/setpriv',['--pdeathsig','SIGKILL','--',process.execPath,'-e',${JSON.stringify(workerCode)}],{detached:true,stdio:['ignore','pipe','ignore']});c.stdout.once('data',b=>{const identity=JSON.parse(String(b).trim()),stat=fs.readFileSync('/proc/'+identity.worker+'/stat','utf8'),a=stat.slice(stat.lastIndexOf(')')+2).trim().split(/\\s+/);identity.workerPgrp=Number(a[2]);identity.workerSession=Number(a[3]);identity.workerStartTicks=a[19];process.stdout.write(JSON.stringify(identity),()=>process.stdin.once('data',()=>process.exit(0)));});`;
-  const supervisor=spawn(process.execPath,['-e',supervisorScript],{stdio:['pipe','pipe','ignore']});let output='';supervisor.stdout.on('data',b=>output+=b);
-  const supervisorExit=await new Promise(resolve=>supervisor.once('close',resolve));assert.equal(supervisorExit,0);
+  const supervisor=spawn(process.execPath,['-e',supervisorScript],{stdio:['pipe','pipe','ignore']});let output='';
+  const identityReady=new Promise((resolve,reject)=>{supervisor.stdout.once('data',b=>{output+=b;resolve();});supervisor.once('error',reject);supervisor.once('close',code=>{if(!output)reject(Error(`supervisor_closed_before_identity:${code}`));});});
+  await identityReady;
   const identity=JSON.parse(output.trim()),workerPid=identity.worker,grandchildPid=identity.grandchild;
   assert.ok(Number.isSafeInteger(workerPid)&&workerPid>1,`invalid worker identity: ${JSON.stringify(identity)}`);
   assert.ok(Number.isSafeInteger(grandchildPid)&&grandchildPid>1,`invalid grandchild identity: ${JSON.stringify(identity)}`);
@@ -148,6 +149,7 @@ test('Linux detached setpriv worker receives parent-death signal and controller 
     assert.equal(grandchild?.pgrp,workerPid,'grandchild must remain in the worker process group');
     assert.equal(grandchild?.session,workerPid,'grandchild must remain in the worker session');
     supervisor.stdin.end('release-parent');
+    const supervisorExit=await new Promise(resolve=>supervisor.once('close',resolve));assert.equal(supervisorExit,0);
     for(let i=0;i<100;i++){const row=readProcess(workerPid);if(!row||row.state==='Z'||row.state==='X'){workerStopped=true;break;}await wait(20);}
     assert.equal(workerStopped,true,'setpriv parent-death signal should stop the detached worker after supervisor exit');
     const liveGrandchild=readProcess(grandchildPid);assert.ok(liveGrandchild&&!['Z','X'].includes(liveGrandchild.state),'grandchild should demonstrate why parent-death alone is insufficient');
