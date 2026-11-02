@@ -34,8 +34,9 @@ test('entry does not spawn unless the explicit one-candidate flag is supplied',a
   const r=await main([],{spawn:()=>{throw Error('must_not_spawn');}});assert.equal(r.status,'NOT_STARTED_NEEDS_EXPLICIT_APPROVAL');assert.equal(r.sourceReadStarted,false);
 });
 
-test('fixed runtime closure matches its byte and SHA inventory',async()=>{
-  const r=await verifyV2ProducerCloudRuntimeClosure();assert.equal(r.status,'RUNTIME_CLOSURE_VERIFIED');assert.equal(r.moduleCount,43);
+test('fixed runtime closure matches its byte and SHA inventory',async t=>{
+  if(process.platform!=='linux')return t.skip('runtime closure is pinned to Linux LF git-blob bytes; validate it in synthetic Linux CI');
+  const r=await verifyV2ProducerCloudRuntimeClosure();assert.equal(r.status,'RUNTIME_CLOSURE_VERIFIED');assert.equal(r.moduleCount,44);
 });
 
 test('dedicated entry verifies bootstrap pins before starting the supervised candidate',async()=>{

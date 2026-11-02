@@ -18,6 +18,7 @@ export const V2_PRODUCER_UID_LAUNCHER_PINS=Object.freeze({
 });
 export const V2_PRODUCER_UID_LAUNCHER_ENV=Object.freeze({PATH:'/usr/bin:/bin',HOME:'/tmp',TMPDIR:'/tmp',LANG:'C.UTF-8',TZ:'UTC'});
 export const V2_PRODUCER_UID_LAUNCHER_POLICY=Object.freeze({uid:1000,gid:1000,startMemoryBytes:3*GiB,minCgroupBytes:6*GiB,minVolumeFreeFraction:0.20,heapMiB:1024,preflightHeapMiB:64});
+export const V2_PRODUCER_UID_LAUNCHER_CLOSURE_MODULE_COUNT=44;
 const fail=reason=>({status:'NOT_STARTED_FAIL_CLOSED',reason,controllerStarted:false,producerStarted:false,privateSourceReads:0,financialActions:0,queueEligible:false,actualPurchase:false});
 
 export function buildV2ProducerUidDropProbeArgs(nodePath=process.execPath){
@@ -62,7 +63,7 @@ export async function verifyV2ProducerUidLauncherPins({readFile=fs.promises.read
     SHA(manifest)!==V2_PRODUCER_UID_LAUNCHER_PINS.closureManifestSHA)throw Error('uid_launcher_source_pin');
   const closureModule=await importClosure('./v2-producer-cloud-closure.mjs');
   const verified=await closureModule.verifyV2ProducerCloudRuntimeClosure(REPO);
-  if(verified.status!=='RUNTIME_CLOSURE_VERIFIED'||verified.moduleCount!==43||verified.manifestSHA!==V2_PRODUCER_UID_LAUNCHER_PINS.closureManifestSHA)
+  if(verified.status!=='RUNTIME_CLOSURE_VERIFIED'||verified.moduleCount!==V2_PRODUCER_UID_LAUNCHER_CLOSURE_MODULE_COUNT||verified.manifestSHA!==V2_PRODUCER_UID_LAUNCHER_PINS.closureManifestSHA)
     throw Error('uid_launcher_runtime_closure');
   return {status:'UID_LAUNCHER_PINS_VERIFIED',entrySHA:V2_PRODUCER_UID_LAUNCHER_PINS.entrySHA,closureModuleSHA:V2_PRODUCER_UID_LAUNCHER_PINS.closureModuleSHA,
     closureManifestSHA:verified.manifestSHA,moduleCount:verified.moduleCount};

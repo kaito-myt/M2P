@@ -4,7 +4,7 @@ import {EventEmitter} from 'node:events';
 import fs from 'node:fs';
 import {fileURLToPath} from 'node:url';
 import {
-  V2_PRODUCER_UID_LAUNCHER_ENV,V2_PRODUCER_UID_LAUNCHER_PINS,
+  V2_PRODUCER_UID_LAUNCHER_CLOSURE_MODULE_COUNT,V2_PRODUCER_UID_LAUNCHER_ENV,V2_PRODUCER_UID_LAUNCHER_PINS,
   assessV2ProducerUidDropProbe,assessV2ProducerUidLauncherPreflight,
   buildV2ProducerUidDropProbeArgs,buildV2ProducerUidEntryArgs,
   launchV2ProducerUidEntry,parseV2ProducerSupplementaryGroups,runV2ProducerUidDropProbe,verifyV2ProducerUidLauncherPins
@@ -21,10 +21,18 @@ function fakePorts({uidDrop='UID_DROP_VERIFIED',resources=healthy,uid=0,gid=0,pl
   return ports;
 }
 
-test('cloud runtime source pins and full transitive module closure verify',async()=>{
+test('cloud runtime source pins and full transitive module closure verify',async t=>{
+  if(process.platform!=='linux')return t.skip('runtime closure is pinned to Linux LF git-blob bytes; validate it in synthetic Linux CI');
   const r=await verifyV2ProducerUidLauncherPins();
-  assert.equal(r.status,'UID_LAUNCHER_PINS_VERIFIED');assert.equal(r.moduleCount,44);
+  assert.equal(r.status,'UID_LAUNCHER_PINS_VERIFIED');assert.equal(r.moduleCount,V2_PRODUCER_UID_LAUNCHER_CLOSURE_MODULE_COUNT);
   assert.equal(r.entrySHA,V2_PRODUCER_UID_LAUNCHER_PINS.entrySHA);
+});
+
+test('launcher rejects stale expected module count even when closure source pins match',async()=>{
+  await assert.rejects(verifyV2ProducerUidLauncherPins({importClosure:async()=>({
+    verifyV2ProducerCloudRuntimeClosure:async()=>({status:'RUNTIME_CLOSURE_VERIFIED',moduleCount:V2_PRODUCER_UID_LAUNCHER_CLOSURE_MODULE_COUNT-1,
+      manifestSHA:V2_PRODUCER_UID_LAUNCHER_PINS.closureManifestSHA})
+  })}),/uid_launcher_runtime_closure/);
 });
 
 test('launcher refuses a changed pinned entry before importing the cloud closure',async()=>{

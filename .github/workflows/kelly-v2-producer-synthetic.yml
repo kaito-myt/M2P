@@ -48,3 +48,11 @@ jobs:
           scripts/boatrace-history/v2-producer-cloud-source-pin-archive.test.mjs
           scripts/boatrace-history/v2-producer-uid-launcher.test.mjs
         timeout-minutes: 5
+
+      - name: Verify pinned closure and real UID drop under a clean root environment
+        run: >-
+          sudo env -i PATH=/usr/bin:/bin HOME=/tmp LANG=C.UTF-8 TZ=UTC
+          "$(command -v node)" --test
+          --test-name-pattern='cloud runtime source pins|Linux CI records real UID drop capability'
+          scripts/boatrace-history/v2-producer-uid-launcher.test.mjs
+        timeout-minutes: 2
