@@ -1,0 +1,220 @@
+{
+  "version": "v2_producer_cloud_runtime_closure_v1",
+  "files": [
+    {
+      "name": "artifacts/kelly-doc53-cloud-e2e/e0-first-reference-artifact-entry.mjs",
+      "bytes": 1270,
+      "sha256": "0a5a52936978b5c9cfc30525ec4f497ffad25aab96b0a65880ced48b7bda7bdb"
+    },
+    {
+      "name": "artifacts/kelly-doc53-cloud-e2e/e0-first-reference-artifact-loader.mjs",
+      "bytes": 8517,
+      "sha256": "222f417fcf4cf343b4a28c20c434b1c3a6ec4a8c884ca99008b6cca9769e2eca"
+    },
+    {
+      "name": "artifacts/kelly-doc53-cloud-e2e/e0-kelly-parent-dataset-reaudit.mjs",
+      "bytes": 7013,
+      "sha256": "a72d7ca075b4eb33e6a6022220efbb76afcbaa5013640e29a5eddc4605ef9ae7"
+    },
+    {
+      "name": "scripts/boatrace-history/actual-reader-one-day-producer.mjs",
+      "bytes": 10636,
+      "sha256": "a95a06a46997950a91d784455d426e8fc264e18534594862805d7de156df5480"
+    },
+    {
+      "name": "scripts/boatrace-history/capacity.mjs",
+      "bytes": 4140,
+      "sha256": "7482c47fc8a656df93d8259be7701bde1e732cd70da6d1e825461b3290dac9e9"
+    },
+    {
+      "name": "scripts/boatrace-history/collector.mjs",
+      "bytes": 16747,
+      "sha256": "ff9e24165051e2d5418bf397f9a3aa02dfecfdb099d0cd75a5c562643b052d63"
+    },
+    {
+      "name": "scripts/boatrace-history/joint-context-calibration.mjs",
+      "bytes": 4522,
+      "sha256": "12ca9d464acf6817cc6a4d4c06c8d89f1754aced8655150933e0509c2d476c4e"
+    },
+    {
+      "name": "scripts/boatrace-history/joint-context-features.mjs",
+      "bytes": 4992,
+      "sha256": "7f5c805cd1d286334efbc766d835c52ad0fc6061f29fb53953b30e584bfbb8ff"
+    },
+    {
+      "name": "scripts/boatrace-history/joint-dataset.mjs",
+      "bytes": 22992,
+      "sha256": "70fc93d38a96b0c6f0e7d97649dc574a6fef4f146b7c85f14f8e199a9ff03137"
+    },
+    {
+      "name": "scripts/boatrace-history/joint-evaluation.mjs",
+      "bytes": 11543,
+      "sha256": "5fcf49e61139a7138b4bb6a003cb933ca4205e562084468348825fa778f679d3"
+    },
+    {
+      "name": "scripts/boatrace-history/joint-feature-inventory-catalog.mjs",
+      "bytes": 9267,
+      "sha256": "5a78bd26f852da52edf5e20545db1b10e0006d3235a7be9d7bbba59d24821d47"
+    },
+    {
+      "name": "scripts/boatrace-history/joint-feature-inventory-history.mjs",
+      "bytes": 12129,
+      "sha256": "bfae7bef4797d26e837bab92e9a5035c56435775c8734c0d70dc66ad10fdf7be"
+    },
+    {
+      "name": "scripts/boatrace-history/joint-feature-inventory-projection.mjs",
+      "bytes": 5222,
+      "sha256": "61ab43ecae11f2ee96cca97011740c85a67d48b87d7646865f06482108d6022c"
+    },
+    {
+      "name": "scripts/boatrace-history/joint-feature-semantics.mjs",
+      "bytes": 10833,
+      "sha256": "d3a23ffc120fbe24e0d1cac13ec318f20e54a7e4cfac13c98d758508c6ac000e"
+    },
+    {
+      "name": "scripts/boatrace-history/joint-formation-calibration.mjs",
+      "bytes": 3947,
+      "sha256": "f4869e725afe5941542e88dd6cb8941824850649b7d331f62f37b81cac155b2a"
+    },
+    {
+      "name": "scripts/boatrace-history/joint-kelly-a0-cohort.mjs",
+      "bytes": 14516,
+      "sha256": "70a8288f9834eb80593652b49b34a589d156a3da7554ed29dffa7306b30e2ea4"
+    },
+    {
+      "name": "scripts/boatrace-history/joint-kelly-a0-policy.mjs",
+      "bytes": 8799,
+      "sha256": "a493407a908c82fa91c37fb7761093cd90e80a54d86a51ab90c00395a7715a16"
+    },
+    {
+      "name": "scripts/boatrace-history/joint-kelly-global-calibration.mjs",
+      "bytes": 9889,
+      "sha256": "ace5487c2956219cf648fb7b8687d94a82a89281eb963da5a81b1f4f8b291da1"
+    },
+    {
+      "name": "scripts/boatrace-history/joint-kelly-money-audit.mjs",
+      "bytes": 15996,
+      "sha256": "d959972ed3b716d7d9a11460a4f3ea0fed31bd1b09d654988083e0038c6617e1"
+    },
+    {
+      "name": "scripts/boatrace-history/joint-kelly-pending-prediction-score.mjs",
+      "bytes": 4261,
+      "sha256": "cea20791791866efd33242d9c227562abbc78c43cdd1c70e97eb44dca5f98deb"
+    },
+    {
+      "name": "scripts/boatrace-history/joint-kelly-prediction-port.mjs",
+      "bytes": 33732,
+      "sha256": "b81d30f249f57f74c774e8191d20ad4fe7acc47db545180f54ef6c3e21e95676"
+    },
+    {
+      "name": "scripts/boatrace-history/joint-kelly-prefit-pending-admission.mjs",
+      "bytes": 4191,
+      "sha256": "ab10dfbdee921fae2ef76c6f39ff54d0e2613c5c602d6c2428d01bfaf76b69ab"
+    },
+    {
+      "name": "scripts/boatrace-history/joint-model.mjs",
+      "bytes": 14797,
+      "sha256": "e62a54cb843aa9978de6f447748feb0941b090d87101910f8c1c38279912d293"
+    },
+    {
+      "name": "scripts/boatrace-history/joint-patterns-runtime.mjs",
+      "bytes": 28889,
+      "sha256": "724d2c9d2f3323487521ca14bcbe30669a5f430ced6fe9389d65f0bec225682f"
+    },
+    {
+      "name": "scripts/boatrace-history/joint-patterns.mjs",
+      "bytes": 29061,
+      "sha256": "1a0290243cb57e2e7d7a37bf64c570f7150d489b7cf5c1e28d8f27915c55a11c"
+    },
+    {
+      "name": "scripts/boatrace-history/joint-race-condition-ast.mjs",
+      "bytes": 18024,
+      "sha256": "2cb7d805abaac4a9b5d99ae88bfe045cfb6ff68a6239cadfe8483db6bd9b4fb8"
+    },
+    {
+      "name": "scripts/boatrace-history/joint-race-condition-features.mjs",
+      "bytes": 15475,
+      "sha256": "367213b6560f0946ae0d363d5abe2b054a14aabaa941a684335421171d826c7f"
+    },
+    {
+      "name": "scripts/boatrace-history/joint-race-condition-registry.mjs",
+      "bytes": 13804,
+      "sha256": "b3a6651fbb133ea4ccb1e022760a4028258a052fbb12d68c662c2968f3bf247a"
+    },
+    {
+      "name": "scripts/boatrace-history/joint-raw-feature-expansion.mjs",
+      "bytes": 12687,
+      "sha256": "230930e43cd627a4112246b1642b400bff6e56b7da59aab0110ad9fe6e29918a"
+    },
+    {
+      "name": "scripts/boatrace-history/joint-rich-feature-pipeline.mjs",
+      "bytes": 17531,
+      "sha256": "3f41ea60a7b68531c4cd7855f3b6279f88af6de20c831fdbde40f5c345432096"
+    },
+    {
+      "name": "scripts/boatrace-history/joint-runtime.mjs",
+      "bytes": 16028,
+      "sha256": "aa07f0066f31fa7aeda834fffd73d39c518524d56beae5db4633b8c3a1c78765"
+    },
+    {
+      "name": "scripts/boatrace-history/joint-ticket-coverage.mjs",
+      "bytes": 4414,
+      "sha256": "f504a7fbc7ab68e3a8856b0638a66839bd435d19a872dd3173ced0203db8b6ce"
+    },
+    {
+      "name": "scripts/boatrace-history/legacy-archive.mjs",
+      "bytes": 12792,
+      "sha256": "f20c068173b9e5e851821e83c049cf829f2722ac3ce77ff721f31ecee3548e72"
+    },
+    {
+      "name": "scripts/boatrace-history/monthly-analysis.mjs",
+      "bytes": 26628,
+      "sha256": "eb02d833d7d010557a70ae141833b7c9cf7284830fc95e7c02b0ed7e1c3513b7"
+    },
+    {
+      "name": "scripts/boatrace-history/normalize.mjs",
+      "bytes": 10903,
+      "sha256": "1cb391847b0d9614202c994d0611fc33d366c33d3b7d8df9191625eb90ddcff9"
+    },
+    {
+      "name": "scripts/boatrace-history/pattern-research.mjs",
+      "bytes": 19375,
+      "sha256": "8a9724684734240195e066c752861f57d8f98689737be2997248752b1fa23f57"
+    },
+    {
+      "name": "scripts/boatrace-history/probe.mjs",
+      "bytes": 15708,
+      "sha256": "95d4a4323415d0f36ee1bd7171b75392727e46278d6bd933e04d8e21f2953e8d"
+    },
+    {
+      "name": "scripts/boatrace-history/quality-audit.mjs",
+      "bytes": 7210,
+      "sha256": "3f77d5d0a52c2f9dd5d1969ed14f30a003f0cfadd6ce266f165eafccc0c47450"
+    },
+    {
+      "name": "scripts/boatrace-history/v2-producer-cloud-controller.mjs",
+      "bytes": 21672,
+      "sha256": "e7cb6dcd967364de54c1611e2522c41a6ddd9bb27f5f51c2213451b28a8b2dd7"
+    },
+    {
+      "name": "scripts/boatrace-history/v2-producer-cloud-inputs.mjs",
+      "bytes": 6916,
+      "sha256": "81ae1eea55ed997f7e13bfa4b5b05fceade287b8feaf9c8fac87e9ed8dd6b279"
+    },
+    {
+      "name": "scripts/boatrace-history/v2-producer-cloud-plan.mjs",
+      "bytes": 5557,
+      "sha256": "4285045e05cc750f9f6ab82bd75b559cee486a102e4e1a14b8f3dd08fd3548ba"
+    },
+    {
+      "name": "scripts/boatrace-history/v2-producer-cloud-runner.mjs",
+      "bytes": 14366,
+      "sha256": "3251fad81f033d5b91f48f3260bfc8b2b3fd9fdf6e49b845fa351ed9f4014c27"
+    },
+    {
+      "name": "scripts/boatrace-history/v2-producer-cloud-worker.mjs",
+      "bytes": 4476,
+      "sha256": "72fba2726c4fa55bd3134f44ae98f359e22e183d566908a03c57eff32ab52cff"
+    }
+  ]
+}
