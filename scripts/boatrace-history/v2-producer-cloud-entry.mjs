@@ -5,7 +5,7 @@ import {fileURLToPath,pathToFileURL} from 'node:url';
 
 const REPO=fileURLToPath(new URL('../../',import.meta.url));
 export const V2_PRODUCER_CLOUD_BOOTSTRAP_PINS=Object.freeze({
-  controllerSHA:'e7cb6dcd967364de54c1611e2522c41a6ddd9bb27f5f51c2213451b28a8b2dd7',closureModuleSHA:'4d0cd80b53e4bdfd271cbb6967c4d570ea80211e388b7ad2d16fd5e44864a64d',closureManifestSHA:'639af7ad53217ad323e61caf39145cd721d81450660249160df52ca261d343fd'
+  controllerSHA:'e7cb6dcd967364de54c1611e2522c41a6ddd9bb27f5f51c2213451b28a8b2dd7',closureModuleSHA:'21b45fea393d65d58c8b4af7e63f2f40416dff803e491ac6269189e4462fc112',closureManifestSHA:'ed30b1d7365bdcfe70d9c8e55e1e2943302299059bd643678773f3adaee9f53d'
 });
 const H=b=>createHash('sha256').update(b).digest('hex');
 async function verifyBootstrap(){
