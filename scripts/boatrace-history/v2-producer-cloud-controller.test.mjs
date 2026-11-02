@@ -128,10 +128,34 @@ test('stale worker heartbeat cannot authorize the fixed-source runner',async()=>
   assert.equal(V2_PRODUCER_CLOUD_CONTROLLER_POLICY.heartbeatMaxAgeMs,3000);
 });
 
-test('Linux setpriv parent-death signal kills the detached worker after supervisor exit',{skip:process.platform!=='linux'||!fs.existsSync('/usr/bin/setpriv')},async()=>{
-  const script=`const{spawn}=require('node:child_process');const code="require('node:fs').writeSync(1,String(process.pid)+' ');setInterval(()=>{},1000)";const c=spawn('/usr/bin/setpriv',['--pdeathsig','SIGKILL','--',process.execPath,'-e',code],{stdio:['ignore','pipe','ignore']});let done=false;c.stdout.once('data',b=>{if(done)return;done=true;process.stdout.write(b,()=>process.exit(0))});`;
-  const parent=spawn(process.execPath,['-e',script],{stdio:['ignore','pipe','ignore']});let text='';parent.stdout.on('data',b=>text+=b);
-  const code=await new Promise(resolve=>parent.once('close',resolve));assert.equal(code,0);const pid=Number(text.trim());assert.ok(Number.isSafeInteger(pid)&&pid>1,`invalid worker pid output: ${JSON.stringify(text)}`);
-  let stopped=false;for(let i=0;i<100;i++){try{const raw=fs.readFileSync(`/proc/${pid}/stat`,'utf8'),state=raw.slice(raw.lastIndexOf(')')+2).trim().split(/\s+/)[0];if(state==='Z'||state==='X')stopped=true;}catch(e){if(e.code==='ENOENT'||e.code==='ESRCH')stopped=true;else throw e;}if(stopped)break;await new Promise(r=>setTimeout(r,20));}
-  assert.equal(stopped,true,'parent-death signal should stop worker without waiting for worker event loop');
+test('Linux detached setpriv worker receives parent-death signal and controller cleanup stops its grandchild',{skip:process.platform!=='linux'||!fs.existsSync('/usr/bin/setpriv')},async()=>{
+  const workerCode="const{spawn}=require('node:child_process'),fs=require('node:fs');const grandchild=spawn(process.execPath,['-e','setInterval(()=>{},1000)'],{stdio:'ignore'});grandchild.once('spawn',()=>{const stat=fs.readFileSync('/proc/'+process.pid+'/stat','utf8'),a=stat.slice(stat.lastIndexOf(')')+2).trim().split(' ');fs.writeSync(1,JSON.stringify({worker:process.pid,workerPgrp:Number(a[2]),workerSession:Number(a[3]),workerStartTicks:a[19],grandchild:grandchild.pid})+' ')});setInterval(()=>{},1000)";
+  const supervisorScript=`const{spawn}=require('node:child_process');const c=spawn('/usr/bin/setpriv',['--pdeathsig','SIGKILL','--',process.execPath,'-e',${JSON.stringify(workerCode)}],{detached:true,stdio:['ignore','pipe','ignore']});c.stdout.once('data',b=>process.stdout.write(b,()=>process.exit(0)));`;
+  const supervisor=spawn(process.execPath,['-e',supervisorScript],{stdio:['ignore','pipe','ignore']});let output='';supervisor.stdout.on('data',b=>output+=b);
+  const supervisorExit=await new Promise(resolve=>supervisor.once('close',resolve));assert.equal(supervisorExit,0);
+  const identity=JSON.parse(output.trim()),workerPid=identity.worker,grandchildPid=identity.grandchild;
+  assert.ok(Number.isSafeInteger(workerPid)&&workerPid>1,`invalid worker identity: ${JSON.stringify(identity)}`);
+  assert.ok(Number.isSafeInteger(grandchildPid)&&grandchildPid>1,`invalid grandchild identity: ${JSON.stringify(identity)}`);
+  assert.equal(identity.workerPgrp,workerPid,'detached worker must lead the process group');assert.equal(identity.workerSession,workerPid,'detached worker must lead the session');assert.match(identity.workerStartTicks,/^\d+$/);
+  const readProcess=pid=>{try{const raw=fs.readFileSync(`/proc/${pid}/stat`,'utf8'),end=raw.lastIndexOf(')'),a=raw.slice(end+2).trim().split(/\s+/);return{pid,state:a[0],ppid:Number(a[1]),pgrp:Number(a[2]),session:Number(a[3]),startTicks:a[19]};}catch(e){if(e.code==='ENOENT'||e.code==='ESRCH')return null;throw e;}};
+  const snapshot=()=>fs.readdirSync('/proc').filter(n=>/^\d+$/.test(n)).map(n=>readProcess(Number(n))).filter(Boolean);
+  const wait=ms=>new Promise(resolve=>setTimeout(resolve,ms));
+  let workerStopped=false;
+  try{
+    const worker=readProcess(workerPid),grandchild=readProcess(grandchildPid);
+    assert.equal(worker?.pgrp,workerPid,'supervised worker must lead its detached process group');
+    assert.equal(worker?.session,workerPid,'supervised worker must lead its detached session');
+    assert.equal(grandchild?.pgrp,workerPid,'grandchild must remain in the worker process group');
+    assert.equal(grandchild?.session,workerPid,'grandchild must remain in the worker session');
+    for(let i=0;i<100;i++){const row=readProcess(workerPid);if(!row||row.state==='Z'||row.state==='X'){workerStopped=true;break;}await wait(20);}
+    assert.equal(workerStopped,true,'setpriv parent-death signal should stop the detached worker after supervisor exit');
+    const liveGrandchild=readProcess(grandchildPid);assert.ok(liveGrandchild&&!['Z','X'].includes(liveGrandchild.state),'grandchild should demonstrate why parent-death alone is insufficient');
+    const ports={readProcess,readProcesses:snapshot,signalGroup:(pid,signal)=>process.kill(-pid,signal),
+      signalProcess:(pid,startTicks,signal)=>{const row=readProcess(pid);if(row&&row.startTicks===startTicks&&!['Z','X'].includes(row.state))process.kill(pid,signal);},wait};
+    const gone=await internals.terminateOwnedTree(workerPid,identity.workerStartTicks,ports,[{pid:grandchildPid,startTicks:liveGrandchild.startTicks}],{termGraceMs:200,killWaitMs:1000});
+    assert.equal(gone,true,'controller tree cleanup should terminate the known grandchild in the owned detached group');
+    const finalGrandchild=readProcess(grandchildPid);assert.ok(!finalGrandchild||['Z','X'].includes(finalGrandchild.state),'no active grandchild should remain after controller cleanup');
+  }finally{
+    for(const pid of [workerPid,grandchildPid]){const row=readProcess(pid);if(row&&row.pgrp===workerPid&&row.session===workerPid&&!['Z','X'].includes(row.state))try{process.kill(-workerPid,'SIGKILL');}catch{}}
+  }
 });
