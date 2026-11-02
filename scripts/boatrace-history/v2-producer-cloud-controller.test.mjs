@@ -129,7 +129,7 @@ test('stale worker heartbeat cannot authorize the fixed-source runner',async()=>
 });
 
 test('Linux setpriv parent-death signal kills the detached worker after supervisor exit',{skip:process.platform!=='linux'||!fs.existsSync('/usr/bin/setpriv')},async()=>{
-  const script=`const{spawn}=require('node:child_process');const code='process.stdout.write(String(process.pid)+"\\n");setInterval(()=>{},1000)';const c=spawn('/usr/bin/setpriv',['--pdeathsig','SIGKILL','--',process.execPath,'-e',code],{stdio:['ignore','pipe','ignore']});let done=false;c.stdout.once('data',b=>{if(done)return;done=true;process.stdout.write(b);process.exit(0)});`;
+  const script=`const{spawn}=require('node:child_process');const code='process.stdout.write(String(process.pid)+"\\n");setInterval(()=>{},1000)';const c=spawn('/usr/bin/setpriv',['--pdeathsig','SIGKILL','--',process.execPath,'-e',code],{stdio:['ignore','pipe','ignore']});let done=false;c.stdout.once('data',b=>{if(done)return;done=true;process.stdout.write(b,()=>process.exit(0))});`;
   const parent=spawn(process.execPath,['-e',script],{stdio:['ignore','pipe','ignore']});let text='';parent.stdout.on('data',b=>text+=b);
   const code=await new Promise(resolve=>parent.once('close',resolve));assert.equal(code,0);const pid=Number(text.trim());assert.ok(Number.isSafeInteger(pid)&&pid>1);
   let stopped=false;for(let i=0;i<100;i++){try{const raw=fs.readFileSync(`/proc/${pid}/stat`,'utf8'),state=raw.slice(raw.lastIndexOf(')')+2).trim().split(/\s+/)[0];if(state==='Z'||state==='X')stopped=true;}catch(e){if(e.code==='ENOENT'||e.code==='ESRCH')stopped=true;else throw e;}if(stopped)break;await new Promise(r=>setTimeout(r,20));}
