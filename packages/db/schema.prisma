@@ -1325,7 +1325,8 @@ model AppSettings {
   booth_session_state_enc         String?   @db.Text
   job_log_retention_days          Int       @default(90)
   r2_archive_threshold_days       Int       @default(365) // T-07-09: R2 アーカイブログ保持日数
-  ai_disclosure_text              String    @db.Text // F-005 巻末挿入文
+  // 廃止 (2026-11-02)。本文へ開示文は入れないため読み書きしない。NOT NULL のため列は残す (共有表の列操作は本番障害になる)。seed のみ空文字を入れる。
+  ai_disclosure_text              String    @db.Text
   // T-02-08: fx.fetch (B-04) が日次更新する USD/JPY 為替レート。
   // catalog.fetch (T-02-09) が `fx_rate_usd_jpy` として参照する。初回 fetch 前は null。
   latest_fx_rate                  Decimal?  @db.Decimal(10, 4)

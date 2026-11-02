@@ -31,7 +31,6 @@ const BASE_SETTINGS = {
   kdp_submit_retry_count: 2,
   job_log_retention_days: 90,
   r2_archive_threshold_days: 365,
-  ai_disclosure_text: 'AI disclosure.',
 };
 
 const EMPTY_CREDENTIALS: Array<{
@@ -48,7 +47,7 @@ describe('serializeSettingsPage — basic fields', () => {
     expect(data.cost_per_book_warn_jpy).toBe(500);
     expect(data.job_log_retention_days).toBe(90);
     expect(data.r2_archive_threshold_days).toBe(365);
-    expect(data.ai_disclosure_text).toBe('AI disclosure.');
+    expect(data).not.toHaveProperty('ai_disclosure_text');
   });
 
   it('converts Decimal-like catalog_price_change_threshold to number', () => {

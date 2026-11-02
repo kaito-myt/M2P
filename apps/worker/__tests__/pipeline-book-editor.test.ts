@@ -92,7 +92,8 @@ interface ChapterRevisionRecord {
 
 interface AppSettingsRecord {
   id: string;
-  ai_disclosure_text: string;
+  /** 廃止列。editor がこれを読んで本文へ挿入しないことを固定するため、レガシー値を持てる。 */
+  ai_disclosure_text?: string;
   autopass_content_enabled?: boolean;
 }
 
@@ -323,10 +324,10 @@ function buildPrisma(args: BuildPrismaArgs): {
       findUnique: async () => {
         if (args.appSettings === null) return null;
         if (args.appSettings === undefined) {
-          return { ai_disclosure_text: '本書は生成 AI で作成されました。' };
+          return { ai_disclosure_text: LEGACY_DISCLOSURE };
         }
         return {
-          ai_disclosure_text: args.appSettings.ai_disclosure_text,
+          ai_disclosure_text: args.appSettings.ai_disclosure_text ?? LEGACY_DISCLOSURE,
           autopass_content_enabled: args.appSettings.autopass_content_enabled ?? false,
         };
       },
@@ -342,6 +343,9 @@ function buildPrisma(args: BuildPrismaArgs): {
   return { prisma, captures, state: { chapters, chapterRevisions, jobs } };
 }
 
+// 廃止済み app_settings.ai_disclosure_text に非空の値が残っていても、editor に渡らないこと。
+const LEGACY_DISCLOSURE = '本書は生成 AI で作成されました。';
+
 function makeEditorOutput(chapters: ChapterRecord[]): EditorOutput {
   return {
     chapters: chapters.map((c) => ({
@@ -350,8 +354,6 @@ function makeEditorOutput(chapters: ChapterRecord[]): EditorOutput {
       body_md: '(校閲後) ' + c.body_md, // 旧との差分があるとわかりやすく
       diff_summary: `第${c.index}章で表記ゆれを統一`,
     })),
-    ai_disclosure_appended: true,
-    ai_disclosure_text: '本書は生成 AI で作成されました。',
     overall_notes: '全体的に文体を統一しました。',
   };
 }
@@ -570,7 +572,6 @@ describe('runPipelineBookEditor happy path', () => {
       bookId: 'book_1',
       accountId: 'acc_1',
       genre: 'business',
-      aiDisclosureText: '本書は生成 AI で作成されました。',
       themeContext: {
         title: 'テスト書籍タイトル',
         subtitle: 'テスト副題',
@@ -626,7 +627,6 @@ describe('runPipelineBookEditor happy path', () => {
       status: 'done',
       result_json: {
         revisions_count: 7,
-        ai_disclosure_appended: true,
         thumbnail_text_job_id: null,
       },
     });
@@ -843,50 +843,27 @@ describe('runPipelineBookEditor error paths', () => {
     expect(failedCall).toBeDefined();
   });
 
-  it('AppSettings 行不在 → NotFoundError, Job=failed', async () => {
+  it('app_settings に旧 ai_disclosure_text が残っていても editBook へ渡さず、結果にも載せない', async () => {
+    // 機構撤去 (2026-11-02): 旧列を読んで aiDisclosureText として渡す実装に戻したら落ちる。
     const { job, book, theme, chapters } = makeJobBookThemeChapters();
     const { prisma, captures } = buildPrisma({
       jobs: [job],
       books: [book],
       themes: [theme],
       chapters,
-      appSettings: null,
-    });
-    const { deps } = buildDeps(prisma);
-    const { addJob } = makeAddJob();
-
-    await expect(
-      runPipelineBookEditor(
-        { book_id: 'book_1', job_id: 'job_editor_1' },
-        addJob,
-        deps,
-      ),
-    ).rejects.toBeInstanceOf(NotFoundError);
-    const failedCall = captures.jobUpdates.find((c) => c.data.status === 'failed');
-    expect(failedCall).toBeDefined();
-  });
-
-  it('ai_disclosure_text 空(空白のみ) → 許容: editBook を空文字で呼び本文へ AI 開示文を挿入しない', async () => {
-    // 運営者要望により本文への AI 開示文は挿入しない運用 (既定で空)。
-    // 空/空白のみは正常系: editBook は aiDisclosureText='' で呼ばれ、末尾挿入は agent 側で skip される。
-    const { job, book, theme, chapters } = makeJobBookThemeChapters();
-    const { prisma, captures } = buildPrisma({
-      jobs: [job],
-      books: [book],
-      themes: [theme],
-      chapters,
-      appSettings: { id: 'singleton', ai_disclosure_text: '   ' },
+      appSettings: { id: 'singleton', ai_disclosure_text: LEGACY_DISCLOSURE },
     });
     const { deps, editCalls } = buildDeps(prisma);
     const { addJob } = makeAddJob();
 
-    await expect(
-      runPipelineBookEditor({ book_id: 'book_1', job_id: 'job_editor_1' }, addJob, deps),
-    ).resolves.not.toThrow();
+    await runPipelineBookEditor({ book_id: 'book_1', job_id: 'job_editor_1' }, addJob, deps);
+
     expect(editCalls).toHaveLength(1);
-    expect((editCalls[0] as { aiDisclosureText?: unknown }).aiDisclosureText).toBe('');
-    const failedCall = captures.jobUpdates.find((c) => c.data.status === 'failed');
-    expect(failedCall).toBeUndefined();
+    expect(editCalls[0]).not.toHaveProperty('aiDisclosureText');
+    expect(JSON.stringify(editCalls[0])).not.toContain(LEGACY_DISCLOSURE);
+    const doneCall = captures.jobUpdates.find((c) => c.data.status === 'done');
+    expect(doneCall?.data.result_json).not.toHaveProperty('ai_disclosure_appended');
+    expect(captures.jobUpdates.find((c) => c.data.status === 'failed')).toBeUndefined();
   });
 
   it('editBook throw → 透過, Job failed, ChapterRevision 0 件', async () => {
@@ -1128,7 +1105,6 @@ describe('runPipelineBookEditor — autopass_content_enabled', () => {
       chapters,
       appSettings: {
         id: 'singleton',
-        ai_disclosure_text: '本書は生成 AI で作成されました。',
         autopass_content_enabled: false,
       },
     });
@@ -1152,7 +1128,6 @@ describe('runPipelineBookEditor — autopass_content_enabled', () => {
       chapters,
       appSettings: {
         id: 'singleton',
-        ai_disclosure_text: '本書は生成 AI で作成されました。',
         autopass_content_enabled: true,
       },
     });
@@ -1193,7 +1168,6 @@ describe('runPipelineBookEditor — autopass_content_enabled', () => {
       chapters,
       appSettings: {
         id: 'singleton',
-        ai_disclosure_text: '本書は生成 AI で作成されました。',
         autopass_content_enabled: true,
       },
       existingThumbnailJob: { id: 'existing_thumb_job' },
@@ -1232,7 +1206,6 @@ describe('runPipelineBookEditor — autopass_content_enabled', () => {
       chapters,
       appSettings: {
         id: 'singleton',
-        ai_disclosure_text: '本書は生成 AI で作成されました。',
         autopass_content_enabled: true,
       },
     });
@@ -1294,7 +1267,6 @@ describe('runPipelineBookEditor — autopass_content_enabled', () => {
       chapters,
       appSettings: {
         id: 'singleton',
-        ai_disclosure_text: '',
         autopass_content_enabled: true,
       },
     });
@@ -1318,7 +1290,6 @@ describe('runPipelineBookEditor — autopass_content_enabled', () => {
       chapters,
       appSettings: {
         id: 'singleton',
-        ai_disclosure_text: '本書は生成 AI で作成されました。',
         autopass_content_enabled: true,
       },
       autopassWriteThrow: boom,

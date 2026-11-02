@@ -988,7 +988,7 @@ model AppSettings {
   kdp_submit_timeout_minutes        Int      @default(10)
   kdp_submit_retry_count            Int      @default(2)
   job_log_retention_days            Int      @default(90)
-  ai_disclosure_text                String   @db.Text  // F-005 巻末挿入文
+  ai_disclosure_text                String   @db.Text  // 廃止 (2026-11-02): 読み書きしない。NOT NULL のため列だけ残す (共有表の列操作は本番障害になる)。seed が '' を入れる
   updated_at                        DateTime @updatedAt
 
   @@map("app_settings")
@@ -1497,7 +1497,6 @@ export const updateSettingsInput = z.object({
   kdp_submit_timeout_minutes: z.number().int().min(1).max(60).optional(),
   kdp_submit_retry_count: z.number().int().min(0).max(5).optional(),
   job_log_retention_days: z.number().int().min(7).max(365).optional(),
-  ai_disclosure_text: z.string().max(2000).optional(),
 })
 export async function updateSettings(input): Promise<ActionResult<void>>
 ```
@@ -1749,7 +1748,7 @@ export const PipelineBookEditorPayload = z.object({ book_id: z.string(), job_id:
 | timeout | 20 分 |
 | max_attempts | 3 |
 | priority | 10 |
-| 実行内容 | Editor (§6.3.3) で全章統合・誤字校閲・AI 開示文挿入。`Chapter.body_md` を更新（version +1, 旧版を `ChapterRevision` 退避）。完了で `pipeline.book.thumbnail.text` enqueue。**ただしサムネ生成済み（同書籍の thumbnail.text が done、= judge 再キック後の再校閲）なら thumbnail を飛ばして `pipeline.book.judge` を直接 enqueue（payload に自 Job の `retry_count` を引継ぎ、Book.status='judging'）**。thumbnail.text が queued/running なら相乗り。手動承認経路 `approveBookContent` SA も同じ遷移。 |
+| 実行内容 | Editor (§6.3.3) で全章統合・誤字校閲（本文へ AI 開示文は入れない）。`Chapter.body_md` を更新（version +1, 旧版を `ChapterRevision` 退避）。完了で `pipeline.book.thumbnail.text` enqueue。**ただしサムネ生成済み（同書籍の thumbnail.text が done、= judge 再キック後の再校閲）なら thumbnail を飛ばして `pipeline.book.judge` を直接 enqueue（payload に自 Job の `retry_count` を引継ぎ、Book.status='judging'）**。thumbnail.text が queued/running なら相乗り。手動承認経路 `approveBookContent` SA も同じ遷移。 |
 
 #### 5.3.6 `pipeline.book.thumbnail.text` [F-006]
 
@@ -2326,7 +2325,7 @@ Kindle 出版済み **93 冊中 12 冊 (13%)** しかペーパーバックが出
   ①**AI作品は「AI生成」サブカテゴリのチェックが必須**(BWヘルプ faq/9999)。フォーム要素 =
   `input.book_sub_category[value="7497"]`(ラベル「AI生成」, **全メインカテゴリ共通の同一 value**, 常時 DOM 内)。
   全書籍が AI 生成のため submit 時に**常時チェック**する(`playwright-submit-port.ts` / `bw-submit.mjs`、ラベルclick+直接check の二段)。
-  ※これは入稿フォームのメタデータであり、[[feedback_no_ai_disclosure]]の「本文にAI開示文を入れない」とは別レイヤ。本文の開示文は
+  ※これは入稿フォームのメタデータであり、[[feedback_no_ai_disclosure]]の「本文にAI開示文を入れない」（§6.3.3 R-05、2026-11-02 に挿入機構も撤去）とは別レイヤ。本文側を撤去してもこのチェックは**絶対に外さない**。本文の開示文は
   `scripts/bookwalker/remove-ai-disclosure.mjs`(文単位除去・実コンテンツ保護のKEEPガード付, 2026-09-07 に 55冊/117文除去)で恒久除去済。
   ②**内容紹介が文の途中で切れていると却下**。旧実装は `descText.slice(0,800)` で中途切断 → `fitToSentence(text, maxlength)`
   (フィールドの maxlength を実行時取得し、その範囲内の**最後の文末文字(。！？」』】)で必ず切る**)に置換。unit test = `playwright-submit-port.test.ts`。
@@ -2800,14 +2799,14 @@ export const EditorInput = z.object({
   feedback: z.array(z.object({ body: z.string(), priority: z.enum(['must','should','may']) })).optional(),
 })
 export const EditorOutput = z.object({
-  chapters: z.array(z.object({ index: z.number(), body_md: z.string(), diff_summary: z.string() })),
-  ai_disclosure_appended: z.boolean(),
+  chapters: z.array(z.object({ index: z.number(), heading: z.string(), body_md: z.string(), diff_summary: z.string().optional() })),
+  overall_notes: z.string().optional(),
 })
 ```
 
 | 項目 | 値 |
 |---|---|
-| 責務 | 表記ゆれ / 論理矛盾 / AI 開示文挿入 |
+| 責務 | 表記ゆれ / 論理矛盾 / 章間参照の整合 / **章末の AI 開示文の除去** |
 | 使うツール | なし |
 | プロンプト | `role='editor'` |
 | 想定モデル | Claude Sonnet 4.6 |
@@ -2836,6 +2835,7 @@ export const ThumbnailImageOutput = z.object({
 | 責務 | カバーテキスト案 (F-006) / 画像生成 (F-007) |
 | 使うツール | `openai.image`（gpt-image-1）/ `r2.upload` / `sharp` リサイズ |
 | プロンプト | `role='thumbnail_text'` / `role='thumbnail_image'`（画像プロンプトテンプレ）|
+// 2026-11-02: 入力 aiDisclosureText / 出力 ai_disclosure_appended・ai_disclosure_text は撤去 (下記 R-05)
 | 想定モデル | テキスト: Claude Sonnet 4.6 / 画像: OpenAI gpt-image-1 |
 
 #### 6.3.5 Quality Judge [F-008] (Phase 2)
@@ -2845,6 +2845,16 @@ export const JudgeInput = z.object({ book_id: z.string() })
 export const JudgeOutput = z.object({
   score_total: z.number().int().min(0).max(100),
   score_breakdown: z.object({
+**R-05: 本文には AI 開示文を入れない（2026-11-02 確定・機構ごと撤去）**
+
+- 旧仕様は `app_settings.ai_disclosure_text` が非空のとき、Editor が最終章末尾へ強制挿入する「R-05 安全装置」だった（空なら挿入しないだけの**設定依存スイッチ**）。運営者指示により、設定が空かどうかに頼らず**入れられない**状態にした。
+- 撤去したもの: Editor 入力 `aiDisclosureText` / 出力 `ai_disclosure_appended`・`ai_disclosure_text` / 強制挿入分岐 (`containsDisclosure`) / worker `pipeline.book.editor` の `app_settings.ai_disclosure_text` 読み出しと `result_json.ai_disclosure_appended`（過去の Job 行には残るが、読む側は無い）/ S-027 設定画面「AI 開示文（巻末挿入）」欄と `updateSettings` の `ai_disclosure_text`。
+- **維持するもの**: `stripTrailingAiDisclosure`。LLM は機構が無くても章末に開示文を自発的に書くことがあるため、全章に適用して除去する（唯一の防波堤）。Editor のユーザープロンプトは常に「本文中に AI 生成に関する開示文・注記は一切挿入しないこと」を出す。DB の既存プロンプトテンプレに `{ai_disclosure_text}` が残っていても、空文字で埋めて未置換のまま漏らさない。
+- DB 列 `app_settings.ai_disclosure_text`（NOT NULL）は**削除しない**（共有表の列操作は本番障害を起こす。2026-10-19 に `jobs.tdp_product_id` で実証済み、docs/12 Inc-1 参照）。schema のコメントを「廃止」に改めるのみ。
+- 既存本文に残った開示文の掃除は `scripts/bookwalker/remove-ai-disclosure.mjs`（文単位除去・運営者が実行）。
+- **別レイヤ（維持）**: KDP と BookWalker への AI 申告は**入稿フォームのメタデータ**で行う。特に BookWalker の「AI生成」サブカテゴリ `input.book_sub_category[value="7497"]` は BW ヘルプ faq/9999 で AI 作品に必須で、2026-09-07 の却下理由①そのもの。**絶対に外さない**（詳細は本書 §5.3.15c BookWalker 節の「却下理由と恒久対策 (2026-09-07)」）。本文の開示文（撤去済み）と入稿フォームの AI 申告（維持）は別レイヤ。
+- 固定するテスト: `packages/agents/__tests__/editor/index.test.ts`（開示文を足さない／LLM が付けた開示文を全章から除去／旧入力 `aiDisclosureText` を無視／プロンプトに挿入指示が無い）、`apps/worker/__tests__/pipeline-book-editor.test.ts`（旧列に値が残っても editBook に渡さない）。
+
     benefit_clarity: z.number().int(), logical_consistency: z.number().int(),
     style_consistency: z.number().int(), japanese_naturalness: z.number().int(),
     title_alignment: z.number().int(), genre_fit: z.number().int(),
@@ -3006,7 +3016,7 @@ sequenceDiagram
     Note over Q: 全章完了で次へ
     Q->>Q: add_job(pipeline.book.editor)
     Q->>E: complete(EditorInput)
-    E-->>Q: chapters (revised), ai_disclosure_appended
+    E-->>Q: chapters (revised, 開示文なし)
     Q->>DB: UPDATE chapters(version++), INSERT chapter_revisions(旧版退避)
 
     Q->>Q: add_job(pipeline.book.thumbnail.text)
@@ -3344,7 +3354,7 @@ export const logger = pino({
 | OQ-D-04 | graphile-worker の `concurrency` 設定変更を運用中に動的反映できるか | Phase 1 運用 1 週間で評価 | 不可なら worker 再起動運用 |
 | OQ-D-05 | `BookLock` の `expires_at` を超過したロックの自動解放（運用ジョブ要否） | Phase 1 運用 1 週間で評価 | 必要なら `alert.cost.check` と同 cron で掃除 |
 | OQ-D-06 | revision_run の同一書籍多重起動を `BookLock` ではなく DB ユニーク制約で防げるか（簡素化） | Phase 1 実装中 | 当面は `BookLock` 方式。代替案として `revision_runs.book_ids_json` の GIN UNIQUE index 検討 |
-| OQ-D-07 | F-005 巻末 AI 開示文の文言（KDP の最新規約に追従する仕組み） | 確定（2026-07-24 方針変更） | `AppSettings.ai_disclosure_text` を採用。**既定は空 = 本文に AI 開示文を入れない**（読者離脱防止）。KDP への AI 開示は入稿フォームの「AI生成コンテンツ」設問で行う運用。Editor は `ai_disclosure_text` が非空のときのみ最終章末尾に 1 回挿入（空なら LLM が付けても step8 で除去）。 |
+| OQ-D-07 | F-005 巻末 AI 開示文の文言（KDP の最新規約に追従する仕組み） | 確定（2026-07-24 方針変更） | `AppSettings.ai_disclosure_text` を採用。**既定は空 = 本文に AI 開示文を入れない**（読者離脱防止）。KDP への AI 開示は入稿フォームの「AI生成コンテンツ」設問で行う運用。**2026-11-02 改訂: 挿入機構ごと撤去**（設定の有無によらず本文へ入れない。§6.3.3 R-05）。列は NOT NULL のため残置・読み書きしない。 |
 | OQ-D-08 | 画像コスト（`gpt-image-1`）の `cost_jpy` 算出。1 枚 ≒ $0.02 を `image_price_per_image_usd` ベースで計算するが、サイズ別単価差をどう扱うか | Phase 1 実装中 | 単一価格で開始、Phase 2 でサイズ別に分離 |
 | OQ-D-09 | `packages/contracts/logger.ts` の redact ネスト深度が 2 階層止まり。`kdpCredentials` 等 3 階層以上のネスト構造（例: `req.body.account.kdpCredentials.password`）が SP-04 (KDP 連携) 周辺で発生する見込み | SP-04 着手時 | Follow-up: `kdpCredentials.*`, `*.kdpCredentials.*`, `*.*.kdpCredentials.*` の 3 階層 redact パターンを追加し、SP-04 で実 payload に対する redact テストを追加 |
 | OQ-D-10 | Marketer エージェントの Anthropic SDK 選定（`@anthropic-ai/claude-agent-sdk` vs `@anthropic-ai/sdk`） | SP-02 T-02-03 で発生 | **【決定 2026-05】SDK は `@anthropic-ai/sdk`**（公式 Messages API クライアント）。`@anthropic-ai/claude-agent-sdk` は Claude Code CLI のプログラマブルラッパで `claude` バイナリ子プロセス起動方式のため Railway 不適合。`web_search_20250305` server tool は Messages API の `tools` パラメータで直接利用可能。詳細は §6.1.1 / §13 #11 / `docs/03 §A-02` 参照。 |

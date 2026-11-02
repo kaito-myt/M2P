@@ -1,10 +1,10 @@
 /**
- * docs/05 §6.3.3 / F-005 / R-05 — Editor エージェント (全章統合校閲 + AI 開示文巻末挿入)。
+ * docs/05 §6.3.3 / F-005 / R-05 — Editor エージェント (全章統合校閲)。本文へ AI 開示文は入れない。
  *
  * フロー (Writer outline/chapter と同パターン):
  *  1. `loadActivePrompt('editor', genre)` で active プロンプトを取得
  *  2. プレースホルダ ({theme_title}/{theme_subtitle}/{theme_hook}/{target_reader}/
- *     {draft_chapters}/{ai_disclosure_text}/{feedback}/{genre}/{chapter_count}) を差込
+ *     {draft_chapters}/{feedback}/{genre}/{chapter_count}) を差込
  *     - draft_chapters は全章を JSON 配列として埋め込む
  *  3. `createAgentClient('editor', genre, ctx)` で LLMClient (withTokenLogging ラップ済) 取得
  *  4. `client.complete({ system, user, maxOutputTokens: 32768 })` を 1 回呼ぶ
@@ -13,9 +13,9 @@
  *     - 出力 chapters の章数が入力と一致
  *     - 出力 chapters の index が入力と一致 (順序維持)
  *     - 各章 body_md 500 字以上 (zod min(500) で強制)
- *  6. **R-05 安全装置**: 最終章 body_md 末尾に aiDisclosureText が含まれることを確認
- *     - 未含なら呼出側で**強制挿入** + `ai_disclosure_appended: true` で返却
- *     - LLM が忘れても KDP コンテンツガイドライン違反を防ぐ
+ *  6. **R-05**: 本文 (全章) に AI 開示文を入れない。LLM が各章末に自発的に付けた開示文は
+ *     `stripTrailingAiDisclosure` で除去する。KDP / BookWalker への AI 申告は入稿フォームの
+ *     メタデータで行う (別レイヤ)。挿入機構は 2026-11-02 に撤去済み。
  *
  * エラー方針 (Writer chapter と同型):
  *  - JSON 抽出/parse 失敗 → `AgentError('editor.invalid_output', { rawText, cause })`
@@ -134,17 +134,13 @@ export async function editBook(
   // 4. LLM 呼出 — **章ごとに分割**して校閲する。
   //    全章を 1 回で返す設計だと出力 (~50,000 字 + JSON) が maxOutputTokens を超えて
   //    truncation し JSON parse に失敗する (8 章規模で editor.invalid_output が再現)。
-  //    章単位で呼び出し、結果を入力順で結合する。AI 開示文は最終章にのみ付与する
-  //    (各章末への重複挿入を防ぐため、非最終章では ai_disclosure_text を空で渡す)。
+  //    章単位で呼び出し、結果を入力順で結合する。
   const editedChapters: EditorChapterOutput[] = [];
   for (let ci = 0; ci < parsedInput.chapters.length; ci++) {
     const chapter = parsedInput.chapters[ci]!;
-    const isLast = ci === parsedInput.chapters.length - 1;
-    const disclosureForChunk = isLast ? parsedInput.aiDisclosureText : '';
     const chunkInput: EditorInput = {
       ...parsedInput,
       chapters: [chapter],
-      aiDisclosureText: disclosureForChunk,
     };
 
     const systemPrompt = fillPlaceholders(prompt.template, {
@@ -154,7 +150,8 @@ export async function editBook(
       target_reader: parsedInput.themeContext.target_reader,
       chapter_count: 1,
       draft_chapters: JSON.stringify(chunkInput.chapters),
-      ai_disclosure_text: disclosureForChunk,
+      // 既存 DB テンプレに {ai_disclosure_text} が残っていても文字列のまま漏れないよう空で埋める。
+      ai_disclosure_text: '',
       feedback: formatFeedback(parsedInput.feedback),
       genre: genreLabel(parsedInput.genre) ?? 'general',
     });
@@ -248,39 +245,14 @@ export async function editBook(
   const toc = editedChapters.map((c) => ({ index: c.index, heading: c.heading }));
   const reconciled = await runConsistencyPass(editedChapters, toc, parsedInput, client);
 
-  // 8. 章末尾の AI 生成開示文を全章から除去する。
-  //    章分割校閲では LLM が各章末に開示文を付けがちだが、開示は**巻末 (最終章)
-  //    に 1 回だけ**で足りる (KDP は書籍単位の開示で十分)。
-  const aiText = parsedInput.aiDisclosureText.trim();
-  const stripped: EditorChapterOutput[] = reconciled.map((c) => ({
+  // 8. 章末尾の AI 生成開示文を全章から除去する。本文には開示文を一切入れない
+  //    (読者離脱防止・運営者指示 2026-11-02)。KDP/BookWalker への AI 申告は入稿フォームで行う。
+  const finalChapters: EditorChapterOutput[] = reconciled.map((c) => ({
     ...c,
     body_md: stripTrailingAiDisclosure(c.body_md),
   }));
 
-  // 9. R-05 安全装置: 最終章 body_md 末尾に正規の AI 開示文を 1 回だけ付与する。
-  //    ただし開示文が空 (運営者が S-027 で無効化) の場合は挿入しない。KDP への AI
-  //    開示は入稿フォームの「AI生成コンテンツ」設問で行う運用とし、本文には入れない
-  //    (読者離脱防止・運営者要望)。step 8 で LLM が付けた開示文は既に除去済み。
-  const lastIdx = stripped.length - 1;
-  const lastChapter = stripped[lastIdx]!;
-  let finalChapters: EditorChapterOutput[] = stripped;
-  let appended = false;
-
-  if (aiText !== '' && !containsDisclosure(lastChapter.body_md, aiText)) {
-    const fixedLast: EditorChapterOutput = {
-      ...lastChapter,
-      body_md: `${lastChapter.body_md.trimEnd()}\n\n${aiText}`,
-    };
-    finalChapters = [...stripped];
-    finalChapters[lastIdx] = fixedLast;
-    appended = true;
-  }
-
-  const result: EditorOutput = {
-    chapters: finalChapters,
-    ai_disclosure_appended: appended,
-    ai_disclosure_text: aiText,
-  };
+  const result: EditorOutput = { chapters: finalChapters };
   return result;
 }
 
@@ -375,9 +347,6 @@ function hasEditorShape(parsed: unknown): boolean {
 /**
  * LLM が省きがちなフィールドを救済して zod 通過させる。
  * - chapters[].heading 欠落 → 入力 chapters[index 一致] の heading で補完
- * - ai_disclosure_appended 欠落 → false で補完 (後段の R-05 安全装置で実体検査)
- * - ai_disclosure_text 欠落 → 入力 aiDisclosureText で補完
- * 最終 ai_disclosure_appended / ai_disclosure_text は呼出側で実体検査後に上書きされる。
  */
 function normalizePartialOutput(raw: unknown, input: EditorInput): unknown {
   if (typeof raw !== 'object' || raw === null) return raw;
@@ -403,19 +372,9 @@ function normalizePartialOutput(raw: unknown, input: EditorInput): unknown {
     });
   }
 
-  if (typeof out.ai_disclosure_appended !== 'boolean') {
-    out.ai_disclosure_appended = false;
-  }
-  if (typeof out.ai_disclosure_text !== 'string' || (out.ai_disclosure_text as string).length === 0) {
-    out.ai_disclosure_text = input.aiDisclosureText;
-  }
   return out;
 }
 
-/**
- * AI 開示文が body_md に含まれるか (空白・改行差を吸収するため normalize 比較)。
- * 完全一致だと「。」「、」など微妙な違いで誤判定するため、空白圧縮した部分一致で確認。
- */
 /**
  * 章末尾に LLM が付与しがちな「AI 生成開示文」段落を除去する。
  * 末尾から走査し、AI 開示マーカーを含む段落 (および直前の見出しのみの段落) を
@@ -441,13 +400,6 @@ function stripTrailingAiDisclosure(bodyMd: string): string {
     break;
   }
   return paragraphs.join('\n\n').trimEnd();
-}
-
-function containsDisclosure(bodyMd: string, aiText: string): boolean {
-  const norm = (s: string) => s.replace(/\s+/g, '');
-  const needle = norm(aiText);
-  if (needle.length === 0) return true; // 空文字は always true (zod min(1) で実質起きない)
-  return norm(bodyMd).includes(needle);
 }
 
 /**
@@ -478,19 +430,10 @@ function buildUserMessage(input: EditorInput): string {
     JSON.stringify(input.chapters, null, 2),
   );
 
-  const hasDisclosure = input.aiDisclosureText.trim() !== '';
-  if (hasDisclosure) {
-    lines.push(
-      '',
-      '【巻末に必ず挿入する AI 生成開示文 (R-05 / KDP コンテンツガイドライン遵守)】',
-      input.aiDisclosureText,
-    );
-  } else {
-    lines.push(
-      '',
-      '【AI 生成開示文】本文中に AI 生成に関する開示文・注記は一切挿入しないこと。',
-    );
-  }
+  lines.push(
+    '',
+    '【AI 生成開示文】本文中に AI 生成に関する開示文・注記は一切挿入しないこと。',
+  );
 
   if (input.feedback && input.feedback.length > 0) {
     lines.push(
@@ -509,7 +452,7 @@ function buildUserMessage(input: EditorInput): string {
     ' - 章間の論理整合性を確認し、重複表現や矛盾を解消する',
     ' - 誤字脱字を修正する',
     ' - 各章の `index` / `heading` は入力と完全一致させる (順序・章数を変えない)',
-    ' - **最終章の本文末尾に AI 生成開示文を必ず挿入する** (R-05 違反は出版停止リスク)',
+    ' - 本文中 (最終章末尾を含む) に AI 生成に関する開示文・注記を挿入しない',
     ' - 主な修正点を `diff_summary` (各章) と `overall_notes` (全体) に簡潔に記載する',
     '',
     '出力形式: JSON で以下を返してください。',
@@ -522,8 +465,6 @@ function buildUserMessage(input: EditorInput): string {
     '      "diff_summary"?: string   // 主な修正点 (任意)',
     '    }, ...',
     '  ],',
-    '  "ai_disclosure_appended": boolean, // 最終章末尾に開示文を挿入したか',
-    '  "ai_disclosure_text": string,      // 実際に挿入した文字列 (入力エコー推奨)',
     '  "overall_notes"?: string           // 全体総評 (任意)',
     '}',
     '',

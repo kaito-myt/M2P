@@ -62,7 +62,6 @@ export interface SettingsPageData {
   kdp_creation_paused_until: string | null;
   job_log_retention_days: number;
   r2_archive_threshold_days: number;
-  ai_disclosure_text: string;
   apiCredentials: ApiCredentialStatusRow[];
 }
 
@@ -93,7 +92,6 @@ interface RawAppSettings {
   kdp_creation_paused_until: Date | null;
   job_log_retention_days: number;
   r2_archive_threshold_days: number;
-  ai_disclosure_text: string;
 }
 
 interface RawApiCredential {
@@ -190,7 +188,6 @@ export function serializeSettingsPage(
       : null,
     job_log_retention_days: raw.job_log_retention_days,
     r2_archive_threshold_days: raw.r2_archive_threshold_days,
-    ai_disclosure_text: raw.ai_disclosure_text,
     apiCredentials,
   };
 }

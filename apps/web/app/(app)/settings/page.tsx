@@ -45,7 +45,6 @@ const DEFAULT_SETTINGS = {
   kdp_submit_retry_count: 2,
   job_log_retention_days: 90,
   r2_archive_threshold_days: 365,
-  ai_disclosure_text: '',
 };
 
 export default async function SettingsPage() {

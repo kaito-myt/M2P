@@ -11,8 +11,6 @@
  *      - 一時 Account + ThemeCandidate (status='accepted') + Book (theme_id 結線) +
  *        Chapter 7 行 (status='done', version=1, body_md ~800字 各章) + 内部 Job
  *        (kind='pipeline.book.editor', status='queued') を Prisma で投入。
- *      - AppSettings (singleton) の ai_disclosure_text は seed 値 (DEFAULT_AI_DISCLOSURE_TEXT)
- *        を使う (既存ロウがあればそのまま、無ければ create で確実に存在させる)。
  *
  *   2. **実 worker 実行** (実 LLM コスト ~$0.13 — claude-sonnet-4-6 7 章校閲):
  *      `runPipelineBookEditor(payload, addJob: spy, deps: {})` を直接呼出。
@@ -21,13 +19,13 @@
  *
  *   3. **検証** (F-005 / F-016 / R-05 受入基準 + docs/05 §5.3.5):
  *      - 内部 Job: status='done', started_at/finished_at 充足, error=null,
- *        result_json={ revisions_count: 7, ai_disclosure_appended: true,
+ *        result_json={ revisions_count: 7,
  *          thumbnail_text_job_id: <child job id> }
  *      - Chapter 7 行すべて: version=2, body_md は校閲後 (元 draft と差分があり得る),
  *        char_count = codepoint length, updated_at が前進
  *      - ChapterRevision 7 行 INSERT: version=旧 (1), body_md=旧 draft, reason=`editor:<jobId>`,
  *        chapter_id / book_id が一致
- *      - **最終章** body_md の末尾近傍に ai_disclosure_text が含まれる (R-05)
+ *      - どの章の body_md にも AI 開示文が含まれない (R-05: 本文には入れない)
  *      - token_usage 1 行 INSERT: role='editor', provider='anthropic',
  *        model=claude-*, book_id=bookId, job_id=jobId, input_tokens>1000
  *      - **thumbnail.text 子 Job** が 1 行 INSERT:
@@ -48,7 +46,7 @@
  *     .env.local (ANTHROPIC_API_KEY / DATABASE_URL / AUTH_*) が前提。
  *     ModelAssignment (role='editor', genre=null, provider='anthropic',
  *     model='claude-sonnet-4-6') + Prompt (role='editor', genre=null active) が
- *     seed 済であることも前提。AppSettings singleton 行も seed 済 (ai_disclosure_text あり)。
+ *     seed 済であることも前提。
  *     addJob は **mock** で受ける (graphile-worker への実 enqueue は本 spec の検証対象外、
  *     enqueue 呼出の identifier / payload / spec の正しさだけを spy で記録する)。
  *
@@ -124,11 +122,8 @@ function buildDummyBody(chars: number, index: number, heading: string): string {
   return body;
 }
 
-/** 空白を圧縮した部分一致判定 (editor 本体の containsDisclosure と同等)。 */
-function normalizedIncludes(haystack: string, needle: string): boolean {
-  const norm = (s: string) => s.replace(/\s+/g, '');
-  return norm(haystack).includes(norm(needle));
-}
+/** 本文に残ってはいけない AI 開示文の目印 (R-05: 本文には AI 開示文を入れない)。 */
+const AI_DISCLOSURE_MARKER = /生成\s*AI|AI\s*生成|コンテンツガイドライン/;
 
 /** 7 章 (F-003 最小, EditorInputSchema min(7) 整合)。各章 ~800 字。 */
 const SEVEN_CHAPTERS = [
@@ -151,27 +146,10 @@ test.describe('runtime: pipeline.book.editor worker task (T-04-06)', () => {
   let bookId: string;
   let jobId: string;
   const chapterIdsByIndex = new Map<number, string>();
-  /** AppSettings から読んだ ai_disclosure_text (検証で使う)。 */
-  let aiDisclosureText: string;
 
   test.beforeAll(async () => {
     if (SKIP_REAL_API) return;
     invalidateApiKeyCache();
-
-    // 0) AppSettings (singleton) 存在確認 — seed 済の想定。存在しなければ create。
-    const existingSettings = await prisma.appSettings.findUnique({
-      where: { id: 'singleton' },
-    });
-    if (!existingSettings) {
-      throw new Error(
-        'AppSettings singleton row not found — run `pnpm db:seed` first',
-      );
-    }
-    const txt = (existingSettings.ai_disclosure_text ?? '').trim();
-    if (txt.length === 0) {
-      throw new Error('AppSettings.ai_disclosure_text is empty — fix seed');
-    }
-    aiDisclosureText = txt;
 
     // 1) 一時 Account
     const account = await prisma.account.create({
@@ -431,11 +409,9 @@ test.describe('runtime: pipeline.book.editor worker task (T-04-06)', () => {
     expect(finalJob!.error).toBeNull();
     const result = finalJob!.result_json as {
       revisions_count: number;
-      ai_disclosure_appended: boolean;
       thumbnail_text_job_id: string | null;
     };
     expect(result.revisions_count).toBe(7);
-    expect(result.ai_disclosure_appended).toBe(true);
     expect(typeof result.thumbnail_text_job_id).toBe('string');
     expect(result.thumbnail_text_job_id!.length).toBeGreaterThan(0);
 
@@ -481,10 +457,12 @@ test.describe('runtime: pipeline.book.editor worker task (T-04-06)', () => {
       expect(r.body_md).toBe(originalBody);
     }
 
-    // --- 検証 4: 最終章 body_md 末尾近傍に ai_disclosure_text が含まれる (R-05) ---
+    // --- 検証 4: どの章の body_md にも AI 開示文が無い (R-05: 本文には入れない) ---
     const lastChapter = editedChapters[editedChapters.length - 1]!;
     expect(lastChapter.index).toBe(7);
-    expect(normalizedIncludes(lastChapter.body_md, aiDisclosureText)).toBe(true);
+    for (const c of editedChapters) {
+      expect(AI_DISCLOSURE_MARKER.test(c.body_md)).toBe(false);
+    }
 
     // --- 検証 5: token_usage 1 行 INSERT (role='editor', model=claude-*) ----
     const usageRows = await prisma.tokenUsage.findMany({
@@ -535,7 +513,6 @@ test.describe('runtime: pipeline.book.editor worker task (T-04-06)', () => {
     console.log(
       `[T-04-06 editor worker] jobId=${jobId} bookId=${bookId} ` +
         `revisions_count=${result.revisions_count} ` +
-        `ai_disclosure_appended=${result.ai_disclosure_appended} ` +
         `thumbnail_text_job_id=${result.thumbnail_text_job_id}`,
     );
     // eslint-disable-next-line no-console

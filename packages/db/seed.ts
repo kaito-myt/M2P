@@ -76,11 +76,9 @@ export const GENRE_AGNOSTIC_ROLES: ReadonlySet<PromptRole> = new Set([
 // ---------------------------------------------------------------------------
 
 /**
- * AI 生成開示文（巻末挿入用）の初期文言。
- * 既定は空 = 本文には AI 開示文を入れない（読者離脱防止・運営者要望）。KDP への AI
- * 開示は入稿フォームの「AI生成コンテンツ」設問で行う運用とする。運営者が S-027 で
- * 文言を設定した場合のみ、Editor が最終章末尾に 1 回だけ挿入する
- * （docs/05 OQ-D-07 / docs/01 §7.1）。
+ * 廃止 (2026-11-02): 本文へ AI 開示文は入れない。app_settings.ai_disclosure_text は NOT NULL の
+ * ため列だけ残してあり、seed が空文字を入れる。誰も読み書きしない（docs/05 R-05）。
+ * KDP / BookWalker への AI 申告は入稿フォームのメタデータで行う（別レイヤ）。
  */
 export const DEFAULT_AI_DISCLOSURE_TEXT = '';
 

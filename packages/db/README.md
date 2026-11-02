@@ -84,8 +84,8 @@ seed の内容（docs/05 §13 #9）:
 全件 upsert で **冪等**。複数回実行しても行は増えない。`Prompt` 本文や `ModelAssignment.model` を
 運営者/Optimizer が後から書き換えた場合、それらは seed 再実行で **上書きされない**（system 印のみ復帰）。
 
-`AppSettings.ai_disclosure_text` の初期文言は仮置き（docs/05 OQ-D-07）。本番運用前に KDP 最新規約に
-合わせて S-027 で更新すること。
+`AppSettings.ai_disclosure_text` は廃止（2026-11-02）。本文へ AI 開示文は入れないため読み書きしない
+（NOT NULL のため列だけ残り、seed が空文字を入れる）。AI 申告は KDP / BookWalker の入稿フォームで行う。
 
 ### 5. graphile-worker スキーマ初期化
 

@@ -2677,8 +2677,6 @@ export const messages = {
         jobLogRetentionHint: 'この日数を超えたジョブログを R2 にアーカイブします (デフォルト: 90)',
         r2ArchiveThresholdLabel: 'R2 アーカイブ閾値 (日)',
         r2ArchiveThresholdHint: 'この日数を超えたアーカイブログを削除します (デフォルト: 365)',
-        aiDisclosureLabel: 'AI 開示文（巻末挿入）',
-        aiDisclosurePlaceholder: '例: 本書の一部はAIの支援を受けて執筆されました。',
       },
       salesAutoFetch: {
         title: '売上 Amazon 自動取得',

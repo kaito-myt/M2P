@@ -56,7 +56,6 @@ export const UpdateSettingsInputSchema = z.object({
   kdp_submit_retry_count: z.number().int().min(0).max(5).optional(),
   job_log_retention_days: z.number().int().min(7).max(365).optional(),
   r2_archive_threshold_days: z.number().int().min(30).max(3650).optional(),
-  ai_disclosure_text: z.string().max(2000).optional(),
 });
 
 export type UpdateSettingsInput = z.infer<typeof UpdateSettingsInputSchema>;
@@ -88,7 +87,6 @@ export interface AppSettingsRow {
   kdp_submit_retry_count: number;
   job_log_retention_days: number;
   r2_archive_threshold_days: number;
-  ai_disclosure_text: string;
 }
 
 export interface AppSettingsRepo {
@@ -245,9 +243,6 @@ export async function updateSettingsCore(
     }
     if (data.r2_archive_threshold_days !== undefined) {
       updateData.r2_archive_threshold_days = data.r2_archive_threshold_days;
-    }
-    if (data.ai_disclosure_text !== undefined) {
-      updateData.ai_disclosure_text = data.ai_disclosure_text;
     }
 
     const after = await deps.appSettingsRepo.update({

@@ -3,7 +3,7 @@
 /**
  * DataRetentionForm — S-027 設定画面 データ管理セクション (T-07-09).
  *
- * Manages job_log_retention_days, r2_archive_threshold_days, ai_disclosure_text.
+ * Manages job_log_retention_days, r2_archive_threshold_days.
  */
 import { useState, useCallback } from 'react';
 import { CheckCircle, XCircle } from 'lucide-react';
@@ -18,14 +18,12 @@ interface DataRetentionFormProps {
   initialData: {
     job_log_retention_days: number;
     r2_archive_threshold_days: number;
-    ai_disclosure_text: string;
   };
 }
 
 export function DataRetentionForm({ initialData }: DataRetentionFormProps) {
   const [jobLogDays, setJobLogDays] = useState(String(initialData.job_log_retention_days));
   const [r2Days, setR2Days] = useState(String(initialData.r2_archive_threshold_days));
-  const [aiText, setAiText] = useState(initialData.ai_disclosure_text);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [isPending, setIsPending] = useState(false);
   const [feedback, setFeedback] = useState<{ ok: boolean; msg: string } | null>(null);
@@ -60,7 +58,6 @@ export function DataRetentionForm({ initialData }: DataRetentionFormProps) {
     const result = await updateSettings({
       job_log_retention_days: Number(jobLogDays),
       r2_archive_threshold_days: Number(r2Days),
-      ai_disclosure_text: aiText,
     });
     setIsPending(false);
     if (result.ok) {
@@ -68,7 +65,7 @@ export function DataRetentionForm({ initialData }: DataRetentionFormProps) {
     } else {
       setFeedback({ ok: false, msg: result.error.message });
     }
-  }, [jobLogDays, r2Days, aiText, validateJobDays, validateR2Days, m.saveSuccess]);
+  }, [jobLogDays, r2Days, validateJobDays, validateR2Days, m.saveSuccess]);
 
   return (
     <section
@@ -127,22 +124,6 @@ export function DataRetentionForm({ initialData }: DataRetentionFormProps) {
           {errors.r2Days && (
             <p role="alert" className="text-button-sm text-destructive">{errors.r2Days}</p>
           )}
-        </div>
-
-        {/* AI disclosure text */}
-        <div className="flex flex-col gap-1">
-          <label htmlFor="ai-disclosure" className="text-body font-medium text-charcoal">
-            {ms.aiDisclosureLabel}
-          </label>
-          <textarea
-            id="ai-disclosure"
-            value={aiText}
-            onChange={(e) => setAiText(e.target.value)}
-            maxLength={2000}
-            rows={4}
-            placeholder={ms.aiDisclosurePlaceholder}
-            className="rounded-default border border-border-warm bg-cream-light px-3 py-2 text-body text-charcoal placeholder:text-muted focus:outline-none focus-visible:ring-2 focus-visible:ring-foreground"
-          />
         </div>
 
         {/* Submit */}

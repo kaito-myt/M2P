@@ -1,18 +1,18 @@
 /**
- * docs/05 §6.3.3 / F-005 — Editor エージェント (校閲 + AI 開示文挿入) の I/O 契約。
+ * docs/05 §6.3.3 / F-005 — Editor エージェント (全章校閲) の I/O 契約。
  *
  * 本ファイルには Editor (T-04-03) の入出力型を定義する。
  *
  * 設計判断 (Hard Rule #3 — DB / docs/05 §6.3.3 整合):
- *  - docs/05 既定 schema は `{book_id, chapters: [{index, heading, body_md}], feedback?}`
- *    入力 / `{chapters: [{index, body_md, diff_summary}], ai_disclosure_appended: bool}` 出力。
- *    本実装はその既定を完全踏襲しつつ、Writer (T-04-01/02) と一貫した拡張フィールド
- *    (jobId / accountId / genre / themeContext / aiDisclosureText) を追加する。
+ *  - 入力は `{book_id, chapters: [{index, heading, body_md}], feedback?}` に、Writer (T-04-01/02) と
+ *    一貫した拡張フィールド (jobId / accountId / genre / themeContext) を加えたもの。
+ *    出力は `{chapters: [{index, heading, body_md, diff_summary}], overall_notes?}`。
  *  - 入力 chapters は Writer 章執筆結果（DB `chapters` 行）を全章分まとめて渡す。
- *    Editor は全章統合校閲 + 巻末 AI 開示文挿入を担う。章数は F-003/F-004 整合で 7〜10。
- *  - `aiDisclosureText` は呼出側 (worker) が `AppSettings.ai_disclosure_text` から読み出して
- *    渡す。Editor は受け取った文字列を巻末挿入し、`ai_disclosure_appended: true` を返す。
- *    LLM が挿入を忘れた場合は呼出側で**強制挿入**する安全装置 (R-05 遵守)。
+ *    Editor は全章統合校閲を担う。章数は F-003/F-004 整合で 7〜10。
+ *  - **本文には AI 開示文を入れない** (2026-11-02 運営者指示。読者離脱防止)。旧
+ *    `aiDisclosureText` 入力 / `ai_disclosure_appended` / `ai_disclosure_text` 出力と巻末強制挿入
+ *    (R-05 安全装置) は撤去済み。KDP / BookWalker への AI 申告は入稿フォームのメタデータで行う
+ *    (別レイヤ・維持)。LLM が自発的に付けた開示文は Editor 実装が章末から除去する。
  *  - `feedback` は Writer chapter と同じ `RevisionFeedbackItemSchema` (priority 別) を流用。
  *    F-050 Revision Applier (docs/05 §6.3.6) が同形式で渡せる。
  *  - 出力 `chapters[].diff_summary` は主な修正点 (任意)。表記ゆれ / 文体混在検出警告を
@@ -24,7 +24,7 @@
  *  - 出力 chapters の index が入力と一致 (順序維持)
  *  - 出力 chapters の章数が入力と一致
  *  - 各章 body_md が 500 字以上 (短縮しすぎ防止)
- *  - 最終章 body_md 末尾に aiDisclosureText が含まれる (未含なら強制挿入 + true 返却)
+ *  - 各章 body_md 末尾に AI 開示文が残らない (stripTrailingAiDisclosure で除去)
  */
 import { z } from 'zod';
 import { GenreValueSchema } from '../genres.js';
@@ -45,11 +45,10 @@ export const EditorChapterInputSchema = z.object({
 export type EditorChapterInput = z.infer<typeof EditorChapterInputSchema>;
 
 /**
- * Editor 入力。Writer chapter 全 N 章 + テーマ文脈 + AI 開示文 + feedback。
+ * Editor 入力。Writer chapter 全 N 章 + テーマ文脈 + feedback。
  *
  * 受入基準 (F-005 / docs/02 / R-05):
  *  - 全章校閲 (順序維持、index 一致)
- *  - AI 開示文を巻末挿入 (Editor 出力 ai_disclosure_appended=true、呼出側で強制保証)
  *  - feedback 反映 (F-050 連携)
  *  - token_usage 紐付け (jobId/bookId 経由)
  */
@@ -71,13 +70,6 @@ export const EditorInputSchema = z.object({
   }),
   /** Writer chapter 全 N 章。writer の章数上限(30)と整合。 */
   chapters: z.array(EditorChapterInputSchema).min(7).max(30),
-  /**
-   * AI 開示文 (`AppSettings.ai_disclosure_text`)。呼出側 (worker) が DB から読み出して渡す。
-   * Editor は受け取った文字列を巻末挿入する責務を負う。
-   */
-  // 空文字 = 本文に AI 開示文を挿入しない (運営者が S-027 で無効化)。KDP への開示は
-  // 入稿フォームで行う運用。非空なら Editor が巻末に 1 回だけ挿入する。
-  aiDisclosureText: z.string().max(500).default(''),
   /** F-050 修正コメント反映 — Writer chapter と同じ priority 別構造化形式。 */
   feedback: z.array(RevisionFeedbackItemSchema).default([]),
 });
@@ -103,15 +95,10 @@ export type EditorChapterOutput = z.infer<typeof EditorChapterOutputSchema>;
  * Editor の最終出力。
  *
  * - chapters: 入力と同じ章数 (呼出側で検証)
- * - ai_disclosure_appended: 巻末挿入確認フラグ (R-05)。
- *   LLM が挿入を忘れた場合は呼出側で**強制挿入** + true で返却する安全装置。
- * - ai_disclosure_text: 実際に挿入された文字列 (監査用にエコー)。
  * - overall_notes: 任意の総評 (運営者向けメモ)。
  */
 export const EditorOutputSchema = z.object({
   chapters: z.array(EditorChapterOutputSchema).min(7).max(30),
-  ai_disclosure_appended: z.boolean(),
-  ai_disclosure_text: z.string().min(1).max(500),
   overall_notes: z.string().max(2000).optional(),
 });
 export type EditorOutput = z.infer<typeof EditorOutputSchema>;

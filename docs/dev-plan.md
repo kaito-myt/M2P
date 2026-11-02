@@ -173,7 +173,7 @@ flowchart LR
 
 | # | リスク | 影響度 | 緩和策 | 関連スプリント |
 |---|---|---|---|---|
-| R-05 | KDP 規約変更（AI 開示文・サムネ規則の改定） | 高 | F-005 で挿入する AI 開示文は `AppSettings.ai_disclosure_text` に保存（OQ-D-07）。SP-04 で実装、SP-09 で運用ハンドブック化 | SP-04, SP-09 |
+| R-05 | KDP 規約変更（AI 開示文・サムネ規則の改定） | 高 | （2026-11-02 改訂）本文へ AI 開示文は入れない。AI 申告は KDP/BookWalker の入稿フォームで行う（OQ-D-07、docs/05 §6.3.3 R-05）。旧: `AppSettings.ai_disclosure_text` に保存。SP-04 で実装、SP-09 で運用ハンドブック化 | SP-04, SP-09 |
 | R-06 | KDP の Bot 検出による Playwright 自動入稿失敗 (OQ-03) | 高 | Phase 3 開始（SP-14）で stealth プラグイン PoC を最初に実施。失敗時はローカル PC 常駐 worker への切替を SP-14 完了判定に組込 | SP-14 |
 | R-07 | プロバイダ価格 API 非提供 → スクレイピング破綻 | 中 | SP-02 で手動編集 UI（B-03）+ 前日値継続使用 + `catalog_fetch_failed` Alert を必ず実装 | SP-02 |
 

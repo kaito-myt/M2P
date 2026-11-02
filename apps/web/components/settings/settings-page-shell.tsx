@@ -62,7 +62,6 @@ export function SettingsPageShell({ data }: SettingsPageShellProps) {
         initialData={{
           job_log_retention_days: data.job_log_retention_days,
           r2_archive_threshold_days: data.r2_archive_threshold_days,
-          ai_disclosure_text: data.ai_disclosure_text,
         }}
       />
 

@@ -44,7 +44,6 @@ const BASE_ROW: AppSettingsRow = {
   kdp_submit_retry_count: 2,
   job_log_retention_days: 90,
   r2_archive_threshold_days: 365,
-  ai_disclosure_text: 'disclosure',
 };
 
 function makeDeps(opts: {
@@ -220,6 +219,17 @@ describe('updateSettingsCore — audit_log API key safety', () => {
         expect(afterJson).not.toHaveProperty(field);
       }
     }
+  });
+
+  it('廃止済み ai_disclosure_text は入力に含まれても DB へ書かれない', async () => {
+    const { deps, spies } = makeDeps();
+    const result = await updateSettingsCore(
+      { job_log_retention_days: 30, ai_disclosure_text: '本書はAIで作成' } as unknown,
+      deps,
+    );
+    expect(isOk(result)).toBe(true);
+    const updateArg = spies.update.mock.calls[0]?.[0];
+    expect(updateArg.data).not.toHaveProperty('ai_disclosure_text');
   });
 
   it('any input containing an "api_key" field is silently ignored (not persisted)', async () => {

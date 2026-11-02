@@ -9,16 +9,14 @@
  *      (token_usage.book_id / job_id FK を満たす)
  *   2. 7 章分のダミー Writer chapter 出力 (heading + body_md ~800-1500 字) を構築
  *   3. editBook({ jobId, bookId, accountId, genre:'business', themeContext,
- *      chapters: [...7 章], aiDisclosureText, feedback: [] }) を実 LLM
+ *      chapters: [...7 章], feedback: [] }) を実 LLM
  *      (editor assignment = anthropic claude-sonnet-4-6) で呼び出し
  *   4. 戻り値を検証 — F-005 / R-05 受入基準:
  *      - chapters.length === 入力章数 (7)
  *      - 各 chapter に index / heading / body_md (>=500 字)
  *      - index は入力と一致 (順序維持)
  *      - heading は入力と一致 (Editor が改変しない契約)
- *      - ai_disclosure_appended === true
- *      - 最終章 body_md (正規化) 末尾近傍に aiDisclosureText (正規化) が含まれる
- *      - ai_disclosure_text === 入力した文字列
+ *      - 出力に ai_disclosure_* が無く、どの章の body_md にも AI 開示文が含まれない
  *   5. token_usage に role='editor', provider='anthropic', book_id=bookId,
  *      job_id=jobId で 1 行 INSERT を確認 (model は claude- prefix)
  *   6. クリーンアップ: 一時 TokenUsage + Job + Book + Account を deleteMany / delete
@@ -42,13 +40,10 @@
  *  - retry 戦略は writer/outline / writer/chapter と同じ。
  *    editor.invalid_output / editor.chapters_mismatch は LLM 揺れで稀に起きるため
  *    最大 3 回 retry。前回失敗 token_usage を掃除して再試行。
- *  - AI 開示文未挿入時の強制挿入動作は **unit test (5/6) で mock 検証済**。
- *    実 LLM では大抵入れてくれるため、本 e2e では LLM が挿入する側の正常系のみ確認。
- *    呼出側の安全装置 (containsDisclosure → 強制挿入) は ai_disclosure_appended === true
- *    で実体保証されているので、本 spec では「最終章末尾近傍に aiDisclosureText が
- *    含まれる」を assert する形で間接的にカバーする。
+ *  - 本文には AI 開示文を入れない (2026-11-02 に挿入機構を撤去)。LLM が自発的に付けた
+ *    開示文は Editor 実装が除去するため、実 LLM でも全章に目印語が残らないことを assert する。
  *  - 入力 chapters は filler 'あ' を使った最小ダミー。LLM は表記ゆれ修正のしようが
- *    限定的だが、F-005 受入基準 (章数/index 維持 + AI 開示文挿入) の検証には十分。
+ *    限定的だが、F-005 受入基準 (章数/index 維持 + 開示文なし) の検証には十分。
  *    Quality Judge (Phase 2) は別レイヤーで評価する。
  */
 import { test, expect } from '@playwright/test';
@@ -73,14 +68,8 @@ function buildDummyBody(chars: number, index: number): string {
   return body;
 }
 
-/** 空白を圧縮した部分一致判定 (editor 本体の containsDisclosure と同等)。 */
-function normalizedIncludes(haystack: string, needle: string): boolean {
-  const norm = (s: string) => s.replace(/\s+/g, '');
-  return norm(haystack).includes(norm(needle));
-}
-
-const AI_DISCLOSURE_TEXT =
-  '本書は生成 AI を活用して執筆・編集されたコンテンツです。Amazon KDP のコンテンツガイドラインに従い、AI 生成コンテンツであることを明示します。';
+/** 本文に残ってはいけない AI 開示文の目印 (R-05: 本文には AI 開示文を入れない)。 */
+const AI_DISCLOSURE_MARKER = /生成\s*AI|AI\s*生成|コンテンツガイドライン/;
 
 const THEME_CONTEXT = {
   title: 'リモートワーク時代のチームマネジメント',
@@ -206,7 +195,6 @@ test.describe('runtime: Editor editBook (T-04-03)', () => {
           genre: 'business',
           themeContext: THEME_CONTEXT,
           chapters: INPUT_CHAPTERS,
-          aiDisclosureText: AI_DISCLOSURE_TEXT,
           feedback: [],
         });
         lastErr = null;
@@ -243,8 +231,7 @@ test.describe('runtime: Editor editBook (T-04-03)', () => {
     // eslint-disable-next-line no-console
     console.log(
       `[T-04-03 editor] chapters=${result.chapters.length} ` +
-        `ai_disclosure_appended=${result.ai_disclosure_appended} ` +
-        `ai_disclosure_text="${result.ai_disclosure_text.slice(0, 40)}..."`,
+        'ai_disclosure=none',
     );
     for (const c of result.chapters) {
       // eslint-disable-next-line no-console
@@ -281,17 +268,12 @@ test.describe('runtime: Editor editBook (T-04-03)', () => {
       }
     }
 
-    // R-05 安全装置: ai_disclosure_appended === true
-    expect(result.ai_disclosure_appended).toBe(true);
-
-    // ai_disclosure_text は入力した文字列 (trim 等価) と一致
-    expect(result.ai_disclosure_text).toBe(AI_DISCLOSURE_TEXT.trim());
-
-    // 最終章 body_md に AI 開示文 (正規化部分一致) が含まれる
-    // LLM が挿入していれば自然に含まれ、忘れていたら editor.ts L196-214 の強制挿入で
-    // 末尾に追加され、いずれにせよ true で返る契約。
-    const lastChapter = result.chapters[result.chapters.length - 1]!;
-    expect(normalizedIncludes(lastChapter.body_md, AI_DISCLOSURE_TEXT)).toBe(true);
+    // R-05: 出力に開示文フィールドは無く、どの章の本文にも開示文が無い
+    expect(result).not.toHaveProperty('ai_disclosure_appended');
+    expect(result).not.toHaveProperty('ai_disclosure_text');
+    for (const c of result.chapters) {
+      expect(AI_DISCLOSURE_MARKER.test(c.body_md)).toBe(false);
+    }
 
     // overall_notes は任意。あれば 2000 字以内。
     if (result.overall_notes !== undefined) {

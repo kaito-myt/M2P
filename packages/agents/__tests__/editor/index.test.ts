@@ -60,6 +60,8 @@ import type {
 // ヘルパ
 // ---------------------------------------------------------------------------
 
+// LLM が自発的に章末へ付けてしまう開示文の例 (Editor が除去することを検証する)。
+const AI_MARKER = /生成\s*AI|AI\s*生成|コンテンツガイドライン/;
 const DEFAULT_AI_DISCLOSURE =
   '本書の本文は生成 AI を活用して作成し、著者が編集・監修したコンテンツです。Amazon KDP のコンテンツガイドラインに従い、AI 生成コンテンツであることを明示します。';
 
@@ -123,11 +125,7 @@ function makeFakeClient(text: string): LLMClient {
       if (idx !== undefined) {
         const ch = payload.chapters.find((c) => c && c.index === idx);
         if (ch) {
-          outText = JSON.stringify({
-            chapters: [ch],
-            ai_disclosure_appended: payload.ai_disclosure_appended,
-            ai_disclosure_text: payload.ai_disclosure_text,
-          });
+          outText = JSON.stringify({ chapters: [ch] });
         }
       }
     }
@@ -214,7 +212,6 @@ function baseInput(overrides: Partial<EditorInput> = {}): EditorInput {
       target_reader: '30 代会社員 / 副業初心者',
     },
     chapters,
-    aiDisclosureText: overrides.aiDisclosureText ?? DEFAULT_AI_DISCLOSURE,
     feedback: overrides.feedback ?? [],
   };
   if (overrides.jobId !== undefined) base.jobId = overrides.jobId;
@@ -223,7 +220,7 @@ function baseInput(overrides: Partial<EditorInput> = {}): EditorInput {
 
 /**
  * LLM 応答 JSON ビルダ。input と同じ章 (index/heading) を echo して body_md を入れ替える。
- * disclosure=true なら最終章末尾に DEFAULT_AI_DISCLOSURE を含める。
+ * disclosure=true なら LLM が最終章末尾へ勝手に DEFAULT_AI_DISCLOSURE を付けた応答にする。
  */
 function buildLlmResponse(
   input: EditorInput,
@@ -231,13 +228,11 @@ function buildLlmResponse(
     disclosure?: boolean;
     bodyChars?: number;
     chaptersOverride?: Array<{ index: number; heading?: string; body_md: string; diff_summary?: string }>;
-    appendedFlag?: boolean;
     overall?: string;
   } = {},
 ): string {
-  const disclosure = opts.disclosure ?? true;
+  const disclosure = opts.disclosure ?? false;
   const bodyChars = opts.bodyChars ?? 800;
-  const appendedFlag = opts.appendedFlag ?? disclosure;
   const chapters =
     opts.chaptersOverride ??
     input.chapters.map((c, i) => {
@@ -252,11 +247,7 @@ function buildLlmResponse(
         diff_summary: '誤字修正',
       };
     });
-  const payload: Record<string, unknown> = {
-    chapters,
-    ai_disclosure_appended: appendedFlag,
-    ai_disclosure_text: DEFAULT_AI_DISCLOSURE,
-  };
+  const payload: Record<string, unknown> = { chapters };
   if (opts.overall) payload.overall_notes = opts.overall;
   return jsonResponse(payload);
 }
@@ -274,9 +265,9 @@ afterEach(() => {
 // ---------------------------------------------------------------------------
 
 describe('editBook — happy path', () => {
-  it('8 章 + AI 開示文付き応答 → 8 章返却 + ai_disclosure_appended=true', async () => {
+  it('8 章の応答 → 8 章返却。本文にも出力にも AI 開示文は無い', async () => {
     const input = baseInput();
-    const text = buildLlmResponse(input, { disclosure: true });
+    const text = buildLlmResponse(input);
     const fakeClient = makeFakeClient(text);
     const promptRepo = makePromptRepo([defaultPromptRow()]);
 
@@ -286,13 +277,8 @@ describe('editBook — happy path', () => {
     });
 
     expect(result.chapters).toHaveLength(8);
-    expect(result.ai_disclosure_appended).toBe(true);
-    expect(result.ai_disclosure_text).toBe(DEFAULT_AI_DISCLOSURE);
-    // 最終章末尾に AI 開示文 (空白圧縮 substring 比較で OK)
-    const last = result.chapters[result.chapters.length - 1]!;
-    expect(last.body_md.replace(/\s+/g, '')).toContain(
-      DEFAULT_AI_DISCLOSURE.replace(/\s+/g, ''),
-    );
+    expect(result).not.toHaveProperty('ai_disclosure_appended');
+    expect(result).not.toHaveProperty('ai_disclosure_text');
     // index 順序維持
     expect(result.chapters.map((c) => c.index)).toEqual([1, 2, 3, 4, 5, 6, 7, 8]);
     // 章ごと校閲 (8) + 整合パス (8) = 16 回
@@ -413,11 +399,13 @@ describe('editBook — 出力検証', () => {
 // 5. AI 開示文未挿入 → 強制挿入 (R-05 安全装置)
 // ---------------------------------------------------------------------------
 
-describe('editBook — R-05 AI 開示文 安全装置', () => {
-  it('LLM が AI 開示文を最終章に含めず + appended=false で返却 → 強制挿入 + appended=true で返却', async () => {
+describe('editBook — R-05 本文に AI 開示文を入れない (挿入機構は撤去済み)', () => {
+  const norm = (t: string) => t.replace(/\s+/g, '');
+  const needle = norm(DEFAULT_AI_DISCLOSURE);
+
+  it('LLM が開示文を付けなかった → 何も足さない (最終章にも入らない)', async () => {
     const input = baseInput();
-    const text = buildLlmResponse(input, { disclosure: false, appendedFlag: false });
-    const fakeClient = makeFakeClient(text);
+    const fakeClient = makeFakeClient(buildLlmResponse(input));
     const promptRepo = makePromptRepo([defaultPromptRow()]);
 
     const result = await editBook(input, {
@@ -425,20 +413,37 @@ describe('editBook — R-05 AI 開示文 安全装置', () => {
       promptLoaderDeps: { prisma: promptRepo },
     });
 
-    expect(result.ai_disclosure_appended).toBe(true);
-    expect(result.ai_disclosure_text).toBe(DEFAULT_AI_DISCLOSURE);
+    for (const c of result.chapters) {
+      expect(AI_MARKER.test(c.body_md)).toBe(false);
+    }
     const last = result.chapters[result.chapters.length - 1]!;
-    expect(last.body_md.replace(/\s+/g, '')).toContain(
-      DEFAULT_AI_DISCLOSURE.replace(/\s+/g, ''),
-    );
-    // 入力 body_md が末尾保持されている (差分 add のみ、既存本文は保たれる)
+    expect(last.body_md).toBe(buildBody(800).trimEnd());
+  });
+
+  it('LLM が最終章末尾に開示文を付けた → 除去される', async () => {
+    const input = baseInput();
+    const fakeClient = makeFakeClient(buildLlmResponse(input, { disclosure: true }));
+    const promptRepo = makePromptRepo([defaultPromptRow()]);
+
+    const result = await editBook(input, {
+      createAgentClient: vi.fn(async () => fakeClient),
+      promptLoaderDeps: { prisma: promptRepo },
+    });
+
+    const last = result.chapters[result.chapters.length - 1]!;
+    expect(norm(last.body_md)).not.toContain(needle);
+    expect(AI_MARKER.test(last.body_md)).toBe(false);
     expect(last.body_md).toContain('## 小見出し');
   });
 
-  it('LLM が AI 開示文を挿入済 + appended=true 申告 → そのまま返却 (二重挿入しない)', async () => {
+  it('LLM が全章の末尾に開示文を付けた → 全章から除去される', async () => {
     const input = baseInput();
-    const text = buildLlmResponse(input, { disclosure: true, appendedFlag: true });
-    const fakeClient = makeFakeClient(text);
+    const chaptersOverride = input.chapters.map((c) => ({
+      index: c.index,
+      heading: c.heading,
+      body_md: buildBody(800) + '\n\n' + DEFAULT_AI_DISCLOSURE,
+    }));
+    const fakeClient = makeFakeClient(buildLlmResponse(input, { chaptersOverride }));
     const promptRepo = makePromptRepo([defaultPromptRow()]);
 
     const result = await editBook(input, {
@@ -446,19 +451,15 @@ describe('editBook — R-05 AI 開示文 安全装置', () => {
       promptLoaderDeps: { prisma: promptRepo },
     });
 
-    expect(result.ai_disclosure_appended).toBe(true);
-    const last = result.chapters[result.chapters.length - 1]!;
-    // AI 開示文の出現回数を空白圧縮ベースで数える
-    const normBody = last.body_md.replace(/\s+/g, '');
-    const normNeedle = DEFAULT_AI_DISCLOSURE.replace(/\s+/g, '');
-    const occurrences = normBody.split(normNeedle).length - 1;
-    expect(occurrences).toBe(1);
+    for (const c of result.chapters) {
+      expect(norm(c.body_md)).not.toContain(needle);
+    }
   });
 
-  it('LLM が挿入済だが appended=false 申告 → 実体優先で appended=true に矯正', async () => {
-    const input = baseInput();
-    const text = buildLlmResponse(input, { disclosure: true, appendedFlag: false });
-    const fakeClient = makeFakeClient(text);
+  it('旧入力 aiDisclosureText を渡されても無視: 本文・プロンプトのどちらにも出ない', async () => {
+    const legacy = 'LEGACY-DISCLOSURE-MARKER 本書はAIで作成されました。';
+    const input = { ...baseInput(), aiDisclosureText: legacy } as EditorInput;
+    const fakeClient = makeFakeClient(buildLlmResponse(input));
     const promptRepo = makePromptRepo([defaultPromptRow()]);
 
     const result = await editBook(input, {
@@ -466,27 +467,39 @@ describe('editBook — R-05 AI 開示文 安全装置', () => {
       promptLoaderDeps: { prisma: promptRepo },
     });
 
-    expect(result.ai_disclosure_appended).toBe(true);
+    expect(JSON.stringify(result)).not.toContain('LEGACY-DISCLOSURE-MARKER');
+    const completeMock = fakeClient.complete as unknown as {
+      mock: { calls: Array<[LLMCompleteArgs]> };
+    };
+    for (const [args] of completeMock.mock.calls) {
+      for (const m of args.messages) {
+        expect(String(m.content)).not.toContain('LEGACY-DISCLOSURE-MARKER');
+      }
+    }
   });
 
-  it('ai_disclosure_text が空 → 本文に開示文を入れない (LLM が付けても除去・appended=false)', async () => {
-    const input = baseInput({ aiDisclosureText: '' });
-    // LLM が最終章末尾に開示文を付けて返しても、空設定なら step8 で除去し step9 で再挿入しない。
-    const text = buildLlmResponse(input, { disclosure: true, appendedFlag: true });
-    const fakeClient = makeFakeClient(text);
+  it('プロンプト: 「挿入しない」指示のみ。挿入を求める文言と未置換プレースホルダは出ない', async () => {
+    const input = baseInput();
+    const fakeClient = makeFakeClient(buildLlmResponse(input));
     const promptRepo = makePromptRepo([defaultPromptRow()]);
 
-    const result = await editBook(input, {
+    await editBook(input, {
       createAgentClient: vi.fn(async () => fakeClient),
       promptLoaderDeps: { prisma: promptRepo },
     });
 
-    expect(result.ai_disclosure_appended).toBe(false);
-    expect(result.ai_disclosure_text).toBe('');
-    const last = result.chapters[result.chapters.length - 1]!;
-    expect(last.body_md.replace(/\s+/g, '')).not.toContain(
-      DEFAULT_AI_DISCLOSURE.replace(/\s+/g, ''),
-    );
+    const completeMock = fakeClient.complete as unknown as {
+      mock: { calls: Array<[LLMCompleteArgs]> };
+    };
+    const first = completeMock.mock.calls[0]![0];
+    const user = String(first.messages.find((m) => m.role === 'user')!.content);
+    const system = String(first.messages.find((m) => m.role === 'system')!.content);
+    expect(user).toContain('一切挿入しないこと');
+    expect(user).not.toContain('必ず挿入');
+    expect(user).not.toContain('巻末に必ず');
+    expect(user).not.toContain('ai_disclosure');
+    // 既存 DB テンプレに {ai_disclosure_text} が残っていても文字列のまま漏れない
+    expect(system).not.toContain('{ai_disclosure_text}');
   });
 });
 
@@ -531,7 +544,7 @@ describe('editBook — プロンプト差込', () => {
     expect(userMsg!.content).toContain('具体的な事例を 3 つ追加してください');
   });
 
-  it('プレースホルダ ({theme_title}/{ai_disclosure_text}/{chapter_count}/{draft_chapters}) が system に差し込まれる', async () => {
+  it('プレースホルダ ({theme_title}/{chapter_count}/{draft_chapters}) が system に差し込まれる', async () => {
     const input = baseInput({
       genre: 'business',
       themeContext: {
@@ -539,17 +552,14 @@ describe('editBook — プロンプト差込', () => {
         hook: 'プロンプト 100 連発',
         target_reader: 'ビジネスパーソン',
       },
-      aiDisclosureText: 'カスタム開示文 (テスト用)',
     });
-    const text = buildLlmResponse(input, { disclosure: false });
-    // disclosure=false でも user 注入を上書きするため、aiDisclosureText を含む応答に揃える
-    // → 最終章末尾に「カスタム開示文 (テスト用)」を強制挿入される動作も同時に検証する
+    const text = buildLlmResponse(input);
     const fakeClient = makeFakeClient(text);
     const promptRepo = makePromptRepo([
       { ...defaultPromptRow(), genre: 'business' },
     ]);
 
-    const result = await editBook(input, {
+    await editBook(input, {
       createAgentClient: vi.fn(async () => fakeClient),
       promptLoaderDeps: { prisma: promptRepo },
     });
@@ -566,17 +576,6 @@ describe('editBook — プロンプト差込', () => {
     // draft_chapters: JSON 配列が埋め込まれている (compact JSON: 空白なし)
     expect(systemMsg!.content).toContain('"index":1');
     expect(systemMsg!.content).toContain('"heading":"第1章 サンプル見出し"');
-    // AI 開示文は **最終章のチャンク** の system にのみ注入される
-    // (非最終章では重複挿入を防ぐため空文字を渡す設計)。
-    // 第1段の最終章呼び出し = 8 章目 = calls[7]。
-    const lastChunkArgs = completeMock.mock.calls[7]![0];
-    const lastSystemMsg = lastChunkArgs.messages.find((m) => m.role === 'system');
-    expect(lastSystemMsg!.content).toContain('カスタム開示文 (テスト用)');
-
-    // カスタム開示文が強制挿入される
-    const last = result.chapters[result.chapters.length - 1]!;
-    expect(last.body_md).toContain('カスタム開示文 (テスト用)');
-    expect(result.ai_disclosure_text).toBe('カスタム開示文 (テスト用)');
   });
 });
 
@@ -713,7 +712,6 @@ describe('editBook — 章数バリエーション', () => {
 
     expect(result.chapters).toHaveLength(7);
     expect(result.chapters.map((c) => c.index)).toEqual([1, 2, 3, 4, 5, 6, 7]);
-    expect(result.ai_disclosure_appended).toBe(true);
   });
 
   it('入力 10 章 → 校閲後も 10 章維持', async () => {
@@ -730,7 +728,6 @@ describe('editBook — 章数バリエーション', () => {
     });
 
     expect(result.chapters).toHaveLength(10);
-    expect(result.ai_disclosure_appended).toBe(true);
   });
 });
 

@@ -55,12 +55,10 @@ function readRetryCount(payloadJson: unknown): number {
  *   1. payload zod parse (book_id / job_id / feedback?)
  *   2. 内部 `Job` 行を CAS で `running` に更新。既に `done` ならスキップ。
  *   3. BookLock `pipeline:<job_id>` 取得 (TTL 30 分、docs/05 §3 規約)。
- *   4. Book + ThemeCandidate + Chapter[] (book_id ASC) + AppSettings.ai_disclosure_text を fetch。
+ *   4. Book + ThemeCandidate + Chapter[] (book_id ASC) を fetch。
  *      - Chapter 0 件 → NotFoundError (Writer chapter が未実行 / 部分失敗)
- *      - AppSettings 1 行不在 → NotFoundError (seed 投入済が前提、運用上ありえない)
- *      - ai_disclosure_text は空を許容 (本文へ AI 開示文を挿入しない運用。空なら末尾挿入skip)
- *   5. `editBook({ jobId, bookId, accountId, genre, themeContext, chapters,
- *      aiDisclosureText, feedback })` 呼出 (token_usage は editBook 内で role='editor' 記録)。
+ *      - 本文へ AI 開示文は入れない (2026-11-02 撤去)。app_settings.ai_disclosure_text は読まない
+ *   5. `editBook({ jobId, bookId, accountId, genre, themeContext, chapters, feedback })` 呼出 (token_usage は editBook 内で role='editor' 記録)。
  *   6. **章ごとに atomic な ChapterRevision INSERT + Chapter update**:
  *      - 各章を **1 トランザクション** に閉じる (全章まとめると tx が長大化して
  *        Postgres ロック競合を起こすため、章単位の atomic boundary を選択)。
@@ -71,14 +69,14 @@ function readRetryCount(payloadJson: unknown): number {
  *      `pipeline.book.judge` を直接 enqueue — 2026-09-16 凍結修正、本文 §7 参照)
  *      (parent_job_id=本ジョブ)。docs/05 §5.3.5 に明記された次フェーズ chain。
  *      - 重複防止: 既存 thumbnail.text Job (queued/running/done) を findFirst で除外。
- *   8. 内部 `Job.status='done'` + `result_json={ revisions_count, ai_disclosure_appended,
+ *   8. 内部 `Job.status='done'` + `result_json={ revisions_count,
  *      thumbnail_text_job_id }`
  *   9. `notifyJobChange({ phase: 'editor_done' })` で SSE 配信。
  *  10. finally で BookLock 解放。
  *
  * エラー方針 (T-04-04/05 と同形):
  *   - payload zod 違反 → `ValidationError`
- *   - Book / Theme / AppSettings 不在 / Chapter 0 件 → `NotFoundError` (内部 Job=failed 降格)
+ *   - Book / Theme 不在 / Chapter 0 件 → `NotFoundError` (内部 Job=failed 降格)
  *   - `editBook` AgentError / ProviderError → 透過 throw + Job=failed
  *   - 章 transaction 失敗 → 透過 throw + Job=failed (Postgres 側で部分 rollback、
  *     既処理済の章はそのまま、本ジョブ再実行時は冪等に再校閲 = 同 body から +1 で版重複なし
@@ -228,6 +226,7 @@ export interface PipelineBookEditorPrisma {
       }>
     >;
   };
+  /** autopass 設定 (readPipelineAutopass) 用。ai_disclosure_text は読まない。 */
   appSettings: {
     findUnique: (args: {
       where: { id: string };
@@ -352,7 +351,7 @@ export async function runPipelineBookEditor(
   }
 
   try {
-    // 4. Book + Theme + Chapter[] + AppSettings fetch
+    // 4. Book + Theme + Chapter[] fetch
     const book = await prisma.book.findUnique({
       where: { id: bookId },
       select: {
@@ -403,21 +402,6 @@ export async function runPipelineBookEditor(
       );
     }
 
-    const appSettings = await prisma.appSettings.findUnique({
-      where: { id: 'singleton' },
-      select: { ai_disclosure_text: true },
-    });
-    if (!appSettings) {
-      throw new NotFoundError('AppSettings singleton row not found', {
-        details: { bookId, jobId },
-      });
-    }
-    // ai_disclosure_text は空を許容する。運営者要望により本文への AI 開示文は挿入
-    // しない運用 (既定で空)。KDP への AI 開示は入稿フォームの「AI生成コンテンツ」設問で
-    // 行う。editBook / editor エージェントは空文字を受け取ると末尾挿入をスキップする
-    // (packages/agents/src/editor/index.ts の R-05 安全装置参照)。
-    const aiDisclosureText = ((appSettings.ai_disclosure_text as string | undefined) ?? '').trim();
-
     // 5. editBook 呼出 (token_usage は editBook 内で role='editor', book_id 紐付け INSERT)
     const genre = normalizeGenre(theme.genre);
     const themeContext: EditorInput['themeContext'] = {
@@ -444,7 +428,6 @@ export async function runPipelineBookEditor(
       genre,
       themeContext,
       chapters: editorChapters,
-      aiDisclosureText,
       feedback: feedback ?? [],
     };
 
@@ -630,7 +613,6 @@ export async function runPipelineBookEditor(
         error: null,
         result_json: {
           revisions_count: revisionsCount,
-          ai_disclosure_appended: result.ai_disclosure_appended,
           thumbnail_text_job_id: thumbnailJobId,
           judge_job_id: judgeJobId,
         },
@@ -643,7 +625,6 @@ export async function runPipelineBookEditor(
         jobId,
         bookId,
         revisionsCount,
-        aiDisclosureAppended: result.ai_disclosure_appended,
         thumbnailJobId,
       },
       'pipeline.book.editor done',
